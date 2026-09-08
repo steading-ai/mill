@@ -4,11 +4,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	millv1 "github.com/ivy/mill/gen/mill/v1"
+	"github.com/ivy/mill/internal/evidence"
 	"github.com/ivy/mill/internal/workflow"
 )
 
@@ -79,6 +81,54 @@ steps:
     models: opus
 `, map[string]string{"implement": "Make the change."}))
 		Expect(err).To(MatchError(ContainSubstring("models")))
+	})
+
+	It("fills the documented defaults for how a status step watches the forge's checks", func() {
+		loaded, _, err := workflow.Load(dir(`
+name: tiny
+steps:
+  - name: implement
+    kind: skill
+    session: implement
+    skill: implement
+    evidence: artifact
+`, map[string]string{"implement": "Make the change."}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(loaded.GetStatus().GetInterval().AsDuration()).To(Equal(evidence.DefaultStatusInterval))
+		Expect(loaded.GetStatus().GetTimeout().AsDuration()).To(Equal(evidence.DefaultStatusTimeout))
+	})
+
+	It("reads the watch interval and cap a workflow names", func() {
+		loaded, _, err := workflow.Load(dir(`
+name: tiny
+status:
+  interval: 15s
+  timeout: 30m
+steps:
+  - name: implement
+    kind: skill
+    session: implement
+    skill: implement
+    evidence: artifact
+`, map[string]string{"implement": "Make the change."}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(loaded.GetStatus().GetInterval().AsDuration()).To(Equal(15 * time.Second))
+		Expect(loaded.GetStatus().GetTimeout().AsDuration()).To(Equal(30 * time.Minute))
+	})
+
+	It("refuses a watch interval that is not a duration", func() {
+		_, _, err := workflow.Load(dir(`
+name: tiny
+status:
+  interval: soon
+steps:
+  - name: implement
+    kind: skill
+    session: implement
+    skill: implement
+    evidence: artifact
+`, map[string]string{"implement": "Make the change."}))
+		Expect(err).To(MatchError(ContainSubstring("status: interval")))
 	})
 
 	It("refuses a step whose skill directory is not there", func() {

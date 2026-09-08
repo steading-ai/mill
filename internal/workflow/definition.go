@@ -12,6 +12,7 @@ import (
 
 	harnessv1 "github.com/ivy/mill/gen/harness/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
+	"github.com/ivy/mill/internal/evidence"
 )
 
 // document is `workflow.yaml`: the mill record for one workflow, mapping
@@ -19,10 +20,20 @@ import (
 // refused, so a misspelled key is an error at push rather than a setting
 // silently dropped from a run.
 type document struct {
-	Name    string     `yaml:"name"`
-	Scope   string     `yaml:"scope,omitempty"`
-	Project string     `yaml:"project,omitempty"`
-	Steps   []stepYAML `yaml:"steps"`
+	Name    string      `yaml:"name"`
+	Scope   string      `yaml:"scope,omitempty"`
+	Project string      `yaml:"project,omitempty"`
+	Status  *statusYAML `yaml:"status,omitempty"`
+	Steps   []stepYAML  `yaml:"steps"`
+}
+
+// statusYAML is how a `status` step watches the forge's checks. It is
+// workflow-level because every CI step in one workflow watches the same
+// forge at the same cadence, and the numbers are a property of the project's
+// pipeline rather than of any one step.
+type statusYAML struct {
+	Interval string `yaml:"interval,omitempty"`
+	Timeout  string `yaml:"timeout,omitempty"`
 }
 
 // stepYAML is one step. `kind` decides which of skill, check, and gate is
@@ -152,6 +163,11 @@ func (d document) toProto() (*millv1.Workflow, error) {
 		}
 	}
 	w := &millv1.Workflow{Name: d.Name, Scope: scope, Project: d.Project}
+	status, err := d.Status.toProto()
+	if err != nil {
+		return nil, err
+	}
+	w.Status = status
 	for _, s := range d.Steps {
 		step, err := s.toProto()
 		if err != nil {
@@ -160,6 +176,41 @@ func (d document) toProto() (*millv1.Workflow, error) {
 		w.Steps = append(w.Steps, step)
 	}
 	return w, nil
+}
+
+// toProto fills the documented defaults for a `status` step's watch — the
+// interval it asks on and the cap it gives up at — so that what is stored is
+// what a run reads. [github.com/ivy/mill/internal/evidence] owns the
+// numbers; the loader only writes them down.
+func (s *statusYAML) toProto() (*millv1.StatusPolicy, error) {
+	policy := &millv1.StatusPolicy{
+		Interval: durationpb.New(evidence.DefaultStatusInterval),
+		Timeout:  durationpb.New(evidence.DefaultStatusTimeout),
+	}
+	if s == nil {
+		return policy, nil
+	}
+	for _, field := range []struct {
+		name  string
+		text  string
+		field **durationpb.Duration
+	}{
+		{"interval", s.Interval, &policy.Interval},
+		{"timeout", s.Timeout, &policy.Timeout},
+	} {
+		if field.text == "" {
+			continue
+		}
+		d, err := time.ParseDuration(field.text)
+		if err != nil {
+			return nil, fmt.Errorf("status: %s: %w", field.name, err)
+		}
+		if d <= 0 {
+			return nil, fmt.Errorf("status: %s: %s is not a positive duration", field.name, field.text)
+		}
+		*field.field = durationpb.New(d)
+	}
+	return policy, nil
 }
 
 func (s stepYAML) toProto() (*millv1.Step, error) {
@@ -262,6 +313,12 @@ func parseOnFailure(text string) (*millv1.OnFailure, error) {
 // toDocument is toProto backwards: what `mill workflow pull` writes.
 func toDocument(w *millv1.Workflow) document {
 	doc := document{Name: w.GetName(), Scope: enumText(w.GetScope()), Project: w.GetProject()}
+	if status := w.GetStatus(); status != nil {
+		doc.Status = &statusYAML{
+			Interval: status.GetInterval().AsDuration().String(),
+			Timeout:  status.GetTimeout().AsDuration().String(),
+		}
+	}
 	for _, step := range w.GetSteps() {
 		s := stepYAML{
 			Name:         step.GetName(),

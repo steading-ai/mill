@@ -2679,7 +2679,10 @@ type Workflow struct {
 	// the pushing principal.
 	Source *Source `protobuf:"bytes,7,opt,name=source,proto3" json:"source,omitempty"`
 	// When this version was stored.
-	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	CreatedAt *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	// How a `status` step watches the forge's checks. Unset means the
+	// documented defaults.
+	Status        *StatusPolicy `protobuf:"bytes,9,opt,name=status,proto3" json:"status,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2770,6 +2773,72 @@ func (x *Workflow) GetCreatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *Workflow) GetStatus() *StatusPolicy {
+	if x != nil {
+		return x.Status
+	}
+	return nil
+}
+
+// StatusPolicy is how long a `status` step waits for the forge's checks to
+// settle, and how often it asks. A pending status is not a failure: the step
+// stays open and is verified again on the next tick until the checks settle
+// or the cap elapses.
+type StatusPolicy struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// How often the forge is asked. Unset means one minute.
+	Interval *durationpb.Duration `protobuf:"bytes,1,opt,name=interval,proto3" json:"interval,omitempty"`
+	// How long the step may keep asking before the run gives up. Unset means
+	// one hour.
+	Timeout       *durationpb.Duration `protobuf:"bytes,2,opt,name=timeout,proto3" json:"timeout,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StatusPolicy) Reset() {
+	*x = StatusPolicy{}
+	mi := &file_mill_v1_mill_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StatusPolicy) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StatusPolicy) ProtoMessage() {}
+
+func (x *StatusPolicy) ProtoReflect() protoreflect.Message {
+	mi := &file_mill_v1_mill_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StatusPolicy.ProtoReflect.Descriptor instead.
+func (*StatusPolicy) Descriptor() ([]byte, []int) {
+	return file_mill_v1_mill_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *StatusPolicy) GetInterval() *durationpb.Duration {
+	if x != nil {
+		return x.Interval
+	}
+	return nil
+}
+
+func (x *StatusPolicy) GetTimeout() *durationpb.Duration {
+	if x != nil {
+		return x.Timeout
+	}
+	return nil
+}
+
 // ProjectDefault is a project naming the workflow its nodes are worked
 // through, and the tier that workflow stands for. Dagger nodes carry no
 // workflow label; dagger never learns the word.
@@ -2788,7 +2857,7 @@ type ProjectDefault struct {
 
 func (x *ProjectDefault) Reset() {
 	*x = ProjectDefault{}
-	mi := &file_mill_v1_mill_proto_msgTypes[16]
+	mi := &file_mill_v1_mill_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2800,7 +2869,7 @@ func (x *ProjectDefault) String() string {
 func (*ProjectDefault) ProtoMessage() {}
 
 func (x *ProjectDefault) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_mill_proto_msgTypes[16]
+	mi := &file_mill_v1_mill_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2813,7 +2882,7 @@ func (x *ProjectDefault) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProjectDefault.ProtoReflect.Descriptor instead.
 func (*ProjectDefault) Descriptor() ([]byte, []int) {
-	return file_mill_v1_mill_proto_rawDescGZIP(), []int{16}
+	return file_mill_v1_mill_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ProjectDefault) GetProject() string {
@@ -2865,7 +2934,7 @@ type StepToken struct {
 
 func (x *StepToken) Reset() {
 	*x = StepToken{}
-	mi := &file_mill_v1_mill_proto_msgTypes[17]
+	mi := &file_mill_v1_mill_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2877,7 +2946,7 @@ func (x *StepToken) String() string {
 func (*StepToken) ProtoMessage() {}
 
 func (x *StepToken) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_mill_proto_msgTypes[17]
+	mi := &file_mill_v1_mill_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2890,7 +2959,7 @@ func (x *StepToken) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepToken.ProtoReflect.Descriptor instead.
 func (*StepToken) Descriptor() ([]byte, []int) {
-	return file_mill_v1_mill_proto_rawDescGZIP(), []int{17}
+	return file_mill_v1_mill_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *StepToken) GetId() string {
@@ -2969,7 +3038,7 @@ type Usage struct {
 
 func (x *Usage) Reset() {
 	*x = Usage{}
-	mi := &file_mill_v1_mill_proto_msgTypes[18]
+	mi := &file_mill_v1_mill_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2981,7 +3050,7 @@ func (x *Usage) String() string {
 func (*Usage) ProtoMessage() {}
 
 func (x *Usage) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_mill_proto_msgTypes[18]
+	mi := &file_mill_v1_mill_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2994,7 +3063,7 @@ func (x *Usage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Usage.ProtoReflect.Descriptor instead.
 func (*Usage) Descriptor() ([]byte, []int) {
-	return file_mill_v1_mill_proto_rawDescGZIP(), []int{18}
+	return file_mill_v1_mill_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *Usage) GetStepRunId() string {
@@ -3089,7 +3158,7 @@ type Workspace struct {
 
 func (x *Workspace) Reset() {
 	*x = Workspace{}
-	mi := &file_mill_v1_mill_proto_msgTypes[19]
+	mi := &file_mill_v1_mill_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3101,7 +3170,7 @@ func (x *Workspace) String() string {
 func (*Workspace) ProtoMessage() {}
 
 func (x *Workspace) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_mill_proto_msgTypes[19]
+	mi := &file_mill_v1_mill_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3114,7 +3183,7 @@ func (x *Workspace) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Workspace.ProtoReflect.Descriptor instead.
 func (*Workspace) Descriptor() ([]byte, []int) {
-	return file_mill_v1_mill_proto_rawDescGZIP(), []int{19}
+	return file_mill_v1_mill_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *Workspace) GetId() string {
@@ -3220,7 +3289,7 @@ type ModelTotals struct {
 
 func (x *ModelTotals) Reset() {
 	*x = ModelTotals{}
-	mi := &file_mill_v1_mill_proto_msgTypes[20]
+	mi := &file_mill_v1_mill_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3232,7 +3301,7 @@ func (x *ModelTotals) String() string {
 func (*ModelTotals) ProtoMessage() {}
 
 func (x *ModelTotals) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_mill_proto_msgTypes[20]
+	mi := &file_mill_v1_mill_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3245,7 +3314,7 @@ func (x *ModelTotals) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModelTotals.ProtoReflect.Descriptor instead.
 func (*ModelTotals) Descriptor() ([]byte, []int) {
-	return file_mill_v1_mill_proto_rawDescGZIP(), []int{20}
+	return file_mill_v1_mill_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ModelTotals) GetModel() string {
@@ -3305,7 +3374,7 @@ type RunSummary struct {
 
 func (x *RunSummary) Reset() {
 	*x = RunSummary{}
-	mi := &file_mill_v1_mill_proto_msgTypes[21]
+	mi := &file_mill_v1_mill_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3317,7 +3386,7 @@ func (x *RunSummary) String() string {
 func (*RunSummary) ProtoMessage() {}
 
 func (x *RunSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_mill_proto_msgTypes[21]
+	mi := &file_mill_v1_mill_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3330,7 +3399,7 @@ func (x *RunSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunSummary.ProtoReflect.Descriptor instead.
 func (*RunSummary) Descriptor() ([]byte, []int) {
-	return file_mill_v1_mill_proto_rawDescGZIP(), []int{21}
+	return file_mill_v1_mill_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *RunSummary) GetRun() *Run {
@@ -3386,7 +3455,7 @@ type StepRunDetail struct {
 
 func (x *StepRunDetail) Reset() {
 	*x = StepRunDetail{}
-	mi := &file_mill_v1_mill_proto_msgTypes[22]
+	mi := &file_mill_v1_mill_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3398,7 +3467,7 @@ func (x *StepRunDetail) String() string {
 func (*StepRunDetail) ProtoMessage() {}
 
 func (x *StepRunDetail) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_mill_proto_msgTypes[22]
+	mi := &file_mill_v1_mill_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3411,7 +3480,7 @@ func (x *StepRunDetail) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepRunDetail.ProtoReflect.Descriptor instead.
 func (*StepRunDetail) Descriptor() ([]byte, []int) {
-	return file_mill_v1_mill_proto_rawDescGZIP(), []int{22}
+	return file_mill_v1_mill_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *StepRunDetail) GetStepRun() *StepRun {
@@ -3600,7 +3669,7 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"\routput_schema\x18\r \x01(\tR\foutputSchema\x1aT\n" +
 	"\fHarnessEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12.\n" +
-	"\x05value\x18\x02 \x01(\v2\x18.mill.v1.HarnessSettingsR\x05value:\x028\x01\"\x91\x02\n" +
+	"\x05value\x18\x02 \x01(\v2\x18.mill.v1.HarnessSettingsR\x05value:\x028\x01\"\xc0\x02\n" +
 	"\bWorkflow\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
@@ -3610,7 +3679,11 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"\x05steps\x18\x06 \x03(\v2\r.mill.v1.StepR\x05steps\x12'\n" +
 	"\x06source\x18\a \x01(\v2\x0f.mill.v1.SourceR\x06source\x129\n" +
 	"\n" +
-	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"i\n" +
+	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12-\n" +
+	"\x06status\x18\t \x01(\v2\x15.mill.v1.StatusPolicyR\x06status\"z\n" +
+	"\fStatusPolicy\x125\n" +
+	"\binterval\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\binterval\x123\n" +
+	"\atimeout\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\atimeout\"i\n" +
 	"\x0eProjectDefault\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x1a\n" +
 	"\bworkflow\x18\x02 \x01(\tR\bworkflow\x12!\n" +
@@ -3778,7 +3851,7 @@ func file_mill_v1_mill_proto_rawDescGZIP() []byte {
 }
 
 var file_mill_v1_mill_proto_enumTypes = make([]protoimpl.EnumInfo, 16)
-var file_mill_v1_mill_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
+var file_mill_v1_mill_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
 var file_mill_v1_mill_proto_goTypes = []any{
 	(RunStatus)(0),                // 0: mill.v1.RunStatus
 	(ParkedReason)(0),             // 1: mill.v1.ParkedReason
@@ -3812,91 +3885,95 @@ var file_mill_v1_mill_proto_goTypes = []any{
 	(*HarnessSettings)(nil),       // 29: mill.v1.HarnessSettings
 	(*Step)(nil),                  // 30: mill.v1.Step
 	(*Workflow)(nil),              // 31: mill.v1.Workflow
-	(*ProjectDefault)(nil),        // 32: mill.v1.ProjectDefault
-	(*StepToken)(nil),             // 33: mill.v1.StepToken
-	(*Usage)(nil),                 // 34: mill.v1.Usage
-	(*Workspace)(nil),             // 35: mill.v1.Workspace
-	(*ModelTotals)(nil),           // 36: mill.v1.ModelTotals
-	(*RunSummary)(nil),            // 37: mill.v1.RunSummary
-	(*StepRunDetail)(nil),         // 38: mill.v1.StepRunDetail
-	nil,                           // 39: mill.v1.Skill.FilesEntry
-	nil,                           // 40: mill.v1.Skill.MetadataEntry
-	nil,                           // 41: mill.v1.Step.HarnessEntry
-	(*timestamppb.Timestamp)(nil), // 42: google.protobuf.Timestamp
-	(*v1.ProcessExit)(nil),        // 43: harness.v1.ProcessExit
-	(*structpb.Struct)(nil),       // 44: google.protobuf.Struct
-	(*v1.ToolPolicy)(nil),         // 45: harness.v1.ToolPolicy
-	(*durationpb.Duration)(nil),   // 46: google.protobuf.Duration
+	(*StatusPolicy)(nil),          // 32: mill.v1.StatusPolicy
+	(*ProjectDefault)(nil),        // 33: mill.v1.ProjectDefault
+	(*StepToken)(nil),             // 34: mill.v1.StepToken
+	(*Usage)(nil),                 // 35: mill.v1.Usage
+	(*Workspace)(nil),             // 36: mill.v1.Workspace
+	(*ModelTotals)(nil),           // 37: mill.v1.ModelTotals
+	(*RunSummary)(nil),            // 38: mill.v1.RunSummary
+	(*StepRunDetail)(nil),         // 39: mill.v1.StepRunDetail
+	nil,                           // 40: mill.v1.Skill.FilesEntry
+	nil,                           // 41: mill.v1.Skill.MetadataEntry
+	nil,                           // 42: mill.v1.Step.HarnessEntry
+	(*timestamppb.Timestamp)(nil), // 43: google.protobuf.Timestamp
+	(*v1.ProcessExit)(nil),        // 44: harness.v1.ProcessExit
+	(*structpb.Struct)(nil),       // 45: google.protobuf.Struct
+	(*v1.ToolPolicy)(nil),         // 46: harness.v1.ToolPolicy
+	(*durationpb.Duration)(nil),   // 47: google.protobuf.Duration
 }
 var file_mill_v1_mill_proto_depIdxs = []int32{
 	0,  // 0: mill.v1.Run.status:type_name -> mill.v1.RunStatus
 	1,  // 1: mill.v1.Run.parked_reason:type_name -> mill.v1.ParkedReason
 	6,  // 2: mill.v1.Run.tier:type_name -> mill.v1.Tier
-	42, // 3: mill.v1.Run.created_at:type_name -> google.protobuf.Timestamp
-	42, // 4: mill.v1.Run.updated_at:type_name -> google.protobuf.Timestamp
-	42, // 5: mill.v1.Run.ended_at:type_name -> google.protobuf.Timestamp
+	43, // 3: mill.v1.Run.created_at:type_name -> google.protobuf.Timestamp
+	43, // 4: mill.v1.Run.updated_at:type_name -> google.protobuf.Timestamp
+	43, // 5: mill.v1.Run.ended_at:type_name -> google.protobuf.Timestamp
 	2,  // 6: mill.v1.StepRun.kind:type_name -> mill.v1.StepKind
 	3,  // 7: mill.v1.StepRun.status:type_name -> mill.v1.StepRunStatus
-	43, // 8: mill.v1.StepRun.exit:type_name -> harness.v1.ProcessExit
-	42, // 9: mill.v1.StepRun.started_at:type_name -> google.protobuf.Timestamp
-	42, // 10: mill.v1.StepRun.ended_at:type_name -> google.protobuf.Timestamp
+	44, // 8: mill.v1.StepRun.exit:type_name -> harness.v1.ProcessExit
+	43, // 9: mill.v1.StepRun.started_at:type_name -> google.protobuf.Timestamp
+	43, // 10: mill.v1.StepRun.ended_at:type_name -> google.protobuf.Timestamp
 	13, // 11: mill.v1.Finding.severity:type_name -> mill.v1.FindingSeverity
 	12, // 12: mill.v1.Verdict.decision:type_name -> mill.v1.VerdictDecision
 	18, // 13: mill.v1.Verdict.findings:type_name -> mill.v1.Finding
 	4,  // 14: mill.v1.Evidence.kind:type_name -> mill.v1.EvidenceKind
-	43, // 15: mill.v1.Evidence.exit:type_name -> harness.v1.ProcessExit
+	44, // 15: mill.v1.Evidence.exit:type_name -> harness.v1.ProcessExit
 	19, // 16: mill.v1.Evidence.verdict:type_name -> mill.v1.Verdict
-	44, // 17: mill.v1.Evidence.structured:type_name -> google.protobuf.Struct
-	42, // 18: mill.v1.Evidence.verified_at:type_name -> google.protobuf.Timestamp
-	44, // 19: mill.v1.Session.adapter_ref:type_name -> google.protobuf.Struct
-	42, // 20: mill.v1.Session.started_at:type_name -> google.protobuf.Timestamp
-	42, // 21: mill.v1.Session.last_turn_at:type_name -> google.protobuf.Timestamp
+	45, // 17: mill.v1.Evidence.structured:type_name -> google.protobuf.Struct
+	43, // 18: mill.v1.Evidence.verified_at:type_name -> google.protobuf.Timestamp
+	45, // 19: mill.v1.Session.adapter_ref:type_name -> google.protobuf.Struct
+	43, // 20: mill.v1.Session.started_at:type_name -> google.protobuf.Timestamp
+	43, // 21: mill.v1.Session.last_turn_at:type_name -> google.protobuf.Timestamp
 	8,  // 22: mill.v1.Source.kind:type_name -> mill.v1.SourceKind
-	39, // 23: mill.v1.Skill.files:type_name -> mill.v1.Skill.FilesEntry
-	40, // 24: mill.v1.Skill.metadata:type_name -> mill.v1.Skill.MetadataEntry
+	40, // 23: mill.v1.Skill.files:type_name -> mill.v1.Skill.FilesEntry
+	41, // 24: mill.v1.Skill.metadata:type_name -> mill.v1.Skill.MetadataEntry
 	22, // 25: mill.v1.Skill.source:type_name -> mill.v1.Source
-	42, // 26: mill.v1.Skill.created_at:type_name -> google.protobuf.Timestamp
+	43, // 26: mill.v1.Skill.created_at:type_name -> google.protobuf.Timestamp
 	9,  // 27: mill.v1.Check.stdout:type_name -> mill.v1.StdoutShape
 	10, // 28: mill.v1.Check.feedback:type_name -> mill.v1.Feedback
 	26, // 29: mill.v1.Gate.ask:type_name -> mill.v1.Ask
 	11, // 30: mill.v1.OnFailure.kind:type_name -> mill.v1.OnFailureKind
-	45, // 31: mill.v1.HarnessSettings.tool_policy:type_name -> harness.v1.ToolPolicy
+	46, // 31: mill.v1.HarnessSettings.tool_policy:type_name -> harness.v1.ToolPolicy
 	2,  // 32: mill.v1.Step.kind:type_name -> mill.v1.StepKind
 	23, // 33: mill.v1.Step.skill:type_name -> mill.v1.SkillRef
 	25, // 34: mill.v1.Step.check:type_name -> mill.v1.Check
 	27, // 35: mill.v1.Step.gate:type_name -> mill.v1.Gate
 	4,  // 36: mill.v1.Step.evidence:type_name -> mill.v1.EvidenceKind
 	5,  // 37: mill.v1.Step.capabilities:type_name -> mill.v1.Capability
-	41, // 38: mill.v1.Step.harness:type_name -> mill.v1.Step.HarnessEntry
+	42, // 38: mill.v1.Step.harness:type_name -> mill.v1.Step.HarnessEntry
 	28, // 39: mill.v1.Step.on_failure:type_name -> mill.v1.OnFailure
-	46, // 40: mill.v1.Step.timeout:type_name -> google.protobuf.Duration
+	47, // 40: mill.v1.Step.timeout:type_name -> google.protobuf.Duration
 	7,  // 41: mill.v1.Workflow.scope:type_name -> mill.v1.Scope
 	30, // 42: mill.v1.Workflow.steps:type_name -> mill.v1.Step
 	22, // 43: mill.v1.Workflow.source:type_name -> mill.v1.Source
-	42, // 44: mill.v1.Workflow.created_at:type_name -> google.protobuf.Timestamp
-	6,  // 45: mill.v1.ProjectDefault.tier:type_name -> mill.v1.Tier
-	5,  // 46: mill.v1.StepToken.capabilities:type_name -> mill.v1.Capability
-	42, // 47: mill.v1.StepToken.issued_at:type_name -> google.protobuf.Timestamp
-	42, // 48: mill.v1.StepToken.revoked_at:type_name -> google.protobuf.Timestamp
-	42, // 49: mill.v1.Usage.recorded_at:type_name -> google.protobuf.Timestamp
-	42, // 50: mill.v1.Usage.posted_at:type_name -> google.protobuf.Timestamp
-	14, // 51: mill.v1.Workspace.kind:type_name -> mill.v1.WorkspaceKind
-	5,  // 52: mill.v1.Workspace.capabilities:type_name -> mill.v1.Capability
-	15, // 53: mill.v1.Workspace.state:type_name -> mill.v1.WorkspaceState
-	42, // 54: mill.v1.Workspace.created_at:type_name -> google.protobuf.Timestamp
-	42, // 55: mill.v1.Workspace.destroyed_at:type_name -> google.protobuf.Timestamp
-	16, // 56: mill.v1.RunSummary.run:type_name -> mill.v1.Run
-	36, // 57: mill.v1.RunSummary.totals:type_name -> mill.v1.ModelTotals
-	17, // 58: mill.v1.StepRunDetail.step_run:type_name -> mill.v1.StepRun
-	20, // 59: mill.v1.StepRunDetail.evidence:type_name -> mill.v1.Evidence
-	21, // 60: mill.v1.StepRunDetail.session:type_name -> mill.v1.Session
-	36, // 61: mill.v1.StepRunDetail.totals:type_name -> mill.v1.ModelTotals
-	29, // 62: mill.v1.Step.HarnessEntry.value:type_name -> mill.v1.HarnessSettings
-	63, // [63:63] is the sub-list for method output_type
-	63, // [63:63] is the sub-list for method input_type
-	63, // [63:63] is the sub-list for extension type_name
-	63, // [63:63] is the sub-list for extension extendee
-	0,  // [0:63] is the sub-list for field type_name
+	43, // 44: mill.v1.Workflow.created_at:type_name -> google.protobuf.Timestamp
+	32, // 45: mill.v1.Workflow.status:type_name -> mill.v1.StatusPolicy
+	47, // 46: mill.v1.StatusPolicy.interval:type_name -> google.protobuf.Duration
+	47, // 47: mill.v1.StatusPolicy.timeout:type_name -> google.protobuf.Duration
+	6,  // 48: mill.v1.ProjectDefault.tier:type_name -> mill.v1.Tier
+	5,  // 49: mill.v1.StepToken.capabilities:type_name -> mill.v1.Capability
+	43, // 50: mill.v1.StepToken.issued_at:type_name -> google.protobuf.Timestamp
+	43, // 51: mill.v1.StepToken.revoked_at:type_name -> google.protobuf.Timestamp
+	43, // 52: mill.v1.Usage.recorded_at:type_name -> google.protobuf.Timestamp
+	43, // 53: mill.v1.Usage.posted_at:type_name -> google.protobuf.Timestamp
+	14, // 54: mill.v1.Workspace.kind:type_name -> mill.v1.WorkspaceKind
+	5,  // 55: mill.v1.Workspace.capabilities:type_name -> mill.v1.Capability
+	15, // 56: mill.v1.Workspace.state:type_name -> mill.v1.WorkspaceState
+	43, // 57: mill.v1.Workspace.created_at:type_name -> google.protobuf.Timestamp
+	43, // 58: mill.v1.Workspace.destroyed_at:type_name -> google.protobuf.Timestamp
+	16, // 59: mill.v1.RunSummary.run:type_name -> mill.v1.Run
+	37, // 60: mill.v1.RunSummary.totals:type_name -> mill.v1.ModelTotals
+	17, // 61: mill.v1.StepRunDetail.step_run:type_name -> mill.v1.StepRun
+	20, // 62: mill.v1.StepRunDetail.evidence:type_name -> mill.v1.Evidence
+	21, // 63: mill.v1.StepRunDetail.session:type_name -> mill.v1.Session
+	37, // 64: mill.v1.StepRunDetail.totals:type_name -> mill.v1.ModelTotals
+	29, // 65: mill.v1.Step.HarnessEntry.value:type_name -> mill.v1.HarnessSettings
+	66, // [66:66] is the sub-list for method output_type
+	66, // [66:66] is the sub-list for method input_type
+	66, // [66:66] is the sub-list for extension type_name
+	66, // [66:66] is the sub-list for extension extendee
+	0,  // [0:66] is the sub-list for field type_name
 }
 
 func init() { file_mill_v1_mill_proto_init() }
@@ -3920,7 +3997,7 @@ func file_mill_v1_mill_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_mill_v1_mill_proto_rawDesc), len(file_mill_v1_mill_proto_rawDesc)),
 			NumEnums:      16,
-			NumMessages:   26,
+			NumMessages:   27,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

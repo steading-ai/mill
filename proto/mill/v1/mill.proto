@@ -642,6 +642,21 @@ message Workflow {
   Source source = 7;
   // When this version was stored.
   google.protobuf.Timestamp created_at = 8;
+  // How a `status` step watches the forge's checks. Unset means the
+  // documented defaults.
+  StatusPolicy status = 9;
+}
+
+// StatusPolicy is how long a `status` step waits for the forge's checks to
+// settle, and how often it asks. A pending status is not a failure: the step
+// stays open and is verified again on the next tick until the checks settle
+// or the cap elapses.
+message StatusPolicy {
+  // How often the forge is asked. Unset means one minute.
+  google.protobuf.Duration interval = 1;
+  // How long the step may keep asking before the run gives up. Unset means
+  // one hour.
+  google.protobuf.Duration timeout = 2;
 }
 
 // ProjectDefault is a project naming the workflow its nodes are worked

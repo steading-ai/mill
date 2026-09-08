@@ -10,7 +10,7 @@ set -euo pipefail
 dirty=$(git status --porcelain)
 if [ -n "$dirty" ]; then
   {
-    echo "Workspace is dirty: stage, delete, or ignore uncommitted files."
+    echo "Workspace is dirty: stage, delete, or ignore uncommitted files"
     echo
     echo "$dirty"
   } >&2
