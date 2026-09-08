@@ -166,3 +166,22 @@ func durationOrNil(d time.Duration) *durationpb.Duration {
 	}
 	return durationpb.New(d)
 }
+
+// Ready is the ready set of the client's project, as dagger reports it to
+// this caller. It is a read: nothing is claimed and nothing is written.
+//
+// `mill doctor` uses it as its liveness probe, because dagger resolves a
+// principal from the transport and refuses a uid it does not know, so an
+// answer proves both that the service is there and that this account reaches
+// it as a principal.
+func (c *Client) Ready(ctx context.Context, kind daggerv1.AssigneeKind) ([]*daggerv1.Node, error) {
+	res, err := c.work.Ready(ctx, connect.NewRequest(&daggerv1.ReadyRequest{
+		Project:      c.project,
+		AssigneeKind: kind,
+		View:         daggerv1.View_VIEW_REFS,
+	}))
+	if err != nil {
+		return nil, fmt.Errorf("dagger: ready: %w", err)
+	}
+	return res.Msg.GetNodes(), nil
+}

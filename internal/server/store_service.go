@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"time"
 
 	"connectrpc.com/connect"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/ivy/mill/gen/mill/v1/millv1connect"
 	"github.com/ivy/mill/internal/domain"
 	"github.com/ivy/mill/internal/server/interceptor"
+	"github.com/ivy/mill/internal/version"
 )
 
 // StoreService is the mill.v1 StoreService over the ledger. A handler maps
@@ -307,6 +309,50 @@ func (s *StoreService) Inspect(ctx context.Context, req *connect.Request[millv1.
 		Summary:  detail.Summary,
 		Workflow: detail.Workflow,
 		Steps:    detail.Steps,
+	}), nil
+}
+
+// History returns a run's audit trail, oldest first.
+func (s *StoreService) History(ctx context.Context, req *connect.Request[millv1.HistoryRequest]) (*connect.Response[millv1.HistoryResponse], error) {
+	if req.Msg.GetId() == "" && req.Msg.GetNodeRef() == "" {
+		return nil, connectError(errNoTarget)
+	}
+	events, err := s.svc.History(ctx, domain.InspectParams{ID: req.Msg.GetId(), NodeRef: req.Msg.GetNodeRef()})
+	if err != nil {
+		return nil, connectError(err)
+	}
+	return connect.NewResponse(&millv1.HistoryResponse{Events: events}), nil
+}
+
+// Cost rolls a window of usage up by run, workflow, step and model.
+func (s *StoreService) Cost(ctx context.Context, req *connect.Request[millv1.CostRequest]) (*connect.Response[millv1.CostResponse], error) {
+	var since time.Time
+	if req.Msg.GetSince() != nil {
+		since = req.Msg.GetSince().AsTime()
+	}
+	cost, err := s.svc.Cost(ctx, domain.CostParams{Since: since, Project: req.Msg.GetProject()})
+	if err != nil {
+		return nil, connectError(err)
+	}
+	return connect.NewResponse(&millv1.CostResponse{
+		ByRun:      cost.ByRun,
+		ByWorkflow: cost.ByWorkflow,
+		ByStep:     cost.ByStep,
+		ByModel:    cost.ByModel,
+	}), nil
+}
+
+// Health is what the service can say about itself. It answers even when the
+// database does not: an unreachable database is the answer a probe wants,
+// not an error to map to a Connect code.
+func (s *StoreService) Health(ctx context.Context, _ *connect.Request[millv1.HealthRequest]) (*connect.Response[millv1.HealthResponse], error) {
+	health := s.svc.Health(ctx)
+	return connect.NewResponse(&millv1.HealthResponse{
+		Version:          version.String(),
+		Database:         health.Database,
+		MigrationVersion: health.Version,
+		MigrationWanted:  health.Wanted,
+		Detail:           health.Detail,
 	}), nil
 }
 

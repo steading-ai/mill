@@ -13,6 +13,7 @@ syntax = "proto3";
 
 package mill.v1;
 
+import "google/protobuf/timestamp.proto";
 import "harness/v1/harness.proto";
 import "mill/v1/mill.proto";
 
@@ -129,6 +130,16 @@ service StoreService {
   // Inspect returns one run's every attempt in order with its evidence,
   // exit, session, and usage.
   rpc Inspect(InspectRequest) returns (InspectResponse);
+  // History returns a run's audit trail, oldest first: the events rows.
+  rpc History(HistoryRequest) returns (HistoryResponse);
+  // Cost rolls a window of usage up by run, by workflow, by step name and
+  // by model. Counts, never currency: a rate table is applied by whoever
+  // wants money (docs/ledger.md §usage).
+  rpc Cost(CostRequest) returns (CostResponse);
+  // Health is what the service can say about itself: its version, whether
+  // the database answers, and whether the schema is the one this binary
+  // carries. `mill doctor` probes the socket and the migrations with it.
+  rpc Health(HealthRequest) returns (HealthResponse);
 }
 
 // GetRunByNodeRequest asks for the live run on a node.
@@ -632,4 +643,63 @@ message InspectResponse {
   Workflow workflow = 2;
   // Every attempt in order, with its evidence, session, and usage.
   repeated StepRunDetail steps = 3;
+}
+
+// HistoryRequest asks for a run's audit trail.
+message HistoryRequest {
+  // The run's id. When set, the rest is ignored.
+  string id = 1;
+  // The node's display key, for a human who has that instead.
+  string node_ref = 2;
+}
+
+// HistoryResponse carries the events rows, oldest first.
+message HistoryResponse {
+  // Every event recorded against the run, in the order they happened.
+  repeated Event events = 1;
+}
+
+// CostRequest asks what a window of runs billed.
+message CostRequest {
+  // Only usage recorded at or after this instant. Unset means everything.
+  google.protobuf.Timestamp since = 1;
+  // Only runs on nodes in this dagger project. Empty means every project.
+  string project = 2;
+}
+
+// CostResponse carries the same usage rolled up four ways, because the
+// question "what did this cost" is asked of a run, of a workflow, of a step
+// and of a model, and one pass over the rows answers all four.
+message CostResponse {
+  // By run, keyed by the run's node reference.
+  repeated CostBucket by_run = 1;
+  // By workflow, keyed by name and version.
+  repeated CostBucket by_workflow = 2;
+  // By step name.
+  repeated CostBucket by_step = 3;
+  // By model.
+  repeated CostBucket by_model = 4;
+}
+
+// HealthRequest asks the service about itself. It takes nothing: identity is
+// the socket's peer uid and there is nothing else to say.
+message HealthRequest {
+  // Reserved: the probe takes no arguments today.
+}
+
+// HealthResponse is what the service can say about itself, which is what
+// `mill doctor` turns into a pass or a fail with one line of reason.
+message HealthResponse {
+  // The version of the binary serving.
+  string version = 1;
+  // Whether the database answered the probe.
+  bool database = 2;
+  // The newest migration applied to the database.
+  int64 migration_version = 3;
+  // The newest migration this binary carries. Equal to migration_version
+  // when the schema is current.
+  int64 migration_wanted = 4;
+  // Why database is false, or why the versions could not be read. Empty
+  // when everything answered.
+  string detail = 5;
 }

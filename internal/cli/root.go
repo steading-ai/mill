@@ -55,7 +55,10 @@ func NewRootCommand(stdout, stderr io.Writer) *cobra.Command {
 "mill work" runs a worker: claim a ready dagger node, then drive its run.
 "mill run" drives a single named node in the calling process.
 "mill restart" abandons a node's run and starts a new generation.
-"mill workflow" pushes, pulls, and lists workflow definitions.`,
+"mill workflow" pushes, pulls, shows, and lists workflow definitions.
+"mill status", "inspect", "explain", "logs", "history" and "cost" read the
+ledger; "mill doctor" probes what a run depends on; "mill cancel" stops one.
+"mill mcp" serves those same tools to a session over stdio.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -73,6 +76,15 @@ func NewRootCommand(stdout, stderr io.Writer) *cobra.Command {
 		newRunCommand(),
 		newRestartCommand(),
 		newWorkflowCommand(),
+		newStatusCommand(),
+		newInspectCommand(),
+		newExplainCommand(),
+		newLogsCommand(),
+		newHistoryCommand(),
+		newCostCommand(),
+		newCancelCommand(),
+		newDoctorCommand(),
+		newMCPCommand(),
 	)
 	return root
 }

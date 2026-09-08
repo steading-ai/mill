@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -477,4 +478,61 @@ func requestID() string {
 		return "mill-" + fmt.Sprint(time.Now().UnixNano())
 	}
 	return "mill-" + hex.EncodeToString(raw)
+}
+
+// Probe starts the sidecar, asks it for a no-op, and reports what it
+// answered. `mill doctor` uses it: a sidecar that starts, parses one frame of
+// newline-delimited protojson and writes one back is a sidecar a step can be
+// given, and nothing short of running it proves that.
+//
+// The no-op is a `cancel` request. Cancellation reaches a running sidecar as
+// SIGTERM, so a cancel on stdin is a frame the sidecar understands and
+// refuses by contract — it never starts a session, never reaches the Claude
+// API, and never bills anything. Its refusal is the answer this probe wants.
+func (a *Adapter) Probe(ctx context.Context) (*harness.Terminal, error) {
+	line, err := encodeRequest(&harnessv1.Request{
+		Id:   requestID(),
+		Body: &harnessv1.Request_Cancel{Cancel: &harnessv1.Cancel{}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	process, err := a.execer.Exec(ctx, workspace.Command{Path: a.command, Args: a.args})
+	if err != nil {
+		return nil, fmt.Errorf("claudecode: spawn sidecar: %w", err)
+	}
+	defer func() {
+		_ = process.Signal(syscall.SIGKILL)
+		_, _ = io.Copy(io.Discard, process.Stderr)
+		process.Wait()
+	}()
+
+	if _, err := process.Stdin.Write(line); err != nil {
+		return nil, fmt.Errorf("claudecode: the sidecar did not read its request: %w", err)
+	}
+	_ = process.Stdin.Close()
+
+	reader := bufio.NewReaderSize(process.Stdout, maxLine)
+	for {
+		raw, err := reader.ReadBytes('\n')
+		if len(bytes.TrimSpace(raw)) > 0 {
+			response, decodeErr := decodeResponse(bytes.TrimSpace(raw))
+			if decodeErr != nil {
+				return nil, decodeErr
+			}
+			if terminal := response.GetTerminal(); terminal != nil {
+				return harness.TerminalFrom(terminal), nil
+			}
+			if failure := response.GetFailure(); failure != nil {
+				return nil, fmt.Errorf("claudecode: the sidecar refused: %s", failure.GetMessage())
+			}
+			continue
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil, errors.New("claudecode: the sidecar answered nothing before it exited")
+			}
+			return nil, fmt.Errorf("claudecode: read the sidecar: %w", err)
+		}
+	}
 }

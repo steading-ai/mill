@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -53,10 +54,13 @@ func serving(ctx context.Context) mill {
 		stop()
 		Eventually(served).Should(Receive(BeNil()), stderr.String())
 	})
+	// The service migrates before it binds, and several of these run at
+	// once, so the wait is generous: this is "has it started", not a bound
+	// on how long starting may take.
 	Eventually(func() error {
 		_, err := os.Stat(socket)
 		return err
-	}).Should(Succeed(), stderr.String())
+	}, 60*time.Second, 50*time.Millisecond).Should(Succeed(), stderr.String())
 	return mill{socket: socket}
 }
 

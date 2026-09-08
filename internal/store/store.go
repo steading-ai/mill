@@ -21,6 +21,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -28,6 +30,7 @@ import (
 
 	harnessv1 "github.com/ivy/mill/gen/harness/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
+	"github.com/ivy/mill/internal/store/migrations"
 )
 
 // The errors a store method is refused with. [ErrFenced] is in fence.go,
@@ -1590,4 +1593,199 @@ func (s *Store) Events(ctx context.Context, runID string) ([]Event, error) {
 		return nil, fmt.Errorf("events of run %s: %w", runID, err)
 	}
 	return rows, nil
+}
+
+// History returns a run's audit trail on the wire, resolving the run the way
+// [Store.Inspect] does so a caller with a node reference and no run id can
+// ask for it (docs/ledger.md §"Queries the CLI needs").
+func (s *Store) History(ctx context.Context, p InspectParams) ([]*millv1.Event, error) {
+	q := New(s.pool)
+	var row Run
+	var err error
+	switch {
+	case p.ID != "":
+		row, err = q.GetRun(ctx, p.ID)
+	case p.NodeRef != "":
+		row, err = q.GetRunByNodeRef(ctx, p.NodeRef)
+	default:
+		return nil, fmt.Errorf("history needs a run id or a node ref: %w", ErrNotFound)
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("run %s%s: %w", p.ID, p.NodeRef, ErrNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get run: %w", err)
+	}
+	rows, err := q.ListEvents(ctx, row.ID)
+	if err != nil {
+		return nil, fmt.Errorf("events of run %s: %w", row.ID, err)
+	}
+	events := make([]*millv1.Event, 0, len(rows))
+	for _, eventRow := range rows {
+		event, err := eventProto(eventRow)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	return events, nil
+}
+
+// CostParams is the window `mill cost` asks about.
+type CostParams struct {
+	// Since bounds the window below. Zero means every row ever recorded.
+	Since time.Time
+	// Project narrows to one dagger project. Empty means every project.
+	Project string
+}
+
+// Cost is a window of usage rolled up four ways at once. One pass over the
+// rows answers "what did this run cost", "what does this workflow cost",
+// "which step is expensive" and "which model billed", which is the whole of
+// what docs/ledger.md §"Queries the CLI needs" asks of `cost --since`.
+type Cost struct {
+	// ByRun is keyed by node reference, ByWorkflow by name and version,
+	// ByStep by step name, ByModel by model.
+	ByRun, ByWorkflow, ByStep, ByModel []*millv1.CostBucket
+}
+
+// Cost rolls a window of usage up by run, workflow, step and model.
+func (s *Store) Cost(ctx context.Context, p CostParams) (*Cost, error) {
+	params := UsageSinceParams{Project: nullable(p.Project)}
+	if !p.Since.IsZero() {
+		since := p.Since
+		params.Since = &since
+	}
+	rows, err := New(s.pool).UsageSince(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("usage rollup: %w", err)
+	}
+	byRun, byWorkflow, byStep, byModel := newRollup(), newRollup(), newRollup(), newRollup()
+	for _, row := range rows {
+		counts := &millv1.ModelTotals{
+			Model:            row.Model,
+			InputTokens:      row.InputTokens,
+			OutputTokens:     row.OutputTokens,
+			CacheReadTokens:  row.CacheReadTokens,
+			CacheWriteTokens: row.CacheWriteTokens,
+		}
+		byRun.add(row.NodeRef, counts)
+		byWorkflow.add(workflowKey(row), counts)
+		byStep.add(row.StepName, counts)
+		byModel.add(row.Model, counts)
+	}
+	return &Cost{
+		ByRun:      byRun.buckets(),
+		ByWorkflow: byWorkflow.buckets(),
+		ByStep:     byStep.buckets(),
+		ByModel:    byModel.buckets(),
+	}, nil
+}
+
+// workflowKey names the workflow version a usage row was billed under. A run
+// still selecting has none, and says so rather than rolling up under "".
+func workflowKey(row UsageSinceRow) string {
+	if row.WorkflowName == nil {
+		return "(selecting)"
+	}
+	return text(row.WorkflowName) + "@" + short(text(row.WorkflowVersion))
+}
+
+// short is a content hash as a human reads it.
+func short(hash string) string {
+	if len(hash) > 12 {
+		return hash[:12]
+	}
+	return hash
+}
+
+// rollup sums usage under a key, per model, keeping the keys sorted so two
+// calls over the same rows render identically.
+type rollup struct {
+	order  []string
+	totals map[string]map[string]*millv1.ModelTotals
+}
+
+func newRollup() *rollup {
+	return &rollup{totals: map[string]map[string]*millv1.ModelTotals{}}
+}
+
+func (r *rollup) add(key string, counts *millv1.ModelTotals) {
+	byModel, seen := r.totals[key]
+	if !seen {
+		byModel = map[string]*millv1.ModelTotals{}
+		r.totals[key] = byModel
+		r.order = append(r.order, key)
+	}
+	total, seen := byModel[counts.GetModel()]
+	if !seen {
+		total = &millv1.ModelTotals{Model: counts.GetModel()}
+		byModel[counts.GetModel()] = total
+	}
+	total.InputTokens += counts.GetInputTokens()
+	total.OutputTokens += counts.GetOutputTokens()
+	total.CacheReadTokens += counts.GetCacheReadTokens()
+	total.CacheWriteTokens += counts.GetCacheWriteTokens()
+}
+
+func (r *rollup) buckets() []*millv1.CostBucket {
+	sort.Strings(r.order)
+	out := make([]*millv1.CostBucket, 0, len(r.order))
+	for _, key := range r.order {
+		byModel := r.totals[key]
+		models := make([]string, 0, len(byModel))
+		for model := range byModel {
+			models = append(models, model)
+		}
+		sort.Strings(models)
+		bucket := &millv1.CostBucket{Key: key, Totals: make([]*millv1.ModelTotals, 0, len(models))}
+		for _, model := range models {
+			bucket.Totals = append(bucket.Totals, byModel[model])
+		}
+		out = append(out, bucket)
+	}
+	return out
+}
+
+// Health is what the store can say about itself: whether the database
+// answers, and whether the schema is the one this binary carries.
+type Health struct {
+	// Database is whether the pool answered a ping.
+	Database bool
+	// Version is the newest migration applied, and Wanted the newest this
+	// binary carries. They differ when a deploy has not migrated.
+	Version, Wanted int64
+	// Detail says what went wrong, empty when nothing did.
+	Detail string
+}
+
+// Health probes the database and compares its schema version against the
+// migrations this binary embeds. It never fails: an unreachable database is
+// an answer, which is the whole point of a probe.
+func (s *Store) Health(ctx context.Context) *Health {
+	health := &Health{Wanted: migrations.Wanted()}
+	if err := s.pool.Ping(ctx); err != nil {
+		health.Detail = err.Error()
+		return health
+	}
+	health.Database = true
+	version, err := s.schemaVersion(ctx)
+	if err != nil {
+		health.Detail = err.Error()
+		return health
+	}
+	health.Version = version
+	return health
+}
+
+// schemaVersion reads goose's own bookkeeping table. It is not a sqlc query
+// because the table is goose's, not the ledger's: no migration creates it and
+// no other query touches it.
+func (s *Store) schemaVersion(ctx context.Context) (int64, error) {
+	var version int64
+	err := s.pool.QueryRow(ctx, "SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&version)
+	if err != nil {
+		return 0, fmt.Errorf("read schema version: %w", err)
+	}
+	return version, nil
 }

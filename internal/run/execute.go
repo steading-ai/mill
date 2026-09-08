@@ -73,12 +73,26 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 		return result{}, err
 	}
 	handle := s.workspace.Handle()
+
+	// The step's own credential is registered with the redactor before the
+	// session is handed it, so a bearer that finds its way into a tool's
+	// output cannot reach the log (docs/architecture.md §Observability).
+	s.workspace.Redact(token.GetToken())
+	logFile, err := openStepLog(r.options.LogDir, s.run.GetId(), step.GetName(), sr.GetAttempt())
+	if err != nil {
+		return result{}, err
+	}
+	if logFile != nil {
+		defer func() { _ = logFile.Close() }()
+	}
+
 	session := harness.Session{
 		ID:        sr.GetSessionId(),
 		Model:     settings.GetModel(),
 		Effort:    settings.GetEffort(),
 		Workspace: harness.Workspace{Socket: handle.Socket, Token: token.GetToken()},
 		Cwd:       handle.Root,
+		Events:    logSink(logFile, r.options.Redactor, r.options.Now),
 	}
 	policy := harness.Policy{
 		Allow: settings.GetToolPolicy().GetAllow(),

@@ -7,6 +7,7 @@ package store
 
 import (
 	"context"
+	"time"
 )
 
 const insertUsage = `-- name: InsertUsage :one
@@ -199,6 +200,76 @@ func (q *Queries) TotalsForStepRun(ctx context.Context, stepRunID string) ([]Tot
 	for rows.Next() {
 		var i TotalsForStepRunRow
 		if err := rows.Scan(
+			&i.Model,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.CacheReadTokens,
+			&i.CacheWriteTokens,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const usageSince = `-- name: UsageSince :many
+SELECT r.node_ref,
+       w.name    AS workflow_name,
+       w.version AS workflow_version,
+       sr.step_name,
+       u.model,
+       u.input_tokens,
+       u.output_tokens,
+       u.cache_read_tokens,
+       u.cache_write_tokens
+FROM usage u
+JOIN step_runs sr ON sr.id = u.step_run_id
+JOIN runs r ON r.id = sr.run_id
+LEFT JOIN workflows w ON w.id = r.workflow_id
+WHERE ($1::timestamptz IS NULL OR u.recorded_at >= $1::timestamptz)
+  AND ($2::text IS NULL OR split_part(r.node_ref, '#', 1) = $2::text)
+ORDER BY r.node_ref, sr.step_name, u.model
+`
+
+type UsageSinceParams struct {
+	Since   *time.Time
+	Project *string
+}
+
+type UsageSinceRow struct {
+	NodeRef          string
+	WorkflowName     *string
+	WorkflowVersion  *string
+	StepName         string
+	Model            string
+	InputTokens      int64
+	OutputTokens     int64
+	CacheReadTokens  int64
+	CacheWriteTokens int64
+}
+
+// Every usage row in a window, with the run, workflow and step it belongs
+// to, so `mill cost` can roll one pass over them up four ways. The window is
+// open-ended when since is null, and the project filter matches the prefix
+// of a node reference such as `mill#18`.
+func (q *Queries) UsageSince(ctx context.Context, arg UsageSinceParams) ([]UsageSinceRow, error) {
+	rows, err := q.db.Query(ctx, usageSince, arg.Since, arg.Project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UsageSinceRow{}
+	for rows.Next() {
+		var i UsageSinceRow
+		if err := rows.Scan(
+			&i.NodeRef,
+			&i.WorkflowName,
+			&i.WorkflowVersion,
+			&i.StepName,
 			&i.Model,
 			&i.InputTokens,
 			&i.OutputTokens,

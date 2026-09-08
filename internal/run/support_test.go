@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/jackc/pgx/v5"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"google.golang.org/protobuf/proto"
@@ -38,6 +39,7 @@ import (
 	"github.com/ivy/mill/internal/workflow"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/local"
+	"github.com/ivy/mill/internal/workspace/redact"
 )
 
 // The run loop is specified end to end, because that is what it is: the only
@@ -71,6 +73,14 @@ type fixture struct {
 	worker    string
 	nodeRef   string
 	nodeTitle string
+
+	// redactor is the one the workspace and the run's step logs share, as
+	// they do in `mill run`: a value the session registers with the `redact`
+	// verb is scrubbed from the log written after it.
+	redactor *redact.Redactor
+	// workspace is the one the last call to Workspaces made, so a spec can
+	// act on it the way a session does through the socket.
+	workspace run.Workspace
 }
 
 // start builds the world: a dagger with a project in it, the ledger behind
@@ -82,11 +92,12 @@ func start(ctx context.Context) *fixture {
 	httpClient := service.HTTPClient()
 
 	f := &fixture{
-		dagger: service,
-		client: dagger.New(httpClient, service.BaseURL(), project, dagger.WithAgentRef("spec@host"), dagger.WithSessionRef("spec")),
-		graph:  daggerv1connect.NewGraphServiceClient(httpClient, service.BaseURL()),
-		forge:  &fixtureForge{},
-		worker: "spec@host",
+		dagger:   service,
+		client:   dagger.New(httpClient, service.BaseURL(), project, dagger.WithAgentRef("spec@host"), dagger.WithSessionRef("spec")),
+		graph:    daggerv1connect.NewGraphServiceClient(httpClient, service.BaseURL()),
+		forge:    &fixtureForge{},
+		worker:   "spec@host",
+		redactor: redact.New(),
 	}
 
 	_, err := f.graph.CreateProject(ctx, connect.NewRequest(&daggerv1.CreateProjectRequest{
@@ -186,6 +197,7 @@ func (f *fixture) runner(options ...func(*run.Options)) *run.Runner {
 		Origin:      f.origin,
 		Out:         GinkgoWriter,
 		Log:         slog.New(slog.NewTextHandler(GinkgoWriter, nil)),
+		Redactor:    f.redactor,
 	}
 	for _, option := range options {
 		option(&opts)
@@ -197,7 +209,11 @@ func (f *fixture) runner(options ...func(*run.Options)) *run.Runner {
 // reattaching one an earlier invocation left behind.
 func (f *fixture) workspaces() run.Workspaces {
 	return func(ctx context.Context, spec workspace.Spec) (run.Workspace, error) {
-		ws := local.New(local.Options{Root: filepath.Join(f.root, "workspaces")})
+		ws := local.New(local.Options{
+			Root:     filepath.Join(f.root, "workspaces"),
+			Redactor: f.redactor,
+		})
+		f.workspace = ws
 		if _, err := ws.Attach(ctx, spec); err == nil {
 			return ws, nil
 		}
@@ -956,4 +972,63 @@ func (f *fixtureForge) closingComments() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string{}, f.comments...)
+}
+
+// openStepRun is the attempt in flight, which is what a cancellation stops.
+func (f *fixture) openStepRun(ctx context.Context) *millv1.StepRun {
+	GinkgoHelper()
+	for _, step := range f.inspect(ctx).GetSteps() {
+		if step.GetStepRun().GetStatus() == millv1.StepRunStatus_STEP_RUN_STATUS_RUNNING {
+			return step.GetStepRun()
+		}
+	}
+	return nil
+}
+
+// stepRunStatus is where one attempt ended up.
+func (f *fixture) stepRunStatus(ctx context.Context, stepRunID string) millv1.StepRunStatus {
+	GinkgoHelper()
+	for _, step := range f.inspect(ctx).GetSteps() {
+		if step.GetStepRun().GetId() == stepRunID {
+			return step.GetStepRun().GetStatus()
+		}
+	}
+	return millv1.StepRunStatus_STEP_RUN_STATUS_UNSPECIFIED
+}
+
+// abortReason is what the audit trail says an attempt was aborted for. The
+// reason is on the event rather than the row: the row holds where the
+// attempt ended, the trail holds why.
+func (f *fixture) abortReason(ctx context.Context, stepRunID string) string {
+	GinkgoHelper()
+	res, err := f.store.History(ctx, connect.NewRequest(&millv1.HistoryRequest{NodeRef: f.nodeRef}))
+	Expect(err).NotTo(HaveOccurred())
+	for _, event := range res.Msg.GetEvents() {
+		if event.GetOp() == "abort_step_run" && event.GetStepRunId() == stepRunID {
+			return event.GetAfter().GetFields()["reason"].GetStringValue()
+		}
+	}
+	return ""
+}
+
+// releasedLease is why the last lease on the node ended. Dagger returns the
+// live lease on a node and nothing about the one before it, so its own
+// record is read directly: the release reason is on the lease row and the
+// detail is on the event, which dagger writes as "reason: detail".
+func (f *fixture) releasedLease(ctx context.Context) (reason, detail string) {
+	GinkgoHelper()
+	conn, err := pgx.Connect(ctx, f.dagger.DatabaseURL)
+	Expect(err).NotTo(HaveOccurred())
+	defer func() { _ = conn.Close(ctx) }()
+
+	node, err := f.client.Node(ctx, f.nodeRef)
+	Expect(err).NotTo(HaveOccurred())
+
+	var recorded string
+	Expect(conn.QueryRow(ctx, `
+		SELECT coalesce(reason, '') FROM events
+		WHERE node_id = $1 AND op = 'release_lease'
+		ORDER BY occurred_at DESC, id DESC LIMIT 1`, node.GetId()).Scan(&recorded)).To(Succeed())
+	reason, detail, _ = strings.Cut(recorded, ": ")
+	return reason, detail
 }

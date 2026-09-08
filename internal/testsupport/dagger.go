@@ -70,6 +70,11 @@ type Dagger struct {
 	// uid resolves to — the same arrangement mill runs under in production
 	// (docs/domain-model.md §Principal).
 	Principal string
+	// DatabaseURL is dagger's own database, for the few facts its API does
+	// not expose. A released lease is one: dagger returns the live lease on
+	// a node and nothing about the one before it, so a spec asserting why a
+	// lease ended reads the row.
+	DatabaseURL string
 }
 
 // StartDagger brings up a dagger service for one spec: an empty database
@@ -102,8 +107,9 @@ func (p *Postgres) StartDagger(ctx context.Context) *Dagger {
 	gomega.Expect(migrate.Wait().Status).To(gomega.BeZero(), "applying dagger's migrations: %s", diagnostics())
 
 	d := &Dagger{
-		Org:       "01HZZZZZZZZZZZZZZZZZZZZZZ0",
-		Principal: "01HZZZZZZZZZZZZZZZZZZZZZZ1",
+		Org:         "01HZZZZZZZZZZZZZZZZZZZZZZ0",
+		Principal:   "01HZZZZZZZZZZZZZZZZZZZZZZ1",
+		DatabaseURL: databaseURL,
 	}
 	seedDagger(ctx, databaseURL, d)
 

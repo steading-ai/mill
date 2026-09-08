@@ -24,6 +24,7 @@ import (
 	"github.com/ivy/mill/internal/run"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/local"
+	"github.com/ivy/mill/internal/workspace/redact"
 )
 
 // ExitFenced is the status `mill run` exits with when another worker took
@@ -76,6 +77,7 @@ type runOptions struct {
 	identity     string
 	name         string
 	workspaceDir string
+	logDir       string
 	ttl          time.Duration
 	interval     time.Duration
 	dryRun       bool
@@ -119,6 +121,7 @@ would be selected, its steps in order, and the evidence each one closes on.`,
 	f.StringVar(&opts.origin, "origin", "", "repository a new workspace clones (default: the --vcs-url repository)")
 	f.StringVar(&opts.ref, "ref", "", "ref a new workspace checks out (default: the repository's own HEAD)")
 	f.StringVar(&opts.workspaceDir, "workspace-dir", defaultWorkspaceDir(), "directory run workspaces are made under")
+	f.StringVar(&opts.logDir, "log-dir", defaultLogDir(), "directory step logs are written under, one file per attempt")
 	f.DurationVar(&opts.ttl, "ttl", run.DefaultTTL, "lease TTL to ask dagger for")
 	f.DurationVar(&opts.interval, "heartbeat", 0, "how often to renew the lease (default: a third of the TTL)")
 	f.BoolVar(&opts.dryRun, "dry-run", false, "print the workflow and its steps; claim nothing and execute nothing")
@@ -218,10 +221,16 @@ func execute(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 		opts.identity = defaultIdentity()
 	}
 
+	// One redactor for the process, shared by the workspace and the run's
+	// step logs: a value a session registers with the `redact` verb reaches
+	// the workspace, and the log an operator tails is written through the
+	// same object (docs/architecture.md §Observability).
+	redactor := redact.New()
+
 	runner := run.New(run.Options{
 		Store:       storeClient(opts.socket),
 		Dagger:      client,
-		Workspaces:  localWorkspaces(opts, f),
+		Workspaces:  localWorkspaces(opts, f, redactor),
 		Forges:      func(context.Context) (forge.Forge, error) { return f, nil },
 		Harnesses:   harnesses,
 		WorkerRef:   worker,
@@ -234,6 +243,8 @@ func execute(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 		Interval:    opts.interval,
 		Answers:     answers,
 		Out:         cmd.OutOrStdout(),
+		LogDir:      opts.logDir,
+		Redactor:    redactor,
 		Log:         slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: slog.LevelInfo})),
 	})
 	return runner.Execute(cmd.Context(), nodeRef)
@@ -255,7 +266,7 @@ func tierNamed(name string) (millv1.Tier, error) {
 // reattaching one this worker left behind before cloning a new one. The
 // forge goes in with it, because the `push` and `pr` verbs a session reaches
 // over the socket are the workspace's and not the loop's.
-func localWorkspaces(opts runOptions, f forge.Forge) run.Workspaces {
+func localWorkspaces(opts runOptions, f forge.Forge, redactor *redact.Redactor) run.Workspaces {
 	return func(ctx context.Context, spec workspace.Spec) (run.Workspace, error) {
 		ws := local.New(local.Options{
 			Root:     opts.workspaceDir,
@@ -263,6 +274,7 @@ func localWorkspaces(opts runOptions, f forge.Forge) run.Workspaces {
 			Forge:    f,
 			Name:     opts.name,
 			Identity: opts.identity,
+			Redactor: redactor,
 		})
 		if _, err := ws.Attach(ctx, spec); err == nil {
 			return ws, nil

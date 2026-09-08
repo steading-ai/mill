@@ -797,3 +797,36 @@ message StepRunDetail {
   // What it cost, by model.
   repeated ModelTotals totals = 4;
 }
+
+// Event is one row of the ledger's audit trail: what changed about a run,
+// when, and under which worker. Append-only, and written by the same
+// transaction as the change it records. See docs/ledger.md §events.
+message Event {
+  // ULID, so time-ordered.
+  string id = 1;
+  // The run the change was about.
+  string run_id = 2;
+  // The attempt the change was about, when it was about one.
+  string step_run_id = 3;
+  // What happened, in the ledger's own words: `run_created`, `step_closed`,
+  // `cancel_requested`.
+  string op = 4;
+  // The fields as they were, for the ones the change touched.
+  google.protobuf.Struct before = 5;
+  // The fields as they became.
+  google.protobuf.Struct after = 6;
+  // The worker that made the change, or the caller that asked for it.
+  string worker_ref = 7;
+  // When it happened.
+  google.protobuf.Timestamp occurred_at = 8;
+}
+
+// CostBucket is one grouping of usage: everything billed under a key, by
+// model, with the totals summed across them. What `mill cost` renders.
+message CostBucket {
+  // What the bucket groups by: a node reference, a workflow name and
+  // version, a step name, or a model.
+  string key = 1;
+  // The bucket's usage, one entry per model.
+  repeated ModelTotals totals = 2;
+}

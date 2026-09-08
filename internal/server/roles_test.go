@@ -65,6 +65,24 @@ var _ = Describe("A connection's uid", Label(testsupport.DBLabel), func() {
 		Expect(run.GetCancelRequested()).To(BeFalse(), "the refused request changed nothing")
 	})
 
+	It("a uid in no role calling Cancel is unauthenticated", func(ctx SpecContext) {
+		f := newFixture(ctx, "mill#35")
+		_, err := f.as(strangerUID).Cancel(ctx, connect.NewRequest(&millv1.CancelRequest{RunId: f.run.GetId()}))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnauthenticated))
+		Expect(err.Error()).To(ContainSubstring("9003"), "the refusal names the uid it could not place")
+		Expect(f.reload(ctx).GetCancelRequested()).To(BeFalse(), "the refused request changed nothing")
+	})
+
+	It("a reader reads the tools that were added for the operator", func(ctx SpecContext) {
+		f := newFixture(ctx, "mill#36")
+		_, err := f.as(readerUID).History(ctx, connect.NewRequest(&millv1.HistoryRequest{Id: f.run.GetId()}))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = f.as(readerUID).Cost(ctx, connect.NewRequest(&millv1.CostRequest{}))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = f.as(readerUID).Health(ctx, connect.NewRequest(&millv1.HealthRequest{}))
+		Expect(err).NotTo(HaveOccurred())
+	})
+
 	It("a uid in no role is unauthenticated", func(ctx SpecContext) {
 		f := newFixture(ctx, "mill#34")
 		_, err := f.as(strangerUID).Status(ctx, connect.NewRequest(&millv1.StatusRequest{}))

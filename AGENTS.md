@@ -56,6 +56,7 @@ compose.yaml          PostgreSQL for local development; .env.example seeds .env
 - **The store and the resume algorithm** — `docs/ledger.md`. The pseudocode there is the specification of the run loop.
 - **Where this is going** — `docs/roadmap.md`. O0 is the walking skeleton; everything past it is parked there with its provenance.
 - **The contract mill consumes** — dagger's `docs/domain-model.md`, checked out on this host under `~/src/github.com/ivy/dagger`.
+- **The tools an operator has** — `docs/tools.md`: what each read tool answers, what `doctor` probes, and how a session reaches them over `mill mcp`.
 - **How to run the acceptance suite** — `docs/runbook.md`: what it needs, what it leaves behind, how to clean up.
 - **Prior art and reviews** — `docs/research/`.
 

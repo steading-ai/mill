@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"text/tabwriter"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
@@ -24,6 +26,7 @@ type workflowOptions struct {
 	project     string
 	version     string
 	name        string
+	view        string
 	allVersions bool
 }
 
@@ -42,7 +45,9 @@ immutable version identified by the hash of its content.
 "push" loads a directory, validates it, and stores the version and its
 skills. Pushing the same files twice stores nothing new.
 "pull" writes a stored version back out as a directory push accepts.
-"list" shows what is stored.`,
+"list" shows what is stored.
+"show" prints one version's steps: what each closes on, what it may do, and
+what its failure does to the run.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
@@ -53,6 +58,7 @@ skills. Pushing the same files twice stores nothing new.
 		newWorkflowPushCommand(&opts),
 		newWorkflowPullCommand(&opts),
 		newWorkflowListCommand(&opts),
+		newWorkflowShowCommand(&opts),
 	)
 	return cmd
 }
@@ -223,6 +229,87 @@ func runWorkflowList(cmd *cobra.Command, opts *workflowOptions) error {
 			len(definition.GetSteps()), definition.GetCreatedAt().AsTime().Format("2006-01-02 15:04"))
 	}
 	return w.Flush()
+}
+
+func newWorkflowShowCommand(opts *workflowOptions) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "show <name>",
+		Short: "Print one workflow version's steps",
+		Long: `Print a stored version as a run would walk it: every step in order, its
+kind, what evidence closes it, the capabilities its workspace handle grants,
+how many times it may fail before the breaker parks the run, and what a
+failure does.
+
+This is the definition, not a run. "mill inspect" shows what a run made of
+it.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runWorkflowShow(cmd, opts, args[0])
+		},
+	}
+	cmd.Flags().StringVar(&opts.scope, "scope", "", "resolve in this scope: org or project")
+	cmd.Flags().StringVar(&opts.project, "project", "", "the project, when the scope is project")
+	cmd.Flags().StringVar(&opts.version, "version", "", "a specific version, rather than the newest")
+	cmd.Flags().StringVar(&opts.view, "view", string(viewSummary), "how much to show: "+strings.Join(views, ", "))
+	return cmd
+}
+
+func runWorkflowShow(cmd *cobra.Command, opts *workflowOptions, name string) error {
+	v, err := parseViewName(opts.view)
+	if err != nil {
+		return err
+	}
+	found, err := storeClient(opts.socket).GetWorkflow(cmd.Context(), connect.NewRequest(&millv1.GetWorkflowRequest{
+		Name:    name,
+		Scope:   parseScope(opts.scope),
+		Project: opts.project,
+		Version: opts.version,
+	}))
+	if err != nil {
+		return fmt.Errorf("show workflow %s: %w", name, err)
+	}
+	definition := found.Msg.GetWorkflow()
+	if definition == nil {
+		return fmt.Errorf("show workflow %s: no such workflow is stored", name)
+	}
+	return renderWorkflow(cmd, definition, v)
+}
+
+// renderWorkflow prints a definition's header and one row per step.
+func renderWorkflow(cmd *cobra.Command, definition *millv1.Workflow, v view) error {
+	out := cmd.OutOrStdout()
+	_, _ = fmt.Fprintf(out, "%s %s %s\n", definition.GetName(), scopeText(definition), definition.GetVersion())
+	if v == viewFull {
+		_, _ = fmt.Fprintf(out, "  stored  %s\n", definition.GetCreatedAt().AsTime().Format(time.RFC3339))
+		_, _ = fmt.Fprintf(out, "  source  %s\n", dash(definition.GetSource().GetPath()))
+	}
+	_, _ = fmt.Fprintln(out)
+
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	if v == viewRefs {
+		_, _ = fmt.Fprintln(w, "STEP\tKIND")
+		for _, step := range definition.GetSteps() {
+			_, _ = fmt.Fprintf(w, "%s\t%s\n", step.GetName(), stepKindName(step.GetKind()))
+		}
+		return w.Flush()
+	}
+	_, _ = fmt.Fprintln(w, "STEP\tKIND\tEVIDENCE\tCAPABILITIES\tRETRIES\tON FAILURE\tSESSION")
+	for _, step := range definition.GetSteps() {
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
+			step.GetName(), stepKindName(step.GetKind()), evidenceKindName(step.GetEvidence()),
+			dash(strings.Join(capabilityNames(step.GetCapabilities()), ",")),
+			step.GetRetries(), onFailureText(step.GetOnFailure()), dash(step.GetSession()))
+	}
+	return w.Flush()
+}
+
+// onFailureText is what a step's failure does to the run: park, or revise a
+// named earlier step.
+func onFailureText(onFailure *millv1.OnFailure) string {
+	if onFailure.GetKind() == millv1.OnFailureKind_ON_FAILURE_KIND_REVISE {
+		return "revise:" + onFailure.GetReviseTarget()
+	}
+	return "park"
 }
 
 // pushSource records who pushed and from where. It is excluded from the

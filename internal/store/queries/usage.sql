@@ -35,3 +35,25 @@ FROM usage u
 JOIN step_runs sr ON sr.id = u.step_run_id
 WHERE sr.run_id = $1
 GROUP BY u.model ORDER BY u.model;
+
+-- Every usage row in a window, with the run, workflow and step it belongs
+-- to, so `mill cost` can roll one pass over them up four ways. The window is
+-- open-ended when since is null, and the project filter matches the prefix
+-- of a node reference such as `mill#18`.
+-- name: UsageSince :many
+SELECT r.node_ref,
+       w.name    AS workflow_name,
+       w.version AS workflow_version,
+       sr.step_name,
+       u.model,
+       u.input_tokens,
+       u.output_tokens,
+       u.cache_read_tokens,
+       u.cache_write_tokens
+FROM usage u
+JOIN step_runs sr ON sr.id = u.step_run_id
+JOIN runs r ON r.id = sr.run_id
+LEFT JOIN workflows w ON w.id = r.workflow_id
+WHERE (sqlc.narg('since')::timestamptz IS NULL OR u.recorded_at >= sqlc.narg('since')::timestamptz)
+  AND (sqlc.narg('project')::text IS NULL OR split_part(r.node_ref, '#', 1) = sqlc.narg('project')::text)
+ORDER BY r.node_ref, sr.step_name, u.model;

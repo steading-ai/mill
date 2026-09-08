@@ -113,6 +113,12 @@ const (
 	StoreServiceStatusProcedure = "/mill.v1.StoreService/Status"
 	// StoreServiceInspectProcedure is the fully-qualified name of the StoreService's Inspect RPC.
 	StoreServiceInspectProcedure = "/mill.v1.StoreService/Inspect"
+	// StoreServiceHistoryProcedure is the fully-qualified name of the StoreService's History RPC.
+	StoreServiceHistoryProcedure = "/mill.v1.StoreService/History"
+	// StoreServiceCostProcedure is the fully-qualified name of the StoreService's Cost RPC.
+	StoreServiceCostProcedure = "/mill.v1.StoreService/Cost"
+	// StoreServiceHealthProcedure is the fully-qualified name of the StoreService's Health RPC.
+	StoreServiceHealthProcedure = "/mill.v1.StoreService/Health"
 )
 
 // StoreServiceClient is a client for the mill.v1.StoreService service.
@@ -208,6 +214,16 @@ type StoreServiceClient interface {
 	// Inspect returns one run's every attempt in order with its evidence,
 	// exit, session, and usage.
 	Inspect(context.Context, *connect.Request[v1.InspectRequest]) (*connect.Response[v1.InspectResponse], error)
+	// History returns a run's audit trail, oldest first: the events rows.
+	History(context.Context, *connect.Request[v1.HistoryRequest]) (*connect.Response[v1.HistoryResponse], error)
+	// Cost rolls a window of usage up by run, by workflow, by step name and
+	// by model. Counts, never currency: a rate table is applied by whoever
+	// wants money (docs/ledger.md §usage).
+	Cost(context.Context, *connect.Request[v1.CostRequest]) (*connect.Response[v1.CostResponse], error)
+	// Health is what the service can say about itself: its version, whether
+	// the database answers, and whether the schema is the one this binary
+	// carries. `mill doctor` probes the socket and the migrations with it.
+	Health(context.Context, *connect.Request[v1.HealthRequest]) (*connect.Response[v1.HealthResponse], error)
 }
 
 // NewStoreServiceClient constructs a client for the mill.v1.StoreService service. By default, it
@@ -383,6 +399,24 @@ func NewStoreServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(storeServiceMethods.ByName("Inspect")),
 			connect.WithClientOptions(opts...),
 		),
+		history: connect.NewClient[v1.HistoryRequest, v1.HistoryResponse](
+			httpClient,
+			baseURL+StoreServiceHistoryProcedure,
+			connect.WithSchema(storeServiceMethods.ByName("History")),
+			connect.WithClientOptions(opts...),
+		),
+		cost: connect.NewClient[v1.CostRequest, v1.CostResponse](
+			httpClient,
+			baseURL+StoreServiceCostProcedure,
+			connect.WithSchema(storeServiceMethods.ByName("Cost")),
+			connect.WithClientOptions(opts...),
+		),
+		health: connect.NewClient[v1.HealthRequest, v1.HealthResponse](
+			httpClient,
+			baseURL+StoreServiceHealthProcedure,
+			connect.WithSchema(storeServiceMethods.ByName("Health")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -415,6 +449,9 @@ type storeServiceClient struct {
 	getSkill             *connect.Client[v1.GetSkillRequest, v1.GetSkillResponse]
 	status               *connect.Client[v1.StatusRequest, v1.StatusResponse]
 	inspect              *connect.Client[v1.InspectRequest, v1.InspectResponse]
+	history              *connect.Client[v1.HistoryRequest, v1.HistoryResponse]
+	cost                 *connect.Client[v1.CostRequest, v1.CostResponse]
+	health               *connect.Client[v1.HealthRequest, v1.HealthResponse]
 }
 
 // GetRunByNode calls mill.v1.StoreService.GetRunByNode.
@@ -552,6 +589,21 @@ func (c *storeServiceClient) Inspect(ctx context.Context, req *connect.Request[v
 	return c.inspect.CallUnary(ctx, req)
 }
 
+// History calls mill.v1.StoreService.History.
+func (c *storeServiceClient) History(ctx context.Context, req *connect.Request[v1.HistoryRequest]) (*connect.Response[v1.HistoryResponse], error) {
+	return c.history.CallUnary(ctx, req)
+}
+
+// Cost calls mill.v1.StoreService.Cost.
+func (c *storeServiceClient) Cost(ctx context.Context, req *connect.Request[v1.CostRequest]) (*connect.Response[v1.CostResponse], error) {
+	return c.cost.CallUnary(ctx, req)
+}
+
+// Health calls mill.v1.StoreService.Health.
+func (c *storeServiceClient) Health(ctx context.Context, req *connect.Request[v1.HealthRequest]) (*connect.Response[v1.HealthResponse], error) {
+	return c.health.CallUnary(ctx, req)
+}
+
 // StoreServiceHandler is an implementation of the mill.v1.StoreService service.
 type StoreServiceHandler interface {
 	// GetRunByNode returns the live run for a dagger node, or nothing. The
@@ -645,6 +697,16 @@ type StoreServiceHandler interface {
 	// Inspect returns one run's every attempt in order with its evidence,
 	// exit, session, and usage.
 	Inspect(context.Context, *connect.Request[v1.InspectRequest]) (*connect.Response[v1.InspectResponse], error)
+	// History returns a run's audit trail, oldest first: the events rows.
+	History(context.Context, *connect.Request[v1.HistoryRequest]) (*connect.Response[v1.HistoryResponse], error)
+	// Cost rolls a window of usage up by run, by workflow, by step name and
+	// by model. Counts, never currency: a rate table is applied by whoever
+	// wants money (docs/ledger.md §usage).
+	Cost(context.Context, *connect.Request[v1.CostRequest]) (*connect.Response[v1.CostResponse], error)
+	// Health is what the service can say about itself: its version, whether
+	// the database answers, and whether the schema is the one this binary
+	// carries. `mill doctor` probes the socket and the migrations with it.
+	Health(context.Context, *connect.Request[v1.HealthRequest]) (*connect.Response[v1.HealthResponse], error)
 }
 
 // NewStoreServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -816,6 +878,24 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(storeServiceMethods.ByName("Inspect")),
 		connect.WithHandlerOptions(opts...),
 	)
+	storeServiceHistoryHandler := connect.NewUnaryHandler(
+		StoreServiceHistoryProcedure,
+		svc.History,
+		connect.WithSchema(storeServiceMethods.ByName("History")),
+		connect.WithHandlerOptions(opts...),
+	)
+	storeServiceCostHandler := connect.NewUnaryHandler(
+		StoreServiceCostProcedure,
+		svc.Cost,
+		connect.WithSchema(storeServiceMethods.ByName("Cost")),
+		connect.WithHandlerOptions(opts...),
+	)
+	storeServiceHealthHandler := connect.NewUnaryHandler(
+		StoreServiceHealthProcedure,
+		svc.Health,
+		connect.WithSchema(storeServiceMethods.ByName("Health")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/mill.v1.StoreService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case StoreServiceGetRunByNodeProcedure:
@@ -872,6 +952,12 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 			storeServiceStatusHandler.ServeHTTP(w, r)
 		case StoreServiceInspectProcedure:
 			storeServiceInspectHandler.ServeHTTP(w, r)
+		case StoreServiceHistoryProcedure:
+			storeServiceHistoryHandler.ServeHTTP(w, r)
+		case StoreServiceCostProcedure:
+			storeServiceCostHandler.ServeHTTP(w, r)
+		case StoreServiceHealthProcedure:
+			storeServiceHealthHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -987,4 +1073,16 @@ func (UnimplementedStoreServiceHandler) Status(context.Context, *connect.Request
 
 func (UnimplementedStoreServiceHandler) Inspect(context.Context, *connect.Request[v1.InspectRequest]) (*connect.Response[v1.InspectResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.Inspect is not implemented"))
+}
+
+func (UnimplementedStoreServiceHandler) History(context.Context, *connect.Request[v1.HistoryRequest]) (*connect.Response[v1.HistoryResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.History is not implemented"))
+}
+
+func (UnimplementedStoreServiceHandler) Cost(context.Context, *connect.Request[v1.CostRequest]) (*connect.Response[v1.CostResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.Cost is not implemented"))
+}
+
+func (UnimplementedStoreServiceHandler) Health(context.Context, *connect.Request[v1.HealthRequest]) (*connect.Response[v1.HealthResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.Health is not implemented"))
 }

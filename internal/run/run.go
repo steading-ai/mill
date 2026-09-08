@@ -38,6 +38,7 @@ import (
 	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/harness"
 	"github.com/ivy/mill/internal/workspace"
+	"github.com/ivy/mill/internal/workspace/redact"
 )
 
 // Defaults from docs/architecture.md §Heartbeat: dagger's lease TTL is
@@ -116,6 +117,14 @@ type Options struct {
 	// Out is where the run's progress is written. `mill run` streams to the
 	// terminal (docs/prd.md R-45).
 	Out io.Writer
+	// LogDir is where a step run's log file is written, one file per
+	// attempt, through [Options.Redactor]. Empty keeps no logs, and
+	// `mill logs` then has nothing to read.
+	LogDir string
+	// Redactor scrubs every step log. It is the workspace's own, so a value
+	// a session registers with the `redact` verb during a step never reaches
+	// the log an operator tails (docs/architecture.md §Observability).
+	Redactor *redact.Redactor
 	// Log is where diagnostics go. Nil discards them.
 	Log *slog.Logger
 	// Now is the clock. Nil means [time.Now].
@@ -177,6 +186,9 @@ func New(options Options) *Runner {
 	}
 	if options.Out == nil {
 		options.Out = io.Discard
+	}
+	if options.Redactor == nil {
+		options.Redactor = redact.New()
 	}
 	return &Runner{options: options}
 }

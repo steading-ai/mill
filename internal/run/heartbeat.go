@@ -6,9 +6,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
 )
 
 // heartbeat holds the lease for the whole run, in a goroutine independent of
@@ -80,10 +77,6 @@ func (r *Runner) beat(ctx context.Context, s *state) error {
 	return nil
 }
 
-// errCancelled is a cancellation a human asked for. The step is aborted, the
-// lease released with preempted, and the run stays resumable at that step.
-var errCancelled = errors.New("run: cancelled")
-
 // fail records why the heartbeat stopped and cancels the step.
 func (h *heartbeat) fail(err error) {
 	h.mu.Lock()
@@ -107,23 +100,6 @@ func (h *heartbeat) err() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.reason
-}
-
-// cancelStep is what a cancellation does to the run: the attempt is aborted,
-// the lease is released with preempted, and the run is left resumable.
-func (r *Runner) cancelStep(ctx context.Context, s *state) error {
-	if _, err := call(ctx, r.options.Store.AbortOpenStepRuns, &millv1.AbortOpenStepRunsRequest{
-		LeaseId: s.lease,
-		RunId:   s.run.GetId(),
-		Reason:  "cancelled",
-	}); err != nil {
-		return err
-	}
-	if err := r.options.Dagger.Release(ctx, s.lease, daggerv1.ReleaseReason_RELEASE_REASON_PREEMPTED, "cancel"); err != nil {
-		return err
-	}
-	r.printf("cancelled; run %s stays resumable\n", s.run.GetId())
-	return errReleased
 }
 
 // containsAny reports whether text holds any of the marks, case-insensitively.

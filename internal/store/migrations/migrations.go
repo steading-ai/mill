@@ -10,6 +10,8 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -89,4 +91,27 @@ func joinClose(err error, c closer) error {
 		return fmt.Errorf("%w (and close: %w)", err, cerr)
 	}
 	return err
+}
+
+// Wanted is the newest migration this binary carries, which is the version a
+// current database is at. `mill doctor` compares it against what the database
+// reports.
+func Wanted() int64 {
+	entries, err := FS.ReadDir(".")
+	if err != nil {
+		return 0
+	}
+	var newest int64
+	for _, entry := range entries {
+		name := entry.Name()
+		digits := name
+		if i := strings.IndexByte(name, '_'); i >= 0 {
+			digits = name[:i]
+		}
+		version, err := strconv.ParseInt(digits, 10, 64)
+		if err == nil && version > newest {
+			newest = version
+		}
+	}
+	return newest
 }

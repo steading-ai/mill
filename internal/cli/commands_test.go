@@ -68,6 +68,55 @@ var _ = Describe("The command tree", Label("unit"), func() {
 		}
 	})
 
+	DescribeTable("a read tool is wired into the tree and sizes its answer with a view",
+		func(name string) {
+			Expect(run(name, "--help")).To(BeZero(), stderr.String())
+			Expect(stdout.String()).To(ContainSubstring("--socket"))
+			Expect(stdout.String()).To(ContainSubstring("--view"))
+		},
+		Entry("status", "status"),
+		Entry("inspect", "inspect"),
+		Entry("history", "history"),
+		Entry("cost", "cost"),
+	)
+
+	It("logs takes the step to read and whether to follow it", func() {
+		Expect(run("logs", "--help")).To(BeZero(), stderr.String())
+		Expect(stdout.String()).To(ContainSubstring("--step"))
+		Expect(stdout.String()).To(ContainSubstring("--follow"))
+		Expect(run("logs")).NotTo(BeZero(), "a log is a log of one run")
+	})
+
+	It("explain reaches dagger for the gate a run is blocked on", func() {
+		Expect(run("explain", "--help")).To(BeZero(), stderr.String())
+		Expect(stdout.String()).To(ContainSubstring("--dagger-socket"))
+		Expect(run("explain")).NotTo(BeZero())
+	})
+
+	It("cancel takes the run it stops and a reason for the trail", func() {
+		Expect(run("cancel", "--help")).To(BeZero(), stderr.String())
+		Expect(stdout.String()).To(ContainSubstring("--reason"))
+		Expect(run("cancel")).NotTo(BeZero())
+	})
+
+	It("doctor takes what it probes and needs no argument", func() {
+		Expect(run("doctor", "--help")).To(BeZero(), stderr.String())
+		for _, flag := range []string{"--dagger-socket", "--sidecar", "--vcs-url", "--workspace-dir"} {
+			Expect(stdout.String()).To(ContainSubstring(flag))
+		}
+	})
+
+	It("mcp serves the same tools over stdio", func() {
+		Expect(run("mcp", "--help")).To(BeZero(), stderr.String())
+		Expect(stdout.String()).To(ContainSubstring("MCP server"))
+		Expect(stdout.String()).To(ContainSubstring("--socket"))
+	})
+
+	It("workflow show is among the workflow verbs", func() {
+		Expect(run("workflow", "--help")).To(BeZero(), stderr.String())
+		Expect(stdout.String()).To(ContainSubstring("show"))
+	})
+
 	It("an unknown subcommand is an error", func() {
 		Expect(run("nonesuch")).NotTo(BeZero())
 	})

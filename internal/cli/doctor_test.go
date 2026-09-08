@@ -1,0 +1,106 @@
+package cli_test
+
+import (
+	"context"
+	"path/filepath"
+	"strings"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"github.com/ivy/mill/internal/testsupport"
+)
+
+var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
+	var ctx context.Context
+
+	BeforeEach(func() {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(context.Background())
+		DeferCleanup(cancel)
+	})
+
+	// probe is one line of doctor's report: the verdict, the probe, and the
+	// reason.
+	probe := func(output, name string) (verdict, reason string) {
+		for _, line := range lines(output) {
+			fields := strings.Fields(line)
+			if len(fields) > 2 && fields[1] == name {
+				return fields[0], strings.Join(fields[2:], " ")
+			}
+		}
+		return "", ""
+	}
+
+	It("reports every probe as pass or fail with one line of reason", func() {
+		m := serving(ctx)
+
+		out, err := runCLI(ctx, m.socket, "doctor",
+			// Nothing else on this host is configured, so every probe but
+			// the two the service answers fails — and says why, which is
+			// what the report is for.
+			"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
+			"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
+			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
+			"--project", "", "--vcs-url", "")
+		Expect(err).To(HaveOccurred(), "a failed probe is a non-zero exit")
+
+		for _, name := range []string{"socket", "schema", "dagger", "sidecar", "signing", "forge"} {
+			verdict, reason := probe(out, name)
+			Expect(verdict).To(BeElementOf("pass", "fail"), "probe %s: %s", name, out)
+			Expect(reason).NotTo(BeEmpty(), "probe %s carries no reason", name)
+		}
+
+		socket, reason := probe(out, "socket")
+		Expect(socket).To(Equal("pass"))
+		Expect(reason).To(ContainSubstring(m.socket))
+
+		schema, reason := probe(out, "schema")
+		Expect(schema).To(Equal("pass"))
+		Expect(reason).To(ContainSubstring("current"))
+
+		dagger, reason := probe(out, "dagger")
+		Expect(dagger).To(Equal("fail"))
+		Expect(reason).To(ContainSubstring("no project to probe"))
+
+		sidecar, reason := probe(out, "sidecar")
+		Expect(sidecar).To(Equal("fail"))
+		Expect(reason).To(ContainSubstring("no-sidecar.js"))
+
+		signing, reason := probe(out, "signing")
+		Expect(signing).To(Equal("fail"))
+		Expect(reason).To(ContainSubstring("no signing key"))
+
+		forge, reason := probe(out, "forge")
+		Expect(forge).To(Equal("fail"))
+		Expect(reason).To(ContainSubstring("no repository to probe"))
+	})
+
+	It("says the socket did not answer when no service is listening", func() {
+		out, err := runCLI(ctx, filepath.Join(GinkgoT().TempDir(), "absent.sock"), "doctor")
+		Expect(err).To(HaveOccurred())
+
+		socket, reason := probe(out, "socket")
+		Expect(socket).To(Equal("fail"))
+		Expect(reason).To(ContainSubstring("did not answer"))
+
+		schema, reason := probe(out, "schema")
+		Expect(schema).To(Equal("fail"))
+		Expect(reason).To(ContainSubstring("the service did not answer"))
+	})
+
+	It("reports dagger as reachable when it answers this account", func() {
+		m := serving(ctx)
+		g := daggerNode(ctx)
+
+		out, _ := runCLI(ctx, m.socket, "doctor",
+			"--dagger-socket", g.service.Socket, "--project", daggerProject,
+			"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
+			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
+			"--vcs-url", "")
+
+		verdict, reason := probe(out, "dagger")
+		Expect(verdict).To(Equal("pass"), out)
+		Expect(reason).To(ContainSubstring("this account is a principal on " + daggerProject))
+	})
+})

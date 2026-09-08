@@ -3,6 +3,7 @@ package domain
 import (
 	"context"
 	"fmt"
+	"time"
 
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/store"
@@ -152,6 +153,30 @@ func (s *Service) Inspect(ctx context.Context, p InspectParams) (*RunDetail, err
 		return nil, err
 	}
 	return &RunDetail{Summary: detail.Summary, Workflow: detail.Workflow, Steps: detail.Steps}, nil
+}
+
+// History returns a run's audit trail, oldest first.
+func (s *Service) History(ctx context.Context, p InspectParams) ([]*millv1.Event, error) {
+	return s.store.History(ctx, store.InspectParams{ID: p.ID, NodeRef: p.NodeRef})
+}
+
+// CostParams is the window `mill cost` asks about.
+type CostParams struct {
+	// Since bounds the window below. Zero means every row ever recorded.
+	Since time.Time
+	// Project narrows to one dagger project. Empty means every project.
+	Project string
+}
+
+// Cost rolls a window of usage up by run, workflow, step and model.
+func (s *Service) Cost(ctx context.Context, p CostParams) (*store.Cost, error) {
+	return s.store.Cost(ctx, store.CostParams{Since: p.Since, Project: p.Project})
+}
+
+// Health is what the service can say about itself: whether the database
+// answers and whether its schema is the one this binary carries.
+func (s *Service) Health(ctx context.Context) *store.Health {
+	return s.store.Health(ctx)
 }
 
 // checkTransition reads the run's status and judges the move to want

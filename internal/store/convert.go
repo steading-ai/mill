@@ -334,3 +334,41 @@ func jsonbMap(values map[string]string) ([]byte, error) {
 	}
 	return json.Marshal(values)
 }
+
+// eventProto builds the wire form of an audit-trail row. The before and
+// after columns are free-form JSON objects the writing call composed, so
+// they travel as structs rather than as a typed shape nothing would agree
+// on.
+func eventProto(row Event) (*millv1.Event, error) {
+	before, err := structFrom(row.Before)
+	if err != nil {
+		return nil, fmt.Errorf("event %s: decode before: %w", row.ID, err)
+	}
+	after, err := structFrom(row.After)
+	if err != nil {
+		return nil, fmt.Errorf("event %s: decode after: %w", row.ID, err)
+	}
+	return &millv1.Event{
+		Id:         row.ID,
+		RunId:      row.RunID,
+		StepRunId:  text(row.StepRunID),
+		Op:         row.Op,
+		Before:     before,
+		After:      after,
+		WorkerRef:  row.WorkerRef,
+		OccurredAt: timestamppb.New(row.OccurredAt),
+	}, nil
+}
+
+// structFrom decodes a nullable jsonb column into a struct, treating NULL and
+// the empty column as no value at all.
+func structFrom(raw []byte) (*structpb.Struct, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	value := &structpb.Struct{}
+	if err := protojson.Unmarshal(raw, value); err != nil {
+		return nil, err
+	}
+	return value, nil
+}

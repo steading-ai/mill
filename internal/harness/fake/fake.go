@@ -39,6 +39,10 @@ type Script struct {
 	// cancelled. Nil means a session that never ran, with reason
 	// `cancelled`.
 	Cancelled *harness.Terminal
+	// Do runs once the turn has begun and before any event is emitted, so a
+	// spec can act as a session acts mid-step: register a value with the
+	// workspace's redactor, touch the checkout, take a lease away.
+	Do func(session harness.Session)
 }
 
 // Call is one thing a spec asked the harness to do.
@@ -115,6 +119,9 @@ func (h *Harness) play(ctx context.Context, verb string, session harness.Session
 
 	turn := harness.NewTurn()
 	go func() {
+		if script.Do != nil {
+			script.Do(session)
+		}
 		for _, event := range script.Events {
 			session.Events.Send(event)
 		}

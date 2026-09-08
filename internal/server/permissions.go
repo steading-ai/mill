@@ -25,6 +25,9 @@ var permissions = map[string]interceptor.Permission{
 	millv1connect.StoreServiceGetSkillProcedure:      interceptor.PermissionRead,
 	millv1connect.StoreServiceStatusProcedure:        interceptor.PermissionRead,
 	millv1connect.StoreServiceInspectProcedure:       interceptor.PermissionRead,
+	millv1connect.StoreServiceHistoryProcedure:       interceptor.PermissionRead,
+	millv1connect.StoreServiceCostProcedure:          interceptor.PermissionRead,
+	millv1connect.StoreServiceHealthProcedure:        interceptor.PermissionRead,
 
 	millv1connect.StoreServiceCancelProcedure:      interceptor.PermissionOperate,
 	millv1connect.StoreServiceAbandonProcedure:     interceptor.PermissionOperate,
