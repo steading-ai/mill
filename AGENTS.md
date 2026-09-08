@@ -31,6 +31,7 @@ Your contract is the node's **Acceptance criteria** and **Scenarios**. Every cri
 cmd/mill/             binary entrypoint; one binary, two faces (service, worker)
 internal/cli/         the cobra command tree: serve, work, run, restart, version
 internal/store/       persistence and its migrations; only internal/domain may import it
+internal/harness/     the adapter seam: the Harness interface, the claudecode sidecar driver, a scripted fake
 internal/workspace/   the process chokepoint. os/exec is forbidden everywhere else
 internal/testsupport/ the testcontainers PostgreSQL fixture db-labelled specs use
 internal/version/     the version injected at link time by the Makefile
