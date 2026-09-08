@@ -24,7 +24,7 @@ COMPOSE := podman compose
 # Silence podman's "executing external compose provider" banner.
 export PODMAN_COMPOSE_WARNING_LOGS = false
 
-.PHONY: all build test test-unit test-db lint check-breaking check-generated typecheck-ts generate sidecar-deps sidecar-build clean db-up db-down db-reset db-migrate
+.PHONY: all build test test-unit test-db test-acceptance lint check-breaking check-generated typecheck-ts generate sidecar-deps sidecar-build clean db-up db-down db-reset db-migrate
 
 all: build
 
@@ -42,6 +42,17 @@ test-unit:
 # Specs that need a real PostgreSQL, labelled "db".
 test-db:
 	$(GINKGO) --label-filter='db' ./...
+
+# The acceptance suite: the whole mill against real dependencies — a real
+# dagger, a real GitLab, the real sidecar, a real Claude account. It costs
+# money and spends merge requests, so it is off in `make test` and turned on
+# here alone. docs/runbook.md is what it needs, what it leaves behind, and
+# how to clean up after it.
+#
+# The specs are independent and run in parallel, so the suite's wall clock is
+# its slowest scenario rather than their sum.
+test-acceptance: sidecar-build
+	MILL_ACCEPTANCE=1 ginkgo -p --randomize-all --fail-on-pending --timeout=20m ./tests/acceptance
 
 # go vet catches what golangci-lint's analyzers do not overlap with; the
 # rules that carry design decisions (depguard, forbidigo) live in

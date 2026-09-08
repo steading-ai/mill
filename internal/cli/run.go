@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -19,6 +18,7 @@ import (
 	"github.com/ivy/mill/gen/mill/v1/millv1connect"
 	"github.com/ivy/mill/internal/dagger"
 	"github.com/ivy/mill/internal/forge"
+	"github.com/ivy/mill/internal/forge/gitlab"
 	"github.com/ivy/mill/internal/harness"
 	"github.com/ivy/mill/internal/harness/claudecode"
 	"github.com/ivy/mill/internal/run"
@@ -42,6 +42,26 @@ const (
 // defaultDaggerSocket is where dagger listens when DG_SOCKET says nothing.
 const defaultDaggerSocket = "/run/dagger/dg.sock"
 
+// The forge credential the mill holds for the repositories it delivers to.
+// It is read from the environment rather than from a flag so it never
+// reaches a process listing, and it is the bottom rung of the credential
+// ladder until a secrets service can mint one per step
+// (docs/architecture.md §"Identity and credentials").
+const (
+	forgeTokenEnv = "MILL_FORGE_TOKEN" //nolint:gosec // the name of a variable, not a credential
+	forgeUserEnv  = "MILL_FORGE_USER"
+	vcsURLEnv     = "MILL_VCS_URL"
+)
+
+// sidecarEnv names the harness sidecar's entrypoint. The adapter's default
+// is relative, and a session's working directory is the run's checkout —
+// some other project's repository — so a mill installed anywhere but its own
+// source tree has to be told where its sidecar is.
+const sidecarEnv = "MILL_SIDECAR"
+
+// defaultForgeUser is the basic-auth username GitLab wants beside a token.
+const defaultForgeUser = "mill"
+
 type runOptions struct {
 	socket       string
 	daggerSocket string
@@ -49,8 +69,12 @@ type runOptions struct {
 	workflow     string
 	tier         string
 	workflowDir  string
+	sidecar      string
+	vcsURL       string
 	origin       string
 	ref          string
+	identity     string
+	name         string
 	workspaceDir string
 	ttl          time.Duration
 	interval     time.Duration
@@ -90,12 +114,16 @@ would be selected, its steps in order, and the evidence each one closes on.`,
 	f.StringVar(&opts.workflow, "workflow", "quick-fix", "workflow to select when the run has none")
 	f.StringVar(&opts.tier, "tier", "quick-fix", "tier that workflow stands for, which gate policies compare against")
 	f.StringVar(&opts.workflowDir, "workflow-dir", "", "directory the workflow was loaded from, for a check step's scripts")
-	f.StringVar(&opts.origin, "origin", "", "repository a new workspace clones")
+	f.StringVar(&opts.sidecar, "sidecar", envOr(sidecarEnv, claudecode.DefaultEntrypoint), "path of the harness sidecar's entrypoint (default: $"+sidecarEnv+")")
+	f.StringVar(&opts.vcsURL, "vcs-url", os.Getenv(vcsURLEnv), "repository this project delivers to, which the forge steps push and merge against (default: $"+vcsURLEnv+")")
+	f.StringVar(&opts.origin, "origin", "", "repository a new workspace clones (default: the --vcs-url repository)")
 	f.StringVar(&opts.ref, "ref", "", "ref a new workspace checks out (default: the repository's own HEAD)")
 	f.StringVar(&opts.workspaceDir, "workspace-dir", defaultWorkspaceDir(), "directory run workspaces are made under")
 	f.DurationVar(&opts.ttl, "ttl", run.DefaultTTL, "lease TTL to ask dagger for")
 	f.DurationVar(&opts.interval, "heartbeat", 0, "how often to renew the lease (default: a third of the TTL)")
 	f.BoolVar(&opts.dryRun, "dry-run", false, "print the workflow and its steps; claim nothing and execute nothing")
+	f.StringVar(&opts.identity, "identity", "", "address the mill commits under, and the principal of its allowed_signers line (default: mill@<host>)")
+	f.StringVar(&opts.name, "name", defaultForgeUser, "name on the mill's commits")
 	f.BoolVar(&opts.noAsk, "no-ask", false, "leave a filed gate for a human elsewhere instead of asking on this terminal")
 	return cmd
 }
@@ -152,7 +180,8 @@ func execute(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 		dagger.WithTTL(opts.ttl))
 
 	harnesses := harness.NewRegistry()
-	if err := harnesses.Register(run.DefaultHarness, claudecode.New()); err != nil {
+	if err := harnesses.Register(run.DefaultHarness,
+		claudecode.New(claudecode.WithEntrypoint(claudecode.DefaultCommand, opts.sidecar))); err != nil {
 		return err
 	}
 
@@ -170,11 +199,30 @@ func execute(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 		return err
 	}
 
+	// The forge is resolved once and shared: the loop reads the pull request
+	// through it and the workspace pushes through it, and both must be
+	// talking to the same repository. A project with no VCS URL yields a
+	// *forge.NoVCSURLError here, before anything is claimed.
+	f, err := projectForge(opts)
+	if err != nil {
+		return err
+	}
+	if opts.origin == "" {
+		repo, err := forge.RepoFor(forge.Project{Slug: opts.project, VCSURL: opts.vcsURL})
+		if err != nil {
+			return err
+		}
+		opts.origin = repo.CloneURL
+	}
+	if opts.identity == "" {
+		opts.identity = defaultIdentity()
+	}
+
 	runner := run.New(run.Options{
 		Store:       storeClient(opts.socket),
 		Dagger:      client,
-		Workspaces:  localWorkspaces(opts),
-		Forges:      noForge,
+		Workspaces:  localWorkspaces(opts, f),
+		Forges:      func(context.Context) (forge.Forge, error) { return f, nil },
 		Harnesses:   harnesses,
 		WorkerRef:   worker,
 		Workflow:    opts.workflow,
@@ -204,10 +252,18 @@ func tierNamed(name string) (millv1.Tier, error) {
 }
 
 // localWorkspaces makes a workspace under the worker's own account,
-// reattaching one this worker left behind before cloning a new one.
-func localWorkspaces(opts runOptions) run.Workspaces {
+// reattaching one this worker left behind before cloning a new one. The
+// forge goes in with it, because the `push` and `pr` verbs a session reaches
+// over the socket are the workspace's and not the loop's.
+func localWorkspaces(opts runOptions, f forge.Forge) run.Workspaces {
 	return func(ctx context.Context, spec workspace.Spec) (run.Workspace, error) {
-		ws := local.New(local.Options{Root: opts.workspaceDir})
+		ws := local.New(local.Options{
+			Root:     opts.workspaceDir,
+			Origin:   opts.origin,
+			Forge:    f,
+			Name:     opts.name,
+			Identity: opts.identity,
+		})
 		if _, err := ws.Attach(ctx, spec); err == nil {
 			return ws, nil
 		}
@@ -218,11 +274,30 @@ func localWorkspaces(opts runOptions) run.Workspaces {
 	}
 }
 
-// noForge is the forge a run gets until `mill run` learns to read the
-// project's `vcs_url` label. A step that needs one fails saying so rather
-// than silently doing nothing.
-func noForge(context.Context) (forge.Forge, error) {
-	return nil, errors.New("mill run: no forge is configured for this project")
+// forges is the registry `mill run` resolves a project's forge through.
+// Registering a forge is the only place an implementation is named
+// (docs/roadmap.md §"Adding a forge is configuration").
+func forges() *forge.Registry {
+	registry := forge.NewRegistry()
+	registry.Register(forge.KindGitLab, func(repo forge.Repo, minter forge.Minter) (forge.Forge, error) {
+		return gitlab.New(repo, minter), nil
+	})
+	return registry
+}
+
+// projectForge is where the run delivers, resolved once at startup so a
+// project with no repository fails before a workspace is created rather than
+// four steps in.
+//
+// dagger's project model carries no VCS URL and no labels of its own
+// (dagger's docs/domain-model.md §Project), so O0 takes it from --vcs-url or
+// $MILL_VCS_URL and forge.Project carries it in the field that exists for
+// the day dagger does. The credential is the one the mill account holds,
+// handed out per request by [forge.Static].
+func projectForge(opts runOptions) (forge.Forge, error) {
+	return forges().For(
+		forge.Project{Slug: opts.project, VCSURL: opts.vcsURL},
+		forge.Static(envOr(forgeUserEnv, defaultForgeUser), os.Getenv(forgeTokenEnv)))
 }
 
 // workerRef names this worker on the run and on every lease: the account and
@@ -237,6 +312,16 @@ func workerRef() (string, error) {
 		return "", fmt.Errorf("mill run: identify the worker: %w", err)
 	}
 	return who.Username + "@" + host, nil
+}
+
+// defaultIdentity is the address the mill commits under when nothing names
+// one: the account and host that own the signing key.
+func defaultIdentity() string {
+	ref, err := workerRef()
+	if err != nil {
+		return defaultForgeUser + "@localhost"
+	}
+	return ref
 }
 
 // defaultWorkspaceDir is where run workspaces live under the worker's

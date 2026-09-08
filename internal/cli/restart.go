@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ivy/mill/internal/dagger"
+	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/run"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/local"
@@ -18,6 +19,7 @@ type restartOptions struct {
 	daggerSocket string
 	project      string
 	workspaceDir string
+	vcsURL       string
 	reason       string
 }
 
@@ -49,13 +51,20 @@ decision; this is that decision.`,
 			if err != nil {
 				return err
 			}
+			// A restart closes the pull request and deletes the branch, so
+			// it needs the same forge a run has. A project with no VCS URL
+			// still restarts; only the forge half is skipped, which is what
+			// run.Restart already does with a forge it cannot reach.
+			forges := func(context.Context) (forge.Forge, error) {
+				return projectForge(runOptions{project: opts.project, vcsURL: opts.vcsURL})
+			}
 			runner := run.New(run.Options{
 				Store:  storeClient(opts.socket),
 				Dagger: dagger.Dial(opts.daggerSocket, opts.project, dagger.WithAgentRef(worker)),
 				// Attach-only: a restart destroys the workspace the run left
 				// behind and must never clone one in order to delete it.
 				Workspaces: attachedWorkspaces(opts.workspaceDir),
-				Forges:     noForge,
+				Forges:     forges,
 				WorkerRef:  worker,
 				Out:        cmd.OutOrStdout(),
 			})
@@ -68,6 +77,7 @@ decision; this is that decision.`,
 	f.StringVar(&opts.daggerSocket, "dagger-socket", envOr(daggerSocketEnv, defaultDaggerSocket), "path of dagger's unix socket (default: $"+daggerSocketEnv+")")
 	f.StringVar(&opts.project, "project", os.Getenv(daggerProjectEnv), "dagger project a bare #7 reference resolves in (default: $"+daggerProjectEnv+")")
 	f.StringVar(&opts.workspaceDir, "workspace-dir", defaultWorkspaceDir(), "directory run workspaces live under")
+	f.StringVar(&opts.vcsURL, "vcs-url", os.Getenv(vcsURLEnv), "repository this project delivers to, whose branch and pull request the restart closes (default: $"+vcsURLEnv+")")
 	f.StringVar(&opts.reason, "reason", "restart", "why, for the lease's release detail and the ledger")
 	return cmd
 }

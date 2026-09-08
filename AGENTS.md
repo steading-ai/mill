@@ -42,6 +42,7 @@ proto/                the contracts: mill.v1 the store API, harness.v1 the sidec
 gen/                  generated Go, committed. buf owns it; `make generate` writes it
 sidecar/              the TypeScript harness adapter; sidecar/gen is harness.v1 in TypeScript
 workflows/            the workflow definitions this repo seeds the store with; `mill workflow push` loads them
+tests/acceptance/     the suite that drives the whole mill against real dependencies; docs/runbook.md
 docs/                 the design. Authoritative
 harness/              the reference agent loop that works one milestone of the backlog
 compose.yaml          PostgreSQL for local development; .env.example seeds .env
@@ -55,6 +56,7 @@ compose.yaml          PostgreSQL for local development; .env.example seeds .env
 - **The store and the resume algorithm** — `docs/ledger.md`. The pseudocode there is the specification of the run loop.
 - **Where this is going** — `docs/roadmap.md`. O0 is the walking skeleton; everything past it is parked there with its provenance.
 - **The contract mill consumes** — dagger's `docs/domain-model.md`, checked out on this host under `~/src/github.com/ivy/dagger`.
+- **How to run the acceptance suite** — `docs/runbook.md`: what it needs, what it leaves behind, how to clean up.
 - **Prior art and reviews** — `docs/research/`.
 
 ## How to work here
@@ -67,6 +69,7 @@ make build              # ./mill
 make test               # all specs
 make test-unit          # specs needing no database
 make test-db            # specs needing PostgreSQL, via testcontainers
+make test-acceptance    # the whole mill against a real dagger, GitLab and Claude account
 make lint               # go vet and golangci-lint
 make generate           # code generators; commit the output
 make db-up              # local PostgreSQL for interactive work
