@@ -6,7 +6,7 @@ Design first, code second. Read [docs/prd.md](docs/prd.md), then [docs/domain-mo
 
 ## Status
 
-Seeded. The design is written; the code is not. The repository is built by dagger's reference harness from the O0 backlog held in dagger (project `mill`), one node at a time: see [harness/README.md](harness/README.md) and `/ralph-loop`.
+Scaffolded. The design is written; the code behind the CLI faces is not. The repository is built by dagger's reference harness from the O0 backlog held in dagger (project `mill`), one node at a time: see [harness/README.md](harness/README.md) and `/ralph-loop`.
 
 ```
 harness/.venv/bin/python harness/loop.py --epic '#1' --dry-run   # what is ready under the milestone

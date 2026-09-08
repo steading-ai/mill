@@ -1,0 +1,33 @@
+# Development PostgreSQL.
+#
+# Specs bring up their own database through testcontainers; this stack exists
+# for running the service locally and inspecting the database by hand.
+#
+# Credentials and the host port come from .env, seeded from .env.example by
+# `make db-up`. Every variable is required so a missing .env fails loudly
+# instead of starting a database with an empty password.
+name: mill
+
+services:
+  postgres:
+    # postgres:18, pinned to the multi-arch index digest. Bump deliberately.
+    image: docker.io/library/postgres:18@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+    ports:
+      - "127.0.0.1:${DB_PORT:?set DB_PORT in .env}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      # Over TCP on purpose: during first-run initialisation the server listens
+      # only on its Unix socket, and a socket probe would report ready too early.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
+volumes:
+  pgdata:

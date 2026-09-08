@@ -1,11 +1,21 @@
 # Tool versions for mill.
 #
 # The reference harness that builds this project runs on Python; the project
-# itself is Go. The Go toolchain and the rest are pinned by the scaffold node.
-# Every tool installs through mise alone.
+# itself is Go, with a Node sidecar for the coding-agent adapter. Every tool
+# below installs through mise alone; the only system package the build assumes
+# is podman, which testcontainers uses for the database specs.
 
 [tools]
 python = "3.14.7"
+go = "1.25.7"
+golangci-lint = "2.13.2"
+buf = "1.72.0"
+sqlc = "1.31.1"
+"aqua:pressly/goose" = "3.28.0"
+ginkgo = "2.32.1"
+node = "24.13.0"
+pnpm = "10.20.0"
+hk = "1.57.0"
 
 [env]
 _.python.venv = { path = "harness/.venv", create = true }

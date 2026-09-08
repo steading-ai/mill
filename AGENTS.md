@@ -25,6 +25,20 @@ Your contract is the node's **Acceptance criteria** and **Scenarios**. Every cri
 
 **Do not modify** `harness/`, `.claude/`, `scripts/`, or `backlog.toml`. That is the machinery running you; the harness reverts changes there and counts them as a review failure. `docs/` is not protected, because work orders name documents as deliverables — but a work order is the only reason to touch a design document. If the design is wrong, say so in your final message and carry on. Do not commit; the harness owns history.
 
+## Repo map
+
+```
+cmd/mill/             binary entrypoint; one binary, two faces (service, worker)
+internal/cli/         the cobra command tree: serve, work, run, restart, version
+internal/store/       persistence and its migrations; only internal/domain may import it
+internal/workspace/   the process chokepoint. os/exec is forbidden everywhere else
+internal/testsupport/ the testcontainers PostgreSQL fixture db-labelled specs use
+internal/version/     the version injected at link time by the Makefile
+docs/                 the design. Authoritative
+harness/              the reference agent loop that works one milestone of the backlog
+compose.yaml          PostgreSQL for local development; .env.example seeds .env
+```
+
 ## Where to look first
 
 - **What mill is and is not** — `docs/prd.md` §1–§3, then `docs/core-principles.md`. The principles have teeth.
@@ -37,7 +51,32 @@ Your contract is the node's **Acceptance criteria** and **Scenarios**. Every cri
 
 ## How to work here
 
-The `scaffold` node establishes `Makefile`, `mise.toml` pins, and the test harness; until it lands there is nothing to build. After it: `mise install`, `make build`, `make test`, `make lint`. Specs are Ginkgo and Gomega. Two lint rules carry design decisions: `depguard` keeps `internal/store` behind `internal/domain`, and `forbidigo` forbids `os/exec` outside `internal/workspace` — the single chokepoint every spawned process goes through.
+Canonical commands live in `Makefile`; tool versions in `mise.toml`. The only system package assumed is podman, which testcontainers and the development database use.
+
+```bash
+mise install            # bootstrap every tool
+make build              # ./mill
+make test               # all specs
+make test-unit          # specs needing no database
+make test-db            # specs needing PostgreSQL, via testcontainers
+make lint               # go vet and golangci-lint
+make generate           # code generators; commit the output
+make db-up              # local PostgreSQL for interactive work
+make db-migrate         # apply migrations to it
+make db-down            # stop it
+```
+
+Before you finish, this must pass:
+
+```bash
+make lint && make test
+```
+
+`hk check` runs the same gate a commit does: `make lint`, then `make test-unit`.
+
+Specs are Ginkgo and Gomega, in the package the code lives in, and a scenario's text is its spec name. Specs that touch PostgreSQL take a database from `internal/testsupport` and must carry the `db` label; the suite starts one container and clones a migrated template per spec.
+
+Two lint rules carry design decisions rather than style: `depguard` stops anything but `internal/domain` importing `internal/store`, and `forbidigo` keeps `os/exec` out of everything but `internal/workspace` — the single chokepoint every spawned process goes through — and `testing` out of everything but `*_suite_test.go`. If one fires, the fix is the code, not the config.
 
 ## Change hygiene
 
@@ -45,5 +84,16 @@ The `scaffold` node establishes `Makefile`, `mise.toml` pins, and the test harne
 - Add specs with the code. A criterion with no spec is not done.
 - Follow the patterns already in the tree over your own preferences; dagger's repository is the style reference.
 - No repo-wide reformatting, and no dependency the work order did not name.
-- Never commit a secret.
+- Never commit a secret. `.env` is ignored; `.env.example` is the template.
 - Generated code is committed. Run `make generate` and include the result.
+
+## Running the build loop
+
+The loop works one milestone: a grouping node whose open children it labels and then claims.
+
+```bash
+harness/.venv/bin/python harness/loop.py --epic '#1' --dry-run   # what is ready under the milestone
+harness/.venv/bin/python harness/loop.py --epic '#1'             # run until it drains
+```
+
+An implementer builds a node, a reviewer judges it against its acceptance criteria and scenarios only, and a pass is committed and pushed. See `harness/README.md`.

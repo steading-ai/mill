@@ -1,0 +1,83 @@
+// Package cli assembles the cobra command tree for the mill binary.
+//
+// One binary has two faces: the service that owns the store and its API, and
+// the worker that claims a dagger node and drives its run. See the "One
+// binary, two faces" section of docs/architecture.md. The subcommands here
+// are the faces themselves plus "version"; each carries no behaviour yet and
+// the nodes that follow the scaffold fill them in.
+package cli
+
+import (
+	"fmt"
+	"io"
+
+	"github.com/spf13/cobra"
+
+	"github.com/ivy/mill/internal/version"
+)
+
+// Run executes the binary with args and returns its exit status. main is a
+// call to this.
+func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	root := NewRootCommand(stdout, stderr)
+	root.SetIn(stdin)
+	root.SetArgs(args)
+	if err := root.Execute(); err != nil {
+		_, _ = fmt.Fprintln(stderr, "mill:", err)
+		return 1
+	}
+	return 0
+}
+
+// NewRootCommand builds the mill command tree. Output is written to stdout
+// and diagnostics to stderr; callers, including specs, may redirect either.
+func NewRootCommand(stdout, stderr io.Writer) *cobra.Command {
+	root := &cobra.Command{
+		Use:     "mill",
+		Short:   "A workflow runner over dagger's work graph",
+		Version: version.String(),
+		Long: `mill is the single entry point to the workflow runner.
+
+"mill serve" runs the service: the store, the workflows, and the ledger.
+"mill work" runs a worker: claim a ready dagger node, then drive its run.
+"mill run" drives a single named node in the calling process.
+"mill restart" abandons a node's run and starts a new generation.`,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
+	}
+	root.SetOut(stdout)
+	root.SetErr(stderr)
+	root.CompletionOptions.DisableDefaultCmd = true
+
+	root.AddCommand(
+		newVersionCommand(),
+		newServeCommand(),
+		newWorkCommand(),
+		newRunCommand(),
+		newRestartCommand(),
+	)
+	return root
+}
+
+func newVersionCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the version of this build",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			_, err := fmt.Fprintf(cmd.OutOrStdout(), "mill version %s\n", version.String())
+			return err
+		},
+	}
+}
+
+// placeholder is what a face of the binary prints until the node that
+// implements it lands. It exits zero: the command tree is real, its
+// behaviour is not yet.
+func placeholder(cmd *cobra.Command) error {
+	_, err := fmt.Fprintf(cmd.OutOrStdout(), "mill %s: not implemented yet\n", cmd.Name())
+	return err
+}

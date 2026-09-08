@@ -1,0 +1,28 @@
+amends "package://github.com/jdx/hk/releases/download/v1.57.0/hk@1.57.0#/Config.pkl"
+
+// The gate before a commit is the same one the build loop and CI apply:
+// `make lint`, then the specs that need no database. Both run over the whole
+// tree rather than the staged files, because the lint rules that matter here
+// (depguard, forbidigo) are about package boundaries, not individual files.
+local checks = new Mapping<String, Step> {
+    ["lint"] {
+        glob = List("**/*.go", "**/*.sql", "go.mod", "go.sum", ".golangci.yml", "Makefile")
+        check = "make lint"
+    }
+    ["test-unit"] {
+        glob = List("**/*.go", "go.mod", "go.sum", "Makefile")
+        check = "make test-unit"
+        depends = "lint"
+    }
+}
+
+hooks {
+    ["pre-commit"] {
+        fix = false
+        stash = "git"
+        steps = checks
+    }
+    ["check"] {
+        steps = checks
+    }
+}

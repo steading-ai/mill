@@ -1,0 +1,82 @@
+version: "2"
+
+run:
+  timeout: 5m
+  # The root specs run `make lint` in copies of the tree while the outer run
+  # may still hold the cache lock. Without this, the second instance fails
+  # rather than waits.
+  allow-parallel-runners: true
+
+linters:
+  default: standard
+  enable:
+    - depguard
+    - forbidigo
+    - gocritic
+    - misspell
+    - revive
+    - unconvert
+    - unparam
+  settings:
+    # The store is reached through the domain layer, never around it.
+    depguard:
+      rules:
+        store-only-from-domain:
+          files:
+            - "!**/internal/domain/**"
+            - "!**/internal/store/**"
+          deny:
+            - pkg: github.com/ivy/mill/internal/store
+              desc: only the domain layer may import the store
+    forbidigo:
+      analyze-types: true
+      forbid:
+        # Specs are Ginkgo. The testing package appears only in the suite
+        # bootstrap file that hands control to Ginkgo.
+        - pattern: ^testing\.
+          msg: use Ginkgo and Gomega; testing belongs only in *_suite_test.go
+        # Every process mill spawns goes through one chokepoint, where
+        # sandboxing, credentials and cancellation live. See
+        # docs/architecture.md and internal/workspace.
+        - pattern: .*
+          pkg: ^os/exec$
+          msg: spawn processes through internal/workspace; the os/exec pattern is forbidden elsewhere
+    # Ginkgo and Gomega are written with dot imports by design.
+    revive:
+      rules:
+        - name: dot-imports
+          arguments:
+            - allowedPackages:
+                - github.com/onsi/ginkgo/v2
+                - github.com/onsi/gomega
+  exclusions:
+    rules:
+      # The suite bootstrap is the one place testing may appear.
+      - path: _suite_test\.go$
+        linters:
+          - forbidigo
+      # internal/workspace is the chokepoint itself.
+      - path: internal/workspace/
+        linters:
+          - forbidigo
+        text: os/exec
+      # Specs drive make, podman and the built binary as subprocesses; the
+      # chokepoint is about what mill does at runtime, not how it is tested.
+      - path: _test\.go$
+        linters:
+          - forbidigo
+        text: os/exec
+
+issues:
+  # Report every rule that fires on a line. Hiding one violation behind
+  # another on the same line costs an extra lint cycle to find it.
+  uniq-by-line: false
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/ivy/mill
