@@ -11,6 +11,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/redact"
 	"github.com/ivy/mill/internal/workspace/socket"
@@ -160,7 +161,26 @@ var _ = Describe("The workspace socket", Label("unit"), func() {
 		Expect(refusal(step.Redact(ctx, "too-late")).Code).To(Equal(socket.CodeUnauthorized))
 	})
 
-	It("answers the forge verbs with a typed not-implemented, not with silence", func(ctx context.Context) {
+	It("serves the forge verbs to a token that carries forge", func(ctx context.Context) {
+		api := newRecordedGitLab()
+		DeferCleanup(api.server.Close)
+		verbs.forge = api.forgeVerbs("mill/mill-12")
+		step := live("forge-bearer", workspace.Forge)
+
+		pushed, err := step.Push(ctx, workspace.PushRequest{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pushed.Branch).To(Equal("mill/mill-12"))
+
+		pr, err := step.PR(ctx, workspace.PRRequest{Title: "mill#12"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pr.URL).To(Equal("https://gitlab.example.test/group/thing/-/merge_requests/7"))
+
+		checks, err := step.Checks(ctx, workspace.ChecksRequest{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(checks.Status).To(Equal(forge.Success))
+	})
+
+	It("answers the forge verbs with a typed not-implemented on a run with no forge, not with silence", func(ctx context.Context) {
 		step := live("forge-bearer", workspace.Forge)
 
 		for _, verb := range []string{socket.VerbGitPush, socket.VerbForgePR, socket.VerbForgeChecks} {
@@ -168,6 +188,28 @@ var _ = Describe("The workspace socket", Label("unit"), func() {
 			Expect(wire.Code).To(Equal(socket.CodeNotImplemented), verb)
 			Expect(wire.Verb).To(Equal(verb))
 		}
+	})
+
+	It("The forge credential is scoped to the step", func(ctx context.Context) {
+		// Given step token T with forge capability.
+		api := newRecordedGitLab()
+		DeferCleanup(api.server.Close)
+		verbs.forge = api.forgeVerbs("mill/mill-12")
+		step := live("the-step-token-T", workspace.Forge)
+
+		pr, err := step.PR(ctx, workspace.PRRequest{Title: "mill#12"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pr.Number).To(Equal(7))
+		reached := api.count()
+		Expect(reached).To(BeNumerically(">", 0), "the granted request did reach GitLab")
+
+		// When T is revoked and forge.pr is requested again with T.
+		server.Rotate(workspace.Token{})
+		_, err = step.PR(ctx, workspace.PRRequest{Title: "mill#12"})
+
+		// Then the request is refused before any GitLab call.
+		Expect(refusal(err).Code).To(Equal(socket.CodeUnauthorized))
+		Expect(api.count()).To(Equal(reached), "a revoked step token reaches no forge")
 	})
 
 	It("refuses a verb that does not exist", func(ctx context.Context) {

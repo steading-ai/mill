@@ -47,6 +47,7 @@ type Verbs interface {
 	Write(ctx context.Context, path string, content []byte) error
 	List(ctx context.Context, path string) ([]workspace.Entry, error)
 	Git() workspace.Git
+	Forge() workspace.ForgeVerbs
 	Redact(values ...string)
 }
 
@@ -95,8 +96,8 @@ const (
 	CodeUnknownVerb = "unknown_verb"
 	// CodeInvalid is a request the verb cannot read.
 	CodeInvalid = "invalid"
-	// CodeNotImplemented is a verb this workspace does not implement yet;
-	// the forge verbs, until the forge node lands.
+	// CodeNotImplemented is a verb this workspace cannot serve: one it does
+	// not implement, or a forge verb on a run with no forge.
 	CodeNotImplemented = "not_implemented"
 	// CodeFailed is the verb refusing on its own terms.
 	CodeFailed = "failed"
@@ -416,15 +417,41 @@ func (s *Server) dispatch(ctx context.Context, verb string, body []byte) (any, i
 		s.logf("verb=%s values=%d", verb, len(request.Values))
 		return RedactResponse{Registered: len(request.Values)}, http.StatusOK, nil
 
-	case VerbGitPush, VerbForgePR, VerbForgeChecks:
-		// The forge verbs are the forge node's work. They are in the table
-		// so that a session asking for one is told the workspace cannot do
-		// it yet, rather than told the verb does not exist.
-		return nil, http.StatusNotImplemented, &Error{
-			Code:    CodeNotImplemented,
-			Verb:    verb,
-			Message: fmt.Sprintf("workspace: %s is not implemented: %v", verb, workspace.ErrNotImplemented),
+	case VerbGitPush:
+		var request workspace.PushRequest
+		if err := decode(body, &request); err != nil {
+			return nil, http.StatusBadRequest, err
 		}
+		result, err := s.verbs.Forge().Push(ctx, request)
+		if err != nil {
+			return nil, statusFor(err), failure(verb, err)
+		}
+		s.logf("verb=%s branch=%s sha=%s remote=%s", verb, result.Branch, result.SHA, result.Remote)
+		return result, http.StatusOK, nil
+
+	case VerbForgePR:
+		var request workspace.PRRequest
+		if err := decode(body, &request); err != nil {
+			return nil, http.StatusBadRequest, err
+		}
+		pr, err := s.verbs.Forge().PR(ctx, request)
+		if err != nil {
+			return nil, statusFor(err), failure(verb, err)
+		}
+		s.logf("verb=%s pr=%d state=%s url=%s", verb, pr.Number, pr.State, pr.URL)
+		return pr, http.StatusOK, nil
+
+	case VerbForgeChecks:
+		var request workspace.ChecksRequest
+		if err := decode(body, &request); err != nil {
+			return nil, http.StatusBadRequest, err
+		}
+		result, err := s.verbs.Forge().Checks(ctx, request)
+		if err != nil {
+			return nil, statusFor(err), failure(verb, err)
+		}
+		s.logf("verb=%s sha=%s status=%s", verb, result.SHA, result.Status)
+		return result, http.StatusOK, nil
 
 	default:
 		return nil, http.StatusNotFound, &Error{Code: CodeUnknownVerb, Verb: verb, Message: fmt.Sprintf("workspace: no verb %q", verb)}
@@ -526,6 +553,8 @@ func failure(verb string, err error) *Error {
 		code = CodeNotImplemented
 	case errors.Is(err, workspace.ErrOutsideTree), errors.Is(err, os.ErrNotExist):
 		code = CodeInvalid
+	case errors.Is(err, workspace.ErrNoForge):
+		code = CodeNotImplemented
 	}
 	refusal := &Error{Code: code, Verb: verb, Message: err.Error()}
 	var capability *workspace.CapabilityError
@@ -538,7 +567,7 @@ func failure(verb string, err error) *Error {
 
 func statusFor(err error) int {
 	switch {
-	case errors.Is(err, workspace.ErrNotImplemented):
+	case errors.Is(err, workspace.ErrNotImplemented), errors.Is(err, workspace.ErrNoForge):
 		return http.StatusNotImplemented
 	case errors.Is(err, workspace.ErrOutsideTree), errors.Is(err, os.ErrNotExist):
 		return http.StatusBadRequest

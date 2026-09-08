@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	millv1 "github.com/ivy/mill/gen/mill/v1"
+	"github.com/ivy/mill/internal/forge"
 )
 
 // Kind is which implementation is behind a workspace. The interface does not
@@ -280,6 +281,71 @@ type Git interface {
 	Commit(ctx context.Context, request CommitRequest) (CommitInfo, error)
 }
 
+// PushRequest is `git.push`: the run's branch, onto the project's repository.
+// There is no branch field, because the branch is the run's and not the
+// session's to name.
+type PushRequest struct {
+	// Force overwrites the branch on the forge, which a rebased run needs.
+	Force bool `json:"force"`
+}
+
+// PushResult is what landed on the forge.
+type PushResult struct {
+	// Branch is the run's branch, on the forge under the same name.
+	Branch string `json:"branch"`
+	// SHA is the commit the branch now points at.
+	SHA string `json:"sha"`
+	// Remote is the repository it was pushed to. It carries no credential.
+	Remote string `json:"remote"`
+}
+
+// PRRequest is `forge.pr`: the pull request for the run's branch, opened if
+// the forge has none. Asking twice returns the same one, so a resumed run
+// and a retried step both land on the pull request that already exists.
+type PRRequest struct {
+	// Title is the pull request's title when one is opened. Empty titles
+	// the pull request after the branch.
+	Title string `json:"title"`
+	// Description is its body.
+	Description string `json:"description"`
+	// Target is the branch to merge into. Empty means the repository's
+	// default branch.
+	Target string `json:"target"`
+}
+
+// ChecksRequest is `forge.checks`: what the forge's checks say about a
+// commit.
+type ChecksRequest struct {
+	// SHA is the commit to read. Empty means the run branch's head.
+	SHA string `json:"sha"`
+}
+
+// ChecksResult is the answer, and the commit it is an answer about.
+type ChecksResult struct {
+	// SHA is the commit the status belongs to.
+	SHA string `json:"sha"`
+	// Status is `pending`, `success` or `failed`.
+	Status forge.Status `json:"status"`
+}
+
+// ForgeVerbs is the forge half of the workspace's verbs, each gated by the
+// `forge` capability. The session never holds the forge credential: it asks
+// for a push or a pull request, and the workspace mints a credential for the
+// step, uses it, and drops it (docs/architecture.md §"Identity and
+// credentials").
+//
+// Merging is not here. A merge is the mill's own act at the end of a run,
+// not something a session asks for, so it is reached through
+// [github.com/ivy/mill/internal/forge.Forge] directly and has no verb.
+type ForgeVerbs interface {
+	// Push puts the run's branch on the forge and returns what landed.
+	Push(ctx context.Context, request PushRequest) (PushResult, error)
+	// PR is the run branch's pull request, opened if there is none.
+	PR(ctx context.Context, request PRRequest) (forge.PullRequest, error)
+	// Checks is what the forge's checks say about a commit.
+	Checks(ctx context.Context, request ChecksRequest) (ChecksResult, error)
+}
+
 // Workspace is what a step is given instead of a path and a keychain.
 //
 // Create, Attach, Destroy and Rotate belong to the worker and are never
@@ -310,6 +376,8 @@ type Workspace interface {
 	List(ctx context.Context, path string) ([]Entry, error)
 	// Git is the git verbs.
 	Git() Git
+	// Forge is the forge verbs.
+	Forge() ForgeVerbs
 	// Redact registers values the workspace must scrub from every log line
 	// it writes from here on.
 	Redact(values ...string)
@@ -348,14 +416,17 @@ func BranchFor(nodeRef string) string {
 }
 
 // ErrNotImplemented is what a verb this workspace does not implement returns.
-// The forge verbs — git.push, forge.pr, forge.checks — are its only users:
-// they are the forge node's work, and a session that asks for one now is told
-// so rather than being told the verb does not exist.
+// A session that asks for one is told so, rather than being told the verb
+// does not exist.
 var ErrNotImplemented = errors.New("workspace: not implemented")
 
 // ErrUnauthorized is a bearer that is not the live step token: revoked,
 // rotated away, or never issued.
 var ErrUnauthorized = errors.New("workspace: unauthorized")
+
+// ErrNoForge is a forge verb on a workspace whose run has no forge: a dagger
+// project with no repository, or a workspace built without one.
+var ErrNoForge = errors.New("workspace: no forge is configured for this run")
 
 // ErrOutsideTree is a path that leaves the checkout.
 var ErrOutsideTree = errors.New("workspace: path is outside the checkout")

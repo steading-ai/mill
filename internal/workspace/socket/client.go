@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 
+	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/workspace"
 )
 
@@ -135,6 +136,27 @@ func (c *Client) GitLog(ctx context.Context, request workspace.LogRequest) ([]wo
 func (c *Client) GitCommit(ctx context.Context, request workspace.CommitRequest) (workspace.CommitInfo, error) {
 	var response workspace.CommitInfo
 	err := c.Call(ctx, VerbGitCommit, request, &response)
+	return response, err
+}
+
+// Push puts the run's branch on the forge.
+func (c *Client) Push(ctx context.Context, request workspace.PushRequest) (workspace.PushResult, error) {
+	var response workspace.PushResult
+	err := c.Call(ctx, VerbGitPush, request, &response)
+	return response, err
+}
+
+// PR is the run branch's pull request, opened if the forge has none.
+func (c *Client) PR(ctx context.Context, request workspace.PRRequest) (forge.PullRequest, error) {
+	var response forge.PullRequest
+	err := c.Call(ctx, VerbForgePR, request, &response)
+	return response, err
+}
+
+// Checks is what the forge's checks say about a commit.
+func (c *Client) Checks(ctx context.Context, request workspace.ChecksRequest) (workspace.ChecksResult, error) {
+	var response workspace.ChecksResult
+	err := c.Call(ctx, VerbForgeChecks, request, &response)
 	return response, err
 }
 

@@ -1,0 +1,156 @@
+package forge_test
+
+import (
+	"context"
+	"errors"
+	"net/http"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"github.com/ivy/mill/internal/forge"
+)
+
+// stubForge is a forge that does nothing, for the specs about resolution and
+// registration, which never reach one.
+type stubForge struct{ repo forge.Repo }
+
+func (s *stubForge) Push(context.Context, forge.PushRequest) (string, error) { return "", nil }
+func (s *stubForge) OpenPR(context.Context, forge.OpenPRRequest) (forge.PullRequest, error) {
+	return forge.PullRequest{}, nil
+}
+func (s *stubForge) PR(context.Context, string) (forge.PullRequest, error) {
+	return forge.PullRequest{}, forge.ErrNoPullRequest
+}
+func (s *stubForge) Checks(context.Context, string) (forge.Status, error) { return forge.Success, nil }
+func (s *stubForge) Merge(context.Context, forge.PullRequest) (forge.PullRequest, error) {
+	return forge.PullRequest{}, nil
+}
+func (s *stubForge) MergeCommit(context.Context, forge.PullRequest) (string, error) {
+	return "", forge.ErrNotMerged
+}
+
+var _ = Describe("The forge registry", Label("unit"), func() {
+	var registry *forge.Registry
+
+	BeforeEach(func() {
+		registry = forge.NewRegistry()
+		registry.Register(forge.KindGitLab, func(repo forge.Repo, _ forge.Minter) (forge.Forge, error) {
+			return &stubForge{repo: repo}, nil
+		})
+	})
+
+	It("resolves a project's repository from the vcs_url label dagger carries today", func() {
+		resolved, err := registry.For(forge.Project{
+			Slug:   "mill",
+			Labels: map[string]string{forge.VCSURLLabel: "https://gitlab.example.test/group/thing.git"},
+		}, nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		repo := resolved.(*stubForge).repo
+		Expect(repo.Kind).To(Equal(forge.KindGitLab))
+		Expect(repo.BaseURL).To(Equal("https://gitlab.example.test"))
+		Expect(repo.Path).To(Equal("group/thing"))
+		Expect(repo.CloneURL).To(Equal("https://gitlab.example.test/group/thing.git"))
+	})
+
+	It("yields a typed error naming the project when it has no VCS URL", func() {
+		_, err := registry.For(forge.Project{Slug: "mill"}, nil)
+
+		var missing *forge.NoVCSURLError
+		Expect(errors.As(err, &missing)).To(BeTrue(), "%v", err)
+		Expect(missing.Project).To(Equal("mill"))
+		Expect(err.Error()).To(ContainSubstring("mill"))
+		Expect(err.Error()).To(ContainSubstring(forge.VCSURLLabel))
+		Expect(forge.Retryable(err)).To(BeFalse(), "no number of attempts adds a URL to the project")
+	})
+
+	It("names the forge it has no adapter for", func() {
+		_, err := registry.For(forge.Project{
+			Slug:   "elsewhere",
+			VCSURL: "https://github.com/ivy/mill.git",
+		}, nil)
+
+		var unsupported *forge.UnsupportedError
+		Expect(errors.As(err, &unsupported)).To(BeTrue(), "%v", err)
+		Expect(unsupported.Kind).To(Equal(forge.KindGitHub))
+		Expect(unsupported.Project).To(Equal("elsewhere"))
+	})
+
+	DescribeTable("reads a repository URL in either spelling git accepts",
+		func(raw string, expected forge.Repo) {
+			Expect(forge.ParseRepo(raw)).To(Equal(expected))
+		},
+		Entry("an HTTPS URL", "https://gitlab.example.test/group/thing.git", forge.Repo{
+			Kind: forge.KindGitLab, BaseURL: "https://gitlab.example.test",
+			Path: "group/thing", CloneURL: "https://gitlab.example.test/group/thing.git",
+		}),
+		Entry("an HTTPS URL without the suffix", "https://gitlab.example.test/group/thing", forge.Repo{
+			Kind: forge.KindGitLab, BaseURL: "https://gitlab.example.test",
+			Path: "group/thing", CloneURL: "https://gitlab.example.test/group/thing.git",
+		}),
+		Entry("a nested group", "https://gitlab.example.test/group/sub/thing.git", forge.Repo{
+			Kind: forge.KindGitLab, BaseURL: "https://gitlab.example.test",
+			Path: "group/sub/thing", CloneURL: "https://gitlab.example.test/group/sub/thing.git",
+		}),
+		Entry("the scp-like spelling", "git@gitlab.example.test:group/thing.git", forge.Repo{
+			Kind: forge.KindGitLab, BaseURL: "https://gitlab.example.test",
+			Path: "group/thing", CloneURL: "https://gitlab.example.test/group/thing.git",
+		}),
+		Entry("github, which is a kind and not an implementation", "https://github.com/ivy/mill.git", forge.Repo{
+			Kind: forge.KindGitHub, BaseURL: "https://github.com",
+			Path: "ivy/mill", CloneURL: "https://github.com/ivy/mill.git",
+		}),
+	)
+
+	It("lets a project name its forge when the host does not give it away", func() {
+		repo, err := forge.RepoFor(forge.Project{
+			Slug: "mill",
+			Labels: map[string]string{
+				forge.VCSURLLabel:    "https://code.example.test/group/thing.git",
+				forge.ForgeKindLabel: string(forge.KindGitHub),
+			},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(repo.Kind).To(Equal(forge.KindGitHub))
+	})
+})
+
+var _ = Describe("What the mill retries", Label("unit"), func() {
+	DescribeTable("a failure is retryable only when trying again could change the answer",
+		func(err error, retryable bool) {
+			Expect(forge.Retryable(err)).To(Equal(retryable))
+		},
+		Entry("a merge the forge refused", &forge.MergeRefusedError{PR: 7, Status: http.StatusMethodNotAllowed, Reason: "Branch cannot be merged"}, false),
+		Entry("a project with no repository", &forge.NoVCSURLError{Project: "mill"}, false),
+		Entry("a forge with no adapter", &forge.UnsupportedError{Kind: forge.KindGitHub, Project: "mill"}, false),
+		Entry("a branch with no pull request", forge.ErrNoPullRequest, false),
+		Entry("a merge commit read too early", forge.ErrNotMerged, false),
+		Entry("the transport failing", errors.New("dial tcp: connection refused"), true),
+		Entry("no failure at all", nil, false),
+	)
+
+	It("names the refusal with the forge's own reason", func() {
+		err := &forge.MergeRefusedError{PR: 7, Status: http.StatusMethodNotAllowed, Reason: "Branch cannot be merged", Detail: "not_approved"}
+
+		Expect(err.Error()).To(ContainSubstring("Branch cannot be merged"))
+		Expect(err.Error()).To(ContainSubstring("not_approved"))
+		Expect(err.Error()).To(ContainSubstring("!7"))
+	})
+})
+
+var _ = Describe("The credential a request is made with", Label("unit"), func() {
+	It("is handed out per request and never held by the forge", func(ctx context.Context) {
+		minter := forge.Static("mill", "glpat-the-mill-holds-this")
+
+		credential, err := minter.Mint(ctx, forge.Step{TokenID: "01J0STEP"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(credential.Token).To(Equal("glpat-the-mill-holds-this"))
+		Expect(credential.Username).To(Equal("mill"))
+	})
+
+	It("refuses when the mill holds none", func(ctx context.Context) {
+		_, err := forge.Static("mill", "").Mint(ctx, forge.Step{})
+		Expect(err).To(HaveOccurred())
+	})
+})

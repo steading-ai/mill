@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/redact"
 	"github.com/ivy/mill/internal/workspace/signing"
@@ -73,6 +74,11 @@ type Options struct {
 	Identity string
 	// Name is the name on the mill's commits.
 	Name string
+	// Forge is where the run delivers: the push, the pull request, the
+	// checks. Nil leaves the forge verbs answering
+	// [workspace.ErrNoForge], which is what a run on a project with no
+	// repository gets.
+	Forge forge.Forge
 }
 
 // Workspace is one run's local workspace.
@@ -463,15 +469,27 @@ func within(root, path string) bool {
 // is the workspace's, not the mill's: no global or system config is read, no
 // terminal prompt can block it, and the identity is the mill's own.
 func (w *Workspace) git(ctx context.Context, dir string, args ...string) (string, error) {
+	return w.gitWith(ctx, dir, nil, args...)
+}
+
+// gitWith runs git with extra environment on top of the workspace's own. The
+// forge is its only caller: a credential reaches git through the environment
+// and a credential helper, so it appears in neither the remote URL nor argv
+// (docs/architecture.md §"Identity and credentials").
+func (w *Workspace) gitWith(ctx context.Context, dir string, extra map[string]string, args ...string) (string, error) {
 	binary := w.options.Git
 	if binary == "" {
 		binary = "git"
+	}
+	env := w.gitEnv(dir)
+	for name, value := range extra {
+		env[name] = value
 	}
 	process, err := w.execer.Exec(ctx, workspace.Command{
 		Path: binary,
 		Args: args,
 		Dir:  dir,
-		Env:  w.gitEnv(dir),
+		Env:  env,
 	})
 	if err != nil {
 		return "", fmt.Errorf("workspace: git %s: %w", args[0], err)
