@@ -77,6 +77,12 @@ service StoreService {
   // Abandon marks a run abandoned so a new generation can be created. The
   // restart path, and the only caller of it is a human.
   rpc Abandon(AbandonRequest) returns (AbandonResponse);
+  // Cancel asks the run's worker to stop at the next heartbeat. It is a
+  // request, not a transition: the flag is set, the worker reads it, aborts
+  // the step and releases its lease, and the run stays resumable. The only
+  // mutation a principal that holds no lease makes to a run's own row, and
+  // the reason the role map exists.
+  rpc Cancel(CancelRequest) returns (CancelResponse);
   // IssueStepToken mints the step-scoped bearer a session presents on the
   // workspace socket. The bearer is returned once; the store keeps its hash.
   rpc IssueStepToken(IssueStepTokenRequest) returns (IssueStepTokenResponse);
@@ -347,6 +353,23 @@ message AbandonRequest {
 // AbandonResponse carries the abandoned run.
 message AbandonResponse {
   // The run, now abandoned.
+  Run run = 1;
+}
+
+// CancelRequest asks a run's worker to stop cleanly.
+message CancelRequest {
+  // The run to cancel. Cancel carries no lease: the caller is a human or an
+  // agent asking the worker to stop, not the worker itself. Who asked is the
+  // connection's own identity, never a field of the request.
+  string run_id = 1;
+  // Why, for the event log.
+  string reason = 2;
+}
+
+// CancelResponse carries the run the request was recorded on.
+message CancelResponse {
+  // The run, with cancel_requested set. Its status is unchanged: the worker
+  // is what stops it.
   Run run = 1;
 }
 

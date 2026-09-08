@@ -400,6 +400,45 @@ func (s *Store) finish(ctx context.Context, leaseID, runID, status, reason strin
 	return run, nil
 }
 
+// RequestCancel records a cancellation request on a run. It is a request to
+// the worker rather than a transition: the flag is set, the run's status is
+// left alone, and the worker reads the flag at its next heartbeat, stops the
+// step cleanly and releases its lease. The run stays resumable.
+//
+// The caller holds no lease — cancel comes from a human or an agent, not
+// from the worker — so the row lock alone serializes it against a concurrent
+// claim. requestedBy is the caller the transport resolved, recorded on the
+// event.
+func (s *Store) RequestCancel(ctx context.Context, runID, requestedBy, reason string) (*millv1.Run, error) {
+	var run *millv1.Run
+	err := s.withTx(ctx, func(ctx context.Context, tx pgx.Tx, q *Queries) error {
+		state, err := lockRunRow(ctx, tx, runID)
+		if err != nil {
+			return err
+		}
+		row, err := q.RequestRunCancel(ctx, runID)
+		if err != nil {
+			return fmt.Errorf("request cancel of run %s: %w", runID, err)
+		}
+		run = runProto(row)
+		after := map[string]any{"status": row.Status, "cancel_requested": true, "requested_by": requestedBy}
+		if reason != "" {
+			after["reason"] = reason
+		}
+		return record(ctx, q, event{
+			runID:     runID,
+			op:        "cancel_requested",
+			before:    map[string]any{"status": state.status, "cancel_requested": false},
+			after:     after,
+			workerRef: row.WorkerRef,
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return run, nil
+}
+
 // StartStepRunParams opens the next attempt at a step.
 type StartStepRunParams struct {
 	// RunID is the run the attempt belongs to.
@@ -455,6 +494,25 @@ func (s *Store) StartStepRun(ctx context.Context, leaseID string, p StartStepRun
 		return nil, err
 	}
 	return stepRun, nil
+}
+
+// GetStepRun returns one attempt, or [ErrNotFound]. The domain reads it to
+// judge a transition before asking for the write that performs it.
+func (s *Store) GetStepRun(ctx context.Context, stepRunID string) (*millv1.StepRun, error) {
+	row, err := New(s.pool).GetStepRun(ctx, stepRunID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("step run %s: %w", stepRunID, ErrNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get step run %s: %w", stepRunID, err)
+	}
+	return stepRunProto(row)
+}
+
+// WorkflowOfRun returns the workflow version a run follows, or
+// [ErrNoWorkflow] while it is still selecting.
+func (s *Store) WorkflowOfRun(ctx context.Context, runID string) (*millv1.Workflow, error) {
+	return workflowOfRun(ctx, New(s.pool), runID)
 }
 
 // CloseStepRunParams records the evidence that closes an attempt.

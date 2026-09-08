@@ -75,6 +75,8 @@ const (
 	StoreServiceDoneProcedure = "/mill.v1.StoreService/Done"
 	// StoreServiceAbandonProcedure is the fully-qualified name of the StoreService's Abandon RPC.
 	StoreServiceAbandonProcedure = "/mill.v1.StoreService/Abandon"
+	// StoreServiceCancelProcedure is the fully-qualified name of the StoreService's Cancel RPC.
+	StoreServiceCancelProcedure = "/mill.v1.StoreService/Cancel"
 	// StoreServiceIssueStepTokenProcedure is the fully-qualified name of the StoreService's
 	// IssueStepToken RPC.
 	StoreServiceIssueStepTokenProcedure = "/mill.v1.StoreService/IssueStepToken"
@@ -145,6 +147,12 @@ type StoreServiceClient interface {
 	// Abandon marks a run abandoned so a new generation can be created. The
 	// restart path, and the only caller of it is a human.
 	Abandon(context.Context, *connect.Request[v1.AbandonRequest]) (*connect.Response[v1.AbandonResponse], error)
+	// Cancel asks the run's worker to stop at the next heartbeat. It is a
+	// request, not a transition: the flag is set, the worker reads it, aborts
+	// the step and releases its lease, and the run stays resumable. The only
+	// mutation a principal that holds no lease makes to a run's own row, and
+	// the reason the role map exists.
+	Cancel(context.Context, *connect.Request[v1.CancelRequest]) (*connect.Response[v1.CancelResponse], error)
 	// IssueStepToken mints the step-scoped bearer a session presents on the
 	// workspace socket. The bearer is returned once; the store keeps its hash.
 	IssueStepToken(context.Context, *connect.Request[v1.IssueStepTokenRequest]) (*connect.Response[v1.IssueStepTokenResponse], error)
@@ -257,6 +265,12 @@ func NewStoreServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(storeServiceMethods.ByName("Abandon")),
 			connect.WithClientOptions(opts...),
 		),
+		cancel: connect.NewClient[v1.CancelRequest, v1.CancelResponse](
+			httpClient,
+			baseURL+StoreServiceCancelProcedure,
+			connect.WithSchema(storeServiceMethods.ByName("Cancel")),
+			connect.WithClientOptions(opts...),
+		),
 		issueStepToken: connect.NewClient[v1.IssueStepTokenRequest, v1.IssueStepTokenResponse](
 			httpClient,
 			baseURL+StoreServiceIssueStepTokenProcedure,
@@ -334,6 +348,7 @@ type storeServiceClient struct {
 	park              *connect.Client[v1.ParkRequest, v1.ParkResponse]
 	done              *connect.Client[v1.DoneRequest, v1.DoneResponse]
 	abandon           *connect.Client[v1.AbandonRequest, v1.AbandonResponse]
+	cancel            *connect.Client[v1.CancelRequest, v1.CancelResponse]
 	issueStepToken    *connect.Client[v1.IssueStepTokenRequest, v1.IssueStepTokenResponse]
 	revokeStepToken   *connect.Client[v1.RevokeStepTokenRequest, v1.RevokeStepTokenResponse]
 	recordUsage       *connect.Client[v1.RecordUsageRequest, v1.RecordUsageResponse]
@@ -404,6 +419,11 @@ func (c *storeServiceClient) Done(ctx context.Context, req *connect.Request[v1.D
 // Abandon calls mill.v1.StoreService.Abandon.
 func (c *storeServiceClient) Abandon(ctx context.Context, req *connect.Request[v1.AbandonRequest]) (*connect.Response[v1.AbandonResponse], error) {
 	return c.abandon.CallUnary(ctx, req)
+}
+
+// Cancel calls mill.v1.StoreService.Cancel.
+func (c *storeServiceClient) Cancel(ctx context.Context, req *connect.Request[v1.CancelRequest]) (*connect.Response[v1.CancelResponse], error) {
+	return c.cancel.CallUnary(ctx, req)
 }
 
 // IssueStepToken calls mill.v1.StoreService.IssueStepToken.
@@ -497,6 +517,12 @@ type StoreServiceHandler interface {
 	// Abandon marks a run abandoned so a new generation can be created. The
 	// restart path, and the only caller of it is a human.
 	Abandon(context.Context, *connect.Request[v1.AbandonRequest]) (*connect.Response[v1.AbandonResponse], error)
+	// Cancel asks the run's worker to stop at the next heartbeat. It is a
+	// request, not a transition: the flag is set, the worker reads it, aborts
+	// the step and releases its lease, and the run stays resumable. The only
+	// mutation a principal that holds no lease makes to a run's own row, and
+	// the reason the role map exists.
+	Cancel(context.Context, *connect.Request[v1.CancelRequest]) (*connect.Response[v1.CancelResponse], error)
 	// IssueStepToken mints the step-scoped bearer a session presents on the
 	// workspace socket. The bearer is returned once; the store keeps its hash.
 	IssueStepToken(context.Context, *connect.Request[v1.IssueStepTokenRequest]) (*connect.Response[v1.IssueStepTokenResponse], error)
@@ -605,6 +631,12 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(storeServiceMethods.ByName("Abandon")),
 		connect.WithHandlerOptions(opts...),
 	)
+	storeServiceCancelHandler := connect.NewUnaryHandler(
+		StoreServiceCancelProcedure,
+		svc.Cancel,
+		connect.WithSchema(storeServiceMethods.ByName("Cancel")),
+		connect.WithHandlerOptions(opts...),
+	)
 	storeServiceIssueStepTokenHandler := connect.NewUnaryHandler(
 		StoreServiceIssueStepTokenProcedure,
 		svc.IssueStepToken,
@@ -691,6 +723,8 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 			storeServiceDoneHandler.ServeHTTP(w, r)
 		case StoreServiceAbandonProcedure:
 			storeServiceAbandonHandler.ServeHTTP(w, r)
+		case StoreServiceCancelProcedure:
+			storeServiceCancelHandler.ServeHTTP(w, r)
 		case StoreServiceIssueStepTokenProcedure:
 			storeServiceIssueStepTokenHandler.ServeHTTP(w, r)
 		case StoreServiceRevokeStepTokenProcedure:
@@ -766,6 +800,10 @@ func (UnimplementedStoreServiceHandler) Done(context.Context, *connect.Request[v
 
 func (UnimplementedStoreServiceHandler) Abandon(context.Context, *connect.Request[v1.AbandonRequest]) (*connect.Response[v1.AbandonResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.Abandon is not implemented"))
+}
+
+func (UnimplementedStoreServiceHandler) Cancel(context.Context, *connect.Request[v1.CancelRequest]) (*connect.Response[v1.CancelResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.Cancel is not implemented"))
 }
 
 func (UnimplementedStoreServiceHandler) IssueStepToken(context.Context, *connect.Request[v1.IssueStepTokenRequest]) (*connect.Response[v1.IssueStepTokenResponse], error) {

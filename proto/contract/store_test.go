@@ -15,6 +15,14 @@ var readOnlyRPCs = map[string]bool{
 	"Inspect":       true,
 }
 
+// leaselessRPCs are the mutations no lease fences, because their caller
+// holds none. Cancel is a request a human or an agent makes to the run's
+// worker: it sets a flag the worker reads at its next heartbeat and moves
+// nothing itself, and the principal making it is the connection's own uid.
+var leaselessRPCs = map[string]bool{
+	"Cancel": true,
+}
+
 // wantedRPCs is exactly the surface docs/ledger.md's resume algorithm calls,
 // plus the two reads the CLI's status and inspect need. An RPC with no
 // caller there does not belong on this service.
@@ -22,7 +30,7 @@ var wantedRPCs = []string{
 	"GetRunByNode", "CreateRun", "SetLease",
 	"StartStepRun", "CloseStepRun", "FailStepRun",
 	"AbortOpenStepRuns", "SupersedeSteps",
-	"MarkWaiting", "Park", "Done", "Abandon",
+	"MarkWaiting", "Park", "Done", "Abandon", "Cancel",
 	"IssueStepToken", "RevokeStepToken",
 	"RecordUsage", "MarkUsagePosted",
 	"GetWorkflow", "ListWorkflows", "PutWorkflow", "PutSkill",
@@ -44,12 +52,21 @@ var _ = Describe("store.proto", func() {
 
 	It("carries a lease id on every mutating request", func() {
 		for _, r := range c.rpcs {
-			if readOnlyRPCs[r.name] {
+			if readOnlyRPCs[r.name] || leaselessRPCs[r.name] {
 				continue
 			}
 			f := c.field(r.request, "lease_id")
 			Expect(f.typ).To(Equal("string"), "%s.lease_id", r.request)
 			Expect(f.comment).NotTo(BeEmpty(), "%s.lease_id", r.request)
+		}
+	})
+
+	It("says on a leaseless mutation why it carries none", func() {
+		for name := range leaselessRPCs {
+			_, ok := c.lookup(name+"Request", "lease_id")
+			Expect(ok).To(BeFalse(), "%sRequest carries a lease it cannot be fenced by", name)
+			Expect(c.field(name+"Request", "run_id").comment).To(
+				ContainSubstring("carries no lease"), name)
 		}
 	})
 

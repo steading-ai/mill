@@ -397,6 +397,38 @@ func (q *Queries) ParkRun(ctx context.Context, arg ParkRunParams) (Run, error) {
 	return i, err
 }
 
+const requestRunCancel = `-- name: RequestRunCancel :one
+UPDATE runs SET cancel_requested = true WHERE id = $1 RETURNING id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at
+`
+
+// Cancel is a request to the worker, not a transition: the flag is set and
+// the run's status is left alone. The worker reads it at its next heartbeat,
+// stops the step cleanly and releases its lease, and the run stays resumable.
+func (q *Queries) RequestRunCancel(ctx context.Context, id string) (Run, error) {
+	row := q.db.QueryRow(ctx, requestRunCancel, id)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.NodeID,
+		&i.NodeRef,
+		&i.Generation,
+		&i.ContextID,
+		&i.WorkflowID,
+		&i.Status,
+		&i.LeaseID,
+		&i.WorkerRef,
+		&i.GateNodeID,
+		&i.ParkedReason,
+		&i.CancelRequested,
+		&i.Branch,
+		&i.Tier,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.EndedAt,
+	)
+	return i, err
+}
+
 const setRunLease = `-- name: SetRunLease :one
 UPDATE runs
 SET lease_id = $2, worker_ref = $3, status = 'running',

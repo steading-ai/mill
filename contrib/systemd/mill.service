@@ -1,0 +1,42 @@
+# The mill service, as a user unit: it runs as the operator's own account,
+# which is what makes it the operator's dagger principal (see the Principal
+# section of docs/domain-model.md). Callers on the host reach its store over
+# the socket in that account's runtime directory. Install with
+#
+#   install -Dm644 contrib/systemd/mill.service ~/.config/systemd/user/mill.service
+#   systemctl --user enable --now mill.service
+#
+# DATABASE_URL and any other settings come from ~/.config/mill/env, one
+# KEY=value per line. See .env.example in the repository for the shape.
+#
+# Readiness is sd_notify: the unit is active only once the service has bound
+# its socket, applied its migrations, and had the database answer, so
+# anything ordered After= it can rely on all three.
+
+[Unit]
+Description=mill: a workflow runner over dagger's work graph
+Documentation=https://github.com/ivy/mill
+After=network.target dagger.service
+
+[Service]
+Type=notify
+NotifyAccess=main
+EnvironmentFile=-%E/mill/env
+RuntimeDirectory=mill
+RuntimeDirectoryMode=0750
+# Other accounts reach the store only if a role map names them; add
+# --roles %E/mill/roles.json once one exists. Without it the service's own
+# account is the only caller, which is the ordinary case while mill and the
+# operator share one.
+ExecStart=%h/.local/bin/mill serve --socket %t/mill/mill.sock
+# mill serve drains in-flight requests for up to its --shutdown-timeout
+# (30s by default) before exiting; give it that and a margin.
+TimeoutStopSec=45
+KillSignal=SIGTERM
+Restart=on-failure
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
