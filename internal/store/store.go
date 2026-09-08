@@ -1258,13 +1258,14 @@ func (s *Store) PutSkill(ctx context.Context, skill *millv1.Skill) (*millv1.Skil
 			return fmt.Errorf("get skill %s: %w", skill.GetName(), err)
 		}
 		row, err = q.InsertSkill(ctx, InsertSkillParams{
-			ID:       newULID(),
-			Name:     skill.GetName(),
-			Digest:   digest,
-			Body:     skill.GetBody(),
-			Files:    files,
-			Metadata: metadata,
-			Source:   source,
+			ID:          newULID(),
+			Name:        skill.GetName(),
+			Digest:      digest,
+			Description: skill.GetDescription(),
+			Body:        skill.GetBody(),
+			Files:       files,
+			Metadata:    metadata,
+			Source:      source,
 		})
 		if err != nil {
 			return fmt.Errorf("put skill %s: %w", skill.GetName(), err)
@@ -1277,6 +1278,20 @@ func (s *Store) PutSkill(ctx context.Context, skill *millv1.Skill) (*millv1.Skil
 		return nil, false, err
 	}
 	return stored, created, nil
+}
+
+// GetSkill returns the skill a workflow step pins, by name and digest. A
+// step carries only the reference, so reading the prompt back out — which
+// is what `mill workflow pull` does — needs the row itself.
+func (s *Store) GetSkill(ctx context.Context, name, digest string) (*millv1.Skill, error) {
+	row, err := New(s.pool).GetSkillByDigest(ctx, GetSkillByDigestParams{Name: name, Digest: digest})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("skill %s@%s: %w", name, digest, ErrNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get skill %s: %w", name, err)
+	}
+	return skillProto(row)
 }
 
 // RunState loads a run and the latest attempt at each of its steps: what

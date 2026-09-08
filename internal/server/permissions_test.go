@@ -19,6 +19,7 @@ var _ = Describe("What a procedure needs", Label("unit"), func() {
 		Entry("GetRunByNode", millv1connect.StoreServiceGetRunByNodeProcedure),
 		Entry("GetWorkflow", millv1connect.StoreServiceGetWorkflowProcedure),
 		Entry("ListWorkflows", millv1connect.StoreServiceListWorkflowsProcedure),
+		Entry("GetSkill", millv1connect.StoreServiceGetSkillProcedure),
 		Entry("Status", millv1connect.StoreServiceStatusProcedure),
 		Entry("Inspect", millv1connect.StoreServiceInspectProcedure),
 	)

@@ -57,3 +57,8 @@ func (s *Service) PutWorkflow(ctx context.Context, workflow *millv1.Workflow) (*
 func (s *Service) PutSkill(ctx context.Context, skill *millv1.Skill) (*millv1.Skill, bool, error) {
 	return s.store.PutSkill(ctx, skill)
 }
+
+// GetSkill returns the skill a workflow step pins, by name and digest.
+func (s *Service) GetSkill(ctx context.Context, name, digest string) (*millv1.Skill, error) {
+	return s.store.GetSkill(ctx, name, digest)
+}

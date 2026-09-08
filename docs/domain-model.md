@@ -314,5 +314,6 @@ Moving mill to its own account is a later change and a larger one than it looks:
 
 ## Open questions
 
-- Whether a `workflow.yaml` sitting beside `SKILL.md` in the seeding repo should be one file per workflow or one per step, given a step's skill is shared across workflows.
+Settled: a `workflow.yaml` is **one file per workflow**, sitting above a `skills/` directory rather than beside a single `SKILL.md`. A step references its skill by name and digest, so a skill shared across workflows is stored once and each workflow pins the version it ran. `internal/workflow` is the loader.
+
 - The exact schema for `structured` evidence on the assessment step — waiting on the first `/build-workflow` spike.

@@ -59,14 +59,15 @@ type Session struct {
 }
 
 type Skill struct {
-	ID        string
-	Name      string
-	Digest    string
-	Body      string
-	Files     []byte
-	Metadata  []byte
-	Source    []byte
-	CreatedAt time.Time
+	ID          string
+	Name        string
+	Digest      string
+	Body        string
+	Files       []byte
+	Metadata    []byte
+	Source      []byte
+	CreatedAt   time.Time
+	Description string
 }
 
 type StepRun struct {

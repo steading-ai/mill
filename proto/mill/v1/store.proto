@@ -1,8 +1,8 @@
 // The mill.v1 store API: what `mill work` speaks to `mill serve` over
 // Connect. docs/ledger.md is its rationale — the resume algorithm there is
 // the specification, and this service exposes exactly the calls that
-// algorithm makes, plus the two reads the CLI needs. Nothing more: an RPC
-// with no caller in the ledger's pseudocode does not belong here.
+// algorithm makes, plus the reads the CLI needs. Nothing more: an RPC with
+// no caller in either does not belong here.
 //
 // This is not a public API. It is spoken only between this binary's own two
 // faces, so it carries no versioning ceremony beyond `buf breaking`. The
@@ -104,6 +104,10 @@ service StoreService {
   // PutSkill stores a skill by name and digest, so a workflow version pins
   // the exact prompt it ran. Idempotent by digest.
   rpc PutSkill(PutSkillRequest) returns (PutSkillResponse);
+  // GetSkill returns the skill a workflow step pins, by name and digest. A
+  // step carries only the reference, so `mill workflow pull` needs this to
+  // write SKILL.md back out.
+  rpc GetSkill(GetSkillRequest) returns (GetSkillResponse);
   // Status lists runs by state with what the ledger derives: current step,
   // cost, and the gate a waiting run is blocked on.
   rpc Status(StatusRequest) returns (StatusResponse);
@@ -513,6 +517,20 @@ message PutSkillResponse {
   Skill skill = 1;
   // Whether this call created the row rather than finding it.
   bool created = 2;
+}
+
+// GetSkillRequest asks for the skill a step pins.
+message GetSkillRequest {
+  // The skill's name, from SKILL.md frontmatter.
+  string name = 1;
+  // The content hash the workflow step references.
+  string digest = 2;
+}
+
+// GetSkillResponse carries the skill.
+message GetSkillResponse {
+  // The skill, unset when no row has that name and digest.
+  Skill skill = 1;
 }
 
 // StatusRequest asks what every run is doing.

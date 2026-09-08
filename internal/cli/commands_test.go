@@ -45,6 +45,13 @@ var _ = Describe("The command tree", Label("unit"), func() {
 		Entry("restart", "restart"),
 	)
 
+	It("workflow carries the verbs that move definitions in and out", func() {
+		Expect(run("workflow", "--help")).To(BeZero(), stderr.String())
+		for _, verb := range []string{"push", "pull", "list"} {
+			Expect(stdout.String()).To(ContainSubstring(verb))
+		}
+	})
+
 	It("an unknown subcommand is an error", func() {
 		Expect(run("nonesuch")).NotTo(BeZero())
 	})

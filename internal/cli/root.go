@@ -41,7 +41,8 @@ func NewRootCommand(stdout, stderr io.Writer) *cobra.Command {
 "mill serve" runs the service: the store, the workflows, and the ledger.
 "mill work" runs a worker: claim a ready dagger node, then drive its run.
 "mill run" drives a single named node in the calling process.
-"mill restart" abandons a node's run and starts a new generation.`,
+"mill restart" abandons a node's run and starts a new generation.
+"mill workflow" pushes, pulls, and lists workflow definitions.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -58,6 +59,7 @@ func NewRootCommand(stdout, stderr io.Writer) *cobra.Command {
 		newWorkCommand(),
 		newRunCommand(),
 		newRestartCommand(),
+		newWorkflowCommand(),
 	)
 	return root
 }

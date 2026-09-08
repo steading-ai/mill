@@ -39,7 +39,7 @@ func (q *Queries) GetNewestWorkflow(ctx context.Context, arg GetNewestWorkflowPa
 }
 
 const getSkillByDigest = `-- name: GetSkillByDigest :one
-SELECT id, name, digest, body, files, metadata, source, created_at FROM skills WHERE name = $1 AND digest = $2
+SELECT id, name, digest, body, files, metadata, source, created_at, description FROM skills WHERE name = $1 AND digest = $2
 `
 
 type GetSkillByDigestParams struct {
@@ -59,6 +59,7 @@ func (q *Queries) GetSkillByDigest(ctx context.Context, arg GetSkillByDigestPara
 		&i.Metadata,
 		&i.Source,
 		&i.CreatedAt,
+		&i.Description,
 	)
 	return i, err
 }
@@ -117,19 +118,20 @@ func (q *Queries) GetWorkflowByVersion(ctx context.Context, arg GetWorkflowByVer
 }
 
 const insertSkill = `-- name: InsertSkill :one
-INSERT INTO skills (id, name, digest, body, files, metadata, source)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, name, digest, body, files, metadata, source, created_at
+INSERT INTO skills (id, name, digest, description, body, files, metadata, source)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, name, digest, body, files, metadata, source, created_at, description
 `
 
 type InsertSkillParams struct {
-	ID       string
-	Name     string
-	Digest   string
-	Body     string
-	Files    []byte
-	Metadata []byte
-	Source   []byte
+	ID          string
+	Name        string
+	Digest      string
+	Description string
+	Body        string
+	Files       []byte
+	Metadata    []byte
+	Source      []byte
 }
 
 func (q *Queries) InsertSkill(ctx context.Context, arg InsertSkillParams) (Skill, error) {
@@ -137,6 +139,7 @@ func (q *Queries) InsertSkill(ctx context.Context, arg InsertSkillParams) (Skill
 		arg.ID,
 		arg.Name,
 		arg.Digest,
+		arg.Description,
 		arg.Body,
 		arg.Files,
 		arg.Metadata,
@@ -152,6 +155,7 @@ func (q *Queries) InsertSkill(ctx context.Context, arg InsertSkillParams) (Skill
 		&i.Metadata,
 		&i.Source,
 		&i.CreatedAt,
+		&i.Description,
 	)
 	return i, err
 }

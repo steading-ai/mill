@@ -11,6 +11,7 @@ var readOnlyRPCs = map[string]bool{
 	"GetRunByNode":  true,
 	"GetWorkflow":   true,
 	"ListWorkflows": true,
+	"GetSkill":      true,
 	"Status":        true,
 	"Inspect":       true,
 }
@@ -24,8 +25,9 @@ var leaselessRPCs = map[string]bool{
 }
 
 // wantedRPCs is exactly the surface docs/ledger.md's resume algorithm calls,
-// plus the two reads the CLI's status and inspect need. An RPC with no
-// caller there does not belong on this service.
+// plus the reads the CLI needs: status, inspect, and the skill a workflow
+// pull writes back out. An RPC with no caller there does not belong on this
+// service.
 var wantedRPCs = []string{
 	"GetRunByNode", "CreateRun", "SetLease",
 	"StartStepRun", "CloseStepRun", "FailStepRun",
@@ -33,7 +35,7 @@ var wantedRPCs = []string{
 	"MarkWaiting", "Park", "Done", "Abandon", "Cancel",
 	"IssueStepToken", "RevokeStepToken",
 	"RecordUsage", "MarkUsagePosted",
-	"GetWorkflow", "ListWorkflows", "PutWorkflow", "PutSkill",
+	"GetWorkflow", "ListWorkflows", "PutWorkflow", "PutSkill", "GetSkill",
 	"Status", "Inspect",
 }
 

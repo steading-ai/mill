@@ -38,6 +38,7 @@ The portable part of a step, stored so a workflow version pins the exact prompt 
 | `id` | ULID |
 | `name` | From `SKILL.md` frontmatter |
 | `digest` | Content hash of the skill directory |
+| `description` | From `SKILL.md` frontmatter. What a router matches a node against |
 | `body` | The `SKILL.md` body, the prompt |
 | `files` | JSONB manifest of `scripts/`, `assets/`, `references/`: path → digest. Bytes are stored in the store's blob table by digest |
 | `metadata` | The flat string map from frontmatter |

@@ -29,15 +29,17 @@ Your contract is the node's **Acceptance criteria** and **Scenarios**. Every cri
 
 ```
 cmd/mill/             binary entrypoint; one binary, two faces (service, worker)
-internal/cli/         the cobra command tree: serve, work, run, restart, version
+internal/cli/         the cobra command tree: serve, work, run, restart, workflow, version
 internal/store/       persistence and its migrations; only internal/domain may import it
 internal/harness/     the adapter seam: the Harness interface, the claudecode sidecar driver, a scripted fake
+internal/workflow/    the loader: a workflow directory in, a versioned definition and its skills out
 internal/workspace/   the process chokepoint. os/exec is forbidden everywhere else
 internal/testsupport/ the testcontainers PostgreSQL fixture db-labelled specs use
 internal/version/     the version injected at link time by the Makefile
 proto/                the two contracts: mill.v1 the store API, harness.v1 the sidecar wire
 gen/                  generated Go, committed. buf owns it; `make generate` writes it
 sidecar/              the TypeScript harness adapter; sidecar/gen is harness.v1 in TypeScript
+workflows/            the workflow definitions this repo seeds the store with; `mill workflow push` loads them
 docs/                 the design. Authoritative
 harness/              the reference agent loop that works one milestone of the backlog
 compose.yaml          PostgreSQL for local development; .env.example seeds .env

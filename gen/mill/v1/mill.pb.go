@@ -2056,7 +2056,10 @@ type Skill struct {
 	// Where this skill came from.
 	Source *Source `protobuf:"bytes,7,opt,name=source,proto3" json:"source,omitempty"`
 	// When it was stored.
-	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	CreatedAt *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	// From SKILL.md frontmatter. The one field besides `name` every
+	// agent-skills client carries, and what a router matches a node against.
+	Description   string `protobuf:"bytes,9,opt,name=description,proto3" json:"description,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2145,6 +2148,13 @@ func (x *Skill) GetCreatedAt() *timestamppb.Timestamp {
 		return x.CreatedAt
 	}
 	return nil
+}
+
+func (x *Skill) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
 }
 
 // Check is a deterministic command a step runs through the workspace. Checks
@@ -3531,7 +3541,7 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"\tpushed_by\x18\x05 \x01(\tR\bpushedBy\"6\n" +
 	"\bSkillRef\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x16\n" +
-	"\x06digest\x18\x02 \x01(\tR\x06digest\"\x9d\x03\n" +
+	"\x06digest\x18\x02 \x01(\tR\x06digest\"\xbf\x03\n" +
 	"\x05Skill\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
@@ -3541,7 +3551,8 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"\bmetadata\x18\x06 \x03(\v2\x1c.mill.v1.Skill.MetadataEntryR\bmetadata\x12'\n" +
 	"\x06source\x18\a \x01(\v2\x0f.mill.v1.SourceR\x06source\x129\n" +
 	"\n" +
-	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x1a8\n" +
+	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12 \n" +
+	"\vdescription\x18\t \x01(\tR\vdescription\x1a8\n" +
 	"\n" +
 	"FilesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +

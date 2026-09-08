@@ -1,0 +1,127 @@
+# quick-fix: the smallest workflow that still ships a change.
+#
+# Adapted from the /work-on skill's Quick Fix tier: one session gathers just
+# enough context, makes the change, commits it, and opens the PR; a check
+# proves the tree is clean and a gate merges. There is no plan step, no
+# review step, and no human in the loop — a quick fix that needs one is the
+# wrong tier, and the circuit breaker is how it reaches a person anyway.
+#
+# Every step names the evidence that closes it (docs/core-principles.md §8)
+# and the capability set its workspace handle grants. The harness table is
+# per-step because the same skill is worth a different model in a different
+# workflow (docs/domain-model.md §Step).
+name: quick-fix
+scope: org
+steps:
+  - name: gather-context
+    kind: skill
+    session: implement
+    skill: gather-context
+    evidence: artifact
+    capabilities:
+      - read
+    harness:
+      claude-code:
+        model: sonnet
+        effort: medium
+        tools:
+          allow:
+            - Glob
+            - Grep
+            - Read
+    retries: 2
+    timeout: 15m
+
+  - name: implement
+    kind: skill
+    session: implement
+    skill: implement
+    evidence: artifact
+    capabilities:
+      - read
+      - write
+      - exec
+    harness:
+      claude-code:
+        model: opus
+        effort: high
+        tools:
+          allow:
+            - Bash
+            - Edit
+            - Glob
+            - Grep
+            - Read
+            - Write
+    retries: 3
+    timeout: 1h
+
+  - name: commit
+    kind: skill
+    session: implement
+    skill: commit
+    evidence: commit
+    capabilities:
+      - write
+    harness:
+      claude-code:
+        model: sonnet
+        effort: medium
+    retries: 2
+    timeout: 15m
+
+  # The tree has to be clean before the run leaves the workspace behind.
+  # This is the check that makes "exec can write" detectable in MVP, and its
+  # failure sends the session back to implement with the dirty paths as the
+  # next prompt (docs/domain-model.md §Check).
+  - name: clean-tree
+    kind: check
+    check:
+      command:
+        - scripts/clean-tree
+      exit:
+        - 0
+      stdout: none
+      feedback: revise
+    evidence: exit
+    capabilities:
+      - exec
+    on_failure: revise implement
+    retries: 3
+    timeout: 2m
+
+  - name: pr
+    kind: skill
+    session: implement
+    skill: pr
+    evidence: url
+    capabilities:
+      - forge
+    harness:
+      claude-code:
+        model: sonnet
+        effort: medium
+    retries: 2
+    timeout: 15m
+
+  # Auto-approved: repo protections are the repo's job
+  # (docs/core-principles.md §1). The gate exists so a project that wants a
+  # human on its merges gets one by dropping the policy, and so the ledger
+  # records that the merge was a decision.
+  - name: merge
+    kind: gate
+    gate:
+      ask:
+        title: 'Merge {{.NodeRef}}?'
+        body: |
+          {{.NodeRef}} — {{.NodeTitle}} — is ready to merge.
+
+          Pull request: {{.PullRequest}}
+
+          Complete this node to merge. Drop it to leave the branch open; the
+          run records the denial on {{.NodeRef}} and stops.
+      auto: true
+      deny_result: Merge denied by a human; the branch and its pull request are left open.
+    evidence: status
+    retries: 1
+    timeout: 168h

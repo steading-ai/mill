@@ -1,8 +1,8 @@
 // The mill.v1 store API: what `mill work` speaks to `mill serve` over
 // Connect. docs/ledger.md is its rationale — the resume algorithm there is
 // the specification, and this service exposes exactly the calls that
-// algorithm makes, plus the two reads the CLI needs. Nothing more: an RPC
-// with no caller in the ledger's pseudocode does not belong here.
+// algorithm makes, plus the reads the CLI needs. Nothing more: an RPC with
+// no caller in either does not belong here.
 //
 // This is not a public API. It is spoken only between this binary's own two
 // faces, so it carries no versioning ceremony beyond `buf breaking`. The
@@ -100,6 +100,8 @@ const (
 	StoreServicePutWorkflowProcedure = "/mill.v1.StoreService/PutWorkflow"
 	// StoreServicePutSkillProcedure is the fully-qualified name of the StoreService's PutSkill RPC.
 	StoreServicePutSkillProcedure = "/mill.v1.StoreService/PutSkill"
+	// StoreServiceGetSkillProcedure is the fully-qualified name of the StoreService's GetSkill RPC.
+	StoreServiceGetSkillProcedure = "/mill.v1.StoreService/GetSkill"
 	// StoreServiceStatusProcedure is the fully-qualified name of the StoreService's Status RPC.
 	StoreServiceStatusProcedure = "/mill.v1.StoreService/Status"
 	// StoreServiceInspectProcedure is the fully-qualified name of the StoreService's Inspect RPC.
@@ -174,6 +176,10 @@ type StoreServiceClient interface {
 	// PutSkill stores a skill by name and digest, so a workflow version pins
 	// the exact prompt it ran. Idempotent by digest.
 	PutSkill(context.Context, *connect.Request[v1.PutSkillRequest]) (*connect.Response[v1.PutSkillResponse], error)
+	// GetSkill returns the skill a workflow step pins, by name and digest. A
+	// step carries only the reference, so `mill workflow pull` needs this to
+	// write SKILL.md back out.
+	GetSkill(context.Context, *connect.Request[v1.GetSkillRequest]) (*connect.Response[v1.GetSkillResponse], error)
 	// Status lists runs by state with what the ledger derives: current step,
 	// cost, and the gate a waiting run is blocked on.
 	Status(context.Context, *connect.Request[v1.StatusRequest]) (*connect.Response[v1.StatusResponse], error)
@@ -319,6 +325,12 @@ func NewStoreServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(storeServiceMethods.ByName("PutSkill")),
 			connect.WithClientOptions(opts...),
 		),
+		getSkill: connect.NewClient[v1.GetSkillRequest, v1.GetSkillResponse](
+			httpClient,
+			baseURL+StoreServiceGetSkillProcedure,
+			connect.WithSchema(storeServiceMethods.ByName("GetSkill")),
+			connect.WithClientOptions(opts...),
+		),
 		status: connect.NewClient[v1.StatusRequest, v1.StatusResponse](
 			httpClient,
 			baseURL+StoreServiceStatusProcedure,
@@ -357,6 +369,7 @@ type storeServiceClient struct {
 	listWorkflows     *connect.Client[v1.ListWorkflowsRequest, v1.ListWorkflowsResponse]
 	putWorkflow       *connect.Client[v1.PutWorkflowRequest, v1.PutWorkflowResponse]
 	putSkill          *connect.Client[v1.PutSkillRequest, v1.PutSkillResponse]
+	getSkill          *connect.Client[v1.GetSkillRequest, v1.GetSkillResponse]
 	status            *connect.Client[v1.StatusRequest, v1.StatusResponse]
 	inspect           *connect.Client[v1.InspectRequest, v1.InspectResponse]
 }
@@ -466,6 +479,11 @@ func (c *storeServiceClient) PutSkill(ctx context.Context, req *connect.Request[
 	return c.putSkill.CallUnary(ctx, req)
 }
 
+// GetSkill calls mill.v1.StoreService.GetSkill.
+func (c *storeServiceClient) GetSkill(ctx context.Context, req *connect.Request[v1.GetSkillRequest]) (*connect.Response[v1.GetSkillResponse], error) {
+	return c.getSkill.CallUnary(ctx, req)
+}
+
 // Status calls mill.v1.StoreService.Status.
 func (c *storeServiceClient) Status(ctx context.Context, req *connect.Request[v1.StatusRequest]) (*connect.Response[v1.StatusResponse], error) {
 	return c.status.CallUnary(ctx, req)
@@ -544,6 +562,10 @@ type StoreServiceHandler interface {
 	// PutSkill stores a skill by name and digest, so a workflow version pins
 	// the exact prompt it ran. Idempotent by digest.
 	PutSkill(context.Context, *connect.Request[v1.PutSkillRequest]) (*connect.Response[v1.PutSkillResponse], error)
+	// GetSkill returns the skill a workflow step pins, by name and digest. A
+	// step carries only the reference, so `mill workflow pull` needs this to
+	// write SKILL.md back out.
+	GetSkill(context.Context, *connect.Request[v1.GetSkillRequest]) (*connect.Response[v1.GetSkillResponse], error)
 	// Status lists runs by state with what the ledger derives: current step,
 	// cost, and the gate a waiting run is blocked on.
 	Status(context.Context, *connect.Request[v1.StatusRequest]) (*connect.Response[v1.StatusResponse], error)
@@ -685,6 +707,12 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(storeServiceMethods.ByName("PutSkill")),
 		connect.WithHandlerOptions(opts...),
 	)
+	storeServiceGetSkillHandler := connect.NewUnaryHandler(
+		StoreServiceGetSkillProcedure,
+		svc.GetSkill,
+		connect.WithSchema(storeServiceMethods.ByName("GetSkill")),
+		connect.WithHandlerOptions(opts...),
+	)
 	storeServiceStatusHandler := connect.NewUnaryHandler(
 		StoreServiceStatusProcedure,
 		svc.Status,
@@ -741,6 +769,8 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 			storeServicePutWorkflowHandler.ServeHTTP(w, r)
 		case StoreServicePutSkillProcedure:
 			storeServicePutSkillHandler.ServeHTTP(w, r)
+		case StoreServiceGetSkillProcedure:
+			storeServiceGetSkillHandler.ServeHTTP(w, r)
 		case StoreServiceStatusProcedure:
 			storeServiceStatusHandler.ServeHTTP(w, r)
 		case StoreServiceInspectProcedure:
@@ -836,6 +866,10 @@ func (UnimplementedStoreServiceHandler) PutWorkflow(context.Context, *connect.Re
 
 func (UnimplementedStoreServiceHandler) PutSkill(context.Context, *connect.Request[v1.PutSkillRequest]) (*connect.Response[v1.PutSkillResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.PutSkill is not implemented"))
+}
+
+func (UnimplementedStoreServiceHandler) GetSkill(context.Context, *connect.Request[v1.GetSkillRequest]) (*connect.Response[v1.GetSkillResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.GetSkill is not implemented"))
 }
 
 func (UnimplementedStoreServiceHandler) Status(context.Context, *connect.Request[v1.StatusRequest]) (*connect.Response[v1.StatusResponse], error) {

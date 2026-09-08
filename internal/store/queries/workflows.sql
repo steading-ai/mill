@@ -26,8 +26,8 @@ WHERE (sqlc.narg('name')::text IS NULL OR name = sqlc.narg('name')::text)
 ORDER BY name, created_at DESC, id DESC;
 
 -- name: InsertSkill :one
-INSERT INTO skills (id, name, digest, body, files, metadata, source)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO skills (id, name, digest, description, body, files, metadata, source)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
 -- name: GetSkillByDigest :one

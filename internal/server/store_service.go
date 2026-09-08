@@ -246,6 +246,15 @@ func (s *StoreService) PutSkill(ctx context.Context, req *connect.Request[millv1
 	return connect.NewResponse(&millv1.PutSkillResponse{Skill: skill, Created: created}), nil
 }
 
+// GetSkill returns the skill a workflow step pins, by name and digest.
+func (s *StoreService) GetSkill(ctx context.Context, req *connect.Request[millv1.GetSkillRequest]) (*connect.Response[millv1.GetSkillResponse], error) {
+	skill, err := s.svc.GetSkill(ctx, req.Msg.GetName(), req.Msg.GetDigest())
+	if err != nil {
+		return nil, connectError(err)
+	}
+	return connect.NewResponse(&millv1.GetSkillResponse{Skill: skill}), nil
+}
+
 // Status lists runs by state with what the ledger derives about them.
 func (s *StoreService) Status(ctx context.Context, req *connect.Request[millv1.StatusRequest]) (*connect.Response[millv1.StatusResponse], error) {
 	runs, err := s.svc.Status(ctx, req.Msg.GetStatuses(), req.Msg.GetProject())

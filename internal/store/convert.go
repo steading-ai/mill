@@ -304,14 +304,15 @@ func skillProto(row Skill) (*millv1.Skill, error) {
 		}
 	}
 	return &millv1.Skill{
-		Id:        row.ID,
-		Name:      row.Name,
-		Digest:    row.Digest,
-		Body:      row.Body,
-		Files:     files,
-		Metadata:  metadata,
-		Source:    source,
-		CreatedAt: timestamppb.New(row.CreatedAt),
+		Id:          row.ID,
+		Name:        row.Name,
+		Digest:      row.Digest,
+		Description: row.Description,
+		Body:        row.Body,
+		Files:       files,
+		Metadata:    metadata,
+		Source:      source,
+		CreatedAt:   timestamppb.New(row.CreatedAt),
 	}, nil
 }
 

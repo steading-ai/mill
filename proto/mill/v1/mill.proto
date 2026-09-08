@@ -509,6 +509,9 @@ message Skill {
   Source source = 7;
   // When it was stored.
   google.protobuf.Timestamp created_at = 8;
+  // From SKILL.md frontmatter. The one field besides `name` every
+  // agent-skills client carries, and what a router matches a node against.
+  string description = 9;
 }
 
 // Check is a deterministic command a step runs through the workspace. Checks
