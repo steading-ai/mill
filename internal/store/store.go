@@ -339,6 +339,36 @@ func (s *Store) Park(ctx context.Context, leaseID, runID, gateNodeID string, rea
 	return run, nil
 }
 
+// SetCompleteRequestID mints the idempotency key of the patch that completes
+// the node, or returns the one the run already carries. It is called before
+// that patch is sent, so that a worker resuming a run whose patch may have
+// landed retries the same patch rather than sending a second one
+// (docs/ledger.md §Resume, Invariant 11).
+func (s *Store) SetCompleteRequestID(ctx context.Context, leaseID, runID, requestID string) (*millv1.Run, error) {
+	var run *millv1.Run
+	err := s.withTx(ctx, func(ctx context.Context, tx pgx.Tx, q *Queries) error {
+		if _, err := fence(ctx, tx, runID, leaseID); err != nil {
+			return err
+		}
+		row, err := q.SetRunCompleteRequestID(ctx, SetRunCompleteRequestIDParams{
+			ID:                runID,
+			CompleteRequestID: requestID,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("run %s: %w", runID, ErrNotFound)
+		}
+		if err != nil {
+			return fmt.Errorf("set complete request id of run %s: %w", runID, err)
+		}
+		run = runProto(row)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return run, nil
+}
+
 // Done marks a run done. It is called only after dagger has confirmed the
 // completing patch: a run marked done before that would strand a node
 // nothing can claim (Invariant 11).

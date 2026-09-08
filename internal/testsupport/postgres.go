@@ -61,6 +61,7 @@ type Postgres struct {
 // SynchronizedBeforeSuite.
 func Start(ctx context.Context, migrate Migrate) (*Postgres, error) {
 	useRootlessPodmanSocket()
+	patientReaper()
 	tclog.SetDefault(ginkgoLogger{})
 
 	ctx, cancel := context.WithTimeout(ctx, startTimeout)
@@ -163,6 +164,24 @@ func (p *Postgres) Database(ctx context.Context) *pgxpool.Pool {
 		return p.drop(ctx, name)
 	})
 	return pool
+}
+
+// Blank hands the running spec its own empty database and returns its
+// connection URL, dropping it when the spec ends. It is what a fixture that
+// brings its own migrations needs — the dagger service in
+// [github.com/ivy/mill/internal/testsupport.Dagger] — where [Postgres.Database]
+// hands out a clone of mill's own schema.
+func (p *Postgres) Blank(ctx context.Context) string {
+	ginkgo.GinkgoHelper()
+	report := ginkgo.CurrentSpecReport()
+	gomega.Expect(report.Labels()).To(gomega.ContainElement(DBLabel),
+		"spec %q uses PostgreSQL and must be labelled %q", report.FullText(), DBLabel)
+	gomega.Expect(p).NotTo(gomega.BeNil(), "PostgreSQL was not started for this suite")
+
+	name := "blank_" + randomSuffix()
+	gomega.Expect(p.admin(ctx, `CREATE DATABASE `+pgx.Identifier{name}.Sanitize())).To(gomega.Succeed())
+	ginkgo.DeferCleanup(func(ctx context.Context) error { return p.drop(ctx, name) })
+	return p.databaseURL(name)
 }
 
 // clone creates name from the template and opens a pool on it.
@@ -291,6 +310,20 @@ func useRootlessPodmanSocket() {
 	}
 	setDefaultEnv("DOCKER_HOST", "unix://"+sock)
 	setDefaultEnv("TESTCONTAINERS_RYUK_CONTAINER_PRIVILEGED", "true")
+}
+
+// patientReaper widens the window Ryuk waits before removing the containers
+// of a run it thinks has ended.
+//
+// Ryuk reaps ten seconds after the last connection from the test process
+// closes, which is fine for a suite whose specs are all short and fatal for
+// one whose specs are not: the run loop's specs hold a lease across a step
+// that sleeps past a TTL, and a database removed underneath them makes every
+// later query hang rather than fail. The safety net is kept — a crashed run
+// still has its containers removed — it is just given a window longer than
+// any spec here.
+func patientReaper() {
+	setDefaultEnv("RYUK_RECONNECTION_TIMEOUT", "5m")
 }
 
 func setDefaultEnv(key, value string) {

@@ -339,6 +339,12 @@ message Run {
   google.protobuf.Timestamp updated_at = 16;
   // When the run reached a terminal state. From docs/ledger.md §runs.
   google.protobuf.Timestamp ended_at = 17;
+  // The idempotency key of the patch that completes the node, minted and
+  // stored before that patch is sent. A worker resuming a run whose
+  // completing patch may or may not have landed retries it under the same
+  // key rather than under a new one, which is what makes "dagger first,
+  // store second" recoverable (docs/ledger.md §Resume, Invariant 11).
+  string complete_request_id = 18;
 }
 
 // StepRun is one attempt at a step. Append-only: an interrupted step starts a

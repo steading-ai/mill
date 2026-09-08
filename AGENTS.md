@@ -31,12 +31,14 @@ Your contract is the node's **Acceptance criteria** and **Scenarios**. Every cri
 cmd/mill/             binary entrypoint; one binary, two faces (service, worker)
 internal/cli/         the cobra command tree: serve, work, run, restart, workflow, version
 internal/store/       persistence and its migrations; only internal/domain may import it
+internal/dagger/      the client for dagger's dagger.v1 API, and the refusals mill owes a gate
+internal/run/         the loop: claim, heartbeat, steps, evidence, finish. docs/ledger.md §Resume in Go
 internal/harness/     the adapter seam: the Harness interface, the claudecode sidecar driver, a scripted fake
 internal/workflow/    the loader: a workflow directory in, a versioned definition and its skills out
 internal/workspace/   the process chokepoint. os/exec is forbidden everywhere else
-internal/testsupport/ the testcontainers PostgreSQL fixture db-labelled specs use
+internal/testsupport/ the testcontainers PostgreSQL fixture db-labelled specs use, and a real `dg serve` for the run loop
 internal/version/     the version injected at link time by the Makefile
-proto/                the two contracts: mill.v1 the store API, harness.v1 the sidecar wire
+proto/                the contracts: mill.v1 the store API, harness.v1 the sidecar wire, dagger.v1 vendored from dagger
 gen/                  generated Go, committed. buf owns it; `make generate` writes it
 sidecar/              the TypeScript harness adapter; sidecar/gen is harness.v1 in TypeScript
 workflows/            the workflow definitions this repo seeds the store with; `mill workflow push` loads them

@@ -8,11 +8,13 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 
 	"github.com/spf13/cobra"
 
+	"github.com/ivy/mill/internal/run"
 	"github.com/ivy/mill/internal/version"
 )
 
@@ -24,9 +26,20 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
 		_, _ = fmt.Fprintln(stderr, "mill:", err)
-		return 1
+		return ExitCode(err)
 	}
 	return 0
+}
+
+// ExitCode is the status one failure exits with. Being fenced out has a
+// status of its own because nothing went wrong: another worker holds the
+// node, the ledger is the truth, and a supervisor that restarts on this is
+// restarting on the normal path rather than on an error.
+func ExitCode(err error) int {
+	if errors.Is(err, run.ErrFenced) {
+		return ExitFenced
+	}
+	return 1
 }
 
 // NewRootCommand builds the mill command tree. Output is written to stdout

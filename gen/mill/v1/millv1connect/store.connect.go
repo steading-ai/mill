@@ -71,6 +71,9 @@ const (
 	StoreServiceMarkWaitingProcedure = "/mill.v1.StoreService/MarkWaiting"
 	// StoreServiceParkProcedure is the fully-qualified name of the StoreService's Park RPC.
 	StoreServiceParkProcedure = "/mill.v1.StoreService/Park"
+	// StoreServiceSetCompleteRequestIdProcedure is the fully-qualified name of the StoreService's
+	// SetCompleteRequestId RPC.
+	StoreServiceSetCompleteRequestIdProcedure = "/mill.v1.StoreService/SetCompleteRequestId"
 	// StoreServiceDoneProcedure is the fully-qualified name of the StoreService's Done RPC.
 	StoreServiceDoneProcedure = "/mill.v1.StoreService/Done"
 	// StoreServiceAbandonProcedure is the fully-qualified name of the StoreService's Abandon RPC.
@@ -142,6 +145,12 @@ type StoreServiceClient interface {
 	// Park trips the circuit breaker: the run stops, a gate asks a human what
 	// to do, and the reason says what stopped it.
 	Park(context.Context, *connect.Request[v1.ParkRequest]) (*connect.Response[v1.ParkResponse], error)
+	// SetCompleteRequestId mints and stores the idempotency key of the patch
+	// that completes the node, before that patch is sent. Minting is once per
+	// run: a second call returns the key already stored, so a worker resuming
+	// a run whose completing patch may have landed retries the same patch
+	// rather than sending a second one.
+	SetCompleteRequestId(context.Context, *connect.Request[v1.SetCompleteRequestIdRequest]) (*connect.Response[v1.SetCompleteRequestIdResponse], error)
 	// Done marks a run done. Called only after dagger has confirmed the
 	// completing patch: a run marked done before that would strand a node
 	// nothing can claim.
@@ -259,6 +268,12 @@ func NewStoreServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(storeServiceMethods.ByName("Park")),
 			connect.WithClientOptions(opts...),
 		),
+		setCompleteRequestId: connect.NewClient[v1.SetCompleteRequestIdRequest, v1.SetCompleteRequestIdResponse](
+			httpClient,
+			baseURL+StoreServiceSetCompleteRequestIdProcedure,
+			connect.WithSchema(storeServiceMethods.ByName("SetCompleteRequestId")),
+			connect.WithClientOptions(opts...),
+		),
 		done: connect.NewClient[v1.DoneRequest, v1.DoneResponse](
 			httpClient,
 			baseURL+StoreServiceDoneProcedure,
@@ -348,30 +363,31 @@ func NewStoreServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 
 // storeServiceClient implements StoreServiceClient.
 type storeServiceClient struct {
-	getRunByNode      *connect.Client[v1.GetRunByNodeRequest, v1.GetRunByNodeResponse]
-	createRun         *connect.Client[v1.CreateRunRequest, v1.CreateRunResponse]
-	setLease          *connect.Client[v1.SetLeaseRequest, v1.SetLeaseResponse]
-	startStepRun      *connect.Client[v1.StartStepRunRequest, v1.StartStepRunResponse]
-	closeStepRun      *connect.Client[v1.CloseStepRunRequest, v1.CloseStepRunResponse]
-	failStepRun       *connect.Client[v1.FailStepRunRequest, v1.FailStepRunResponse]
-	abortOpenStepRuns *connect.Client[v1.AbortOpenStepRunsRequest, v1.AbortOpenStepRunsResponse]
-	supersedeSteps    *connect.Client[v1.SupersedeStepsRequest, v1.SupersedeStepsResponse]
-	markWaiting       *connect.Client[v1.MarkWaitingRequest, v1.MarkWaitingResponse]
-	park              *connect.Client[v1.ParkRequest, v1.ParkResponse]
-	done              *connect.Client[v1.DoneRequest, v1.DoneResponse]
-	abandon           *connect.Client[v1.AbandonRequest, v1.AbandonResponse]
-	cancel            *connect.Client[v1.CancelRequest, v1.CancelResponse]
-	issueStepToken    *connect.Client[v1.IssueStepTokenRequest, v1.IssueStepTokenResponse]
-	revokeStepToken   *connect.Client[v1.RevokeStepTokenRequest, v1.RevokeStepTokenResponse]
-	recordUsage       *connect.Client[v1.RecordUsageRequest, v1.RecordUsageResponse]
-	markUsagePosted   *connect.Client[v1.MarkUsagePostedRequest, v1.MarkUsagePostedResponse]
-	getWorkflow       *connect.Client[v1.GetWorkflowRequest, v1.GetWorkflowResponse]
-	listWorkflows     *connect.Client[v1.ListWorkflowsRequest, v1.ListWorkflowsResponse]
-	putWorkflow       *connect.Client[v1.PutWorkflowRequest, v1.PutWorkflowResponse]
-	putSkill          *connect.Client[v1.PutSkillRequest, v1.PutSkillResponse]
-	getSkill          *connect.Client[v1.GetSkillRequest, v1.GetSkillResponse]
-	status            *connect.Client[v1.StatusRequest, v1.StatusResponse]
-	inspect           *connect.Client[v1.InspectRequest, v1.InspectResponse]
+	getRunByNode         *connect.Client[v1.GetRunByNodeRequest, v1.GetRunByNodeResponse]
+	createRun            *connect.Client[v1.CreateRunRequest, v1.CreateRunResponse]
+	setLease             *connect.Client[v1.SetLeaseRequest, v1.SetLeaseResponse]
+	startStepRun         *connect.Client[v1.StartStepRunRequest, v1.StartStepRunResponse]
+	closeStepRun         *connect.Client[v1.CloseStepRunRequest, v1.CloseStepRunResponse]
+	failStepRun          *connect.Client[v1.FailStepRunRequest, v1.FailStepRunResponse]
+	abortOpenStepRuns    *connect.Client[v1.AbortOpenStepRunsRequest, v1.AbortOpenStepRunsResponse]
+	supersedeSteps       *connect.Client[v1.SupersedeStepsRequest, v1.SupersedeStepsResponse]
+	markWaiting          *connect.Client[v1.MarkWaitingRequest, v1.MarkWaitingResponse]
+	park                 *connect.Client[v1.ParkRequest, v1.ParkResponse]
+	setCompleteRequestId *connect.Client[v1.SetCompleteRequestIdRequest, v1.SetCompleteRequestIdResponse]
+	done                 *connect.Client[v1.DoneRequest, v1.DoneResponse]
+	abandon              *connect.Client[v1.AbandonRequest, v1.AbandonResponse]
+	cancel               *connect.Client[v1.CancelRequest, v1.CancelResponse]
+	issueStepToken       *connect.Client[v1.IssueStepTokenRequest, v1.IssueStepTokenResponse]
+	revokeStepToken      *connect.Client[v1.RevokeStepTokenRequest, v1.RevokeStepTokenResponse]
+	recordUsage          *connect.Client[v1.RecordUsageRequest, v1.RecordUsageResponse]
+	markUsagePosted      *connect.Client[v1.MarkUsagePostedRequest, v1.MarkUsagePostedResponse]
+	getWorkflow          *connect.Client[v1.GetWorkflowRequest, v1.GetWorkflowResponse]
+	listWorkflows        *connect.Client[v1.ListWorkflowsRequest, v1.ListWorkflowsResponse]
+	putWorkflow          *connect.Client[v1.PutWorkflowRequest, v1.PutWorkflowResponse]
+	putSkill             *connect.Client[v1.PutSkillRequest, v1.PutSkillResponse]
+	getSkill             *connect.Client[v1.GetSkillRequest, v1.GetSkillResponse]
+	status               *connect.Client[v1.StatusRequest, v1.StatusResponse]
+	inspect              *connect.Client[v1.InspectRequest, v1.InspectResponse]
 }
 
 // GetRunByNode calls mill.v1.StoreService.GetRunByNode.
@@ -422,6 +438,11 @@ func (c *storeServiceClient) MarkWaiting(ctx context.Context, req *connect.Reque
 // Park calls mill.v1.StoreService.Park.
 func (c *storeServiceClient) Park(ctx context.Context, req *connect.Request[v1.ParkRequest]) (*connect.Response[v1.ParkResponse], error) {
 	return c.park.CallUnary(ctx, req)
+}
+
+// SetCompleteRequestId calls mill.v1.StoreService.SetCompleteRequestId.
+func (c *storeServiceClient) SetCompleteRequestId(ctx context.Context, req *connect.Request[v1.SetCompleteRequestIdRequest]) (*connect.Response[v1.SetCompleteRequestIdResponse], error) {
+	return c.setCompleteRequestId.CallUnary(ctx, req)
 }
 
 // Done calls mill.v1.StoreService.Done.
@@ -528,6 +549,12 @@ type StoreServiceHandler interface {
 	// Park trips the circuit breaker: the run stops, a gate asks a human what
 	// to do, and the reason says what stopped it.
 	Park(context.Context, *connect.Request[v1.ParkRequest]) (*connect.Response[v1.ParkResponse], error)
+	// SetCompleteRequestId mints and stores the idempotency key of the patch
+	// that completes the node, before that patch is sent. Minting is once per
+	// run: a second call returns the key already stored, so a worker resuming
+	// a run whose completing patch may have landed retries the same patch
+	// rather than sending a second one.
+	SetCompleteRequestId(context.Context, *connect.Request[v1.SetCompleteRequestIdRequest]) (*connect.Response[v1.SetCompleteRequestIdResponse], error)
 	// Done marks a run done. Called only after dagger has confirmed the
 	// completing patch: a run marked done before that would strand a node
 	// nothing can claim.
@@ -641,6 +668,12 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(storeServiceMethods.ByName("Park")),
 		connect.WithHandlerOptions(opts...),
 	)
+	storeServiceSetCompleteRequestIdHandler := connect.NewUnaryHandler(
+		StoreServiceSetCompleteRequestIdProcedure,
+		svc.SetCompleteRequestId,
+		connect.WithSchema(storeServiceMethods.ByName("SetCompleteRequestId")),
+		connect.WithHandlerOptions(opts...),
+	)
 	storeServiceDoneHandler := connect.NewUnaryHandler(
 		StoreServiceDoneProcedure,
 		svc.Done,
@@ -747,6 +780,8 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 			storeServiceMarkWaitingHandler.ServeHTTP(w, r)
 		case StoreServiceParkProcedure:
 			storeServiceParkHandler.ServeHTTP(w, r)
+		case StoreServiceSetCompleteRequestIdProcedure:
+			storeServiceSetCompleteRequestIdHandler.ServeHTTP(w, r)
 		case StoreServiceDoneProcedure:
 			storeServiceDoneHandler.ServeHTTP(w, r)
 		case StoreServiceAbandonProcedure:
@@ -822,6 +857,10 @@ func (UnimplementedStoreServiceHandler) MarkWaiting(context.Context, *connect.Re
 
 func (UnimplementedStoreServiceHandler) Park(context.Context, *connect.Request[v1.ParkRequest]) (*connect.Response[v1.ParkResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.Park is not implemented"))
+}
+
+func (UnimplementedStoreServiceHandler) SetCompleteRequestId(context.Context, *connect.Request[v1.SetCompleteRequestIdRequest]) (*connect.Response[v1.SetCompleteRequestIdResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.SetCompleteRequestId is not implemented"))
 }
 
 func (UnimplementedStoreServiceHandler) Done(context.Context, *connect.Request[v1.DoneRequest]) (*connect.Response[v1.DoneResponse], error) {

@@ -146,5 +146,14 @@ func (g gitRunner) Run(ctx context.Context, env map[string]string, args ...strin
 // Git is the interface gitRunner satisfies.
 var _ forge.Git = gitRunner{}
 
+// GitRunner runs git in the run's checkout through the same chokepoint the
+// forge uses. The `commit` verifier needs it — asking git whether an object
+// exists and whether it is on the run's branch is a fact about the
+// repository, not about the session — and the run loop is what wires the two
+// together (internal/evidence.Git).
+func (w *Workspace) GitRunner() forge.Git {
+	return gitRunner{w: w, dir: w.snapshot().Root}
+}
+
 // forgeVerbs implements the socket's forge half.
 var _ workspace.ForgeVerbs = forgeVerbs{}

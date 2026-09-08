@@ -10,7 +10,7 @@ import (
 )
 
 const clearRunGate = `-- name: ClearRunGate :one
-UPDATE runs SET gate_node_id = NULL, status = 'running' WHERE id = $1 RETURNING id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at
+UPDATE runs SET gate_node_id = NULL, status = 'running' WHERE id = $1 RETURNING id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at, complete_request_id
 `
 
 // A gate that has been read and answered is no longer filed, which is what
@@ -36,6 +36,7 @@ func (q *Queries) ClearRunGate(ctx context.Context, id string) (Run, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.EndedAt,
+		&i.CompleteRequestID,
 	)
 	return i, err
 }
@@ -58,7 +59,7 @@ const finishRun = `-- name: FinishRun :one
 UPDATE runs
 SET status = $2, ended_at = now(), lease_id = NULL
 WHERE id = $1
-RETURNING id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at
+RETURNING id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at, complete_request_id
 `
 
 type FinishRunParams struct {
@@ -88,12 +89,13 @@ func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) (Run, erro
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.EndedAt,
+		&i.CompleteRequestID,
 	)
 	return i, err
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at FROM runs WHERE id = $1
+SELECT id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at, complete_request_id FROM runs WHERE id = $1
 `
 
 func (q *Queries) GetRun(ctx context.Context, id string) (Run, error) {
@@ -117,12 +119,13 @@ func (q *Queries) GetRun(ctx context.Context, id string) (Run, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.EndedAt,
+		&i.CompleteRequestID,
 	)
 	return i, err
 }
 
 const getRunByNode = `-- name: GetRunByNode :one
-SELECT id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at FROM runs
+SELECT id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at, complete_request_id FROM runs
 WHERE node_id = $1 AND status <> 'abandoned'
 ORDER BY generation DESC LIMIT 1
 `
@@ -151,12 +154,13 @@ func (q *Queries) GetRunByNode(ctx context.Context, nodeID string) (Run, error) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.EndedAt,
+		&i.CompleteRequestID,
 	)
 	return i, err
 }
 
 const getRunByNodeRef = `-- name: GetRunByNodeRef :one
-SELECT id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at FROM runs WHERE node_ref = $1 ORDER BY generation DESC LIMIT 1
+SELECT id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at, complete_request_id FROM runs WHERE node_ref = $1 ORDER BY generation DESC LIMIT 1
 `
 
 func (q *Queries) GetRunByNodeRef(ctx context.Context, nodeRef string) (Run, error) {
@@ -180,6 +184,7 @@ func (q *Queries) GetRunByNodeRef(ctx context.Context, nodeRef string) (Run, err
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.EndedAt,
+		&i.CompleteRequestID,
 	)
 	return i, err
 }
@@ -208,7 +213,7 @@ func (q *Queries) GetRunFence(ctx context.Context, id string) (GetRunFenceRow, e
 const insertRun = `-- name: InsertRun :one
 INSERT INTO runs (id, node_id, node_ref, generation, context_id, lease_id, worker_ref, branch)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at
+RETURNING id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at, complete_request_id
 `
 
 type InsertRunParams struct {
@@ -252,12 +257,13 @@ func (q *Queries) InsertRun(ctx context.Context, arg InsertRunParams) (Run, erro
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.EndedAt,
+		&i.CompleteRequestID,
 	)
 	return i, err
 }
 
 const listRuns = `-- name: ListRuns :many
-SELECT id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at FROM runs
+SELECT id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at, complete_request_id FROM runs
 WHERE (cardinality($1::text[]) = 0 OR status = ANY($1::text[]))
   AND ($2::text IS NULL OR node_ref LIKE $2::text || '#%')
 ORDER BY updated_at DESC, id DESC
@@ -295,6 +301,7 @@ func (q *Queries) ListRuns(ctx context.Context, arg ListRunsParams) ([]Run, erro
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.EndedAt,
+			&i.CompleteRequestID,
 		); err != nil {
 			return nil, err
 		}
@@ -326,7 +333,7 @@ const markRunWaiting = `-- name: MarkRunWaiting :one
 UPDATE runs
 SET status = 'waiting', gate_node_id = $2, lease_id = NULL
 WHERE id = $1
-RETURNING id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at
+RETURNING id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at, complete_request_id
 `
 
 type MarkRunWaitingParams struct {
@@ -355,6 +362,7 @@ func (q *Queries) MarkRunWaiting(ctx context.Context, arg MarkRunWaitingParams) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.EndedAt,
+		&i.CompleteRequestID,
 	)
 	return i, err
 }
@@ -363,7 +371,7 @@ const parkRun = `-- name: ParkRun :one
 UPDATE runs
 SET status = 'parked', gate_node_id = $2, parked_reason = $3, lease_id = NULL
 WHERE id = $1
-RETURNING id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at
+RETURNING id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at, complete_request_id
 `
 
 type ParkRunParams struct {
@@ -393,12 +401,13 @@ func (q *Queries) ParkRun(ctx context.Context, arg ParkRunParams) (Run, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.EndedAt,
+		&i.CompleteRequestID,
 	)
 	return i, err
 }
 
 const requestRunCancel = `-- name: RequestRunCancel :one
-UPDATE runs SET cancel_requested = true WHERE id = $1 RETURNING id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at
+UPDATE runs SET cancel_requested = true WHERE id = $1 RETURNING id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at, complete_request_id
 `
 
 // Cancel is a request to the worker, not a transition: the flag is set and
@@ -425,6 +434,48 @@ func (q *Queries) RequestRunCancel(ctx context.Context, id string) (Run, error) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.EndedAt,
+		&i.CompleteRequestID,
+	)
+	return i, err
+}
+
+const setRunCompleteRequestID = `-- name: SetRunCompleteRequestID :one
+UPDATE runs
+SET complete_request_id = CASE WHEN complete_request_id = '' THEN $2 ELSE complete_request_id END
+WHERE id = $1
+RETURNING id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at, complete_request_id
+`
+
+type SetRunCompleteRequestIDParams struct {
+	ID                string
+	CompleteRequestID string
+}
+
+// The completing patch's idempotency key, minted once and never replaced: a
+// second call returns the key already stored, so a worker resuming a run
+// whose completing patch may have landed retries it under the same key.
+func (q *Queries) SetRunCompleteRequestID(ctx context.Context, arg SetRunCompleteRequestIDParams) (Run, error) {
+	row := q.db.QueryRow(ctx, setRunCompleteRequestID, arg.ID, arg.CompleteRequestID)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.NodeID,
+		&i.NodeRef,
+		&i.Generation,
+		&i.ContextID,
+		&i.WorkflowID,
+		&i.Status,
+		&i.LeaseID,
+		&i.WorkerRef,
+		&i.GateNodeID,
+		&i.ParkedReason,
+		&i.CancelRequested,
+		&i.Branch,
+		&i.Tier,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.EndedAt,
+		&i.CompleteRequestID,
 	)
 	return i, err
 }
@@ -434,7 +485,7 @@ UPDATE runs
 SET lease_id = $2, worker_ref = $3, status = 'running',
     parked_reason = NULL, cancel_requested = false, ended_at = NULL
 WHERE id = $1
-RETURNING id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at
+RETURNING id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at, complete_request_id
 `
 
 type SetRunLeaseParams struct {
@@ -467,6 +518,7 @@ func (q *Queries) SetRunLease(ctx context.Context, arg SetRunLeaseParams) (Run, 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.EndedAt,
+		&i.CompleteRequestID,
 	)
 	return i, err
 }
@@ -475,7 +527,7 @@ const setRunWorkflow = `-- name: SetRunWorkflow :one
 UPDATE runs
 SET workflow_id = $2, tier = coalesce($3::text, tier), status = 'running'
 WHERE id = $1
-RETURNING id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at
+RETURNING id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at, complete_request_id
 `
 
 type SetRunWorkflowParams struct {
@@ -507,6 +559,7 @@ func (q *Queries) SetRunWorkflow(ctx context.Context, arg SetRunWorkflowParams) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.EndedAt,
+		&i.CompleteRequestID,
 	)
 	return i, err
 }

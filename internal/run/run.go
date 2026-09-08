@@ -1,0 +1,420 @@
+// Package run is the loop: claim a node, hold its lease, walk the workflow's
+// steps, and finish.
+//
+// docs/ledger.md §Resume is the specification, line by line, and this package
+// is that pseudocode in Go. Three of its properties are the reason it is
+// shaped the way it is:
+//
+//   - Steps are re-run, sessions are resumed. An interrupted step starts a
+//     new attempt from the top; the session it runs in is found by its
+//     deterministic id, so the model picks up its own context.
+//   - Resume is the same code as a first run. The only branch a resume takes
+//     that a first run does not is the gate at the top of the loop.
+//   - Dagger first, store second. The node is completed in dagger before the
+//     run is marked done in the store, under a request id minted and stored
+//     before the patch is sent, so a crash between the two is a retry of the
+//     same patch and never a node nothing can claim.
+//
+// A fenced write on either side — the store refusing a lease that is no
+// longer the run's, dagger refusing the same — is the normal end of a stale
+// worker, not an error to retry. The run is abandoned locally, nothing more
+// is written, and [ErrFenced] comes back.
+package run
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"time"
+
+	"connectrpc.com/connect"
+
+	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
+	millv1 "github.com/ivy/mill/gen/mill/v1"
+	"github.com/ivy/mill/gen/mill/v1/millv1connect"
+	"github.com/ivy/mill/internal/dagger"
+	"github.com/ivy/mill/internal/forge"
+	"github.com/ivy/mill/internal/harness"
+	"github.com/ivy/mill/internal/workspace"
+)
+
+// Defaults from docs/architecture.md §Heartbeat: dagger's lease TTL is
+// fifteen minutes, and the worker renews well inside it.
+const (
+	// DefaultTTL is the lease TTL every claim asks for.
+	DefaultTTL = 15 * time.Minute
+	// DefaultGrace is how long a cancelled step has to stop before the
+	// adapter kills it.
+	DefaultGrace = 5 * time.Second
+)
+
+// ErrFenced ends a run that lost its lease. It is returned rather than
+// wrapped in a failure, because there is nothing to recover: the ledger is
+// the truth and the new holder owns it.
+var ErrFenced = errors.New("run: fenced out; another worker holds this node")
+
+// ErrRefused is a run the mill will not continue: an invariant the store
+// could not reconcile, such as a done run on an open node.
+var ErrRefused = errors.New("run: refused")
+
+// Workspace is the run loop's view of a workspace: the verbs a step reaches
+// through the socket, plus the two things the loop itself needs — the handle
+// it records, and a git runner for the `commit` verifier.
+type Workspace interface {
+	workspace.Workspace
+	// Handle is the workspace as the ledger records it.
+	Handle() *workspace.Handle
+	// GitRunner runs git in the checkout, through the same chokepoint.
+	GitRunner() forge.Git
+}
+
+// Workspaces makes the workspace a run works in: reattached when this worker
+// left one behind, cloned from the run's branch when it did not.
+type Workspaces func(ctx context.Context, spec workspace.Spec) (Workspace, error)
+
+// Forges resolves the project's forge. It is a function rather than a value
+// because a run that never reaches a `forge` step should never need one.
+type Forges func(ctx context.Context) (forge.Forge, error)
+
+// Options is everything the runner is built from. Every field but the clock
+// and the log is required.
+type Options struct {
+	// Store is `mill serve`, over its unix socket.
+	Store millv1connect.StoreServiceClient
+	// Dagger is the work graph.
+	Dagger *dagger.Client
+	// Workspaces makes the run's workspace.
+	Workspaces Workspaces
+	// Forges resolves the project's forge.
+	Forges Forges
+	// Harnesses is the adapter table a skill step's harness name is looked
+	// up in.
+	Harnesses *harness.Registry
+	// WorkerRef is this worker, recorded on the run and on every attempt.
+	WorkerRef string
+	// Workflow is the workflow name to select when a run has none. The
+	// project default, until the assessment step exists.
+	Workflow string
+	// Origin is the repository a new workspace clones.
+	Origin string
+	// WorkflowDir is the directory the workflow was loaded from, which a
+	// check step's relative command resolves against. Skill bodies come
+	// from the store; the scripts beside them do not, because the store
+	// keeps their digests and not their bytes.
+	WorkflowDir string
+	// Ref is what a new workspace checks out: the project's default branch.
+	Ref string
+	// TTL is the lease TTL asked for at every claim and heartbeat.
+	TTL time.Duration
+	// Interval is how often the lease is renewed. Zero takes a third of the
+	// TTL, which is the bound docs/architecture.md sets on it.
+	Interval time.Duration
+	// Grace is how long a cancelled step has to stop.
+	Grace time.Duration
+	// Out is where the run's progress is written. `mill run` streams to the
+	// terminal (docs/prd.md R-45).
+	Out io.Writer
+	// Log is where diagnostics go. Nil discards them.
+	Log *slog.Logger
+	// Now is the clock. Nil means [time.Now].
+	Now func() time.Time
+}
+
+// Runner drives one node's run.
+type Runner struct {
+	options Options
+}
+
+// New builds a runner, applying the defaults.
+func New(options Options) *Runner {
+	if options.TTL <= 0 {
+		options.TTL = DefaultTTL
+	}
+	if options.Interval <= 0 || options.Interval > options.TTL/3 {
+		options.Interval = options.TTL / 3
+	}
+	if options.Grace <= 0 {
+		options.Grace = DefaultGrace
+	}
+	if options.Now == nil {
+		options.Now = time.Now
+	}
+	if options.Log == nil {
+		options.Log = slog.New(slog.DiscardHandler)
+	}
+	if options.Out == nil {
+		options.Out = io.Discard
+	}
+	return &Runner{options: options}
+}
+
+// Interval is how often the runner renews its lease. It is never more than
+// a third of the TTL: docs/architecture.md's rule is that a worker renews
+// well inside the window, so that one missed tick is not a lost node.
+func (r *Runner) Interval() time.Duration { return r.options.Interval }
+
+// state is one run in flight: what the loop carries between its stages.
+type state struct {
+	node      *daggerv1.Node
+	lease     string
+	run       *millv1.Run
+	workflow  *millv1.Workflow
+	workspace Workspace
+	// beat is the heartbeat, which owns the step's context.
+	beat *heartbeat
+
+	// resumed is the set of sessions this worker has already spoken to, so
+	// a second step in the same session resumes it rather than starting it
+	// again. A session a *previous* worker started is resumed too: the
+	// ledger's attempt count says so.
+	resumed map[string]bool
+	// summary is the implementer's last word, which becomes the node's
+	// result body.
+	summary string
+	// pullRequestURL is the pull request the run opened, once a `url` step
+	// has closed on it.
+	pullRequestURL string
+	// mergeCommit is the commit the branch became once a merge gate was
+	// approved and the merge made.
+	mergeCommit string
+}
+
+// markResumed records that this worker has spoken to a session.
+func (s *state) markResumed(id string) {
+	if id == "" {
+		return
+	}
+	if s.resumed == nil {
+		s.resumed = map[string]bool{}
+	}
+	s.resumed[id] = true
+}
+
+// Execute drives one node from a claim to a result. It is docs/ledger.md
+// §Resume, and every stage below is a line of it.
+func (r *Runner) Execute(ctx context.Context, nodeRef string) error {
+	node, err := r.options.Dagger.Node(ctx, nodeRef)
+	if err != nil {
+		return err
+	}
+	if node.GetAssigneeKind() == daggerv1.AssigneeKind_ASSIGNEE_KIND_USER {
+		return &dagger.UserNodeError{Ref: nodeRef, Verb: "claim"}
+	}
+
+	// A node already done in dagger is the crash window of Invariant 11: the
+	// completing patch landed and store.Done did not. Nothing is claimed —
+	// the node is not claimable and there is nothing left to do to it — and
+	// the run is simply caught up with what dagger already says.
+	if node.GetStatus() == daggerv1.Status_STATUS_DONE {
+		return r.reconcileDone(ctx, node)
+	}
+
+	claimed, err := r.options.Dagger.Claim(ctx, nodeRef)
+	if err != nil {
+		return err
+	}
+	s := &state{node: claimed.Node, lease: claimed.Lease.GetId()}
+	r.printf("claimed %s under lease %s\n", s.node.GetReference(), s.lease)
+
+	if err := r.openRun(ctx, s); err != nil {
+		return r.stop(ctx, s, err)
+	}
+
+	s.beat = r.startHeartbeat(ctx, s)
+	defer s.beat.stop()
+
+	if err := r.openWorkspace(s.beat.ctx, s); err != nil {
+		return r.stop(ctx, s, err)
+	}
+	if err := r.selectWorkflow(s.beat.ctx, s); err != nil {
+		return r.stop(ctx, s, err)
+	}
+	return r.stop(ctx, s, r.walk(s.beat.ctx, s))
+}
+
+// reconcileDone marks a run done whose node dagger already says is done. The
+// second `mill run` of the crash scenario ends here: it finds the node done,
+// marks the run done, and sends no second patch.
+func (r *Runner) reconcileDone(ctx context.Context, node *daggerv1.Node) error {
+	run, err := r.runByNode(ctx, node.GetId())
+	if err != nil {
+		return err
+	}
+	if run == nil {
+		return fmt.Errorf("%w: %s is done in dagger and the ledger has no run for it", ErrRefused, node.GetReference())
+	}
+	if run.GetStatus() == millv1.RunStatus_RUN_STATUS_DONE {
+		r.printf("%s is already done\n", node.GetReference())
+		return nil
+	}
+	if _, err := call(ctx, r.options.Store.Done, &millv1.DoneRequest{
+		LeaseId: run.GetLeaseId(),
+		RunId:   run.GetId(),
+	}); err != nil {
+		return err
+	}
+	r.printf("%s was completed in dagger; run %s marked done\n", node.GetReference(), run.GetId())
+	return nil
+}
+
+// openRun finds or creates the run and takes it over under this claim's
+// lease. It is the switch at the head of the resume algorithm.
+func (r *Runner) openRun(ctx context.Context, s *state) error {
+	run, err := r.runByNode(ctx, s.node.GetId())
+	if err != nil {
+		return err
+	}
+	switch {
+	case run == nil:
+		created, err := call(ctx, r.options.Store.CreateRun, &millv1.CreateRunRequest{
+			LeaseId:    s.lease,
+			NodeId:     s.node.GetId(),
+			NodeRef:    s.node.GetReference(),
+			ContextId:  s.node.GetContextId(),
+			Generation: 1,
+			WorkerRef:  r.options.WorkerRef,
+			Branch:     workspace.BranchFor(s.node.GetReference()),
+		})
+		if err != nil {
+			return err
+		}
+		// CreateRun takes the lease as it opens the run, so there is
+		// nothing to take over: SetLease is the write that changes what
+		// later writes compare against, and this claim is already what
+		// they compare against.
+		s.run = created.GetRun()
+		return nil
+
+	case run.GetStatus() == millv1.RunStatus_RUN_STATUS_DONE:
+		// The node is open — Execute returned above if it were not — so a
+		// done run on it is Invariant 11 violated. Park rather than guess.
+		return fmt.Errorf("%w: run %s is done but %s is open", ErrRefused, run.GetId(), s.node.GetReference())
+
+	default:
+		// A `running` row here belongs to a worker that died or was fenced
+		// out. The next attempt at that step starts from the top.
+		if _, err := call(ctx, r.options.Store.AbortOpenStepRuns, &millv1.AbortOpenStepRunsRequest{
+			LeaseId: run.GetLeaseId(),
+			RunId:   run.GetId(),
+			Reason:  "the worker that held this run is gone",
+		}); err != nil {
+			return err
+		}
+	}
+
+	leased, err := call(ctx, r.options.Store.SetLease, &millv1.SetLeaseRequest{
+		LeaseId:   s.lease,
+		RunId:     run.GetId(),
+		WorkerRef: r.options.WorkerRef,
+	})
+	if err != nil {
+		return err
+	}
+	s.run = leased.GetRun()
+	return nil
+}
+
+// openWorkspace reattaches the workspace this worker left behind, or clones
+// one. The loader guarantees the branch is on the forge before any gate that
+// follows a write, so a worker elsewhere can always recreate it.
+func (r *Runner) openWorkspace(ctx context.Context, s *state) error {
+	ref := r.options.Ref
+	if s.run.GetStatus() != millv1.RunStatus_RUN_STATUS_SELECTING {
+		ref = s.run.GetBranch()
+	}
+	ws, err := r.options.Workspaces(ctx, workspace.Spec{
+		RunID:   s.run.GetId(),
+		NodeRef: s.run.GetNodeRef(),
+		Origin:  r.options.Origin,
+		Ref:     ref,
+	})
+	if err != nil {
+		return fmt.Errorf("run %s: workspace: %w", s.run.GetId(), err)
+	}
+	s.workspace = ws
+	return nil
+}
+
+// runByNode reads the live run on a node, or nil.
+func (r *Runner) runByNode(ctx context.Context, nodeID string) (*millv1.Run, error) {
+	res, err := call(ctx, r.options.Store.GetRunByNode, &millv1.GetRunByNodeRequest{NodeId: nodeID})
+	if err != nil {
+		return nil, err
+	}
+	return res.GetRun(), nil
+}
+
+// stop is the one exit. A fenced runner writes nothing more — not to the
+// store, not to dagger — because everything it could write belongs to the
+// worker that fenced it out. Every other failure gives the lease back so the
+// node is claimable again rather than waiting out its TTL.
+func (r *Runner) stop(ctx context.Context, s *state, err error) error {
+	if s.beat != nil {
+		s.beat.stop()
+		if beatErr := s.beat.err(); beatErr != nil && err == nil {
+			err = beatErr
+		}
+	}
+	if s.workspace != nil && err != nil {
+		// A failed run keeps its workspace: the next attempt reattaches it,
+		// and a human looking at what went wrong needs the tree.
+		r.options.Log.Debug("workspace retained", "run", s.run.GetId())
+	}
+	if err == nil || errors.Is(err, ErrFenced) || errors.Is(err, errReleased) {
+		if errors.Is(err, errReleased) {
+			return nil
+		}
+		return err
+	}
+	if s.lease != "" {
+		if releaseErr := r.options.Dagger.Release(ctx, s.lease, daggerv1.ReleaseReason_RELEASE_REASON_CRASH, err.Error()); releaseErr != nil {
+			r.options.Log.Warn("releasing the lease after a failure", "error", releaseErr)
+		}
+	}
+	return err
+}
+
+// errReleased ends the loop where the run is meant to stop and stay
+// resumable: a gate filed, a park, or a cancellation. The lease is already
+// released by the branch that raises it.
+var errReleased = errors.New("run: released")
+
+// printf writes one line of progress to the run's output.
+func (r *Runner) printf(format string, args ...any) {
+	_, _ = fmt.Fprintf(r.options.Out, format, args...)
+}
+
+// call is one Connect request against the store, unwrapped to its message
+// and with a fenced refusal turned into [ErrFenced]. Every store write is
+// fenced by the lease (Invariant 9), so every store call goes through here.
+func call[Req, Res any](ctx context.Context, method func(context.Context, *connect.Request[Req]) (*connect.Response[Res], error), req *Req) (*Res, error) {
+	res, err := method(ctx, connect.NewRequest(req))
+	if err != nil {
+		if isFenced(err) {
+			return nil, fmt.Errorf("%w: %w", ErrFenced, err)
+		}
+		return nil, err
+	}
+	return res.Msg, nil
+}
+
+// isFenced reports whether a failure is a lease that is no longer current,
+// on either side. The store answers a fenced write with FAILED_PRECONDITION
+// and a message naming both leases; dagger answers the same code with a
+// message naming the lease. Both halves are checked, so a precondition of
+// another kind is not mistaken for a fence.
+func isFenced(err error) bool {
+	if errors.Is(err, ErrFenced) || errors.Is(err, dagger.ErrFenced) {
+		return true
+	}
+	var connectErr *connect.Error
+	if !errors.As(err, &connectErr) {
+		return false
+	}
+	if connectErr.Code() != connect.CodeFailedPrecondition {
+		return false
+	}
+	return containsAny(connectErr.Message(), "fenced", "lease")
+}

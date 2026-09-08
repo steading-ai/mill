@@ -80,6 +80,14 @@ func (s *Service) Park(ctx context.Context, leaseID, runID, gateNodeID string, r
 	return s.store.Park(ctx, leaseID, runID, gateNodeID, reason)
 }
 
+// SetCompleteRequestID mints the completing patch's idempotency key, or
+// returns the one the run already carries. There is no transition to check:
+// it records a key against a run that is still running, before the patch
+// that ends it.
+func (s *Service) SetCompleteRequestID(ctx context.Context, leaseID, runID, requestID string) (*millv1.Run, error) {
+	return s.store.SetCompleteRequestID(ctx, leaseID, runID, requestID)
+}
+
 // Done marks a run done, after dagger has confirmed the completing patch.
 func (s *Service) Done(ctx context.Context, leaseID, runID string) (*millv1.Run, error) {
 	if err := s.checkTransition(ctx, runID, millv1.RunStatus_RUN_STATUS_DONE); err != nil {

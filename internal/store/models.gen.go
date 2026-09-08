@@ -28,23 +28,24 @@ type Evidence struct {
 }
 
 type Run struct {
-	ID              string
-	NodeID          string
-	NodeRef         string
-	Generation      int64
-	ContextID       string
-	WorkflowID      *string
-	Status          string
-	LeaseID         *string
-	WorkerRef       string
-	GateNodeID      *string
-	ParkedReason    *string
-	CancelRequested bool
-	Branch          string
-	Tier            *string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	EndedAt         *time.Time
+	ID                string
+	NodeID            string
+	NodeRef           string
+	Generation        int64
+	ContextID         string
+	WorkflowID        *string
+	Status            string
+	LeaseID           *string
+	WorkerRef         string
+	GateNodeID        *string
+	ParkedReason      *string
+	CancelRequested   bool
+	Branch            string
+	Tier              *string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	EndedAt           *time.Time
+	CompleteRequestID string
 }
 
 type Session struct {

@@ -92,3 +92,12 @@ ORDER BY updated_at DESC, id DESC;
 -- attempt, which counts review rounds.
 -- name: CountRunLeases :one
 SELECT count(*) FROM events WHERE run_id = $1 AND op = 'set_lease';
+
+-- The completing patch's idempotency key, minted once and never replaced: a
+-- second call returns the key already stored, so a worker resuming a run
+-- whose completing patch may have landed retries it under the same key.
+-- name: SetRunCompleteRequestID :one
+UPDATE runs
+SET complete_request_id = CASE WHEN complete_request_id = '' THEN $2 ELSE complete_request_id END
+WHERE id = $1
+RETURNING *;

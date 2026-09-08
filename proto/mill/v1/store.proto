@@ -70,6 +70,12 @@ service StoreService {
   // Park trips the circuit breaker: the run stops, a gate asks a human what
   // to do, and the reason says what stopped it.
   rpc Park(ParkRequest) returns (ParkResponse);
+  // SetCompleteRequestId mints and stores the idempotency key of the patch
+  // that completes the node, before that patch is sent. Minting is once per
+  // run: a second call returns the key already stored, so a worker resuming
+  // a run whose completing patch may have landed retries the same patch
+  // rather than sending a second one.
+  rpc SetCompleteRequestId(SetCompleteRequestIdRequest) returns (SetCompleteRequestIdResponse);
   // Done marks a run done. Called only after dagger has confirmed the
   // completing patch: a run marked done before that would strand a node
   // nothing can claim.
@@ -214,6 +220,9 @@ message CloseStepRunRequest {
   // Set only when the closing step is the selection step: the tier the
   // assessment named, which gate auto predicates compare against.
   Tier tier = 5;
+  // Set only by a gate step the `auto` predicate closed without a human.
+  // The ledger records that the decision was a policy's and not a person's.
+  bool auto_approved = 6;
 }
 
 // CloseStepRunResponse carries the closed attempt and its evidence.
@@ -321,6 +330,24 @@ message ParkRequest {
 // ParkResponse carries the parked run.
 message ParkResponse {
   // The run, now parked and holding no lease.
+  Run run = 1;
+}
+
+// SetCompleteRequestIdRequest asks for the run's completing request id.
+message SetCompleteRequestIdRequest {
+  // The lease the caller holds, compared against the run's current lease
+  // inside the writing transaction.
+  string lease_id = 1;
+  // The run about to be completed.
+  string run_id = 2;
+  // The key to store if the run has none. Ignored when it already has one.
+  string request_id = 3;
+}
+
+// SetCompleteRequestIdResponse carries the key the completing patch must
+// use, which is the stored one whether or not this call minted it.
+message SetCompleteRequestIdResponse {
+  // The run, carrying its complete_request_id.
   Run run = 1;
 }
 

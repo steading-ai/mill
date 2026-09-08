@@ -41,9 +41,17 @@ var _ = Describe("The command tree", Label("unit"), func() {
 			Expect(stdout.String()).To(ContainSubstring(name))
 		},
 		Entry("work", "work"),
-		Entry("run", "run"),
 		Entry("restart", "restart"),
 	)
+
+	It("run is wired into the tree and takes the node it drives", func() {
+		Expect(run("run", "--help")).To(BeZero(), stderr.String())
+		Expect(stdout.String()).To(ContainSubstring("--dry-run"))
+		Expect(stdout.String()).To(ContainSubstring("--project"))
+		// The node is the argument that replaces the claim, so a run
+		// without one is a usage error rather than a claim of anything.
+		Expect(run("run")).NotTo(BeZero())
+	})
 
 	It("workflow carries the verbs that move definitions in and out", func() {
 		Expect(run("workflow", "--help")).To(BeZero(), stderr.String())

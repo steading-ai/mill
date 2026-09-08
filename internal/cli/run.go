@@ -1,16 +1,256 @@
 package cli
 
-import "github.com/spf13/cobra"
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"os/user"
+	"path/filepath"
+	"strings"
+	"text/tabwriter"
+	"time"
+
+	"connectrpc.com/connect"
+	"github.com/spf13/cobra"
+
+	millv1 "github.com/ivy/mill/gen/mill/v1"
+	"github.com/ivy/mill/gen/mill/v1/millv1connect"
+	"github.com/ivy/mill/internal/dagger"
+	"github.com/ivy/mill/internal/forge"
+	"github.com/ivy/mill/internal/harness"
+	"github.com/ivy/mill/internal/harness/claudecode"
+	"github.com/ivy/mill/internal/run"
+	"github.com/ivy/mill/internal/workspace"
+	"github.com/ivy/mill/internal/workspace/local"
+)
+
+// ExitFenced is the status `mill run` exits with when another worker took
+// the node's lease. It is distinct from an ordinary failure because nothing
+// went wrong: the ledger is the truth, the new holder owns the run, and a
+// supervisor restarting on this is restarting on the normal path.
+const ExitFenced = 75
+
+// daggerSocketEnv and daggerProjectEnv are dagger's own variables, so a
+// shell already set up for `dg` needs nothing more for `mill run`.
+const (
+	daggerSocketEnv  = "DG_SOCKET"
+	daggerProjectEnv = "DG_PROJECT"
+)
+
+// defaultDaggerSocket is where dagger listens when DG_SOCKET says nothing.
+const defaultDaggerSocket = "/run/dagger/dg.sock"
+
+type runOptions struct {
+	socket       string
+	daggerSocket string
+	project      string
+	workflow     string
+	workflowDir  string
+	origin       string
+	ref          string
+	workspaceDir string
+	ttl          time.Duration
+	interval     time.Duration
+	dryRun       bool
+}
 
 // newRunCommand is "work" with the claim replaced by an argument: one node,
-// driven in the calling process, with gates answerable from the terminal.
+// driven in the calling process, on the code path the daemon uses (docs/prd.md
+// R-45).
 func newRunCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "run [node]",
+	opts := runOptions{}
+	cmd := &cobra.Command{
+		Use:   "run <node>",
 		Short: "Drive a single node's run in this process",
-		Args:  cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return placeholder(cmd)
+		Long: `Drive one dagger node end to end: claim it, hold its lease, walk the
+selected workflow's steps, and complete it with a result.
+
+This is the worker's own code path with the claim replaced by an argument.
+The node must be ready; a node that is not is explained and the command
+stops rather than waiting for it.
+
+--dry-run claims nothing and executes nothing. It prints the workflow that
+would be selected, its steps in order, and the evidence each one closes on.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.dryRun {
+				return dryRun(cmd, opts, args[0])
+			}
+			return execute(cmd, opts, args[0])
 		},
 	}
+	f := cmd.Flags()
+	f.StringVar(&opts.socket, "socket", defaultSocketPath(), "path of the service's unix socket")
+	f.StringVar(&opts.daggerSocket, "dagger-socket", envOr(daggerSocketEnv, defaultDaggerSocket), "path of dagger's unix socket (default: $"+daggerSocketEnv+")")
+	f.StringVar(&opts.project, "project", os.Getenv(daggerProjectEnv), "dagger project a bare #7 reference resolves in (default: $"+daggerProjectEnv+")")
+	f.StringVar(&opts.workflow, "workflow", "quick-fix", "workflow to select when the run has none")
+	f.StringVar(&opts.workflowDir, "workflow-dir", "", "directory the workflow was loaded from, for a check step's scripts")
+	f.StringVar(&opts.origin, "origin", "", "repository a new workspace clones")
+	f.StringVar(&opts.ref, "ref", "", "ref a new workspace checks out (default: the repository's own HEAD)")
+	f.StringVar(&opts.workspaceDir, "workspace-dir", defaultWorkspaceDir(), "directory run workspaces are made under")
+	f.DurationVar(&opts.ttl, "ttl", run.DefaultTTL, "lease TTL to ask dagger for")
+	f.DurationVar(&opts.interval, "heartbeat", 0, "how often to renew the lease (default: a third of the TTL)")
+	f.BoolVar(&opts.dryRun, "dry-run", false, "print the workflow and its steps; claim nothing and execute nothing")
+	return cmd
+}
+
+// dryRun prints what a run would do. It reads the workflow and nothing else:
+// no claim, no lease, no run, no workspace, no session.
+func dryRun(cmd *cobra.Command, opts runOptions, nodeRef string) error {
+	store := storeClient(opts.socket)
+	workflow, err := selectedWorkflow(cmd.Context(), store, opts)
+	if err != nil {
+		return err
+	}
+	out := cmd.OutOrStdout()
+	_, _ = fmt.Fprintf(out, "%s would run workflow %s@%s\n\n", nodeRef, workflow.GetName(), workflow.GetVersion())
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "STEP\tKIND\tEVIDENCE\tCAPABILITIES")
+	for _, step := range workflow.GetSteps() {
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
+			step.GetName(), stepKindName(step.GetKind()), evidenceKindName(step.GetEvidence()),
+			strings.Join(capabilityNames(step.GetCapabilities()), ","))
+	}
+	return w.Flush()
+}
+
+// selectedWorkflow is the version a run on this project would follow.
+func selectedWorkflow(ctx context.Context, store millv1connect.StoreServiceClient, opts runOptions) (*millv1.Workflow, error) {
+	// The scope is left unspecified so the store resolves project over org,
+	// which is the precedence a run itself follows.
+	res, err := store.GetWorkflow(ctx, connect.NewRequest(&millv1.GetWorkflowRequest{
+		Name:    opts.workflow,
+		Project: opts.project,
+	}))
+	if err != nil {
+		return nil, err
+	}
+	if res.Msg.GetWorkflow() == nil {
+		return nil, fmt.Errorf("mill run: no workflow named %q is stored", opts.workflow)
+	}
+	return res.Msg.GetWorkflow(), nil
+}
+
+// execute drives the node.
+func execute(cmd *cobra.Command, opts runOptions, nodeRef string) error {
+	if opts.project == "" {
+		return fmt.Errorf("mill run: a dagger project is required; pass --project or set %s", daggerProjectEnv)
+	}
+	worker, err := workerRef()
+	if err != nil {
+		return err
+	}
+	client := dagger.Dial(opts.daggerSocket, opts.project,
+		dagger.WithAgentRef(worker),
+		dagger.WithSessionRef(nodeRef),
+		dagger.WithTTL(opts.ttl))
+
+	harnesses := harness.NewRegistry()
+	if err := harnesses.Register(run.DefaultHarness, claudecode.New()); err != nil {
+		return err
+	}
+
+	runner := run.New(run.Options{
+		Store:       storeClient(opts.socket),
+		Dagger:      client,
+		Workspaces:  localWorkspaces(opts),
+		Forges:      noForge,
+		Harnesses:   harnesses,
+		WorkerRef:   worker,
+		Workflow:    opts.workflow,
+		WorkflowDir: opts.workflowDir,
+		Origin:      opts.origin,
+		Ref:         opts.ref,
+		TTL:         opts.ttl,
+		Interval:    opts.interval,
+		Out:         cmd.OutOrStdout(),
+		Log:         slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: slog.LevelInfo})),
+	})
+	return runner.Execute(cmd.Context(), nodeRef)
+}
+
+// localWorkspaces makes a workspace under the worker's own account,
+// reattaching one this worker left behind before cloning a new one.
+func localWorkspaces(opts runOptions) run.Workspaces {
+	return func(ctx context.Context, spec workspace.Spec) (run.Workspace, error) {
+		ws := local.New(local.Options{Root: opts.workspaceDir})
+		if _, err := ws.Attach(ctx, spec); err == nil {
+			return ws, nil
+		}
+		if _, err := ws.Create(ctx, spec); err != nil {
+			return nil, err
+		}
+		return ws, nil
+	}
+}
+
+// noForge is the forge a run gets until `mill run` learns to read the
+// project's `vcs_url` label. A step that needs one fails saying so rather
+// than silently doing nothing.
+func noForge(context.Context) (forge.Forge, error) {
+	return nil, errors.New("mill run: no forge is configured for this project")
+}
+
+// workerRef names this worker on the run and on every lease: the account and
+// the host it runs on.
+func workerRef() (string, error) {
+	who, err := user.Current()
+	if err != nil {
+		return "", fmt.Errorf("mill run: identify the worker: %w", err)
+	}
+	host, err := os.Hostname()
+	if err != nil {
+		return "", fmt.Errorf("mill run: identify the worker: %w", err)
+	}
+	return who.Username + "@" + host, nil
+}
+
+// defaultWorkspaceDir is where run workspaces live under the worker's
+// account.
+func defaultWorkspaceDir() string {
+	if dir := os.Getenv("XDG_STATE_HOME"); dir != "" {
+		return filepath.Join(dir, "mill", "workspaces")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(os.TempDir(), "mill", "workspaces")
+	}
+	return filepath.Join(home, ".local", "state", "mill", "workspaces")
+}
+
+// envOr is a variable's value or a fallback.
+func envOr(name, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
+}
+
+// stepKindName, evidenceKindName and capabilityNames render enums for the
+// dry run's table.
+func stepKindName(kind millv1.StepKind) string {
+	switch kind {
+	case millv1.StepKind_STEP_KIND_SKILL:
+		return "skill"
+	case millv1.StepKind_STEP_KIND_CHECK:
+		return "check"
+	case millv1.StepKind_STEP_KIND_GATE:
+		return "gate"
+	default:
+		return "unspecified"
+	}
+}
+
+func evidenceKindName(kind millv1.EvidenceKind) string {
+	return strings.ToLower(strings.TrimPrefix(kind.String(), "EVIDENCE_KIND_"))
+}
+
+func capabilityNames(capabilities []millv1.Capability) []string {
+	names := make([]string, 0, len(capabilities))
+	for _, capability := range capabilities {
+		names = append(names, strings.ToLower(strings.TrimPrefix(capability.String(), "CAPABILITY_")))
+	}
+	return names
 }

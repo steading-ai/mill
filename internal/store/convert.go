@@ -143,6 +143,8 @@ func runProto(row Run) *millv1.Run {
 		CreatedAt:       timestamppb.New(row.CreatedAt),
 		UpdatedAt:       timestamppb.New(row.UpdatedAt),
 		EndedAt:         stamp(row.EndedAt),
+
+		CompleteRequestId: row.CompleteRequestID,
 	}
 }
 

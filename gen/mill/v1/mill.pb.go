@@ -1097,9 +1097,15 @@ type Run struct {
 	// When the run last changed.
 	UpdatedAt *timestamppb.Timestamp `protobuf:"bytes,16,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
 	// When the run reached a terminal state. From docs/ledger.md §runs.
-	EndedAt       *timestamppb.Timestamp `protobuf:"bytes,17,opt,name=ended_at,json=endedAt,proto3" json:"ended_at,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	EndedAt *timestamppb.Timestamp `protobuf:"bytes,17,opt,name=ended_at,json=endedAt,proto3" json:"ended_at,omitempty"`
+	// The idempotency key of the patch that completes the node, minted and
+	// stored before that patch is sent. A worker resuming a run whose
+	// completing patch may or may not have landed retries it under the same
+	// key rather than under a new one, which is what makes "dagger first,
+	// store second" recoverable (docs/ledger.md §Resume, Invariant 11).
+	CompleteRequestId string `protobuf:"bytes,18,opt,name=complete_request_id,json=completeRequestId,proto3" json:"complete_request_id,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *Run) Reset() {
@@ -1249,6 +1255,13 @@ func (x *Run) GetEndedAt() *timestamppb.Timestamp {
 		return x.EndedAt
 	}
 	return nil
+}
+
+func (x *Run) GetCompleteRequestId() string {
+	if x != nil {
+		return x.CompleteRequestId
+	}
+	return ""
 }
 
 // StepRun is one attempt at a step. Append-only: an interrupted step starts a
@@ -3515,7 +3528,7 @@ var File_mill_v1_mill_proto protoreflect.FileDescriptor
 
 const file_mill_v1_mill_proto_rawDesc = "" +
 	"\n" +
-	"\x12mill/v1/mill.proto\x12\amill.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18harness/v1/harness.proto\"\x80\x05\n" +
+	"\x12mill/v1/mill.proto\x12\amill.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18harness/v1/harness.proto\"\xb0\x05\n" +
 	"\x03Run\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
 	"\anode_id\x18\x02 \x01(\tR\x06nodeId\x12\x19\n" +
@@ -3542,7 +3555,8 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"created_at\x18\x0f \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
 	"updated_at\x18\x10 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x125\n" +
-	"\bended_at\x18\x11 \x01(\v2\x1a.google.protobuf.TimestampR\aendedAt\"\x80\x04\n" +
+	"\bended_at\x18\x11 \x01(\v2\x1a.google.protobuf.TimestampR\aendedAt\x12.\n" +
+	"\x13complete_request_id\x18\x12 \x01(\tR\x11completeRequestId\"\x80\x04\n" +
 	"\aStepRun\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x1b\n" +

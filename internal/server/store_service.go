@@ -77,10 +77,11 @@ func (s *StoreService) StartStepRun(ctx context.Context, req *connect.Request[mi
 // CloseStepRun records the evidence that closes an attempt.
 func (s *StoreService) CloseStepRun(ctx context.Context, req *connect.Request[millv1.CloseStepRunRequest]) (*connect.Response[millv1.CloseStepRunResponse], error) {
 	stepRun, evidence, err := s.svc.CloseStepRun(ctx, req.Msg.GetLeaseId(), domain.CloseStepRunParams{
-		StepRunID:  req.Msg.GetStepRunId(),
-		Evidence:   req.Msg.GetEvidence(),
-		WorkflowID: req.Msg.GetWorkflowId(),
-		Tier:       req.Msg.GetTier(),
+		StepRunID:    req.Msg.GetStepRunId(),
+		Evidence:     req.Msg.GetEvidence(),
+		WorkflowID:   req.Msg.GetWorkflowId(),
+		Tier:         req.Msg.GetTier(),
+		AutoApproved: req.Msg.GetAutoApproved(),
 	})
 	if err != nil {
 		return nil, connectError(err)
@@ -134,6 +135,16 @@ func (s *StoreService) Park(ctx context.Context, req *connect.Request[millv1.Par
 }
 
 // Done marks a run done, after dagger has confirmed the completing patch.
+// SetCompleteRequestId mints the completing patch's idempotency key before
+// that patch is sent.
+func (s *StoreService) SetCompleteRequestId(ctx context.Context, req *connect.Request[millv1.SetCompleteRequestIdRequest]) (*connect.Response[millv1.SetCompleteRequestIdResponse], error) {
+	run, err := s.svc.SetCompleteRequestID(ctx, req.Msg.GetLeaseId(), req.Msg.GetRunId(), req.Msg.GetRequestId())
+	if err != nil {
+		return nil, connectError(err)
+	}
+	return connect.NewResponse(&millv1.SetCompleteRequestIdResponse{Run: run}), nil
+}
+
 func (s *StoreService) Done(ctx context.Context, req *connect.Request[millv1.DoneRequest]) (*connect.Response[millv1.DoneResponse], error) {
 	run, err := s.svc.Done(ctx, req.Msg.GetLeaseId(), req.Msg.GetRunId())
 	if err != nil {
