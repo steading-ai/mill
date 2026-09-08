@@ -1,0 +1,83 @@
+package contract_test
+
+import (
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+)
+
+// readOnlyRPCs are the calls that only read. Everything else on
+// StoreService writes, and therefore has to be fenced by a lease.
+var readOnlyRPCs = map[string]bool{
+	"GetRunByNode":  true,
+	"GetWorkflow":   true,
+	"ListWorkflows": true,
+	"Status":        true,
+	"Inspect":       true,
+}
+
+// wantedRPCs is exactly the surface docs/ledger.md's resume algorithm calls,
+// plus the two reads the CLI's status and inspect need. An RPC with no
+// caller there does not belong on this service.
+var wantedRPCs = []string{
+	"GetRunByNode", "CreateRun", "SetLease",
+	"StartStepRun", "CloseStepRun", "FailStepRun",
+	"AbortOpenStepRuns", "SupersedeSteps",
+	"MarkWaiting", "Park", "Done", "Abandon",
+	"IssueStepToken", "RevokeStepToken",
+	"RecordUsage", "MarkUsagePosted",
+	"GetWorkflow", "ListWorkflows", "PutWorkflow", "PutSkill",
+	"Status", "Inspect",
+}
+
+var _ = Describe("store.proto", func() {
+	var c contract
+
+	BeforeEach(func() {
+		c = parse(storeProto)
+		Expect(c.rpcs).NotTo(BeEmpty())
+	})
+
+	It("declares exactly the RPCs the resume algorithm needs", func() {
+		Expect(c.rpcNames()).To(ConsistOf(wantedRPCs))
+		Expect(c.services).To(HaveKey("StoreService"))
+	})
+
+	It("carries a lease id on every mutating request", func() {
+		for _, r := range c.rpcs {
+			if readOnlyRPCs[r.name] {
+				continue
+			}
+			f := c.field(r.request, "lease_id")
+			Expect(f.typ).To(Equal("string"), "%s.lease_id", r.request)
+			Expect(f.comment).NotTo(BeEmpty(), "%s.lease_id", r.request)
+		}
+	})
+
+	It("says the lease is compared inside the writing transaction", func() {
+		comment := c.services["StoreService"]
+		Expect(comment).To(ContainSubstring("lease_id"))
+		Expect(comment).To(ContainSubstring("inside the same transaction as the write"))
+		Expect(comment).To(ContainSubstring("rolls the transaction back on mismatch"))
+	})
+
+	It("names the exceptions to the fencing rule on their own requests", func() {
+		// SetLease is the write that changes what later comparisons compare
+		// against; PutWorkflow and PutSkill write rows that belong to no run.
+		// Each says so where an implementer will read it.
+		Expect(c.field("SetLeaseRequest", "lease_id").comment).To(
+			ContainSubstring("not compared against the stored one"))
+		for _, m := range []string{"PutWorkflowRequest", "PutSkillRequest"} {
+			Expect(c.field(m, "lease_id").comment).To(
+				ContainSubstring("Empty for a CLI push"), m)
+		}
+	})
+
+	It("pairs every RPC with its own request and response messages", func() {
+		for _, r := range c.rpcs {
+			Expect(r.request).To(Equal(r.name+"Request"), r.name)
+			Expect(r.response).To(Equal(r.name+"Response"), r.name)
+			Expect(r.comment).NotTo(BeEmpty(), r.name)
+		}
+	})
+
+})

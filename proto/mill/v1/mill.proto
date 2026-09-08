@@ -1,0 +1,775 @@
+// The mill.v1 domain model: what happened inside a run. This file is the
+// contract the store, its API, and the worker are derived from;
+// docs/domain-model.md is its rationale and docs/ledger.md its storage.
+//
+// The mill holds exactly one kind of state dagger does not — which workflow,
+// which step, what evidence, which session. Where dagger already names a
+// thing (node, lease, gate, artifact, usage, principal, context id) this
+// package stores dagger's *identifier* and never dagger's content, so a
+// message here is never a copy of a message there.
+//
+// Where a field's comment and docs/domain-model.md disagree, the comment
+// says so rather than choosing silently.
+
+syntax = "proto3";
+
+package mill.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "harness/v1/harness.proto";
+
+option go_package = "github.com/ivy/mill/gen/mill/v1;millv1";
+
+// RunStatus is where a run is. The states and the transitions between them
+// are docs/domain-model.md §"Run states".
+enum RunStatus {
+  // RUN_STATUS_UNSPECIFIED is the zero value and carries no meaning.
+  RUN_STATUS_UNSPECIFIED = 0;
+  // RUN_STATUS_SELECTING means the node is claimed and has no workflow yet.
+  // The assessment step runs here.
+  RUN_STATUS_SELECTING = 1;
+  // RUN_STATUS_RUNNING means a lease is held and a step is executing or
+  // about to.
+  RUN_STATUS_RUNNING = 2;
+  // RUN_STATUS_WAITING means a gate node exists and blocks this node. The
+  // run holds no lease and no worker.
+  RUN_STATUS_WAITING = 3;
+  // RUN_STATUS_PARKED means the circuit breaker fired: a gate asks a human
+  // what to do and the lease is released. Structurally identical to
+  // WAITING; distinguished so status can say why.
+  RUN_STATUS_PARKED = 4;
+  // RUN_STATUS_DONE means the terminal step closed with evidence and the
+  // completing patch was accepted by dagger.
+  RUN_STATUS_DONE = 5;
+  // RUN_STATUS_FAILED means a gate was denied, or the node was dropped
+  // underneath the run. Terminal.
+  RUN_STATUS_FAILED = 6;
+  // RUN_STATUS_ABANDONED means a human restarted the node and a new
+  // generation exists. Terminal. docs/ledger.md's `runs` table omits this
+  // state from its status list; docs/domain-model.md §Run defines it and
+  // wins.
+  RUN_STATUS_ABANDONED = 7;
+}
+
+// ParkedReason says why the circuit breaker tripped, so the gate that asks a
+// human what to do can say what stopped.
+enum ParkedReason {
+  // PARKED_REASON_UNSPECIFIED is the zero value: the run is not parked.
+  PARKED_REASON_UNSPECIFIED = 0;
+  // PARKED_REASON_RETRIES means the failing step exhausted its retries.
+  PARKED_REASON_RETRIES = 1;
+  // PARKED_REASON_BUDGET means the run reached its spending cap.
+  PARKED_REASON_BUDGET = 2;
+  // PARKED_REASON_DENIED means a human denied a gate.
+  PARKED_REASON_DENIED = 3;
+  // PARKED_REASON_TIMEOUT means a step exceeded its wall clock.
+  PARKED_REASON_TIMEOUT = 4;
+  // PARKED_REASON_REFUSED means the mill refused to continue: an invariant
+  // the store could not reconcile, such as a done run on an open node.
+  PARKED_REASON_REFUSED = 5;
+}
+
+// StepKind says how a step is executed. Three kinds, no more:
+// docs/domain-model.md §Step.
+enum StepKind {
+  // STEP_KIND_UNSPECIFIED is the zero value and carries no meaning.
+  STEP_KIND_UNSPECIFIED = 0;
+  // STEP_KIND_SKILL runs a skill as a headless session and produces
+  // artifacts and, where the definition says so, structured output.
+  STEP_KIND_SKILL = 1;
+  // STEP_KIND_CHECK runs a command through the workspace and reads its exit
+  // code and stdout. It produces evidence directly.
+  STEP_KIND_CHECK = 2;
+  // STEP_KIND_GATE files a dagger gate and releases the lease. It produces
+  // no evidence of its own; the gate's result is the evidence.
+  STEP_KIND_GATE = 3;
+}
+
+// StepRunStatus is the state of one attempt at a step. docs/ledger.md
+// §step_runs.
+enum StepRunStatus {
+  // STEP_RUN_STATUS_UNSPECIFIED is the zero value and carries no meaning.
+  STEP_RUN_STATUS_UNSPECIFIED = 0;
+  // STEP_RUN_STATUS_RUNNING means the attempt is in flight. At most one per
+  // run.
+  STEP_RUN_STATUS_RUNNING = 1;
+  // STEP_RUN_STATUS_CLOSED means evidence exists for this attempt.
+  STEP_RUN_STATUS_CLOSED = 2;
+  // STEP_RUN_STATUS_FAILED means the attempt ended and on_failure applies.
+  STEP_RUN_STATUS_FAILED = 3;
+  // STEP_RUN_STATUS_ABORTED means the worker stopped or was fenced out
+  // before the attempt ended; the next worker starts a new attempt.
+  STEP_RUN_STATUS_ABORTED = 4;
+  // STEP_RUN_STATUS_SUPERSEDED means a later revise reopened this step; the
+  // row and its evidence stay as the record of pass one.
+  STEP_RUN_STATUS_SUPERSEDED = 5;
+}
+
+// EvidenceKind names what closes a step, and therefore how the mill verified
+// it. docs/domain-model.md §Evidence lists what each kind proves.
+enum EvidenceKind {
+  // EVIDENCE_KIND_UNSPECIFIED is the zero value and carries no meaning.
+  EVIDENCE_KIND_UNSPECIFIED = 0;
+  // EVIDENCE_KIND_COMMIT closes commit steps: `git cat-file -e <sha>` in the
+  // workspace succeeds and the SHA is on the run's branch.
+  EVIDENCE_KIND_COMMIT = 1;
+  // EVIDENCE_KIND_EXIT closes check steps such as build, test, and lint: the
+  // process the workspace ran exited with the code the definition names.
+  EVIDENCE_KIND_EXIT = 2;
+  // EVIDENCE_KIND_VERDICT closes review steps: the session's final output
+  // parsed as a verdict whose decision is approve.
+  EVIDENCE_KIND_VERDICT = 3;
+  // EVIDENCE_KIND_STRUCTURED closes assessment and plan steps: the session's
+  // final output validated against the step's schema.
+  EVIDENCE_KIND_STRUCTURED = 4;
+  // EVIDENCE_KIND_URL closes PR steps: the forge returned the URL when asked
+  // for the PR by branch.
+  EVIDENCE_KIND_URL = 5;
+  // EVIDENCE_KIND_STATUS closes CI steps: the forge reports the named check
+  // as success for the commit.
+  EVIDENCE_KIND_STATUS = 6;
+  // EVIDENCE_KIND_ARTIFACT closes any step: an artifact with this digest was
+  // accepted by dagger.
+  EVIDENCE_KIND_ARTIFACT = 7;
+  // EVIDENCE_KIND_GATE closes gate steps: the gate node's status is done and
+  // its result is attached.
+  EVIDENCE_KIND_GATE = 8;
+}
+
+// Capability is one thing a step may do through its workspace.
+// docs/domain-model.md §"Capability set".
+enum Capability {
+  // CAPABILITY_UNSPECIFIED is the zero value and grants nothing.
+  CAPABILITY_UNSPECIFIED = 0;
+  // CAPABILITY_READ grants reading files in the checkout.
+  CAPABILITY_READ = 1;
+  // CAPABILITY_WRITE grants writing files, staging, and committing on the
+  // run's branch.
+  CAPABILITY_WRITE = 2;
+  // CAPABILITY_EXEC grants running commands in the checkout.
+  CAPABILITY_EXEC = 3;
+  // CAPABILITY_NETWORK grants outbound network from commands.
+  CAPABILITY_NETWORK = 4;
+  // CAPABILITY_FORGE grants a forge credential scoped to the project's
+  // repository: push the branch, open and query a PR, read CI status.
+  CAPABILITY_FORGE = 5;
+  // CAPABILITY_DEPLOY grants whatever the project's deploy step needs,
+  // defined per project.
+  CAPABILITY_DEPLOY = 6;
+}
+
+// Tier is how much work a node is, and what gate auto predicates compare
+// against. Every run has one by the time its first gate is evaluated, from
+// the assessment or from the project default.
+enum Tier {
+  // TIER_UNSPECIFIED is the zero value and carries no meaning.
+  TIER_UNSPECIFIED = 0;
+  // TIER_QUICK_FIX is a change a single step can carry.
+  TIER_QUICK_FIX = 1;
+  // TIER_SMALL is a change with a handful of steps and no design decision.
+  TIER_SMALL = 2;
+  // TIER_FEATURE is a change worth planning and reviewing.
+  TIER_FEATURE = 3;
+  // TIER_LARGE is a change a human should look at before it merges.
+  TIER_LARGE = 4;
+}
+
+// Scope says how widely a workflow applies. A project definition overrides an
+// org one; a shadowing definition logs a warning at load, mirroring the
+// agent-skills precedence rule.
+enum Scope {
+  // SCOPE_UNSPECIFIED is the zero value and carries no meaning.
+  SCOPE_UNSPECIFIED = 0;
+  // SCOPE_ORG makes the workflow available to every project in the
+  // organization.
+  SCOPE_ORG = 1;
+  // SCOPE_PROJECT restricts the workflow to one project, named alongside it.
+  SCOPE_PROJECT = 2;
+}
+
+// SourceKind says where a stored definition came from.
+enum SourceKind {
+  // SOURCE_KIND_UNSPECIFIED is the zero value and carries no meaning.
+  SOURCE_KIND_UNSPECIFIED = 0;
+  // SOURCE_KIND_REPO means the definition was seeded from files in a
+  // repository at a commit.
+  SOURCE_KIND_REPO = 1;
+  // SOURCE_KIND_CLI means a principal pushed the definition with the CLI.
+  SOURCE_KIND_CLI = 2;
+}
+
+// StdoutShape is what a check's stdout is expected to be, following the
+// agent-skills script convention: JSON on stdout, diagnostics on stderr.
+enum StdoutShape {
+  // STDOUT_SHAPE_UNSPECIFIED is the zero value and carries no meaning.
+  STDOUT_SHAPE_UNSPECIFIED = 0;
+  // STDOUT_SHAPE_NONE means stdout is ignored.
+  STDOUT_SHAPE_NONE = 1;
+  // STDOUT_SHAPE_TEXT means stdout is captured as text.
+  STDOUT_SHAPE_TEXT = 2;
+  // STDOUT_SHAPE_JSON means stdout is parsed as JSON and validated against
+  // the check's schema.
+  STDOUT_SHAPE_JSON = 3;
+}
+
+// Feedback says what a check's failure does with its stderr.
+enum Feedback {
+  // FEEDBACK_UNSPECIFIED is the zero value and carries no meaning.
+  FEEDBACK_UNSPECIFIED = 0;
+  // FEEDBACK_REVISE returns stderr to the session as the next prompt.
+  FEEDBACK_REVISE = 1;
+  // FEEDBACK_PARK parks the run instead of feeding anything back.
+  FEEDBACK_PARK = 2;
+}
+
+// OnFailureKind is what a step's failure does to the run. There is no
+// branching in a workflow except this.
+enum OnFailureKind {
+  // ON_FAILURE_KIND_UNSPECIFIED is the zero value; the loader treats it as
+  // PARK, which is the documented default.
+  ON_FAILURE_KIND_UNSPECIFIED = 0;
+  // ON_FAILURE_KIND_REVISE returns to a named earlier step in its session
+  // with the failure as the next prompt.
+  ON_FAILURE_KIND_REVISE = 1;
+  // ON_FAILURE_KIND_PARK trips the circuit breaker.
+  ON_FAILURE_KIND_PARK = 2;
+}
+
+// VerdictDecision is a reviewer's answer. There is no needs-human decision: a
+// human is reached only through the circuit breaker.
+enum VerdictDecision {
+  // VERDICT_DECISION_UNSPECIFIED is the zero value and carries no meaning.
+  VERDICT_DECISION_UNSPECIFIED = 0;
+  // VERDICT_DECISION_APPROVE closes the review step.
+  VERDICT_DECISION_APPROVE = 1;
+  // VERDICT_DECISION_REVISE sends the work back. A revise with zero blocking
+  // findings is a definition error, treated as approve with a warning in the
+  // ledger.
+  VERDICT_DECISION_REVISE = 2;
+}
+
+// FindingSeverity says whether a finding blocks approval.
+enum FindingSeverity {
+  // FINDING_SEVERITY_UNSPECIFIED is the zero value and carries no meaning.
+  FINDING_SEVERITY_UNSPECIFIED = 0;
+  // FINDING_SEVERITY_BLOCKING must be addressed before approval.
+  FINDING_SEVERITY_BLOCKING = 1;
+  // FINDING_SEVERITY_NOTE is recorded and does not block. A finding the
+  // reviewer could not tie to an acceptance criterion is recorded as this.
+  FINDING_SEVERITY_NOTE = 2;
+}
+
+// WorkspaceKind is how a workspace is realised. The workflow definition does
+// not change across these; if it has to, the seam leaked.
+enum WorkspaceKind {
+  // WORKSPACE_KIND_UNSPECIFIED is the zero value and carries no meaning.
+  WORKSPACE_KIND_UNSPECIFIED = 0;
+  // WORKSPACE_KIND_LOCAL is a clone under the mill's own account, isolated
+  // by that account and the tool policy.
+  WORKSPACE_KIND_LOCAL = 1;
+  // WORKSPACE_KIND_CONTAINER is a clone in a rootless podman container.
+  WORKSPACE_KIND_CONTAINER = 2;
+  // WORKSPACE_KIND_REMOTE is a clone on another host reached over the
+  // tailnet.
+  WORKSPACE_KIND_REMOTE = 3;
+}
+
+// WorkspaceState is whether a workspace's files still exist.
+enum WorkspaceState {
+  // WORKSPACE_STATE_UNSPECIFIED is the zero value and carries no meaning.
+  WORKSPACE_STATE_UNSPECIFIED = 0;
+  // WORKSPACE_STATE_LIVE means the run is executing in it.
+  WORKSPACE_STATE_LIVE = 1;
+  // WORKSPACE_STATE_RETAINED means the run is waiting or parked and the
+  // files are kept so a resume or a human finds them intact.
+  WORKSPACE_STATE_RETAINED = 2;
+  // WORKSPACE_STATE_DESTROYED means the files are gone; the row stays.
+  WORKSPACE_STATE_DESTROYED = 3;
+}
+
+// Run is one node, worked through one workflow, by this mill: the unit a
+// worker takes and the unit a workspace belongs to.
+message Run {
+  // ULID, internal.
+  string id = 1;
+  // The dagger node.
+  string node_id = 2;
+  // The display key (`dagger#18`).
+  string node_ref = 3;
+  // 1 for the first run on a node; incremented by restart.
+  // `(node_id, generation)` is unique; at most one run per node is live.
+  // docs/ledger.md's `runs` table has no such column and calls `node_id`
+  // unique outright; docs/domain-model.md §Restart requires the generation
+  // and wins.
+  int64 generation = 4;
+  // Dagger's context id for the node, copied at creation. Every session in
+  // the run derives from it and the generation.
+  string context_id = 5;
+  // The immutable workflow version this run follows. Fixed at selection;
+  // never changes mid-run. Empty while selecting.
+  string workflow_id = 6;
+  // Where the run is. See RunStatus.
+  RunStatus status = 7;
+  // The current dagger lease, or empty while waiting or parked. The fencing
+  // token on every dagger write.
+  string lease_id = 8;
+  // Where the current attempt runs. Free string; a hostname and account
+  // today.
+  string worker_ref = 9;
+  // Set with parked: why the breaker tripped.
+  ParkedReason parked_reason = 10;
+  // Set with waiting: the gate this run filed and is blocked on.
+  string gate_node_id = 11;
+  // Set by cancel; the worker reads it at every heartbeat and stops the step
+  // cleanly, releasing with preempted. Cleared on resume.
+  bool cancel_requested = 12;
+  // The run's git branch, derived from the node ref. From docs/ledger.md
+  // §runs; docs/domain-model.md carries it on the workspace instead, and the
+  // store keeps it on the run so a resume elsewhere can clone before a
+  // workspace row exists.
+  string branch = 13;
+  // The tier this run was assessed at, or the project default's. What gate
+  // auto predicates compare against, so it always exists by the first gate.
+  Tier tier = 14;
+  // When the run was created.
+  google.protobuf.Timestamp created_at = 15;
+  // When the run last changed.
+  google.protobuf.Timestamp updated_at = 16;
+  // When the run reached a terminal state. From docs/ledger.md §runs.
+  google.protobuf.Timestamp ended_at = 17;
+}
+
+// StepRun is one attempt at a step. Append-only: an interrupted step starts a
+// new attempt from the top rather than resuming.
+message StepRun {
+  // ULID.
+  string id = 1;
+  // The run this attempt belongs to.
+  string run_id = 2;
+  // The step from the run's workflow definition.
+  string step_name = 3;
+  // 1-based per `(run_id, step_name)`.
+  int64 attempt = 4;
+  // Copied at start so the row reads alone.
+  StepKind kind = 5;
+  // Skill steps: the session this attempt ran in.
+  string session_id = 6;
+  // The dagger lease held when this attempt ran.
+  string lease_id = 7;
+  // The worker that ran this attempt.
+  string worker_ref = 8;
+  // Where the attempt is. See StepRunStatus.
+  StepRunStatus status = 9;
+  // Skill and check steps: how the process ended. A status of -1 means it
+  // never ran.
+  harness.v1.ProcessExit exit = 10;
+  // The step run whose failure this attempt is the revise for, or empty.
+  string feedback_from = 11;
+  // Gate steps: true when the auto predicate closed it without a human.
+  bool auto_approved = 12;
+  // When the attempt started.
+  google.protobuf.Timestamp started_at = 13;
+  // When the attempt ended.
+  google.protobuf.Timestamp ended_at = 14;
+}
+
+// Finding is one thing a reviewer found, tied to an acceptance criterion.
+message Finding {
+  // The node's acceptance criterion this finding is against, by label. A
+  // reviewer that cannot tie a finding to a criterion is drifting from its
+  // contract, and the finding is recorded as a note.
+  string criterion = 1;
+  // Whether the finding blocks approval.
+  FindingSeverity severity = 2;
+  // What is wrong, in one sentence.
+  string summary = 3;
+  // Where, as `path:line`.
+  string location = 4;
+}
+
+// Verdict is a review step's structured output. Parsed, never read: the
+// decision closes the step or sends the work back, and no prose in it is
+// evidence.
+message Verdict {
+  // Approve or revise.
+  VerdictDecision decision = 1;
+  // What the reviewer found.
+  repeated Finding findings = 2;
+}
+
+// Evidence is an externally verified fact that closes a step. Immutable once
+// recorded. Nothing the session says, and nothing in a transcript, is
+// evidence.
+message Evidence {
+  // The step run it closes.
+  string step_run_id = 1;
+  // Which kind of fact this is. Redundant with the `value` oneof and stored
+  // so a row reads without unpacking it.
+  EvidenceKind kind = 2;
+  // The fact itself, in the shape the kind defines.
+  oneof value {
+    // A commit SHA on the run's branch.
+    string commit = 3;
+    // How the process the workspace ran ended.
+    harness.v1.ProcessExit exit = 4;
+    // A parsed review verdict whose decision is approve.
+    Verdict verdict = 5;
+    // A JSON document validated against the step's schema.
+    google.protobuf.Struct structured = 6;
+    // A URL the forge returned.
+    string url = 7;
+    // A status string the forge reports for the commit.
+    string status = 8;
+    // An artifact digest dagger accepted.
+    string artifact = 9;
+    // The gate node's id, whose result is attached to the closing step.
+    string gate = 10;
+  }
+  // Which check or which mill routine established it.
+  string verified_by = 11;
+  // When it was established.
+  google.protobuf.Timestamp verified_at = 12;
+}
+
+// Session is a resumable agent session inside a run. Named by the step
+// definition, identified deterministically, owned by the run. A session's
+// transcript lives with the harness on the worker's host, never in the store.
+message Session {
+  // The run this session belongs to. Composite key with `name`.
+  string run_id = 1;
+  // The step's session value: implement, review. Composite key with
+  // `run_id`.
+  string name = 2;
+  // UUIDv5 of (`context_id`, `generation`, `name`). Deterministic, so a
+  // resumed worker computes the same id and the harness resumes the same
+  // transcript; a restart's new generation yields ids the harness has never
+  // seen. docs/ledger.md §sessions omits the generation from the tuple;
+  // docs/domain-model.md §Session includes it and wins, because without it a
+  // restart would reuse the abandoned run's transcripts.
+  string id = 3;
+  // claude-code today. Which adapter owns it.
+  string harness = 4;
+  // Whatever the adapter needs to find the transcript: a config dir and cwd
+  // for Claude Code.
+  google.protobuf.Struct adapter_ref = 5;
+  // The host the transcript is on. A different worker cannot
+  // transcript-resume; it graph-resumes with a fresh session of the same id.
+  // From docs/ledger.md §sessions.
+  string worker_ref = 6;
+  // When the session first ran.
+  google.protobuf.Timestamp started_at = 7;
+  // When it last took a turn.
+  google.protobuf.Timestamp last_turn_at = 8;
+}
+
+// Source is where a stored definition came from, so a ledger entry can say
+// exactly which definition produced it.
+message Source {
+  // Whether the definition was seeded from a repository or pushed.
+  SourceKind kind = 1;
+  // The repository it was seeded from.
+  string repo = 2;
+  // The commit it was seeded at.
+  string commit = 3;
+  // The path within the repository.
+  string path = 4;
+  // The pushing principal, for a CLI push.
+  string pushed_by = 5;
+}
+
+// SkillRef pins the exact prompt a step ran: a skill is referenced by name
+// and content hash, so two workflows sharing a skill share the record.
+message SkillRef {
+  // The skill's name, from SKILL.md frontmatter.
+  string name = 1;
+  // Content hash of the skill directory, resolved from the store at workflow
+  // load.
+  string digest = 2;
+}
+
+// Skill is the portable part of a step, stored so a workflow version pins the
+// exact prompt it ran. docs/ledger.md §skills.
+message Skill {
+  // ULID.
+  string id = 1;
+  // From SKILL.md frontmatter.
+  string name = 2;
+  // Content hash of the skill directory.
+  string digest = 3;
+  // The SKILL.md body, the prompt.
+  string body = 4;
+  // Manifest of scripts/, assets/, references/: path to digest. Bytes are
+  // stored in the store's blob table by digest.
+  map<string, string> files = 5;
+  // The flat string map from frontmatter.
+  map<string, string> metadata = 6;
+  // Where this skill came from.
+  Source source = 7;
+  // When it was stored.
+  google.protobuf.Timestamp created_at = 8;
+}
+
+// Check is a deterministic command a step runs through the workspace. Checks
+// are what make a workflow enforced: a skill can recommend a script, only a
+// check step makes the mill run it and act on the result.
+message Check {
+  // Path relative to the skill directory or the workflow, plus arguments.
+  // Executed by Workspace.Exec, never directly.
+  repeated string command = 1;
+  // Which codes mean pass. Empty means 0.
+  repeated int32 exit = 2;
+  // What stdout is expected to be.
+  StdoutShape stdout = 3;
+  // JSON Schema stdout is validated against when `stdout` is JSON.
+  string stdout_schema = 4;
+  // Whether a failure's stderr is returned to the session as the next prompt
+  // or parks the run.
+  Feedback feedback = 5;
+}
+
+// Ask is a gate node's title and body, templated from the run: which node,
+// which step, what is being asked, what the artifacts are.
+message Ask {
+  // The gate node's title.
+  string title = 1;
+  // The gate node's body, as markdown.
+  string body = 2;
+}
+
+// Gate is a human decision, expressed the only way dagger allows: a node with
+// assignee_kind user that blocks this run's node. The mill files it, never
+// claims it, never completes it, and never disposes of it.
+message Gate {
+  // The gate node's title and body, templated from the run.
+  Ask ask = 1;
+  // A policy that closes the gate without a human: a predicate over prior
+  // evidence and the run's tier, such as
+  // `verdict.decision == approve && tier <= feature`. Recorded in the ledger
+  // as an auto-approval when it fires. Empty means always ask.
+  string auto = 2;
+  // What the run records on the node if the human denies.
+  string deny_result = 3;
+}
+
+// OnFailure is what a step's failure does to the run.
+message OnFailure {
+  // Revise or park. Default park.
+  OnFailureKind kind = 1;
+  // The step to return to, for a revise. Must be earlier in the workflow; a
+  // target that is not is a definition error caught at load. Every step from
+  // the target through the failing step is superseded, so revised work is
+  // re-checked, re-committed, and re-reviewed.
+  string revise_target = 2;
+}
+
+// HarnessSettings is one adapter's entry in a step's harness table. Resolves
+// docs/domain-model.md's open question "whether harness settings belong on
+// the step or on the skill record": on the step, because a skill shared
+// between a docs workflow and a feature workflow is worth a different model
+// in each and the skill record cannot hold both.
+message HarnessSettings {
+  // The model to run the session on. Harness-specific free string.
+  string model = 1;
+  // How hard the model should think. Harness-specific free string.
+  string effort = 2;
+  // The tool allowlist the session runs under.
+  harness.v1.ToolPolicy tool_policy = 3;
+}
+
+// Step is one unit of a workflow. Steps run in order; there is no branching
+// except on_failure.
+message Step {
+  // Unique within the workflow. The ledger's key for the step.
+  string name = 1;
+  // skill, check, or gate.
+  StepKind kind = 2;
+  // Skill steps only. Names the session this step runs in; steps sharing a
+  // name resume the same session.
+  string session = 3;
+  // Skill steps: the skill's name and content hash, resolved from the store
+  // at workflow load.
+  SkillRef skill = 4;
+  // Check steps: command path relative to the skill or workflow, exit-code
+  // semantics, expected stdout shape.
+  Check check = 5;
+  // Gate steps: the ask, and the auto-approve policy.
+  Gate gate = 6;
+  // What closes this step.
+  EvidenceKind evidence = 7;
+  // The capability set the step's workspace handle grants.
+  repeated Capability capabilities = 8;
+  // Per-harness settings: model, effort, tool policy. Keyed by harness name;
+  // the adapter reads its own entry.
+  map<string, HarnessSettings> harness = 9;
+  // What a failure does: revise a named earlier step, or park. Default park.
+  OnFailure on_failure = 10;
+  // How many times this step may fail with revise before park. Counted on
+  // this step's attempts. Default 3.
+  int32 retries = 11;
+  // Wall clock for the step, enforced by the worker. Independent of the
+  // dagger lease, which the worker heartbeats for the step's whole duration;
+  // a step may run longer than a lease TTL.
+  google.protobuf.Duration timeout = 12;
+  // JSON Schema the session's structured output must validate against, for a
+  // skill step whose evidence is structured.
+  string output_schema = 13;
+}
+
+// Workflow is a named, immutable, versioned definition of how a class of node
+// gets worked. Data, not code. A workflow is never edited: a change is a new
+// version, and runs in flight keep the version they started with.
+message Workflow {
+  // ULID.
+  string id = 1;
+  // quick-fix, feature, docs. Unique within a scope.
+  string name = 2;
+  // Content hash of the definition. Two definitions with the same hash are
+  // the same version.
+  string version = 3;
+  // org or project. A project definition overrides an org one.
+  Scope scope = 4;
+  // The project, when the scope is project.
+  string project = 5;
+  // Ordered list of steps.
+  repeated Step steps = 6;
+  // Where this version came from: repo, commit, path — or a CLI push with
+  // the pushing principal.
+  Source source = 7;
+  // When this version was stored.
+  google.protobuf.Timestamp created_at = 8;
+}
+
+// ProjectDefault is a project naming the workflow its nodes are worked
+// through, and the tier that workflow stands for. Dagger nodes carry no
+// workflow label; dagger never learns the word.
+message ProjectDefault {
+  // The dagger project.
+  string project = 1;
+  // Name, resolved to the newest version in scope at run creation.
+  string workflow = 2;
+  // What gate auto predicates compare against when the assessment did not
+  // run.
+  Tier tier = 3;
+}
+
+// StepToken is the credential ladder's bottom rung: issued by the store per
+// step run, and the only credential a session ever holds. Every derived
+// credential is minted by the workspace against a live step token and dies
+// with it.
+message StepToken {
+  // ULID. From docs/ledger.md §step_tokens.
+  string id = 1;
+  // What it is scoped to.
+  string step_run_id = 2;
+  // Opaque bearer. Presented on the workspace socket. Returned by
+  // IssueStepToken once and never again: the store keeps only `token_hash`.
+  string token = 3;
+  // SHA-256 of the bearer, which is all the store holds. From
+  // docs/ledger.md §step_tokens.
+  string token_hash = 4;
+  // Copied from the step at issue.
+  repeated Capability capabilities = 5;
+  // When it was issued.
+  google.protobuf.Timestamp issued_at = 6;
+  // Revoked when the step run closes, whichever way.
+  google.protobuf.Timestamp revoked_at = 7;
+}
+
+// Usage is what one turn cost, per model. One row per turn per model, as the
+// adapter reports: a turn that bills two models writes two. Counts, never
+// currency; a rate table is applied at query time.
+message Usage {
+  // The step run the cost is attributed to.
+  string step_run_id = 1;
+  // Free string naming the model.
+  string model = 2;
+  // Tokens sent to the model.
+  int64 input_tokens = 3;
+  // Tokens produced by the model.
+  int64 output_tokens = 4;
+  // Tokens served from the model's prompt cache.
+  int64 cache_read_tokens = 5;
+  // Tokens written to the model's prompt cache.
+  int64 cache_write_tokens = 6;
+  // When the turn was recorded.
+  google.protobuf.Timestamp recorded_at = 7;
+  // When this row's step totals were posted to dagger; unset until then.
+  google.protobuf.Timestamp posted_at = 8;
+}
+
+// Workspace is what a step receives instead of a path and a keychain: a unix
+// socket and a step token. One workspace per run; concurrent runs never share
+// one.
+message Workspace {
+  // ULID.
+  string id = 1;
+  // The run it belongs to. Unique while live.
+  string run_id = 2;
+  // local today; container and remote later behind the same interface.
+  WorkspaceKind kind = 3;
+  // The git ref checked out at creation: the project's default branch, or
+  // the run's branch on resume.
+  string ref = 4;
+  // The run's working branch, derived from the node ref.
+  string branch = 5;
+  // The unix socket a step's session reaches the workspace through.
+  string socket = 6;
+  // The step-scoped bearer for that socket. Rotated per step.
+  string token = 7;
+  // The effective capability set, from the current step.
+  repeated Capability capabilities = 8;
+  // Where it is. From docs/ledger.md §workspaces.
+  string worker_ref = 9;
+  // Whether its files still exist. From docs/ledger.md §workspaces.
+  WorkspaceState state = 10;
+  // When it was created. From docs/ledger.md §workspaces.
+  google.protobuf.Timestamp created_at = 11;
+  // When its files were destroyed. From docs/ledger.md §workspaces.
+  google.protobuf.Timestamp destroyed_at = 12;
+}
+
+// ModelTotals is one model's usage summed over some scope: a step run, a run.
+message ModelTotals {
+  // Free string naming the model.
+  string model = 1;
+  // Tokens sent to the model.
+  int64 input_tokens = 2;
+  // Tokens produced by the model.
+  int64 output_tokens = 3;
+  // Tokens served from the model's prompt cache.
+  int64 cache_read_tokens = 4;
+  // Tokens written to the model's prompt cache.
+  int64 cache_write_tokens = 5;
+}
+
+// RunSummary is a run with the things the ledger derives rather than stores,
+// which is what `mill status` renders.
+message RunSummary {
+  // The run itself.
+  Run run = 1;
+  // The first step whose latest step run is not closed. Derived, never
+  // stored: a column would drift.
+  string current_step = 2;
+  // Attempts used against the current step's retries.
+  int64 current_attempt = 3;
+  // The run's cost so far, summed over its step runs, by model.
+  repeated ModelTotals totals = 4;
+  // How many dagger leases the node has held under this run. Distinct from a
+  // step's attempt.
+  int64 leases = 5;
+}
+
+// StepRunDetail is one attempt with everything hanging off it, which is what
+// `mill inspect` renders.
+message StepRunDetail {
+  // The attempt.
+  StepRun step_run = 1;
+  // The evidence that closed it, if it closed.
+  Evidence evidence = 2;
+  // The session it ran in, for a skill step.
+  Session session = 3;
+  // What it cost, by model.
+  repeated ModelTotals totals = 4;
+}

@@ -1,0 +1,310 @@
+// The harness.v1 sidecar wire. A skill step becomes a session in a harness,
+// and the mill drives that harness through an adapter: a child process
+// spawned per step and spoken to over newline-delimited JSON on stdio. This
+// file types both ends of that pipe. docs/architecture.md §"Skill steps: the
+// harness adapter" is its rationale; the Go adapter and the TypeScript
+// sidecar are both generated from here, so neither side hand-writes a frame.
+//
+// Encoding. One protojson-encoded Request or Response per line, no framing
+// beyond the newline. Every message therefore has to survive a JSON
+// round-trip with no side channel: there are no bytes fields and no
+// well-known types beyond Struct, whose JSON is its own value.
+//
+// This package defines no service. The transport is a pipe, not Connect; a
+// unix socket with Connect is the upgrade if a sidecar ever has to outlive
+// its worker, and nothing in MVP needs that.
+
+syntax = "proto3";
+
+package harness.v1;
+
+import "google/protobuf/struct.proto";
+
+option go_package = "github.com/ivy/mill/gen/harness/v1;harnessv1";
+
+// ExitReason says why a session ended when the exit status alone does not.
+// It is the discriminator that keeps "never ran" apart from "ran and
+// failed", which is what lets retry policy do the right thing.
+enum ExitReason {
+  // EXIT_REASON_UNSPECIFIED is the zero value: the process ran and its
+  // status and signal are the whole story.
+  EXIT_REASON_UNSPECIFIED = 0;
+  // EXIT_REASON_REFUSED means the harness declined to start the session at
+  // all, for its own reasons.
+  EXIT_REASON_REFUSED = 1;
+  // EXIT_REASON_POLICY means the tool policy the step asked for could not be
+  // applied, so the session was never started under it.
+  EXIT_REASON_POLICY = 2;
+  // EXIT_REASON_TIMEOUT means the step's wall clock elapsed and the worker
+  // stopped the session.
+  EXIT_REASON_TIMEOUT = 3;
+  // EXIT_REASON_CANCELLED means a human or the worker cancelled the run and
+  // the session was stopped cleanly.
+  EXIT_REASON_CANCELLED = 4;
+}
+
+// ProcessExit is how a spawned thing ended. Borrowed wholesale from
+// buildkite-agent, including the convention that a negative status means the
+// process never ran; see docs/architecture.md §"What is borrowed".
+message ProcessExit {
+  // The process's exit status. A status of -1 means "never ran": no process
+  // reached the point of producing a status, and `reason` says why. Any
+  // other value is a status the process actually exited with, so a caller
+  // can tell a failing session from a session that never started.
+  int32 status = 1;
+  // The signal that killed the process, or 0 if none did.
+  int32 signal = 2;
+  // Why the session ended, when the status alone does not say. Required
+  // whenever `status` is -1.
+  ExitReason reason = 3;
+}
+
+// TokenCounts is one model's token usage. Counts, never currency: a rate
+// table is applied by whoever wants money, exactly as in dagger.
+message TokenCounts {
+  // Tokens sent to the model.
+  int64 input = 1;
+  // Tokens produced by the model.
+  int64 output = 2;
+  // Tokens served from the model's prompt cache.
+  int64 cache_read = 3;
+  // Tokens written to the model's prompt cache.
+  int64 cache_write = 4;
+}
+
+// Usage is what a turn or a whole session cost, keyed by model. It is a map
+// and not a single model's counts because one assistant turn bills an
+// auxiliary model alongside the one the step asked for, and the mill posts
+// one dagger usage record per (lease, model). Usage is part of the adapter's
+// contract, not an optional event: the adapter is the only component that
+// sees the harness's numbers.
+message Usage {
+  // Token counts by model name. The key is the harness's own free-string
+  // model identifier, passed through unaltered.
+  map<string, TokenCounts> by_model = 1;
+}
+
+// ToolPolicy is the tool allowlist a session runs under. In MVP it is the
+// only enforcement of the reviewer's read-only guarantee and the
+// implementer's write boundary: the SDK enforces it and the model does not
+// get a vote.
+message ToolPolicy {
+  // Tool names the session may call. Empty means the harness's default set.
+  repeated string allow = 1;
+  // Tool names the session may not call, applied after `allow`.
+  repeated string deny = 2;
+}
+
+// Settings are the per-harness knobs a step carries for the adapter that
+// owns it. Resolved from the step's `harness` table entry for this adapter's
+// name before the sidecar is spawned.
+//
+// Resolves docs/domain-model.md's open question "whether harness settings
+// belong on the step or on the skill record": they are on the step. The same
+// skill is worth a cheaper model in a docs workflow than in a feature
+// workflow, and the skill record is shared across workflows, so it cannot
+// hold a setting that differs between them.
+message Settings {
+  // The model to run the session on. A harness-specific free string; the
+  // mill never interprets it.
+  string model = 1;
+  // How hard the model should think, where the harness has such a knob.
+  // Harness-specific free string.
+  string effort = 2;
+  // The tool allowlist for this session.
+  ToolPolicy tool_policy = 3;
+}
+
+// Workspace is the entire environment a session is given: a unix socket and
+// a step token, and nothing else. Everything the session does to the world
+// goes through that socket, gated by the step's capability set.
+message Workspace {
+  // Path to the workspace's unix socket. The sidecar mounts it as an MCP
+  // server so the session's own file and command tools route through it.
+  string socket = 1;
+  // The step token, presented as a bearer on the socket. Scoped to one step
+  // run and revoked when that step run leaves `running`, so a leaked
+  // transcript contains nothing reusable.
+  string token = 2;
+}
+
+// Attachment is one piece of context handed to the session alongside the
+// prompt: a prior step's artifact, or a predecessor node's result.
+message Attachment {
+  // What to call this attachment in the rendered prompt.
+  string name = 1;
+  // Who is making this claim: the principal or step the content came from.
+  // Predecessor content is rendered as attributed, delimited data and never
+  // as instructions, which is dagger's rule and the mill's to honour.
+  string source = 2;
+  // The content's media type, so the sidecar renders it correctly.
+  string media_type = 3;
+  // The content itself, as text. The wire is JSON, so attachments are text
+  // and a binary artifact is referenced through the workspace instead.
+  string content = 4;
+}
+
+// Start begins a session that has never run. The session id is deterministic
+// — UUIDv5 of the run's context id, generation, and the step's session name
+// — so a restart's new generation yields ids the harness has never seen.
+message Start {
+  // The session to create, by its deterministic id.
+  string session_id = 1;
+  // The prompt: the skill body, plus the node's body and inputs.
+  string prompt = 2;
+  // Context the session is given beside the prompt.
+  repeated Attachment attachments = 3;
+  // Model, effort, and tool policy for this session.
+  Settings settings = 4;
+  // The socket and token that are the session's only environment.
+  Workspace workspace = 5;
+  // JSON Schema the session's final output must validate against, when the
+  // step declares one. Empty when the step wants no structured output.
+  string output_schema = 6;
+  // Working directory for the session, inside the workspace's checkout.
+  string cwd = 7;
+}
+
+// Resume continues an existing session with a new prompt, so a `revise`
+// returns to the implementing session and the model picks up its own prior
+// context. A step is never resumed mid-flight; a session is.
+message Resume {
+  // The session to resume, by the same deterministic id. An adapter that
+  // cannot find the transcript starts a fresh session under this id rather
+  // than failing: the ledger, not the transcript, is what resume trusts.
+  string session_id = 1;
+  // The next prompt: the revising step's feedback, or the next step's skill
+  // body.
+  string prompt = 2;
+  // Context the session is given beside the prompt.
+  repeated Attachment attachments = 3;
+  // Model, effort, and tool policy for this turn. Re-sent because a step may
+  // resume a session under different settings than started it.
+  Settings settings = 4;
+  // The socket and token for this step run. Rotated per step, so a resumed
+  // session is handed a token the previous step's does not outlive.
+  Workspace workspace = 5;
+  // JSON Schema the session's final output must validate against, when the
+  // step declares one.
+  string output_schema = 6;
+  // Working directory for the session, inside the workspace's checkout.
+  string cwd = 7;
+}
+
+// Cancel stops a running session: SIGTERM, a grace window, SIGKILL. The
+// sidecar answers with a Terminal whose exit reason is CANCELLED.
+message Cancel {
+  // The session to stop.
+  string session_id = 1;
+  // How long the session may take to stop cleanly before it is killed, in
+  // milliseconds. Zero means the sidecar's default grace.
+  int32 grace_ms = 2;
+}
+
+// Request is one line from the worker to the sidecar.
+message Request {
+  // Correlates this request with the responses it produces. Every Event and
+  // the Terminal carry it back.
+  string id = 1;
+  // Exactly one of the three verbs the adapter interface names.
+  oneof body {
+    // Begin a session that has never run.
+    Start start = 2;
+    // Continue an existing session.
+    Resume resume = 3;
+    // Stop a running session.
+    Cancel cancel = 4;
+  }
+}
+
+// Text is something the assistant said, streamed as it is produced.
+message Text {
+  // The text fragment. Fragments concatenate in arrival order.
+  string text = 1;
+}
+
+// ToolCall is the session asking to use a tool.
+message ToolCall {
+  // The harness's id for this call, matching the ToolResult that answers it.
+  string call_id = 1;
+  // The tool's name, as the harness names it.
+  string name = 2;
+  // The call's arguments. Logged as a summary line, never in full.
+  google.protobuf.Struct arguments = 3;
+}
+
+// ToolResult is what a tool returned. Full tool output is never logged; a
+// summary line per result is.
+message ToolResult {
+  // The ToolCall this answers.
+  string call_id = 1;
+  // The result rendered as text, truncated by the sidecar.
+  string content = 2;
+  // Whether the tool failed.
+  bool is_error = 3;
+}
+
+// Event is one thing that happened during a turn, streamed to the worker as
+// it happens. Events are for the operator's log and the ledger's usage rows;
+// nothing an event says is evidence.
+message Event {
+  // The request this event belongs to.
+  string request_id = 1;
+  // What happened.
+  oneof body {
+    // The assistant said something.
+    Text text = 2;
+    // The session asked to use a tool.
+    ToolCall tool_call = 3;
+    // A tool answered.
+    ToolResult tool_result = 4;
+    // What this turn cost, per model. Written to the ledger per turn.
+    Usage usage = 5;
+  }
+}
+
+// Terminal is the last line of a request: how the session ended and what it
+// produced. Exactly one Terminal follows each Start or Resume, and it is the
+// only thing the worker turns into evidence.
+message Terminal {
+  // The request this terminates.
+  string request_id = 1;
+  // The session's final assistant message. Becomes the run's result body
+  // when the terminal step is a skill step.
+  string final_message = 2;
+  // The final output parsed against the step's `output_schema`, when the
+  // step declared one. Unset otherwise, and unset when parsing failed —
+  // `exit` says so.
+  google.protobuf.Struct structured_output = 3;
+  // What the whole session cost, per model. The terminal total, not a
+  // running sum of the Usage events, because the harness's own total is
+  // authoritative.
+  Usage usage = 4;
+  // How the session ended. A status of -1 means it never ran and `reason`
+  // says why.
+  ProcessExit exit = 5;
+}
+
+// Failure is the sidecar reporting that it could not handle a request at
+// all: a malformed frame, an unknown verb, or a crash before any session
+// existed. A failure that a session reached is a Terminal, not this.
+message Failure {
+  // The request that could not be handled, or empty if it could not be
+  // parsed far enough to say.
+  string request_id = 1;
+  // What went wrong, for the operator's log.
+  string message = 2;
+}
+
+// Response is one line from the sidecar to the worker.
+message Response {
+  // Exactly one of the three things the sidecar emits.
+  oneof body {
+    // Something happened during a turn.
+    Event event = 1;
+    // A request ended.
+    Terminal terminal = 2;
+    // A request could not be handled.
+    Failure failure = 3;
+  }
+}

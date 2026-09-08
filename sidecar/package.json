@@ -1,0 +1,19 @@
+{
+  "name": "@mill/sidecar",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The harness adapter's other end: a child process the worker speaks harness.v1 to over newline-delimited JSON on stdio.",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@bufbuild/protoc-gen-es": "^2.10.1",
+    "@types/node": "^24.13.3",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.10.1"
+  }
+}

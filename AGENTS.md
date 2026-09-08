@@ -34,6 +34,9 @@ internal/store/       persistence and its migrations; only internal/domain may i
 internal/workspace/   the process chokepoint. os/exec is forbidden everywhere else
 internal/testsupport/ the testcontainers PostgreSQL fixture db-labelled specs use
 internal/version/     the version injected at link time by the Makefile
+proto/                the two contracts: mill.v1 the store API, harness.v1 the sidecar wire
+gen/                  generated Go, committed. buf owns it; `make generate` writes it
+sidecar/              the TypeScript harness adapter; sidecar/gen is harness.v1 in TypeScript
 docs/                 the design. Authoritative
 harness/              the reference agent loop that works one milestone of the backlog
 compose.yaml          PostgreSQL for local development; .env.example seeds .env

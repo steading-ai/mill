@@ -24,7 +24,7 @@ COMPOSE := podman compose
 # Silence podman's "executing external compose provider" banner.
 export PODMAN_COMPOSE_WARNING_LOGS = false
 
-.PHONY: all build test test-unit test-db lint generate clean db-up db-down db-reset db-migrate
+.PHONY: all build test test-unit test-db lint check-breaking check-generated typecheck-ts generate sidecar-deps clean db-up db-down db-reset db-migrate
 
 all: build
 
@@ -45,16 +45,62 @@ test-db:
 
 # go vet catches what golangci-lint's analyzers do not overlap with; the
 # rules that carry design decisions (depguard, forbidigo) live in
-# .golangci.yml. buf and sqlc checks join here when proto/ and the queries
+# .golangci.yml. buf lints the proto contracts and refuses a change that
+# would break a generated client; sqlc's check joins here when the queries
 # arrive.
 lint:
 	go vet ./...
 	golangci-lint run ./...
+	buf lint
+	@$(MAKE) --no-print-directory check-breaking
+	$(MAKE) --no-print-directory check-generated
+	$(MAKE) --no-print-directory typecheck-ts
+
+# The proto contracts are compared against main, so a change that would
+# break a generated client fails the build. A checkout whose main carries no
+# proto/ — before this contract first landed there, or a clone with no main
+# branch — has nothing to compare against, and buf treats an empty module as
+# an error rather than as "no breaking changes".
+check-breaking:
+	@if git cat-file -e main:proto 2>/dev/null; then \
+	  buf breaking --against '.git#branch=main'; \
+	 else \
+	  echo "buf breaking: main carries no proto/ to compare against; skipped"; \
+	 fi
+
+# Generated code is committed, so a consumer needs no proto toolchain. Both
+# templates are regenerated into a scratch tree and compared against this
+# one; either lagging its proto fails the build. Specs living beside
+# generated packages are hand-written and excluded from the comparison.
+check-generated: sidecar-deps
+	@tmp=$$(mktemp -d) && trap 'rm -rf "$$tmp"' EXIT && \
+	  buf generate -o "$$tmp" && \
+	  buf generate --template buf.gen.ts.yaml -o "$$tmp" && \
+	  if ! diff -r --exclude='*_test.go' "$$tmp/gen" gen || \
+	     ! diff -r "$$tmp/sidecar/gen" sidecar/gen; then \
+	    echo "lint: generated code is stale relative to proto/; run make generate"; \
+	    exit 1; \
+	  fi
 
 # Code generators. Each is deterministic: running twice leaves the tree
-# unchanged.
-generate:
+# unchanged, which check-generated relies on.
+generate: sidecar-deps
 	go generate ./...
+	buf generate
+	buf generate --template buf.gen.ts.yaml
+
+# The sidecar is the other end of the harness wire, so the generated
+# TypeScript has to type-check for the same reason the generated Go has to
+# compile.
+typecheck-ts: sidecar-deps
+	pnpm --dir sidecar exec tsc --noEmit
+
+# protoc-gen-es is a node package, so the TypeScript half of the contract
+# cannot be generated or checked without the sidecar's dependencies. The
+# lockfile pins them and pnpm's content-addressable store makes a warm
+# install offline and near-instant.
+sidecar-deps:
+	@pnpm install --dir sidecar --frozen-lockfile --prefer-offline --silent
 
 clean:
 	rm -f $(BINARY)

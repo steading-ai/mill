@@ -112,6 +112,8 @@ One unit of a workflow. Three kinds.
 | `retries` | How many times *this* step may fail with `revise` before `park`. Counted on this step's attempts. Default 3 |
 | `timeout` | Wall clock for the step, enforced by the worker. Independent of the dagger lease, which the worker heartbeats for the step's whole duration; a step may run longer than a lease TTL |
 
+Harness settings live on the **step**, not on the skill record. A skill is shared across workflows, so it cannot hold a setting that differs between them: the same reviewer is worth a cheaper model in a `docs` workflow than in `feature`. `mill.v1.HarnessSettings` and `harness.v1.Settings` carry the decision in the proto.
+
 A **skill step** runs a skill as a headless session: the skill body is the prompt, the node's body and inputs are context, prior steps' artifacts are attached. It produces artifacts and, where the definition says so, structured output.
 
 A **check step** runs a command through the workspace and reads its exit code and stdout. It produces evidence directly.
@@ -313,5 +315,4 @@ Moving mill to its own account is a later change and a larger one than it looks:
 ## Open questions
 
 - Whether a `workflow.yaml` sitting beside `SKILL.md` in the seeding repo should be one file per workflow or one per step, given a step's skill is shared across workflows.
-- Whether `harness` settings belong on the step or on the skill record. Leaning step: the same skill may want a cheaper model in a `docs` workflow than in `feature`.
 - The exact schema for `structured` evidence on the assessment step — waiting on the first `/build-workflow` spike.

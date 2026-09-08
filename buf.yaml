@@ -1,0 +1,14 @@
+# Proto module configuration. The proto packages are the two contracts mill
+# is built from: mill.v1, the store API its faces speak, and harness.v1, the
+# sidecar wire. See docs/domain-model.md and docs/architecture.md.
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+    # Every message, field, enum, and value states its meaning.
+    - COMMENTS
+breaking:
+  use:
+    - FILE

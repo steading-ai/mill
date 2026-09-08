@@ -1,0 +1,525 @@
+// The mill.v1 store API: what `mill work` speaks to `mill serve` over
+// Connect. docs/ledger.md is its rationale — the resume algorithm there is
+// the specification, and this service exposes exactly the calls that
+// algorithm makes, plus the two reads the CLI needs. Nothing more: an RPC
+// with no caller in the ledger's pseudocode does not belong here.
+//
+// This is not a public API. It is spoken only between this binary's own two
+// faces, so it carries no versioning ceremony beyond `buf breaking`. The
+// Connect boundary exists from the first commit so that a second worker on
+// another host is a configuration change.
+
+syntax = "proto3";
+
+package mill.v1;
+
+import "harness/v1/harness.proto";
+import "mill/v1/mill.proto";
+
+option go_package = "github.com/ivy/mill/gen/mill/v1;millv1";
+
+// StoreService is the ledger's one door. It reads and writes the record of
+// what happened inside a run: selection, step runs, evidence, sessions,
+// tokens, and usage.
+//
+// Lease fencing. Every mutating request carries `lease_id`, the dagger lease
+// the caller believes it holds. The store takes the run's row lock
+// (`SELECT … FOR UPDATE`), re-reads `lease_id` in a separate statement after
+// the lock is granted — a locked row is not re-read, so a lease a concurrent
+// claim committed while waiting would otherwise be missed — compares it to
+// the lease the request presented, and rolls the transaction back on
+// mismatch. The comparison happens inside the same transaction as the write
+// it guards, so a stale worker cannot corrupt the record however well it is
+// behaving; see docs/ledger.md Invariant 9. A fenced-out write is the normal
+// path for a stale worker, not an error to retry: it abandons the run
+// locally and goes back to ClaimNext.
+//
+// Two mutations sit outside that rule and say so on their requests:
+// SetLease, which is the write that changes what later comparisons compare
+// against, and PutWorkflow and PutSkill, whose rows are not run-scoped.
+service StoreService {
+  // GetRunByNode returns the live run for a dagger node, or nothing. The
+  // first call a worker makes after a claim.
+  rpc GetRunByNode(GetRunByNodeRequest) returns (GetRunByNodeResponse);
+  // CreateRun opens a run on a node in status selecting. At most one live
+  // run per node; the store rejects a second.
+  rpc CreateRun(CreateRunRequest) returns (CreateRunResponse);
+  // SetLease makes a claim's lease the run's current one, so every later
+  // write is fenced by it.
+  rpc SetLease(SetLeaseRequest) returns (SetLeaseResponse);
+  // StartStepRun opens the next attempt at a step, numbering it max+1 for
+  // the (run, step) pair. At most one running attempt per run.
+  rpc StartStepRun(StartStepRunRequest) returns (StartStepRunResponse);
+  // CloseStepRun records the evidence that closes an attempt and marks it
+  // closed, in one transaction. The only way a step becomes closed.
+  rpc CloseStepRun(CloseStepRunRequest) returns (CloseStepRunResponse);
+  // FailStepRun marks an attempt failed with how its process ended, so the
+  // step's on_failure can be applied.
+  rpc FailStepRun(FailStepRunRequest) returns (FailStepRunResponse);
+  // AbortOpenStepRuns marks any still-running attempt aborted. Called on
+  // resume, when a running row belongs to a dead or fenced-out worker.
+  rpc AbortOpenStepRuns(AbortOpenStepRunsRequest) returns (AbortOpenStepRunsResponse);
+  // SupersedeSteps marks the latest attempts of every step from a target
+  // through a failing step superseded, which is what moves current_step
+  // backwards for a revise.
+  rpc SupersedeSteps(SupersedeStepsRequest) returns (SupersedeStepsResponse);
+  // MarkWaiting records the gate a run is blocked on and marks it waiting.
+  // Called between the patch that files the gate and the release, so a crash
+  // never leaves a gate the store would file twice.
+  rpc MarkWaiting(MarkWaitingRequest) returns (MarkWaitingResponse);
+  // Park trips the circuit breaker: the run stops, a gate asks a human what
+  // to do, and the reason says what stopped it.
+  rpc Park(ParkRequest) returns (ParkResponse);
+  // Done marks a run done. Called only after dagger has confirmed the
+  // completing patch: a run marked done before that would strand a node
+  // nothing can claim.
+  rpc Done(DoneRequest) returns (DoneResponse);
+  // Abandon marks a run abandoned so a new generation can be created. The
+  // restart path, and the only caller of it is a human.
+  rpc Abandon(AbandonRequest) returns (AbandonResponse);
+  // IssueStepToken mints the step-scoped bearer a session presents on the
+  // workspace socket. The bearer is returned once; the store keeps its hash.
+  rpc IssueStepToken(IssueStepTokenRequest) returns (IssueStepTokenResponse);
+  // RevokeStepToken revokes a bearer. Written in the same transaction that
+  // moves its step run out of running.
+  rpc RevokeStepToken(RevokeStepTokenRequest) returns (RevokeStepTokenResponse);
+  // RecordUsage appends what a turn cost, per model, to the ledger.
+  rpc RecordUsage(RecordUsageRequest) returns (RecordUsageResponse);
+  // MarkUsagePosted marks a step run's usage rows as posted to dagger, after
+  // ReportUsage has accepted them.
+  rpc MarkUsagePosted(MarkUsagePostedRequest) returns (MarkUsagePostedResponse);
+  // GetWorkflow returns one workflow version, by id or by name in a scope.
+  rpc GetWorkflow(GetWorkflowRequest) returns (GetWorkflowResponse);
+  // ListWorkflows lists workflow versions in a scope, newest first.
+  rpc ListWorkflows(ListWorkflowsRequest) returns (ListWorkflowsResponse);
+  // PutWorkflow stores a workflow version. Idempotent by content hash:
+  // storing the same definition twice returns the existing version.
+  rpc PutWorkflow(PutWorkflowRequest) returns (PutWorkflowResponse);
+  // PutSkill stores a skill by name and digest, so a workflow version pins
+  // the exact prompt it ran. Idempotent by digest.
+  rpc PutSkill(PutSkillRequest) returns (PutSkillResponse);
+  // Status lists runs by state with what the ledger derives: current step,
+  // cost, and the gate a waiting run is blocked on.
+  rpc Status(StatusRequest) returns (StatusResponse);
+  // Inspect returns one run's every attempt in order with its evidence,
+  // exit, session, and usage.
+  rpc Inspect(InspectRequest) returns (InspectResponse);
+}
+
+// GetRunByNodeRequest asks for the live run on a node.
+message GetRunByNodeRequest {
+  // The dagger node's id.
+  string node_id = 1;
+}
+
+// GetRunByNodeResponse carries the run, or nothing when the node has none.
+message GetRunByNodeResponse {
+  // The live run, unset when there is none.
+  Run run = 1;
+}
+
+// CreateRunRequest opens a run on a claimed node.
+message CreateRunRequest {
+  // The lease the caller holds, compared against the run's current lease
+  // inside the writing transaction.
+  string lease_id = 1;
+  // The dagger node's id.
+  string node_id = 2;
+  // The node's display key.
+  string node_ref = 3;
+  // Dagger's context id for the node, copied at creation.
+  string context_id = 4;
+  // 1 for the first run on a node; restart passes the next generation.
+  int64 generation = 5;
+  // Where this attempt runs.
+  string worker_ref = 6;
+  // The run's git branch, derived from the node ref.
+  string branch = 7;
+}
+
+// CreateRunResponse carries the created run.
+message CreateRunResponse {
+  // The run, in status selecting.
+  Run run = 1;
+}
+
+// SetLeaseRequest makes a claim's lease the run's current one.
+message SetLeaseRequest {
+  // The new lease. SetLease is the one write the presented lease is not
+  // compared against the stored one: it is the write that changes what later
+  // comparisons compare against. It takes the same row lock and requires the
+  // run's status to be one a new claim may take over — running with an
+  // expired lease, waiting, parked, or done with the node still open.
+  string lease_id = 1;
+  // The run to fence.
+  string run_id = 2;
+  // The worker taking it over.
+  string worker_ref = 3;
+}
+
+// SetLeaseResponse carries the run under its new lease.
+message SetLeaseResponse {
+  // The run, now running under the presented lease.
+  Run run = 1;
+}
+
+// StartStepRunRequest opens the next attempt at a step.
+message StartStepRunRequest {
+  // The lease the caller holds, compared against the run's current lease
+  // inside the writing transaction.
+  string lease_id = 1;
+  // The run the attempt belongs to.
+  string run_id = 2;
+  // The step from the run's workflow definition.
+  string step_name = 3;
+  // The step's kind, copied onto the attempt so the row reads alone.
+  StepKind kind = 4;
+  // Skill steps: the session this attempt runs in.
+  string session_id = 5;
+  // The worker running it.
+  string worker_ref = 6;
+  // The step run whose failure this attempt is the revise for, or empty.
+  string feedback_from = 7;
+}
+
+// StartStepRunResponse carries the opened attempt.
+message StartStepRunResponse {
+  // The attempt, numbered max+1 for its (run, step) pair.
+  StepRun step_run = 1;
+}
+
+// CloseStepRunRequest records the evidence that closes an attempt.
+message CloseStepRunRequest {
+  // The lease the caller holds, compared against the run's current lease
+  // inside the writing transaction.
+  string lease_id = 1;
+  // The attempt to close.
+  string step_run_id = 2;
+  // The fact that closes it. Insert-only; a step run has at most one.
+  Evidence evidence = 3;
+  // Set only when the closing step is the selection step: the workflow
+  // version the assessment named. The store applies it to the run, which may
+  // happen exactly once.
+  string workflow_id = 4;
+  // Set only when the closing step is the selection step: the tier the
+  // assessment named, which gate auto predicates compare against.
+  Tier tier = 5;
+}
+
+// CloseStepRunResponse carries the closed attempt and its evidence.
+message CloseStepRunResponse {
+  // The attempt, now closed.
+  StepRun step_run = 1;
+  // The evidence as stored.
+  Evidence evidence = 2;
+}
+
+// FailStepRunRequest marks an attempt failed.
+message FailStepRunRequest {
+  // The lease the caller holds, compared against the run's current lease
+  // inside the writing transaction.
+  string lease_id = 1;
+  // The attempt that failed.
+  string step_run_id = 2;
+  // How the process ended. A status of -1 means it never ran.
+  harness.v1.ProcessExit exit = 3;
+}
+
+// FailStepRunResponse carries the failed attempt.
+message FailStepRunResponse {
+  // The attempt, now failed.
+  StepRun step_run = 1;
+}
+
+// AbortOpenStepRunsRequest closes out a dead worker's attempts.
+message AbortOpenStepRunsRequest {
+  // The lease the caller holds, compared against the run's current lease
+  // inside the writing transaction. The resume algorithm calls this before
+  // SetLease, when the stored lease is still the dead worker's, so the store
+  // accepts the presented lease under the same conditions SetLease does.
+  // docs/ledger.md §Resume says every store call is fenced by Invariant 9
+  // and orders this call before SetLease; the two cannot both hold, and the
+  // ordering wins because it is what makes resume work.
+  string lease_id = 1;
+  // The run whose running attempts are stale.
+  string run_id = 2;
+  // Why they were aborted, for the event log: crashed, fenced, cancelled.
+  string reason = 3;
+}
+
+// AbortOpenStepRunsResponse carries what was aborted.
+message AbortOpenStepRunsResponse {
+  // The attempts that were running and are now aborted.
+  repeated StepRun step_runs = 1;
+}
+
+// SupersedeStepsRequest reopens a span of steps for a revise.
+message SupersedeStepsRequest {
+  // The lease the caller holds, compared against the run's current lease
+  // inside the writing transaction.
+  string lease_id = 1;
+  // The run being revised.
+  string run_id = 2;
+  // The step to return to. Its latest attempt is superseded along with every
+  // step after it, so current_step becomes this one.
+  string from_step = 3;
+  // The failing step whose on_failure asked for the revise. Superseded
+  // inclusive.
+  string through_step = 4;
+}
+
+// SupersedeStepsResponse carries what was reopened.
+message SupersedeStepsResponse {
+  // The attempts now superseded. Their evidence rows stay, immutable, and no
+  // longer close anything.
+  repeated StepRun step_runs = 1;
+}
+
+// MarkWaitingRequest records the gate a run is blocked on.
+message MarkWaitingRequest {
+  // The lease the caller holds, compared against the run's current lease
+  // inside the writing transaction.
+  string lease_id = 1;
+  // The run that filed the gate.
+  string run_id = 2;
+  // The gate node dagger returned. Recorded after the patch and before the
+  // release; a gate is filed once.
+  string gate_node_id = 3;
+  // The gate step's attempt, which stays open until the gate completes.
+  string step_run_id = 4;
+}
+
+// MarkWaitingResponse carries the waiting run.
+message MarkWaitingResponse {
+  // The run, now waiting and holding no lease.
+  Run run = 1;
+}
+
+// ParkRequest trips the circuit breaker.
+message ParkRequest {
+  // The lease the caller holds, compared against the run's current lease
+  // inside the writing transaction.
+  string lease_id = 1;
+  // The run to park.
+  string run_id = 2;
+  // The gate node asking a human what to do.
+  string gate_node_id = 3;
+  // What stopped the run.
+  ParkedReason reason = 4;
+}
+
+// ParkResponse carries the parked run.
+message ParkResponse {
+  // The run, now parked and holding no lease.
+  Run run = 1;
+}
+
+// DoneRequest marks a run done.
+message DoneRequest {
+  // The lease the caller held. The completing patch releases the lease as
+  // part of itself, so this is the lease that was current when the patch was
+  // sent; it is compared against the run's current lease inside the writing
+  // transaction.
+  string lease_id = 1;
+  // The run dagger has confirmed complete.
+  string run_id = 2;
+}
+
+// DoneResponse carries the finished run.
+message DoneResponse {
+  // The run, now done.
+  Run run = 1;
+}
+
+// AbandonRequest marks a run abandoned so a new generation can be created.
+message AbandonRequest {
+  // The lease the caller holds, compared against the run's current lease
+  // inside the writing transaction. Empty when the restart path has already
+  // released the lease, which is the ordinary case.
+  string lease_id = 1;
+  // The run to abandon. Its step runs, evidence, and usage stay as the
+  // record of what went wrong.
+  string run_id = 2;
+  // Why, for the event log and the comment on the node.
+  string reason = 3;
+}
+
+// AbandonResponse carries the abandoned run.
+message AbandonResponse {
+  // The run, now abandoned.
+  Run run = 1;
+}
+
+// IssueStepTokenRequest mints the credential a session will hold.
+message IssueStepTokenRequest {
+  // The lease the caller holds, compared against the run's current lease
+  // inside the writing transaction.
+  string lease_id = 1;
+  // The attempt the token is scoped to. It must be running.
+  string step_run_id = 2;
+  // Copied from the step at issue.
+  repeated Capability capabilities = 3;
+}
+
+// IssueStepTokenResponse carries the token, bearer included, once.
+message IssueStepTokenResponse {
+  // The token. Its `token` field is populated here and nowhere else; the
+  // store holds only the hash.
+  StepToken step_token = 1;
+}
+
+// RevokeStepTokenRequest revokes a bearer.
+message RevokeStepTokenRequest {
+  // The lease the caller holds, compared against the run's current lease
+  // inside the writing transaction.
+  string lease_id = 1;
+  // The token to revoke.
+  string step_token_id = 2;
+}
+
+// RevokeStepTokenResponse carries the revoked token.
+message RevokeStepTokenResponse {
+  // The token, now revoked, without its bearer.
+  StepToken step_token = 1;
+}
+
+// RecordUsageRequest appends what a turn cost.
+message RecordUsageRequest {
+  // The lease the caller holds, compared against the run's current lease
+  // inside the writing transaction.
+  string lease_id = 1;
+  // The attempt the cost is attributed to.
+  string step_run_id = 2;
+  // One row per model the turn billed.
+  repeated Usage usage = 3;
+}
+
+// RecordUsageResponse carries what was appended.
+message RecordUsageResponse {
+  // The rows as stored.
+  repeated Usage usage = 1;
+}
+
+// MarkUsagePostedRequest marks a step's usage as reported to dagger.
+message MarkUsagePostedRequest {
+  // The lease the caller holds, compared against the run's current lease
+  // inside the writing transaction.
+  string lease_id = 1;
+  // The attempt whose unposted rows were just reported.
+  string step_run_id = 2;
+}
+
+// MarkUsagePostedResponse says how much was marked.
+message MarkUsagePostedResponse {
+  // How many rows were marked posted.
+  int64 marked = 1;
+}
+
+// GetWorkflowRequest asks for one workflow version.
+message GetWorkflowRequest {
+  // The version's id. When set, the rest is ignored.
+  string id = 1;
+  // The workflow's name, resolved to the newest version in scope.
+  string name = 2;
+  // The scope to resolve in. A project scope falls back to org.
+  Scope scope = 3;
+  // The project, when the scope is project.
+  string project = 4;
+  // A specific content hash, when a run pins one.
+  string version = 5;
+}
+
+// GetWorkflowResponse carries the version.
+message GetWorkflowResponse {
+  // The workflow, unset when nothing resolved.
+  Workflow workflow = 1;
+}
+
+// ListWorkflowsRequest asks for the workflow versions in a scope.
+message ListWorkflowsRequest {
+  // Only this name. Empty means every name.
+  string name = 1;
+  // The scope to list. Unspecified means both.
+  Scope scope = 2;
+  // The project, when the scope is project.
+  string project = 3;
+  // Whether to list every version rather than the newest of each name.
+  bool all_versions = 4;
+}
+
+// ListWorkflowsResponse carries the versions, newest first.
+message ListWorkflowsResponse {
+  // The workflows.
+  repeated Workflow workflows = 1;
+}
+
+// PutWorkflowRequest stores a workflow version.
+message PutWorkflowRequest {
+  // The lease the caller holds. Empty for a CLI push, which holds no lease:
+  // workflows are not run-scoped, and docs/ledger.md Invariant 9 fences only
+  // writes to a run's own rows. The field is present because every mutating
+  // request carries one, and the store compares it inside the writing
+  // transaction whenever it is set.
+  string lease_id = 1;
+  // The definition to store. Its version is computed from the content; a
+  // version already present is returned unchanged.
+  Workflow workflow = 2;
+}
+
+// PutWorkflowResponse carries the stored version.
+message PutWorkflowResponse {
+  // The workflow as stored, with its id, version, and created_at.
+  Workflow workflow = 1;
+  // Whether this call created the version rather than finding it.
+  bool created = 2;
+}
+
+// PutSkillRequest stores a skill.
+message PutSkillRequest {
+  // The lease the caller holds. Empty for a CLI push, for the same reason as
+  // PutWorkflow: skills are not run-scoped. Compared inside the writing
+  // transaction whenever it is set.
+  string lease_id = 1;
+  // The skill to store. A digest already present is returned unchanged.
+  Skill skill = 2;
+}
+
+// PutSkillResponse carries the stored skill.
+message PutSkillResponse {
+  // The skill as stored.
+  Skill skill = 1;
+  // Whether this call created the row rather than finding it.
+  bool created = 2;
+}
+
+// StatusRequest asks what every run is doing.
+message StatusRequest {
+  // Only runs in these states. Empty means every non-terminal state.
+  repeated RunStatus statuses = 1;
+  // Only runs on nodes in this dagger project. Empty means every project.
+  string project = 2;
+}
+
+// StatusResponse carries the runs and what the ledger derives about them.
+message StatusResponse {
+  // One entry per run, most recently updated first.
+  repeated RunSummary runs = 1;
+}
+
+// InspectRequest asks for one run in full.
+message InspectRequest {
+  // The run's id. When set, the rest is ignored.
+  string id = 1;
+  // The node's display key, for a human who has that instead.
+  string node_ref = 2;
+}
+
+// InspectResponse carries the run, its definition, and its every attempt.
+message InspectResponse {
+  // The run and what the ledger derives about it.
+  RunSummary summary = 1;
+  // The workflow version the run follows, unset while selecting.
+  Workflow workflow = 2;
+  // Every attempt in order, with its evidence, session, and usage.
+  repeated StepRunDetail steps = 3;
+}

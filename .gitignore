@@ -16,8 +16,9 @@ harness/state.json
 *.out
 /.gocache/
 
-# Node
+# Node. The sidecar's compiled output; its generated types are committed.
 node_modules/
+/sidecar/dist/
 
 # Python bytecode
 __pycache__/

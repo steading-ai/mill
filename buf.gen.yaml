@@ -1,0 +1,23 @@
+# Go code generation for the proto module. Output under gen/ is committed so
+# a consumer of this repository needs no proto toolchain.
+#
+# Go is generated for both packages: mill.v1 for the store API's Connect
+# handlers and client, harness.v1 for the messages the Go adapter writes to
+# the sidecar's stdin. Both plugins run through `go tool`, so their versions
+# are pinned by go.mod alongside the runtime libraries they generate against.
+#
+# TypeScript is generated for harness.v1 alone and lives in buf.gen.ts.yaml.
+# It is a second template rather than a third plugin here because buf applies
+# every plugin in a template to every input; there is no per-plugin path
+# filter, and the sidecar has no business knowing the store's API. `make
+# generate` runs both.
+version: v2
+plugins:
+  - local: [go, tool, protoc-gen-go]
+    out: gen
+    opt: paths=source_relative
+  - local: [go, tool, protoc-gen-connect-go]
+    out: gen
+    opt: paths=source_relative
+inputs:
+  - directory: proto

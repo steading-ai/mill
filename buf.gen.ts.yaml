@@ -1,0 +1,19 @@
+# TypeScript code generation for harness.v1, the sidecar wire. Output under
+# sidecar/gen/ is committed alongside the Go output, for the same reason.
+#
+# The input is filtered to proto/harness/v1: the sidecar speaks the wire and
+# nothing else, so the store API is not generated for it. protoc-gen-es comes
+# from sidecar/node_modules, so `pnpm install --dir sidecar` is what pins its
+# version, and it must match the @bufbuild/protobuf the sidecar imports at
+# runtime.
+version: v2
+plugins:
+  - local: [./sidecar/node_modules/.bin/protoc-gen-es]
+    out: sidecar/gen
+    opt:
+      - target=ts
+      - import_extension=.js
+inputs:
+  - directory: proto
+    paths:
+      - proto/harness/v1
