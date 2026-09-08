@@ -9,6 +9,10 @@
 # DATABASE_URL and any other settings come from ~/.config/mill/env, one
 # KEY=value per line. See .env.example in the repository for the shape.
 #
+# What the worker claims — its projects, its labels, its concurrency — comes
+# from ~/.config/mill/config.yaml, whose keys are the long flag names. A flag
+# on the ExecStart line below wins over the file.
+#
 # Readiness is sd_notify: the unit is active only once the service has bound
 # its socket, applied its migrations, and had the database answer, so
 # anything ordered After= it can rely on all three.
@@ -28,10 +32,18 @@ RuntimeDirectoryMode=0750
 # --roles %E/mill/roles.json once one exists. Without it the service's own
 # account is the only caller, which is the ordinary case while mill and the
 # operator share one.
-ExecStart=%h/.local/bin/mill serve --socket %t/mill/mill.sock
-# mill serve drains in-flight requests for up to its --shutdown-timeout
-# (30s by default) before exiting; give it that and a margin.
-TimeoutStopSec=45
+# One process, both faces: the store and a worker over it. The Connect
+# boundary between them is still there, so a second worker on another host
+# stays a configuration change (docs/architecture.md §"One binary, two
+# faces").
+ExecStart=%h/.local/bin/mill serve --work --socket %t/mill/mill.sock
+# On stop the worker goes first — it releases its lease as a preemption with
+# detail "shutdown" and leaves its run resumable — and the store drains
+# after it. That is the worker's --grace (30s by default) plus serve's
+# --shutdown-timeout (30s), so give it both and a margin. A second SIGTERM
+# inside the window kills the sessions, which is what SendSIGKILL does at
+# the end of this timeout anyway.
+TimeoutStopSec=90
 KillSignal=SIGTERM
 Restart=on-failure
 RestartSec=2

@@ -100,11 +100,3 @@ func newVersionCommand() *cobra.Command {
 		},
 	}
 }
-
-// placeholder is what a face of the binary prints until the node that
-// implements it lands. It exits zero: the command tree is real, its
-// behaviour is not yet.
-func placeholder(cmd *cobra.Command) error {
-	_, err := fmt.Fprintf(cmd.OutOrStdout(), "mill %s: not implemented yet\n", cmd.Name())
-	return err
-}

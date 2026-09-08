@@ -35,13 +35,21 @@ var _ = Describe("The command tree", Label("unit"), func() {
 		Expect(stdout.String()).To(ContainSubstring("--database-url"))
 	})
 
-	DescribeTable("a face is wired into the tree and exits zero",
-		func(name string) {
-			Expect(run(name)).To(BeZero(), stderr.String())
-			Expect(stdout.String()).To(ContainSubstring(name))
-		},
-		Entry("work", "work"),
-	)
+	It("work is wired into the tree and is the worker face", func() {
+		Expect(run("work", "--help")).To(BeZero(), stderr.String())
+		Expect(stdout.String()).To(ContainSubstring("--project"))
+		Expect(stdout.String()).To(ContainSubstring("--label"))
+		Expect(stdout.String()).To(ContainSubstring("--concurrency"))
+		// A worker with no project has nothing to claim from, and saying
+		// so beats blocking forever on an empty filter.
+		Expect(run("work", "--config", "/nonexistent/mill.yaml")).NotTo(BeZero())
+	})
+
+	It("serve takes the worker's flags too, so one process runs both faces", func() {
+		Expect(run("serve", "--help")).To(BeZero(), stderr.String())
+		Expect(stdout.String()).To(ContainSubstring("--work"))
+		Expect(stdout.String()).To(ContainSubstring("--concurrency"))
+	})
 
 	It("restart is wired into the tree and takes the node it restarts", func() {
 		Expect(run("restart", "--help")).To(BeZero(), stderr.String())

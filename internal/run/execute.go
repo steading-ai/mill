@@ -113,7 +113,14 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 	if err != nil {
 		// The session was stopped: cancel it so nothing outlives the step,
 		// then report what it billed before it went.
-		_ = adapter.Cancel(context.WithoutCancel(ctx), session)
+		//
+		// The cancellation runs under the process's context rather than the
+		// step's, which is already dead, because the adapter does not
+		// return until the session's process group is gone and that is the
+		// point of calling it. A worker killed rather than stopped — a
+		// second signal inside its grace window — is the one thing that
+		// cuts the wait short.
+		_ = adapter.Cancel(s.processContext(), session)
 		return result{}, err
 	}
 

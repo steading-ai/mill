@@ -715,6 +715,10 @@ func stepRuns(detail *millv1.InspectResponse, name string) []*millv1.StepRun {
 }
 
 // sessionsOf is the session id each attempt at a step ran in.
+// The step is a parameter because the helper is about any step; that every
+// spec so far asks about `implement` is a fact about those specs.
+//
+//nolint:unparam // see above
 func sessionsOf(detail *millv1.InspectResponse, name string) []string {
 	var ids []string
 	for _, sr := range stepRuns(detail, name) {

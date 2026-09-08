@@ -185,3 +185,55 @@ func (c *Client) Ready(ctx context.Context, kind daggerv1.AssigneeKind) ([]*dagg
 	}
 	return res.Msg.GetNodes(), nil
 }
+
+// claimChunk bounds one ClaimNext request inside a longer wait. Dagger
+// clamps a wait to five minutes and polls its ready set at most a second
+// apart, so a long wait is many short requests rather than one held
+// connection — the same shape `dg claim --wait` takes.
+const claimChunk = time.Minute
+
+// ClaimNext is the worker's claim: the next ready node of this client's
+// project matching labels, already leased. A nil node with a nil error is
+// the wait elapsing with nothing to claim, which is the ordinary answer on
+// an idle graph and not a failure.
+//
+// The filters are the whole of the selection a worker makes
+// (docs/architecture.md §"Request path", step 1). `assignee_kind: agent` is
+// not one of them in the configurable sense: it is the seam's refusal to
+// claim a node only a person may complete, which includes every gate mill
+// itself files (docs/domain-model.md §Principal). Dagger reads it as "agent
+// or unassigned", so an ordinary node is still claimable.
+//
+// The request id is held across the chunks of one wait: an empty answer
+// writes nothing, so the key is unused until a claim lands, and a retry
+// after a dropped connection then returns the same node rather than a
+// second one.
+func (c *Client) ClaimNext(ctx context.Context, labels []string, wait time.Duration) (*Claimed, error) {
+	requestID := nonce("claim")
+	deadline := time.Now().Add(wait)
+	for {
+		res, err := c.work.ClaimNext(ctx, connect.NewRequest(&daggerv1.ClaimNextRequest{
+			RequestId:    requestID,
+			Project:      c.project,
+			AssigneeKind: daggerv1.AssigneeKind_ASSIGNEE_KIND_AGENT,
+			Labels:       labels,
+			Wait:         durationpb.New(max(min(claimChunk, time.Until(deadline)), 0)),
+			Ttl:          durationOrNil(c.options.ttl),
+			Harness:      HarnessName,
+			AgentRef:     c.options.agentRef,
+			SessionRef:   c.options.sessionRef,
+		}))
+		if err != nil {
+			return nil, wrap("dagger: claim next", err)
+		}
+		if node, lease := res.Msg.GetNode(), res.Msg.GetLease(); node != nil && lease != nil {
+			return &Claimed{Node: node, Lease: lease}, nil
+		}
+		if !time.Now().Before(deadline) {
+			return nil, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
+}

@@ -207,6 +207,16 @@ type state struct {
 	workspace Workspace
 	// beat is the heartbeat, which owns the step's context.
 	beat *heartbeat
+	// stopping is closed when the process the run is in has been asked to
+	// stop. The heartbeat watches it alongside the lease, so a shutdown
+	// reaches a step exactly as a cancellation does. Nil never fires.
+	stopping <-chan struct{}
+	// process is the context of the process the run is in, which a step
+	// stopping never cancels. Only a kill does — a worker signalled a
+	// second time inside its grace window (docs/architecture.md §"Failure
+	// and stop"). It is what the work that has to outlive a cancelled step
+	// runs under, and what says that work is no longer worth waiting for.
+	process context.Context
 
 	// resumed is the set of sessions this worker has already spoken to, so
 	// a second step in the same session resumes it rather than starting it
@@ -238,6 +248,14 @@ type state struct {
 	// this is where that is recorded (docs/architecture.md §"The circuit
 	// breaker").
 	retried map[string]int64
+}
+
+// processContext is the context of the process the run is in.
+func (s *state) processContext() context.Context {
+	if s.process == nil {
+		return context.Background()
+	}
+	return s.process
 }
 
 // record appends what one failed attempt at a step reported.
@@ -291,7 +309,32 @@ func (r *Runner) Execute(ctx context.Context, nodeRef string) error {
 	if err != nil {
 		return err
 	}
-	s := &state{node: claimed.Node, lease: claimed.Lease.GetId(), retried: map[string]int64{}}
+	return r.drive(ctx, claimed, nil)
+}
+
+// ExecuteClaimed drives a node `ClaimNext` has already claimed, which is the
+// only difference between the daemon and single-run mode: `mill work` is
+// handed a node and its lease, `mill run` is handed a reference and takes
+// the lease itself. Everything after the claim is this same function, which
+// is what keeps single-run mode a real test of the daemon.
+//
+// stopping is closed when the process has been asked to shut down. The run
+// then stops at the first boundary it can reach, aborts the attempt in
+// flight, releases the lease `preempted`/`shutdown`, and stays resumable.
+// Nil never fires, which is what `mill run` passes.
+func (r *Runner) ExecuteClaimed(ctx context.Context, claimed *dagger.Claimed, stopping <-chan struct{}) error {
+	return r.drive(ctx, claimed, stopping)
+}
+
+// drive is the run loop proper: everything from a held lease to a result.
+func (r *Runner) drive(ctx context.Context, claimed *dagger.Claimed, stopping <-chan struct{}) error {
+	s := &state{
+		node:     claimed.Node,
+		lease:    claimed.Lease.GetId(),
+		retried:  map[string]int64{},
+		stopping: stopping,
+		process:  ctx,
+	}
 	r.printf("claimed %s under lease %s\n", s.node.GetReference(), s.lease)
 
 	if err := r.openRun(ctx, s); err != nil {

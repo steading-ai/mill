@@ -134,6 +134,8 @@ func (r *Runner) stopped(ctx context.Context, s *state) error {
 		return ErrFenced
 	case errors.Is(err, errCancelled):
 		return r.cancelStep(context.WithoutCancel(ctx), s)
+	case errors.Is(err, errShutdown):
+		return r.shutdownStep(context.WithoutCancel(ctx), s)
 	case err != nil:
 		return err
 	default:

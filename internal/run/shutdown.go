@@ -1,0 +1,51 @@
+package run
+
+import (
+	"context"
+	"errors"
+
+	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
+	millv1 "github.com/ivy/mill/gen/mill/v1"
+)
+
+// Stopping a worker, from the run's side.
+//
+// docs/architecture.md §"Failure and stop": on SIGTERM the worker stops
+// claiming, lets the current step reach a boundary if it can inside the
+// grace window, posts unposted usage, releases every lease with reason
+// `preempted` and detail `shutdown` — dagger's ReleaseReason has no shutdown
+// value, and an operator taking the lease away is what preempted means —
+// and leaves workspaces intact.
+//
+// That is a cancellation in every respect but who asked for it and what the
+// event log records, so it is the same mechanism: the heartbeat raises
+// [errShutdown], the step's context is cancelled, the adapter stops the
+// session, and [Runner.shutdownStep] writes the two facts that make the run
+// resumable. "Resume is the crash path" is the whole of the recovery: the
+// next claim finds a `running` run with an aborted attempt and starts the
+// next attempt at the same step, in the same session.
+
+// errShutdown is the process going away. The step is aborted, the lease
+// released with preempted and detail `shutdown`, and the run stays resumable
+// at that step.
+var errShutdown = errors.New("run: shutting down")
+
+// shutdownStep leaves the run where the next worker can pick it up.
+//
+// It is called with a context the heartbeat has not cancelled, because these
+// two writes are the point of the shutdown and must land.
+func (r *Runner) shutdownStep(ctx context.Context, s *state) error {
+	if _, err := call(ctx, r.options.Store.AbortOpenStepRuns, &millv1.AbortOpenStepRunsRequest{
+		LeaseId: s.lease,
+		RunId:   s.run.GetId(),
+		Reason:  "shutdown",
+	}); err != nil {
+		return err
+	}
+	if err := r.options.Dagger.Release(ctx, s.lease,
+		daggerv1.ReleaseReason_RELEASE_REASON_PREEMPTED, "shutdown"); err != nil {
+		return err
+	}
+	r.printf("shutting down; run %s stays resumable\n", s.run.GetId())
+	return errReleased
+}

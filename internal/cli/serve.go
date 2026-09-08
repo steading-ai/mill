@@ -42,6 +42,12 @@ type serveOptions struct {
 	databaseURL     string
 	roles           string
 	shutdownTimeout time.Duration
+	// work runs a worker in this same process. MVP runs `serve` and `work`
+	// on one host as one unit (docs/architecture.md §"One binary, two
+	// faces"); the Connect boundary between them is still there, so a
+	// second worker elsewhere stays a configuration change.
+	work   bool
+	worker workOptions
 }
 
 // newServeCommand is the service face: Connect handlers over PostgreSQL,
@@ -60,7 +66,11 @@ The account the service runs as does everything; other uids hold the role
 
 Under a Type=notify unit the service reports itself ready once its socket is
 bound and the database has answered. SIGTERM and SIGINT drain in-flight
-requests before the process exits.`,
+requests before the process exits.
+
+--work runs a worker in this same process, over this same socket, so one
+unit is the whole mill. On shutdown the worker stops first and the store
+drains after it, because the worker is one of the store's clients.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runServe(cmd, opts)
@@ -71,11 +81,21 @@ requests before the process exits.`,
 	f.StringVar(&opts.databaseURL, "database-url", os.Getenv(databaseURLEnv), "PostgreSQL connection URL (default: $"+databaseURLEnv+")")
 	f.StringVar(&opts.roles, "roles", "", "path of the uid-to-role map (default: only the service's own uid)")
 	f.DurationVar(&opts.shutdownTimeout, "shutdown-timeout", server.DefaultShutdownTimeout, "how long to wait for in-flight requests on shutdown")
+	f.BoolVar(&opts.work, "work", false, "also run a worker in this process, claiming from the configured projects")
+	bindWorkFlags(cmd, &opts.worker)
 	return cmd
 }
 
 func runServe(cmd *cobra.Command, opts serveOptions) error {
 	log := slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: slog.LevelInfo}))
+	if opts.work {
+		// The file is read before anything is built, because --socket is
+		// one of the settings it may carry and the listener is built from
+		// it.
+		if err := applyConfig(cmd, &opts.worker, &opts.socket); err != nil {
+			return err
+		}
+	}
 	if opts.databaseURL == "" {
 		return fmt.Errorf("mill serve: a database URL is required; pass --database-url or set %s", databaseURLEnv)
 	}
@@ -116,16 +136,49 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 
 	serveCtx, drain := context.WithCancel(context.WithoutCancel(ctx))
 	defer drain()
+	served := make(chan error, 1)
+	go func() { served <- srv.Serve(serveCtx) }()
+
+	// The worker is one of this store's clients, so on shutdown it goes
+	// first and the handlers it writes through drain after it. `stopped`
+	// is what says it has.
+	worked := make(chan error, 1)
+	stopped := make(chan struct{})
+	if opts.work {
+		opts.worker.run.socket = opts.socket
+		worker, err := newWorker(cmd, &opts.worker)
+		if err != nil {
+			return fmt.Errorf("mill serve: %w", err)
+		}
+		log.Info("worker starting in this process",
+			"projects", opts.worker.projects, "labels", opts.worker.labels, "concurrency", opts.worker.concurrency)
+		signals, stopSignalling := stopSignals()
+		defer stopSignalling()
+		go func() { worked <- supervise(ctx, worker, opts.worker.grace, signals) }()
+	} else {
+		worked <- nil
+	}
+
 	go func() {
 		<-ctx.Done()
 		log.Info("shutdown signal received")
 		notify(log, sdnotify.Stopping)
+		<-stopped
 		drain()
 	}()
-	if err := srv.Serve(serveCtx); err != nil {
+
+	workErr := <-worked
+	close(stopped)
+	if workErr != nil {
+		// The worker gave up on its own — dagger unreachable, most likely.
+		// Serving on with no worker would be a mill that answers reads and
+		// never takes work, so the process ends and the unit restarts it.
+		drain()
+	}
+	if err := <-served; err != nil {
 		return fmt.Errorf("mill serve: %w", err)
 	}
-	return nil
+	return workErr
 }
 
 // announceReady reports the service ready to systemd once the database

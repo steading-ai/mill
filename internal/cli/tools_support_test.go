@@ -57,7 +57,14 @@ type runs struct {
 // state every read tool is interesting about.
 func openRun(ctx context.Context, nodeRef, nodeID string) *runs {
 	GinkgoHelper()
-	m := serving(ctx)
+	return openRunOn(ctx, serving(ctx), nodeRef, nodeID)
+}
+
+// openRunOn is openRun against a service the caller already started, which
+// is how a spec puts a run in the ledger of a process that is also running a
+// worker.
+func openRunOn(ctx context.Context, m mill, nodeRef, nodeID string) *runs {
+	GinkgoHelper()
 	store := ledger(m)
 
 	definition, skills, err := workflow.Load(quickFix)

@@ -173,20 +173,6 @@ func execute(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 	if opts.project == "" {
 		return fmt.Errorf("mill run: a dagger project is required; pass --project or set %s", daggerProjectEnv)
 	}
-	worker, err := workerRef()
-	if err != nil {
-		return err
-	}
-	client := dagger.Dial(opts.daggerSocket, opts.project,
-		dagger.WithAgentRef(worker),
-		dagger.WithSessionRef(nodeRef),
-		dagger.WithTTL(opts.ttl))
-
-	harnesses := harness.NewRegistry()
-	if err := harnesses.Register(run.DefaultHarness,
-		claudecode.New(claudecode.WithEntrypoint(claudecode.DefaultCommand, opts.sidecar))); err != nil {
-		return err
-	}
 
 	// A gate filed under `mill run` is put to whoever is watching. The run
 	// stops either way — the gate is filed, the lease released — and the
@@ -197,23 +183,56 @@ func execute(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 		answers = NewTerminalAnswerer(cmd.InOrStdin(), cmd.OutOrStdout())
 	}
 
-	tier, err := tierNamed(opts.tier)
+	runner, err := newRunner(cmd, opts, opts.project, nodeRef, answers)
 	if err != nil {
 		return err
+	}
+	return runner.Execute(cmd.Context(), nodeRef)
+}
+
+// newRunner assembles the run loop for one project. It is shared by `run`
+// and `work` on purpose: the daemon and single-run mode differ in where the
+// node comes from and in whether a person can answer a gate, and in nothing
+// else. If they diverged here, single-run mode would stop being a test of
+// the daemon (docs/architecture.md §"One binary, two faces").
+//
+// sessionRef is what dagger records on the lease as the harness session.
+// `mill run` names the node it was given; a worker has none to name, because
+// the node is not known until the claim it is an argument to has returned.
+func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, answers run.Answerer) (*run.Runner, error) {
+	worker, err := workerRef()
+	if err != nil {
+		return nil, err
+	}
+	client := dagger.Dial(opts.daggerSocket, project,
+		dagger.WithAgentRef(worker),
+		dagger.WithSessionRef(sessionRef),
+		dagger.WithTTL(opts.ttl))
+
+	harnesses := harness.NewRegistry()
+	if err := harnesses.Register(run.DefaultHarness,
+		claudecode.New(claudecode.WithEntrypoint(claudecode.DefaultCommand, opts.sidecar))); err != nil {
+		return nil, err
+	}
+
+	tier, err := tierNamed(opts.tier)
+	if err != nil {
+		return nil, err
 	}
 
 	// The forge is resolved once and shared: the loop reads the pull request
 	// through it and the workspace pushes through it, and both must be
 	// talking to the same repository. A project with no VCS URL yields a
 	// *forge.NoVCSURLError here, before anything is claimed.
+	opts.project = project
 	f, err := projectForge(opts)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if opts.origin == "" {
-		repo, err := forge.RepoFor(forge.Project{Slug: opts.project, VCSURL: opts.vcsURL})
+		repo, err := forge.RepoFor(forge.Project{Slug: project, VCSURL: opts.vcsURL})
 		if err != nil {
-			return err
+			return nil, err
 		}
 		opts.origin = repo.CloneURL
 	}
@@ -221,13 +240,13 @@ func execute(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 		opts.identity = defaultIdentity()
 	}
 
-	// One redactor for the process, shared by the workspace and the run's
-	// step logs: a value a session registers with the `redact` verb reaches
-	// the workspace, and the log an operator tails is written through the
-	// same object (docs/architecture.md §Observability).
+	// One redactor per run loop, shared by the workspace and the run's step
+	// logs: a value a session registers with the `redact` verb reaches the
+	// workspace, and the log an operator tails is written through the same
+	// object (docs/architecture.md §Observability).
 	redactor := redact.New()
 
-	runner := run.New(run.Options{
+	return run.New(run.Options{
 		Store:       storeClient(opts.socket),
 		Dagger:      client,
 		Workspaces:  localWorkspaces(opts, f, redactor),
@@ -246,8 +265,7 @@ func execute(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 		LogDir:      opts.logDir,
 		Redactor:    redactor,
 		Log:         slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: slog.LevelInfo})),
-	})
-	return runner.Execute(cmd.Context(), nodeRef)
+	}), nil
 }
 
 // tierNamed reads the project default's tier. It is a flag rather than a

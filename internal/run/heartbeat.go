@@ -19,6 +19,10 @@ import (
 //
 // The same tick reads `cancel_requested` off the run, which is the only
 // polling the design allows and the only place a cancellation is noticed.
+//
+// The goroutine also watches the run's stop channel, so a worker shutting
+// down reaches the step through the one seam that already stops it rather
+// than through a second path of its own.
 type heartbeat struct {
 	// ctx is the context every step runs under. Cancelling it is how a
 	// fenced or cancelled run stops what is in flight.
@@ -44,6 +48,14 @@ func (r *Runner) startHeartbeat(ctx context.Context, s *state) *heartbeat {
 		for {
 			select {
 			case <-stepCtx.Done():
+				return
+			case <-s.stopping:
+				// The process is going away. It is the same shape as a
+				// cancellation — stop the step, abort the attempt, give the
+				// lease back — and differs only in the detail dagger
+				// records and in nobody having asked for this run in
+				// particular (docs/architecture.md §"Failure and stop").
+				h.fail(errShutdown)
 				return
 			case <-ticker.C:
 				if err := r.beat(stepCtx, s); err != nil {
