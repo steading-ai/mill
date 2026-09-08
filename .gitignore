@@ -1,0 +1,24 @@
+# Harness runtime
+harness/.venv/
+harness/logs/
+harness/STOP
+harness/state.json
+
+# Build output
+/mill
+/dist
+
+# Local environment
+.env
+
+# Go
+*.test
+*.out
+/.gocache/
+
+# Node
+node_modules/
+
+# Python bytecode
+__pycache__/
+*.pyc

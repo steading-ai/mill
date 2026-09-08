@@ -1,0 +1,12 @@
+# Tool versions for mill.
+#
+# The reference harness that builds this project runs on Python; the project
+# itself is Go. The Go toolchain and the rest are pinned by the scaffold node.
+# Every tool installs through mise alone.
+
+[tools]
+python = "3.14.7"
+
+[env]
+_.python.venv = { path = "harness/.venv", create = true }
+DG_PROJECT = "mill"
