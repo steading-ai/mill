@@ -100,7 +100,7 @@ type Adapter struct {
 // workspace.
 func New(options ...Option) *Adapter {
 	adapter := &Adapter{
-		execer:  workspace.Local{},
+		execer:  workspace.Spawner{},
 		command: DefaultCommand,
 		args:    []string{DefaultEntrypoint},
 		grace:   DefaultGrace,

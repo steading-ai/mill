@@ -1,6 +1,11 @@
 package mill_test
 
 import (
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
@@ -9,6 +14,37 @@ import (
 var _ = Describe("Lint and package boundaries", Label("unit", "slow"), func() {
 	It("make lint passes on the current tree", func() {
 		Expect(makeTarget(checkout(), "lint")).To(gexec.Exit(0))
+	})
+
+	It("os/exec is imported only under internal/workspace", func() {
+		By("given the tree as it stands")
+		var importers []string
+
+		By("when every package under internal/ is read")
+		Expect(filepath.WalkDir("internal", func(path string, entry fs.DirEntry, err error) error {
+			if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".go") {
+				return err
+			}
+			source, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if strings.Contains(string(source), `"os/exec"`) {
+				importers = append(importers, filepath.ToSlash(path))
+			}
+			return nil
+		})).To(Succeed())
+
+		By("then only files under internal/workspace/ import it")
+		Expect(importers).NotTo(BeEmpty(), "the chokepoint itself should be in the list")
+		for _, path := range importers {
+			// Specs drive subprocesses of their own; the rule is about what
+			// mill does at runtime, which is what the chokepoint owns.
+			if strings.HasSuffix(path, "_test.go") {
+				continue
+			}
+			Expect(path).To(HavePrefix("internal/workspace/"))
+		}
 	})
 
 	It("The forbidigo rule guards the workspace chokepoint", func() {

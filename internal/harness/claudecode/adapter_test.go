@@ -32,7 +32,7 @@ var _ = Describe("The claudecode adapter", Label("unit"), func() {
 
 	BeforeEach(func() {
 		log = &recorder{}
-		spawner = &watching{Execer: workspace.Local{}}
+		spawner = &watching{Execer: workspace.Spawner{}}
 		session = harness.Session{
 			ID:        "b6f1e0a2-0000-4000-8000-000000000001",
 			Model:     "claude-opus-5",

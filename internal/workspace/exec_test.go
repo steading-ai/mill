@@ -27,10 +27,10 @@ func script(body string) string {
 	return path
 }
 
-var _ = Describe("The local workspace", Label("unit"), func() {
-	var local workspace.Local
+var _ = Describe("The process spawner", Label("unit"), func() {
+	var local workspace.Spawner
 
-	BeforeEach(func() { local = workspace.Local{} })
+	BeforeEach(func() { local = workspace.Spawner{} })
 
 	It("runs a command and hands back its output and status", func(ctx context.Context) {
 		process, err := local.Exec(ctx, workspace.Command{

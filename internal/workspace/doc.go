@@ -1,12 +1,28 @@
-// Package workspace is the single chokepoint for spawning processes.
+// Package workspace is what a step is given instead of a path and a keychain.
 //
-// Every checkout, git invocation, agent session and check that mill runs on
-// behalf of a step goes through here, so that sandboxing, credentials and
-// cancellation have one place to live. The forbidigo rule in .golangci.yml
-// enforces it: os/exec may be imported by this package and nothing else.
+// A step never receives a filesystem path it may treat as the host and never
+// a credential in its environment. It receives a unix socket and a step
+// token, and everything it does to the world goes through that socket
+// (docs/architecture.md §"The workspace", docs/domain-model.md §Workspace).
+// This package holds the vocabulary — the [Workspace] interface, the
+// capability set, the step token, the errors a refused verb carries — and the
+// [Spawner] every process goes out through.
 //
-// Only the spawning half is here: Local.Exec starts a process in a process
-// group of its own, with the environment the caller's step is allowed, so
-// the harness adapter has a chokepoint to go through. The checkout, git, the
-// socket and its verbs arrive with the workspace node.
+// [Spawner.Exec] is the single chokepoint. Cwd, uid and environment are set
+// there and nowhere else, which is why the forbidigo rule in .golangci.yml
+// lets os/exec be imported here and by no other package: the guarantee is
+// checkable rather than aspirational.
+//
+// The parts:
+//
+//   - workspace — this package: the interface and its types
+//   - workspace/local — the MVP implementation: a clone per run under the
+//     mill's account, on a branch derived from the node
+//   - workspace/socket — the verbs over a unix socket, gated by the token
+//   - workspace/redact — the log redactor the socket writes through
+//   - workspace/signing — the SSH key every commit is signed with
+//
+// The container and remote workspaces implement [Workspace] with a real
+// isolation boundary. Nothing in a workflow definition changes across them;
+// if it has to, the seam leaked.
 package workspace
