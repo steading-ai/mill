@@ -24,7 +24,7 @@ COMPOSE := podman compose
 # Silence podman's "executing external compose provider" banner.
 export PODMAN_COMPOSE_WARNING_LOGS = false
 
-.PHONY: all build test test-unit test-db lint check-breaking check-generated typecheck-ts generate sidecar-deps clean db-up db-down db-reset db-migrate
+.PHONY: all build test test-unit test-db lint check-breaking check-generated typecheck-ts generate sidecar-deps sidecar-build clean db-up db-down db-reset db-migrate
 
 all: build
 
@@ -102,9 +102,15 @@ typecheck-ts: sidecar-deps
 sidecar-deps:
 	@pnpm install --dir sidecar --frozen-lockfile --prefer-offline --silent
 
+# The sidecar the worker spawns per skill step, compiled to
+# sidecar/dist/main.js. The specs build it themselves; this is for running it
+# by hand and for whoever packages a worker.
+sidecar-build: sidecar-deps
+	pnpm --dir sidecar run build
+
 clean:
 	rm -f $(BINARY)
-	rm -rf dist
+	rm -rf dist sidecar/dist
 
 # Development database. See compose.yaml.
 
