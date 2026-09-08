@@ -154,6 +154,8 @@ One row per turn, per model, as the adapter reports — a turn that bills two mo
 
 Append-only. Every change to `runs.status`, every step run start and close, every token issue and revoke, every gate filed and every auto-approval. Fields: `id` (ULID), `run_id`, `step_run_id` (nullable), `op`, `before`, `after`, `worker_ref`, `occurred_at`. This is the audit trail and what `mill status --history` reads. It is not a change stream for consumers; nothing subscribes to it.
 
+Not time-partitioned, unlike dagger's events. Dagger's are partitioned from the start because they are a change stream many consumers resume from; these are neither, and one operator running tens of runs a day does not justify the machinery. Partitioning is a migration away if volume ever asks for it.
+
 ## Invariants
 
 The store enforces these with constraints or in the writing transaction. A violation is a bug in the mill, not a condition to handle.
@@ -280,5 +282,4 @@ Every artifact's metadata carries `run_id`. Every `ApplyPatch` mill sends uses `
 ## Open questions
 
 - Whether `skills.files` bytes belong in this database or in dagger's blob store by digest. Leaning here: a workflow must be loadable without dagger.
-- Whether `events` should be time-partitioned from the start as dagger's are, or only when volume justifies it. Leaning later: one operator, tens of runs a day.
 - Whether the store should expose a `WatchRuns` stream for a future thicket bridge to render live status, or whether polling `status` is enough for a long time. Leaning polling.

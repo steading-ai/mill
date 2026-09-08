@@ -49,10 +49,8 @@ var _ = Describe("Lint and package boundaries", Label("unit", "slow"), func() {
 	It("Only the domain layer may reach the store", func() {
 		By(`given a file under "internal/worker" importing "internal/store"`)
 		dir := checkout()
-		writeFile(dir, "internal/store/store.go",
-			"// Package store is the persistence layer.\npackage store\n\n// Open is a placeholder the depguard spec imports.\nfunc Open() {}\n")
 		writeFile(dir, "internal/worker/worker.go",
-			"package worker\n\nimport \"github.com/ivy/mill/internal/store\"\n\n// Work reaches the store directly.\nfunc Work() { store.Open() }\n")
+			"package worker\n\nimport \"github.com/ivy/mill/internal/store\"\n\n// Fenced reaches the store directly.\nvar Fenced = store.ErrFenced\n")
 
 		By("when make lint runs")
 		session := makeTarget(dir, "lint")

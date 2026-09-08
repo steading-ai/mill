@@ -1,0 +1,405 @@
+package store_test
+
+import (
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	harnessv1 "github.com/ivy/mill/gen/harness/v1"
+	millv1 "github.com/ivy/mill/gen/mill/v1"
+	"github.com/ivy/mill/internal/store"
+	"github.com/ivy/mill/internal/testsupport"
+)
+
+var _ = Describe("SetLease", Label(testsupport.DBLabel), func() {
+	// The statuses a new claim may take over, from Invariant 9. Whether a
+	// running run's lease has expired is dagger's judgement: it hands out a
+	// second lease only once the first is gone.
+	DescribeTable("takes a run over only from a status a new claim may take",
+		func(ctx SpecContext, reach func(*ledger, SpecContext) *millv1.Run, accepted bool) {
+			l := newLedger(ctx)
+			run := reach(l, ctx)
+			claimed, err := l.store.SetLease(ctx, run.GetId(), "L2", "worker-2")
+			if !accepted {
+				Expect(err).To(MatchError(store.ErrNotClaimable))
+				Expect(err).To(MatchError(ContainSubstring("is "+statusText(run.GetStatus()))),
+					"the refusal names the status")
+				return
+			}
+			Expect(err).NotTo(HaveOccurred())
+			Expect(claimed.GetLeaseId()).To(Equal("L2"))
+			Expect(claimed.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+			Expect(claimed.GetWorkerRef()).To(Equal("worker-2"))
+		},
+		Entry("running, whose lease dagger has already replaced", func(l *ledger, ctx SpecContext) *millv1.Run {
+			run, _ := l.runWithWorkflow(ctx, "mill#8")
+			return run
+		}, true),
+		Entry("waiting on a gate", func(l *ledger, ctx SpecContext) *millv1.Run {
+			run, _ := l.runWithWorkflow(ctx, "mill#8")
+			open := l.startKind(ctx, run.GetId(), "review", millv1.StepKind_STEP_KIND_GATE)
+			waiting, err := l.store.MarkWaiting(ctx, l.lease, run.GetId(), "gate-1", open.GetId())
+			Expect(err).NotTo(HaveOccurred())
+			return waiting
+		}, true),
+		Entry("parked by the circuit breaker", func(l *ledger, ctx SpecContext) *millv1.Run {
+			run, _ := l.runWithWorkflow(ctx, "mill#8")
+			parked, err := l.store.Park(ctx, l.lease, run.GetId(), "gate-1",
+				millv1.ParkedReason_PARKED_REASON_RETRIES)
+			Expect(err).NotTo(HaveOccurred())
+			return parked
+		}, true),
+		Entry("done, with the node still open", func(l *ledger, ctx SpecContext) *millv1.Run {
+			run, _ := l.runWithWorkflow(ctx, "mill#8")
+			done, err := l.store.Done(ctx, l.lease, run.GetId())
+			Expect(err).NotTo(HaveOccurred())
+			return done
+		}, true),
+		Entry("selecting, whose run already holds the lease that created it", func(l *ledger, ctx SpecContext) *millv1.Run {
+			return l.run(ctx, "mill#8")
+		}, false),
+		Entry("failed", func(l *ledger, ctx SpecContext) *millv1.Run {
+			run, _ := l.runWithWorkflow(ctx, "mill#8")
+			failed, err := l.store.Failed(ctx, l.lease, run.GetId(), "denied")
+			Expect(err).NotTo(HaveOccurred())
+			return failed
+		}, false),
+		Entry("abandoned by a restart", func(l *ledger, ctx SpecContext) *millv1.Run {
+			run, _ := l.runWithWorkflow(ctx, "mill#8")
+			abandoned, err := l.store.Abandon(ctx, l.lease, run.GetId(), "restart")
+			Expect(err).NotTo(HaveOccurred())
+			return abandoned
+		}, false),
+	)
+
+	It("makes the new lease what later writes are compared against", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		run, _ := l.runWithWorkflow(ctx, "mill#8")
+		_, err := l.store.SetLease(ctx, run.GetId(), "L2", "worker-2")
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = l.store.StartStepRun(ctx, "L2", store.StartStepRunParams{
+			RunID: run.GetId(), StepName: "implement", Kind: millv1.StepKind_STEP_KIND_SKILL,
+		})
+		Expect(err).NotTo(HaveOccurred())
+	}, SpecTimeout(time.Minute))
+
+	It("clears what the previous attempt left behind, and keeps the gate", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		run, _ := l.runWithWorkflow(ctx, "mill#8")
+		parked, err := l.store.Park(ctx, l.lease, run.GetId(), "gate-1",
+			millv1.ParkedReason_PARKED_REASON_BUDGET)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(parked.GetEndedAt()).To(BeNil())
+
+		claimed, err := l.store.SetLease(ctx, run.GetId(), "L2", "worker-2")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(claimed.GetParkedReason()).To(Equal(millv1.ParkedReason_PARKED_REASON_UNSPECIFIED))
+		Expect(claimed.GetGateNodeId()).To(Equal("gate-1"), "a resume through a gate reads it")
+	}, SpecTimeout(time.Minute))
+})
+
+var _ = Describe("Usage", Label(testsupport.DBLabel), func() {
+	It("RecordUsage accepts two rows for one turn with different models", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		run, _ := l.runWithWorkflow(ctx, "mill#8")
+		open := l.start(ctx, run.GetId(), "implement")
+
+		recorded, err := l.store.RecordUsage(ctx, l.lease, open.GetId(), []*millv1.Usage{
+			{Model: "claude-opus-5", InputTokens: 100, OutputTokens: 20, CacheReadTokens: 5, CacheWriteTokens: 1},
+			{Model: "claude-haiku-4", InputTokens: 7, OutputTokens: 3},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(recorded).To(HaveLen(2))
+		Expect(recorded[0].GetModel()).To(Equal("claude-opus-5"))
+		Expect(recorded[0].GetInputTokens()).To(Equal(int64(100)))
+		Expect(recorded[1].GetModel()).To(Equal("claude-haiku-4"))
+		Expect(recorded[0].GetPostedAt()).To(BeNil())
+	}, SpecTimeout(time.Minute))
+
+	It("MarkUsagePosted marks exactly the rows for one step run", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		run, _ := l.runWithWorkflow(ctx, "mill#8")
+		first := l.start(ctx, run.GetId(), "implement")
+		_, err := l.store.RecordUsage(ctx, l.lease, first.GetId(), []*millv1.Usage{
+			{Model: "opus", InputTokens: 1}, {Model: "haiku", InputTokens: 2},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		_, _, err = l.store.CloseStepRun(ctx, l.lease, store.CloseStepRunParams{
+			StepRunID: first.GetId(), Evidence: commitEvidence("sha")})
+		Expect(err).NotTo(HaveOccurred())
+
+		second := l.start(ctx, run.GetId(), "simplify")
+		_, err = l.store.RecordUsage(ctx, l.lease, second.GetId(),
+			[]*millv1.Usage{{Model: "opus", InputTokens: 9}})
+		Expect(err).NotTo(HaveOccurred())
+
+		marked, err := l.store.MarkUsagePosted(ctx, l.lease, first.GetId())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(marked).To(Equal(int64(2)))
+
+		var unposted int
+		Expect(l.db.QueryRow(ctx,
+			`SELECT count(*) FROM usage WHERE step_run_id = $1 AND posted_at IS NULL`, second.GetId()).
+			Scan(&unposted)).To(Succeed())
+		Expect(unposted).To(Equal(1), "the other attempt's rows are untouched")
+
+		// A second call marks nothing: the rows are posted already.
+		marked, err = l.store.MarkUsagePosted(ctx, l.lease, first.GetId())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(marked).To(BeZero())
+	}, SpecTimeout(time.Minute))
+})
+
+var _ = Describe("Resume", Label(testsupport.DBLabel), func() {
+	It("returns the run a claim on the node resumes, and nothing for a node with none", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		run := l.run(ctx, "mill#8")
+
+		found, err := l.store.GetRunByNode(ctx, run.GetNodeId())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found.GetId()).To(Equal(run.GetId()))
+
+		missing, err := l.store.GetRunByNode(ctx, "node-nothing")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(missing).To(BeNil())
+
+		// A restart retires the run, and the node reads as free until the
+		// next generation is created.
+		_, err = l.store.Abandon(ctx, l.lease, run.GetId(), "restart")
+		Expect(err).NotTo(HaveOccurred())
+		retired, err := l.store.GetRunByNode(ctx, run.GetNodeId())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(retired).To(BeNil())
+	}, SpecTimeout(time.Minute))
+
+	It("aborts the attempts of a dead worker and revokes their tokens", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		run, workflow := l.runWithWorkflow(ctx, "mill#8")
+		open := l.start(ctx, run.GetId(), "implement")
+		token, err := l.store.IssueStepToken(ctx, l.lease, open.GetId(), nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		// The next worker holds a lease the store has never seen, which is
+		// why this call is admitted by status rather than by the fence.
+		aborted, err := l.store.AbortOpenStepRuns(ctx, "L2", run.GetId(), "crashed")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(namesOf(aborted)).To(Equal([]string{"implement"}))
+		Expect(l.statusOf(ctx, open.GetId())).To(Equal("aborted"))
+
+		var revoked *time.Time
+		Expect(l.db.QueryRow(ctx, `SELECT revoked_at FROM step_tokens WHERE id = $1`, token.GetId()).
+			Scan(&revoked)).To(Succeed())
+		Expect(revoked).NotTo(BeNil())
+
+		// The aborted attempt does not close the step: the next worker
+		// starts a new one from the top.
+		Expect(l.currentStep(ctx, run.GetId(), workflow)).To(Equal("implement"))
+		_, err = l.store.SetLease(ctx, run.GetId(), "L2", "worker-2")
+		Expect(err).NotTo(HaveOccurred())
+		next, err := l.store.StartStepRun(ctx, "L2", store.StartStepRunParams{
+			RunID: run.GetId(), StepName: "implement", Kind: millv1.StepKind_STEP_KIND_SKILL,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(next.GetAttempt()).To(Equal(int64(2)))
+	}, SpecTimeout(time.Minute))
+
+	It("records how a failed attempt's process ended", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		run, _ := l.runWithWorkflow(ctx, "mill#8")
+		open := l.start(ctx, run.GetId(), "implement")
+		failed, err := l.store.FailStepRun(ctx, l.lease, open.GetId(), &harnessv1.ProcessExit{
+			Status: -1, Reason: harnessv1.ExitReason_EXIT_REASON_TIMEOUT,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(failed.GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_FAILED))
+		Expect(failed.GetExit().GetStatus()).To(Equal(int32(-1)))
+		Expect(failed.GetExit().GetReason()).To(Equal(harnessv1.ExitReason_EXIT_REASON_TIMEOUT))
+
+		_, err = l.store.FailStepRun(ctx, l.lease, open.GetId(), nil)
+		Expect(err).To(MatchError(store.ErrNotRunning))
+	}, SpecTimeout(time.Minute))
+})
+
+var _ = Describe("The catalog", Label(testsupport.DBLabel), func() {
+	It("stores a workflow version once, by content hash", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		definition := &millv1.Workflow{
+			Name: "feature", Scope: millv1.Scope_SCOPE_ORG,
+			Steps: []*millv1.Step{{Name: "implement", Kind: millv1.StepKind_STEP_KIND_SKILL}},
+		}
+		first, created, err := l.store.PutWorkflow(ctx, definition)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeTrue())
+		Expect(first.GetVersion()).NotTo(BeEmpty())
+
+		again, created, err := l.store.PutWorkflow(ctx, definition)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeFalse())
+		Expect(again.GetId()).To(Equal(first.GetId()))
+
+		changed := &millv1.Workflow{
+			Name: "feature", Scope: millv1.Scope_SCOPE_ORG,
+			Steps: []*millv1.Step{
+				{Name: "implement", Kind: millv1.StepKind_STEP_KIND_SKILL},
+				{Name: "review", Kind: millv1.StepKind_STEP_KIND_GATE},
+			},
+		}
+		next, created, err := l.store.PutWorkflow(ctx, changed)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeTrue())
+		Expect(next.GetVersion()).NotTo(Equal(first.GetVersion()))
+
+		newest, err := l.store.GetWorkflow(ctx, store.GetWorkflowParams{
+			Name: "feature", Scope: millv1.Scope_SCOPE_ORG})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(newest.GetId()).To(Equal(next.GetId()))
+		Expect(newest.GetSteps()).To(HaveLen(2))
+
+		pinned, err := l.store.GetWorkflow(ctx, store.GetWorkflowParams{
+			Name: "feature", Scope: millv1.Scope_SCOPE_ORG, Version: first.GetVersion()})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pinned.GetId()).To(Equal(first.GetId()))
+
+		listed, err := l.store.ListWorkflows(ctx, store.WorkflowFilter{Name: "feature"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(listed).To(HaveLen(1), "the newest of each name unless every version is asked for")
+		listed, err = l.store.ListWorkflows(ctx, store.WorkflowFilter{Name: "feature", AllVersions: true})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(listed).To(HaveLen(2))
+	}, SpecTimeout(time.Minute))
+
+	It("resolves a project workflow before the org's, and falls back to it", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		org, _, err := l.store.PutWorkflow(ctx, &millv1.Workflow{
+			Name: "feature", Scope: millv1.Scope_SCOPE_ORG,
+			Steps: []*millv1.Step{{Name: "implement"}}})
+		Expect(err).NotTo(HaveOccurred())
+		project, _, err := l.store.PutWorkflow(ctx, &millv1.Workflow{
+			Name: "feature", Scope: millv1.Scope_SCOPE_PROJECT, Project: "mill",
+			Steps: []*millv1.Step{{Name: "implement"}, {Name: "review"}}})
+		Expect(err).NotTo(HaveOccurred())
+
+		resolved, err := l.store.GetWorkflow(ctx, store.GetWorkflowParams{Name: "feature", Project: "mill"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resolved.GetId()).To(Equal(project.GetId()))
+
+		resolved, err = l.store.GetWorkflow(ctx, store.GetWorkflowParams{Name: "feature", Project: "dagger"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resolved.GetId()).To(Equal(org.GetId()))
+
+		_, err = l.store.GetWorkflow(ctx, store.GetWorkflowParams{Name: "nothing"})
+		Expect(err).To(MatchError(store.ErrNotFound))
+	}, SpecTimeout(time.Minute))
+
+	It("stores a skill once, by digest", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		skill := &millv1.Skill{
+			Name: "implement", Digest: "sha256:abc", Body: "do the work",
+			Files:    map[string]string{"scripts/check.sh": "sha256:def"},
+			Metadata: map[string]string{"description": "implement a node"},
+		}
+		stored, created, err := l.store.PutSkill(ctx, skill)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeTrue())
+		Expect(stored.GetFiles()).To(HaveKeyWithValue("scripts/check.sh", "sha256:def"))
+		Expect(stored.GetMetadata()).To(HaveKeyWithValue("description", "implement a node"))
+
+		again, created, err := l.store.PutSkill(ctx, skill)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeFalse())
+		Expect(again.GetId()).To(Equal(stored.GetId()))
+	}, SpecTimeout(time.Minute))
+})
+
+var _ = Describe("The reads the CLI needs", Label(testsupport.DBLabel), func() {
+	It("Status derives the current step, the attempts, the cost and the leases", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		run, _ := l.runWithWorkflow(ctx, "mill#8")
+		l.close(ctx, run.GetId(), "implement")
+		failing := l.start(ctx, run.GetId(), "simplify")
+		_, err := l.store.RecordUsage(ctx, l.lease, failing.GetId(), []*millv1.Usage{
+			{Model: "opus", InputTokens: 10, OutputTokens: 2},
+			{Model: "opus", InputTokens: 5},
+			{Model: "haiku", InputTokens: 1},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		summaries, err := l.store.Status(ctx, nil, "mill")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(summaries).To(HaveLen(1))
+		summary := summaries[0]
+		Expect(summary.GetCurrentStep()).To(Equal("simplify"))
+		Expect(summary.GetCurrentAttempt()).To(Equal(int64(1)))
+		Expect(summary.GetTotals()).To(HaveLen(2))
+		Expect(summary.GetTotals()[1].GetModel()).To(Equal("opus"))
+		Expect(summary.GetTotals()[1].GetInputTokens()).To(Equal(int64(15)))
+		Expect(summary.GetLeases()).To(BeZero(), "the run has been claimed once, at creation")
+
+		_, err = l.store.SetLease(ctx, run.GetId(), "L2", "worker-2")
+		Expect(err).NotTo(HaveOccurred())
+		summaries, err = l.store.Status(ctx, []millv1.RunStatus{millv1.RunStatus_RUN_STATUS_RUNNING}, "")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(summaries[0].GetLeases()).To(Equal(int64(1)))
+
+		// A project the node does not belong to sees nothing.
+		summaries, err = l.store.Status(ctx, nil, "dagger")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(summaries).To(BeEmpty())
+	}, SpecTimeout(time.Minute))
+
+	It("Inspect returns every attempt in order with its evidence and cost", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		run, _ := l.runWithWorkflow(ctx, "mill#8")
+		l.close(ctx, run.GetId(), "implement")
+		open := l.start(ctx, run.GetId(), "simplify")
+		_, err := l.store.RecordUsage(ctx, l.lease, open.GetId(),
+			[]*millv1.Usage{{Model: "opus", InputTokens: 4}})
+		Expect(err).NotTo(HaveOccurred())
+
+		detail, err := l.store.Inspect(ctx, store.InspectParams{NodeRef: "mill#8"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(detail.Workflow.GetName()).To(Equal("feature"))
+		Expect(detail.Steps).To(HaveLen(3))
+		Expect(detail.Steps[0].GetStepRun().GetStepName()).To(Equal("assess"))
+		Expect(detail.Steps[1].GetEvidence().GetCommit()).To(Equal("implement-sha"))
+		Expect(detail.Steps[2].GetEvidence()).To(BeNil())
+		Expect(detail.Steps[2].GetTotals()[0].GetInputTokens()).To(Equal(int64(4)))
+		Expect(detail.Summary.GetCurrentStep()).To(Equal("simplify"))
+	}, SpecTimeout(time.Minute))
+
+	It("writes the audit trail as it writes the change", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		run, _ := l.runWithWorkflow(ctx, "mill#8")
+		l.close(ctx, run.GetId(), "implement")
+
+		events, err := l.store.Events(ctx, run.GetId())
+		Expect(err).NotTo(HaveOccurred())
+		ops := make([]string, 0, len(events))
+		for _, e := range events {
+			ops = append(ops, e.Op)
+		}
+		Expect(ops).To(Equal([]string{
+			"create_run", "start_step_run", "close_step_run", "start_step_run", "close_step_run",
+		}))
+
+		_, err = l.db.Exec(ctx, `DELETE FROM events WHERE run_id = $1`, run.GetId())
+		Expect(err).To(MatchError(ContainSubstring("events is append-only")))
+	}, SpecTimeout(time.Minute))
+})
+
+// statusText renders a run status the way the ledger stores it, for the
+// specs that assert a refusal names the status.
+func statusText(status millv1.RunStatus) string {
+	switch status {
+	case millv1.RunStatus_RUN_STATUS_SELECTING:
+		return "selecting"
+	case millv1.RunStatus_RUN_STATUS_FAILED:
+		return "failed"
+	case millv1.RunStatus_RUN_STATUS_ABANDONED:
+		return "abandoned"
+	default:
+		return status.String()
+	}
+}

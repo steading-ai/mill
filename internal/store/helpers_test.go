@@ -1,0 +1,180 @@
+package store_test
+
+import (
+	"context"
+	"math/rand/v2"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	millv1 "github.com/ivy/mill/gen/mill/v1"
+	"github.com/ivy/mill/internal/store"
+)
+
+// The workflow every spec that needs one runs against: the five steps of
+// docs/ledger.md's revise example, implement through review.
+var fiveSteps = []string{"implement", "simplify", "commit", "pr", "review"}
+
+// ledger is one spec's database, the store over it, and the fixtures it has
+// made so far. Every spec builds its own; nothing is shared but the server.
+type ledger struct {
+	db    *pgxpool.Pool
+	store *store.Store
+	// lease is the lease the fixtures were created under, and the one a
+	// spec presents unless it is testing what happens when it does not.
+	lease string
+}
+
+// newLedger clones a migrated database and opens a store on it.
+func newLedger(ctx context.Context) *ledger {
+	GinkgoHelper()
+	db := pg.Database(ctx)
+	return &ledger{db: db, store: store.FromPool(db), lease: "lease-1"}
+}
+
+// workflow stores the five-step workflow and returns it.
+func (l *ledger) workflow(ctx context.Context) *millv1.Workflow {
+	GinkgoHelper()
+	steps := make([]*millv1.Step, 0, len(fiveSteps))
+	for _, name := range fiveSteps {
+		steps = append(steps, &millv1.Step{
+			Name:     name,
+			Kind:     millv1.StepKind_STEP_KIND_SKILL,
+			Evidence: millv1.EvidenceKind_EVIDENCE_KIND_COMMIT,
+		})
+	}
+	stored, _, err := l.store.PutWorkflow(ctx, &millv1.Workflow{
+		Name:  "feature",
+		Scope: millv1.Scope_SCOPE_ORG,
+		Steps: steps,
+	})
+	Expect(err).NotTo(HaveOccurred())
+	return stored
+}
+
+// run creates a run on a node, holding l.lease.
+func (l *ledger) run(ctx context.Context, nodeRef string) *millv1.Run {
+	GinkgoHelper()
+	run, err := l.store.CreateRun(ctx, l.lease, store.CreateRunParams{
+		NodeID:    "node-" + nodeRef,
+		NodeRef:   nodeRef,
+		ContextID: "ctx-" + nodeRef,
+		WorkerRef: "worker-1",
+		Branch:    "mill/" + nodeRef,
+	})
+	Expect(err).NotTo(HaveOccurred())
+	return run
+}
+
+// runWithWorkflow creates a run and pins the five-step workflow to it, the
+// state a run is in once selection has closed.
+func (l *ledger) runWithWorkflow(ctx context.Context, nodeRef string) (*millv1.Run, *millv1.Workflow) {
+	GinkgoHelper()
+	workflow := l.workflow(ctx)
+	run := l.run(ctx, nodeRef)
+	stepRun := l.start(ctx, run.GetId(), "assess")
+	_, _, err := l.store.CloseStepRun(ctx, l.lease, store.CloseStepRunParams{
+		StepRunID:  stepRun.GetId(),
+		Evidence:   commitEvidence("assessed"),
+		WorkflowID: workflow.GetId(),
+		Tier:       millv1.Tier_TIER_FEATURE,
+	})
+	Expect(err).NotTo(HaveOccurred())
+	run, err = l.store.GetRun(ctx, run.GetId())
+	Expect(err).NotTo(HaveOccurred())
+	return run, workflow
+}
+
+// start opens an attempt at a skill step.
+func (l *ledger) start(ctx context.Context, runID, stepName string) *millv1.StepRun {
+	GinkgoHelper()
+	return l.startKind(ctx, runID, stepName, millv1.StepKind_STEP_KIND_SKILL)
+}
+
+// startKind opens an attempt at a step of a given kind.
+func (l *ledger) startKind(ctx context.Context, runID, stepName string, kind millv1.StepKind) *millv1.StepRun {
+	GinkgoHelper()
+	stepRun, err := l.store.StartStepRun(ctx, l.lease, store.StartStepRunParams{
+		RunID:     runID,
+		StepName:  stepName,
+		Kind:      kind,
+		WorkerRef: "worker-1",
+	})
+	Expect(err).NotTo(HaveOccurred())
+	return stepRun
+}
+
+// close opens an attempt at a step and closes it with commit evidence.
+func (l *ledger) close(ctx context.Context, runID, stepName string) *millv1.StepRun {
+	GinkgoHelper()
+	stepRun := l.start(ctx, runID, stepName)
+	closed, _, err := l.store.CloseStepRun(ctx, l.lease, store.CloseStepRunParams{
+		StepRunID: stepRun.GetId(),
+		Evidence:  commitEvidence(stepName + "-sha"),
+	})
+	Expect(err).NotTo(HaveOccurred())
+	return closed
+}
+
+// fail opens an attempt at a step and fails it.
+func (l *ledger) fail(ctx context.Context, runID, stepName string) *millv1.StepRun {
+	GinkgoHelper()
+	stepRun := l.start(ctx, runID, stepName)
+	failed, err := l.store.FailStepRun(ctx, l.lease, stepRun.GetId(), nil)
+	Expect(err).NotTo(HaveOccurred())
+	return failed
+}
+
+// currentStep is the run's derived current step.
+func (l *ledger) currentStep(ctx context.Context, runID string, workflow *millv1.Workflow) string {
+	GinkgoHelper()
+	state, err := l.store.RunState(ctx, runID)
+	Expect(err).NotTo(HaveOccurred())
+	name, _ := store.CurrentStep(state, workflow)
+	return name
+}
+
+// statusOf reads a step run's status straight from the table, for the specs
+// that must see the row rather than what a method returned.
+func (l *ledger) statusOf(ctx context.Context, stepRunID string) string {
+	GinkgoHelper()
+	var status string
+	Expect(l.db.QueryRow(ctx, `SELECT status FROM step_runs WHERE id = $1`, stepRunID).Scan(&status)).To(Succeed())
+	return status
+}
+
+// commitEvidence is the simplest fact that closes a step.
+func commitEvidence(sha string) *millv1.Evidence {
+	return &millv1.Evidence{
+		Kind:       millv1.EvidenceKind_EVIDENCE_KIND_COMMIT,
+		Value:      &millv1.Evidence_Commit{Commit: sha},
+		VerifiedBy: "spec",
+	}
+}
+
+// newID mints an identifier of the shape the is_ulid check accepts, for the
+// specs that insert rows by hand to test a constraint the store API cannot
+// reach.
+func newID() string {
+	const crockford = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+	id := make([]byte, 26)
+	id[0] = '0'
+	for i := 1; i < len(id); i++ {
+		id[i] = crockford[rand.IntN(len(crockford))]
+	}
+	return string(id)
+}
+
+// asAppRole opens a connection of its own and switches it to the role the
+// mill runs as, so a spec sees exactly the privileges production has.
+func (l *ledger) asAppRole(ctx context.Context) *pgx.Conn {
+	GinkgoHelper()
+	conn, err := pgx.ConnectConfig(ctx, l.db.Config().ConnConfig)
+	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(func(ctx context.Context) error { return conn.Close(ctx) })
+	_, err = conn.Exec(ctx, `SET ROLE mill_app`)
+	Expect(err).NotTo(HaveOccurred())
+	return conn
+}

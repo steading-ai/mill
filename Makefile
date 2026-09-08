@@ -46,12 +46,14 @@ test-db:
 # go vet catches what golangci-lint's analyzers do not overlap with; the
 # rules that carry design decisions (depguard, forbidigo) live in
 # .golangci.yml. buf lints the proto contracts and refuses a change that
-# would break a generated client; sqlc's check joins here when the queries
-# arrive.
+# would break a generated client, and sqlc parses the migrations and the
+# queries against each other, so a query the schema cannot answer fails the
+# build rather than a spec.
 lint:
 	go vet ./...
 	golangci-lint run ./...
 	buf lint
+	sqlc vet
 	@$(MAKE) --no-print-directory check-breaking
 	$(MAKE) --no-print-directory check-generated
 	$(MAKE) --no-print-directory typecheck-ts
@@ -81,6 +83,10 @@ check-generated: sidecar-deps
 	    echo "lint: generated code is stale relative to proto/; run make generate"; \
 	    exit 1; \
 	  fi
+	@sqlc diff || { \
+	  echo "lint: generated queries are stale relative to $(MIGRATIONS) or the query files; run make generate"; \
+	  exit 1; \
+	 }
 
 # Code generators. Each is deterministic: running twice leaves the tree
 # unchanged, which check-generated relies on.
@@ -88,6 +94,7 @@ generate: sidecar-deps
 	go generate ./...
 	buf generate
 	buf generate --template buf.gen.ts.yaml
+	sqlc generate
 
 # The sidecar is the other end of the harness wire, so the generated
 # TypeScript has to type-check for the same reason the generated Go has to
@@ -129,16 +136,10 @@ db-down:
 
 # Apply every pending migration to the development database. The service and
 # the specs embed the same files; this is for working on the schema by hand.
-# DATABASE_URL comes from .env. Until the store node lands there are no
-# migration files, and goose treats an empty directory as an error, so an
-# empty schema is reported and skipped rather than failing the target.
+# DATABASE_URL comes from .env.
 db-migrate: db-up
 	@set -a && . ./.env && set +a && \
-	  if ls $(MIGRATIONS)/*.sql >/dev/null 2>&1; then \
-	    goose -dir $(MIGRATIONS) postgres "$$DATABASE_URL" up; \
-	  else \
-	    echo "db-migrate: no migrations in $(MIGRATIONS) yet; nothing to apply"; \
-	  fi
+	  goose -dir $(MIGRATIONS) postgres "$$DATABASE_URL" up
 
 # Drop and recreate the development database inside the running container.
 # Credentials resolve from the container's environment, so this file never
