@@ -136,7 +136,7 @@ Implementations behind the interface:
 
 A workflow definition does not change across these. If it has to, the seam leaked.
 
-Adapters get the socket path and token as their entire environment. The Claude Code sidecar mounts them as an MCP server the session's tools call, so `Read`/`Write`/`Bash` inside the session route through the workspace's verbs.
+Adapters get the socket path and token as their entire environment. The adapter is the socket's client, not the session: the Claude Code sidecar holds the socket and re-exposes the verbs as an MCP server hosted in its own process, and the session's built-in `Read`/`Write`/`Edit`/`Bash` are removed by policy so the workspace's tools are the only filesystem and the only way to a process. A session cannot be pointed at the socket directly — the SDK's MCP transports are stdio, HTTP and in-process, and no URL spelling reaches a unix socket (`docs/spikes/mcp-workspace.md`). The mount is what makes every file and command one auditable call at a seam the mill owns; it is not what enforces. Enforcement is the process boundary `Workspace.Exec` sets — cwd, uid, environment — because a command run through `exec` is bounded by the process it spawns, not by the tool that spawned it.
 
 In MVP the adapter's tool allowlist is the **only** enforcement: the workspace's `local` implementation does not yet gate `exec` against `write`, so a reviewer allowed `Bash` to run tests can also write. MVP detects rather than prevents: a `clean-tree` check after every read-only step fails it if the tree changed, and the ledger says which session did it. The capability set becomes a second, independent layer with the container workspace.
 

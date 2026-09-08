@@ -1,0 +1,236 @@
+[
+ {
+  "arm": "mcp",
+  "rep": 1,
+  "ms": 8618,
+  "turns": 8,
+  "calls": {
+   "mcp__mill_workspace__fs_read": 3,
+   "mcp__mill_workspace__fs_write": 3,
+   "mcp__mill_workspace__exec": 1
+  },
+  "usage": {
+   "input": 1084,
+   "output": 686,
+   "cacheRead": 38955,
+   "cacheWrite": 4434
+  },
+  "serverMs": [
+   0,
+   0,
+   0,
+   1,
+   1,
+   0,
+   27
+  ],
+  "ok": true,
+  "failed": [],
+  "subtype": "success"
+ },
+ {
+  "arm": "mcp",
+  "rep": 2,
+  "ms": 8322,
+  "turns": 8,
+  "calls": {
+   "mcp__mill_workspace__fs_read": 3,
+   "mcp__mill_workspace__fs_write": 3,
+   "mcp__mill_workspace__exec": 1
+  },
+  "usage": {
+   "input": 1084,
+   "output": 670,
+   "cacheRead": 38931,
+   "cacheWrite": 4422
+  },
+  "serverMs": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   27
+  ],
+  "ok": true,
+  "failed": [],
+  "subtype": "success"
+ },
+ {
+  "arm": "mcp",
+  "rep": 3,
+  "ms": 8423,
+  "turns": 8,
+  "calls": {
+   "mcp__mill_workspace__fs_read": 3,
+   "mcp__mill_workspace__fs_write": 3,
+   "mcp__mill_workspace__exec": 1
+  },
+  "usage": {
+   "input": 1084,
+   "output": 703,
+   "cacheRead": 38953,
+   "cacheWrite": 4433
+  },
+  "serverMs": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   27
+  ],
+  "ok": true,
+  "failed": [],
+  "subtype": "success"
+ },
+ {
+  "arm": "builtins",
+  "rep": 1,
+  "ms": 10570,
+  "turns": 6,
+  "calls": {
+   "Bash": 2,
+   "Edit": 3
+  },
+  "usage": {
+   "input": 1049,
+   "output": 763,
+   "cacheRead": 74738,
+   "cacheWrite": 5015
+  },
+  "serverMs": [],
+  "ok": true,
+  "failed": [],
+  "subtype": "success"
+ },
+ {
+  "arm": "builtins",
+  "rep": 2,
+  "ms": 8789,
+  "turns": 6,
+  "calls": {
+   "Bash": 2,
+   "Edit": 3
+  },
+  "usage": {
+   "input": 1049,
+   "output": 685,
+   "cacheRead": 74650,
+   "cacheWrite": 4935
+  },
+  "serverMs": [],
+  "ok": true,
+  "failed": [],
+  "subtype": "success"
+ },
+ {
+  "arm": "builtins",
+  "rep": 3,
+  "ms": 8609,
+  "turns": 6,
+  "calls": {
+   "Bash": 2,
+   "Edit": 3
+  },
+  "usage": {
+   "input": 1049,
+   "output": 668,
+   "cacheRead": 74662,
+   "cacheWrite": 4941
+  },
+  "serverMs": [],
+  "ok": true,
+  "failed": [],
+  "subtype": "success"
+ },
+ {
+  "arm": "both",
+  "rep": 1,
+  "ms": 9653,
+  "turns": 8,
+  "calls": {
+   "mcp__mill_workspace__fs_read": 3,
+   "mcp__mill_workspace__fs_write": 3,
+   "mcp__mill_workspace__exec": 1
+  },
+  "usage": {
+   "input": 1049,
+   "output": 732,
+   "cacheRead": 77035,
+   "cacheWrite": 5067
+  },
+  "serverMs": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   27
+  ],
+  "ok": true,
+  "failed": [],
+  "subtype": "success"
+ },
+ {
+  "arm": "both",
+  "rep": 2,
+  "ms": 8882,
+  "turns": 8,
+  "calls": {
+   "mcp__mill_workspace__fs_read": 3,
+   "mcp__mill_workspace__fs_write": 3,
+   "mcp__mill_workspace__exec": 1
+  },
+  "usage": {
+   "input": 1049,
+   "output": 769,
+   "cacheRead": 77042,
+   "cacheWrite": 5070
+  },
+  "serverMs": [
+   0,
+   0,
+   0,
+   0,
+   1,
+   1,
+   28
+  ],
+  "ok": true,
+  "failed": [],
+  "subtype": "success"
+ },
+ {
+  "arm": "both",
+  "rep": 3,
+  "ms": 11786,
+  "turns": 8,
+  "calls": {
+   "mcp__mill_workspace__fs_read": 3,
+   "mcp__mill_workspace__fs_write": 3,
+   "mcp__mill_workspace__exec": 1
+  },
+  "usage": {
+   "input": 1049,
+   "output": 712,
+   "cacheRead": 77039,
+   "cacheWrite": 5069
+  },
+  "serverMs": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   27
+  ],
+  "ok": true,
+  "failed": [],
+  "subtype": "success"
+ }
+]

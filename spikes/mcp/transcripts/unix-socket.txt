@@ -1,0 +1,15 @@
+workspace mcp listening unix /tmp/ws-unix-9IgHKa/workspace.sock
+{"socket":"/tmp/ws-unix-9IgHKa/workspace.sock","exists":true}
+{"attempt":"http, curl's --unix-socket spelling","config":{"type":"http","url":"http://unix:/tmp/ws-unix-9IgHKa/workspace.sock:/mcp","alwaysLoad":true},"status":"failed","tools":[]}
+{"attempt":"http, http+unix scheme","config":{"type":"http","url":"http+unix://%2Ftmp%2Fws-unix-9IgHKa%2Fworkspace.sock/mcp","alwaysLoad":true},"status":"failed","tools":[]}
+{"attempt":"http, unix scheme","config":{"type":"http","url":"unix:///tmp/ws-unix-9IgHKa/workspace.sock:/mcp","alwaysLoad":true},"status":"failed","tools":[]}
+{"attempt":"http, bare socket path as url","config":{"type":"http","url":"/tmp/ws-unix-9IgHKa/workspace.sock","alwaysLoad":true},"status":"failed","tools":[]}
+{"attempt":"sse, curl's --unix-socket spelling","config":{"type":"sse","url":"http://unix:/tmp/ws-unix-9IgHKa/workspace.sock:/mcp","alwaysLoad":true},"status":"failed","tools":[]}
+{"attempt":"stdio bridge onto the http socket","config":{"type":"stdio","command":"/home/ivy/src/github.com/ivy/mill/node_modules/.bin/tsx","args":["/home/ivy/src/github.com/ivy/mill/spikes/mcp/socket-bridge.ts","/tmp/ws-unix-9IgHKa/workspace.sock"],"alwaysLoad":true},"status":"failed","tools":[]}
+workspace mcp listening unix-jsonrpc /tmp/ws-unix-9IgHKa/workspace-jsonrpc.sock
+{"attempt":"stdio bridge onto a line-delimited JSON-RPC socket","config":{"type":"stdio","command":"/home/ivy/src/github.com/ivy/mill/node_modules/.bin/tsx","args":["/home/ivy/src/github.com/ivy/mill/spikes/mcp/socket-bridge.ts","/tmp/ws-unix-9IgHKa/workspace-jsonrpc.sock"],"alwaysLoad":true},"status":"connected","tools":["mcp__mill_workspace__exec","mcp__mill_workspace__fs_read","mcp__mill_workspace__fs_write"]}
+{"attempt":"http, curl spelling, against the JSON-RPC socket","config":{"type":"http","url":"http://unix:/tmp/ws-unix-9IgHKa/workspace-jsonrpc.sock:/mcp","alwaysLoad":true},"status":"failed","tools":[]}
+{"attempt":"stdio: the server as a child process","config":{"type":"stdio","command":"/home/ivy/src/github.com/ivy/mill/node_modules/.bin/tsx","args":["/home/ivy/src/github.com/ivy/mill/spikes/mcp/workspace-server.ts","stdio","/tmp/ws-unix-9IgHKa"],"alwaysLoad":true},"status":"connected","tools":["mcp__mill_workspace__exec","mcp__mill_workspace__fs_read","mcp__mill_workspace__fs_write"]}
+{"attempt":"sdk: the server in the driver's own process","config":{"type":"sdk","name":"mill_workspace"},"status":"connected","tools":["mcp__mill_workspace__exec","mcp__mill_workspace__fs_read","mcp__mill_workspace__fs_write"]}
+workspace mcp listening http 8931
+{"attempt":"http over a TCP port, as a control","config":{"type":"http","url":"http://127.0.0.1:8931/mcp","alwaysLoad":true},"status":"connected","tools":["mcp__mill_workspace__exec","mcp__mill_workspace__fs_read","mcp__mill_workspace__fs_write"]}
