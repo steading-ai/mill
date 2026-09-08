@@ -169,10 +169,10 @@ The store enforces these with constraints or in the writing transaction. A viola
 6. **Evidence is never updated or deleted.** No `UPDATE` or `DELETE` grants on the table for the application role.
 7. **Attempts are contiguous.** `attempt` for `(run_id, step_name)` is `max + 1`, assigned in the insert.
 8. **A live token belongs to a `running` step run.** Revocation is written in the same transaction that moves the step run out of `running`.
-9. **Every store write is fenced by the lease, atomically.** Every statement that mutates `step_runs`, `evidence`, `step_tokens`, `usage`, or `runs` for a run takes the `runs` row lock (`SELECT … FOR UPDATE`), re-reads `lease_id` in a separate statement after the lock is granted — a locked row is not re-read, so a lease a concurrent claim committed while waiting would otherwise be missed, which is exactly the trap dagger's `fence()` comments on — compares it to the lease the worker presented, and rolls back on mismatch. This is the mechanism behind "a stale worker cannot corrupt the record," and it lives in the store, not in the worker's good behaviour. The one exception is `SetLease` itself, which is the write that changes what later writes compare against; it takes the same lock and requires the run's current status to be one a new claim may take over (`running` with an expired lease, `waiting`, `parked`, or `done` with the node still open).
+9. **Every store write is fenced by the lease, atomically.** Every statement that mutates `step_runs`, `evidence`, `step_tokens`, `usage`, or `runs` for a run takes the `runs` row lock (`SELECT … FOR UPDATE`), re-reads `lease_id` in a separate statement after the lock is granted — a locked row is not re-read, so a lease a concurrent claim committed while waiting would otherwise be missed, which is exactly the trap dagger's `fence()` comments on — compares it to the lease the worker presented, and rolls back on mismatch. This is the mechanism behind "a stale worker cannot corrupt the record," and it lives in the store, not in the worker's good behaviour. The one exception is `SetLease` itself, which is the write that changes what later writes compare against; it takes the same lock and requires the run's current status to be one a new claim may take over (`running` with an expired lease, `waiting`, `parked`, `done` with the node still open, or `selecting` holding no lease — the run `restart` opens at the next generation, created outside any claim because the human restarting holds none).
 10. **`current_step` is derived.** There is no column to drift.
 11. **Dagger first, store second.** A run is marked `done` only after dagger has confirmed the completing patch; `gate_node_id` is recorded only after dagger has returned the gate's id and before the lease is released. The store never asserts a fact about dagger that dagger has not yet made true.
-12. **A gate is filed once per step run.** `gate_node_id` set and the current step a gate step means resume reads the gate; it never files another.
+12. **A gate is filed once per step run.** `gate_node_id` set and the current step a gate step means resume reads the gate; it never files another. Invariant 11's order leaves one window this cannot close on its own: the patch that files the gate lands and the process dies before the store write, so dagger has a gate the ledger knows nothing about. A worker therefore asks dagger before it files — the node's user-assigned children carrying the run's and the step's labels — and records what it finds instead of filing a second one. That is the only place in the loop where dagger's graph, rather than the ledger, decides what to write, and it is the only place it can be: the gate exists in exactly one of them.
 
 ## Resume
 
@@ -186,21 +186,28 @@ switch:
   run.status == done:                              # dagger confirmed Complete but the store missed it?
       if dagger.Node(node.id).status == done: store.Done(run); return   # no — the node is done; nothing to do
       # else: a done run on an open node is Invariant 11 violated; park with reason `refused` and alert
-  run.status in (running, waiting, parked):
+  run.status == running:
       store.AbortOpenStepRuns(run)                 # a 'running' row here belongs to a dead or fenced-out worker
+      # not when waiting: that open row is the gate step's own attempt, left open so the answer closes it
 store.SetLease(run, node.lease_id, self)          # from here every write is fenced by this lease
+
 go heartbeat(node.lease_id) until run leaves this worker   # renews well inside the TTL; a fenced heartbeat, or cancel_requested, cancels the step
 #   cancel_requested: abort the step run (reason cancelled), Release(PREEMPTED, 'cancel'), return — the run stays resumable
 
 ws := workspace.Attach(run) or workspace.Create(run)   # local? reattach. elsewhere? clone run.branch (pushed, by the loader's rule)
 
+if run was parked:                                 # the breaker stopped it and a human was asked
+    if gate(run.gate_node_id).status != done: dagger.Release(node.lease_id, GATE); return
+    store.Resume(run)                              # gate cleared; attempts at the parked step start again
+
 for step in run.workflow.steps starting at run.current_step():
 
     if step.kind == gate and run.gate_node_id != nil:          # resume through a gate
-        g := dagger.Node(run.gate_node_id)
-        sr := store.LatestStepRun(run, step)
-        if g.status == done:  store.Close(sr, evidence{kind: gate, value: g.result}); run.gate_node_id = nil; continue
-        else:                 store.Fail(run, denied); dagger.Complete(node, deny_result); store.Failed(run); return
+        g := gate(run.gate_node_id)                # by label among the node's children: dagger resolves refs, not ids
+        sr := store.LatestStepRun(run, step)       # the attempt that filed it; there is no second one
+        if g.status == done:     store.Close(sr, evidence{kind: gate, value: g.result}); run.gate_node_id = nil; continue
+        if g.status == open:     dagger.Release(node.lease_id, GATE); return   # nobody has answered yet
+        else:                    dagger.Complete(node, deny_result); store.Fail(run, denied); return  # dropped: a denial
 
     sr := store.StartStepRun(run, step)            # attempt = max+1 for (run, step)
     tok := store.IssueToken(sr, step.capabilities)
@@ -213,13 +220,14 @@ for step in run.workflow.steps starting at run.current_step():
       evidence verified:
           store.Close(sr, evidence)                # one transaction; sr -> closed
       gate to file:                                # step.kind == gate, auto did not hold
-          gate := dagger.ApplyPatch(create gate + blocks edge, request_id)   # 1. dagger
+          gate := dagger.Gates(node, labels(run, step))                      # 0. a gate a crash left behind
+          gate ?= dagger.ApplyPatch(create gate + blocks edge, request_id)   # 1. dagger
           store.MarkWaiting(run, gate.id)          # 2. store, before the release
           dagger.Release(node.lease_id, GATE)      # 3. dagger
-          return
+          return                                   # the attempt stays open: the answer closes it
       failed:
           store.Fail(sr, exit)
-          if step.on_failure == revise <target> and store.Attempt(run, step) < step.retries:
+          if step.on_failure == revise <target> and store.Attempt(run, step) <= step.retries:
               store.Supersede(run, from=target, through=step)   # their latest rows -> superseded
               feedback = result.feedback; continue            # loop recomputes current_step() == target
           else:

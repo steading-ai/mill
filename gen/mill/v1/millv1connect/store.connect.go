@@ -76,6 +76,10 @@ const (
 	StoreServiceSetCompleteRequestIdProcedure = "/mill.v1.StoreService/SetCompleteRequestId"
 	// StoreServiceDoneProcedure is the fully-qualified name of the StoreService's Done RPC.
 	StoreServiceDoneProcedure = "/mill.v1.StoreService/Done"
+	// StoreServiceFailProcedure is the fully-qualified name of the StoreService's Fail RPC.
+	StoreServiceFailProcedure = "/mill.v1.StoreService/Fail"
+	// StoreServiceResumeProcedure is the fully-qualified name of the StoreService's Resume RPC.
+	StoreServiceResumeProcedure = "/mill.v1.StoreService/Resume"
 	// StoreServiceAbandonProcedure is the fully-qualified name of the StoreService's Abandon RPC.
 	StoreServiceAbandonProcedure = "/mill.v1.StoreService/Abandon"
 	// StoreServiceCancelProcedure is the fully-qualified name of the StoreService's Cancel RPC.
@@ -155,6 +159,15 @@ type StoreServiceClient interface {
 	// completing patch: a run marked done before that would strand a node
 	// nothing can claim.
 	Done(context.Context, *connect.Request[v1.DoneRequest]) (*connect.Response[v1.DoneResponse], error)
+	// Fail ends a run a human refused: the gate on its way out was denied, or
+	// the node was dropped underneath it. The node's result already says why;
+	// this is the ledger catching up with it.
+	Fail(context.Context, *connect.Request[v1.FailRequest]) (*connect.Response[v1.FailResponse], error)
+	// Resume clears the gate a run stopped on once it has been answered, so
+	// the run is running again and the next gate step files its own. A run
+	// parked by the circuit breaker needs it: its current step is not a gate
+	// step, so nothing else would ever clear the park gate.
+	Resume(context.Context, *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error)
 	// Abandon marks a run abandoned so a new generation can be created. The
 	// restart path, and the only caller of it is a human.
 	Abandon(context.Context, *connect.Request[v1.AbandonRequest]) (*connect.Response[v1.AbandonResponse], error)
@@ -280,6 +293,18 @@ func NewStoreServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(storeServiceMethods.ByName("Done")),
 			connect.WithClientOptions(opts...),
 		),
+		fail: connect.NewClient[v1.FailRequest, v1.FailResponse](
+			httpClient,
+			baseURL+StoreServiceFailProcedure,
+			connect.WithSchema(storeServiceMethods.ByName("Fail")),
+			connect.WithClientOptions(opts...),
+		),
+		resume: connect.NewClient[v1.ResumeRequest, v1.ResumeResponse](
+			httpClient,
+			baseURL+StoreServiceResumeProcedure,
+			connect.WithSchema(storeServiceMethods.ByName("Resume")),
+			connect.WithClientOptions(opts...),
+		),
 		abandon: connect.NewClient[v1.AbandonRequest, v1.AbandonResponse](
 			httpClient,
 			baseURL+StoreServiceAbandonProcedure,
@@ -375,6 +400,8 @@ type storeServiceClient struct {
 	park                 *connect.Client[v1.ParkRequest, v1.ParkResponse]
 	setCompleteRequestId *connect.Client[v1.SetCompleteRequestIdRequest, v1.SetCompleteRequestIdResponse]
 	done                 *connect.Client[v1.DoneRequest, v1.DoneResponse]
+	fail                 *connect.Client[v1.FailRequest, v1.FailResponse]
+	resume               *connect.Client[v1.ResumeRequest, v1.ResumeResponse]
 	abandon              *connect.Client[v1.AbandonRequest, v1.AbandonResponse]
 	cancel               *connect.Client[v1.CancelRequest, v1.CancelResponse]
 	issueStepToken       *connect.Client[v1.IssueStepTokenRequest, v1.IssueStepTokenResponse]
@@ -448,6 +475,16 @@ func (c *storeServiceClient) SetCompleteRequestId(ctx context.Context, req *conn
 // Done calls mill.v1.StoreService.Done.
 func (c *storeServiceClient) Done(ctx context.Context, req *connect.Request[v1.DoneRequest]) (*connect.Response[v1.DoneResponse], error) {
 	return c.done.CallUnary(ctx, req)
+}
+
+// Fail calls mill.v1.StoreService.Fail.
+func (c *storeServiceClient) Fail(ctx context.Context, req *connect.Request[v1.FailRequest]) (*connect.Response[v1.FailResponse], error) {
+	return c.fail.CallUnary(ctx, req)
+}
+
+// Resume calls mill.v1.StoreService.Resume.
+func (c *storeServiceClient) Resume(ctx context.Context, req *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error) {
+	return c.resume.CallUnary(ctx, req)
 }
 
 // Abandon calls mill.v1.StoreService.Abandon.
@@ -559,6 +596,15 @@ type StoreServiceHandler interface {
 	// completing patch: a run marked done before that would strand a node
 	// nothing can claim.
 	Done(context.Context, *connect.Request[v1.DoneRequest]) (*connect.Response[v1.DoneResponse], error)
+	// Fail ends a run a human refused: the gate on its way out was denied, or
+	// the node was dropped underneath it. The node's result already says why;
+	// this is the ledger catching up with it.
+	Fail(context.Context, *connect.Request[v1.FailRequest]) (*connect.Response[v1.FailResponse], error)
+	// Resume clears the gate a run stopped on once it has been answered, so
+	// the run is running again and the next gate step files its own. A run
+	// parked by the circuit breaker needs it: its current step is not a gate
+	// step, so nothing else would ever clear the park gate.
+	Resume(context.Context, *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error)
 	// Abandon marks a run abandoned so a new generation can be created. The
 	// restart path, and the only caller of it is a human.
 	Abandon(context.Context, *connect.Request[v1.AbandonRequest]) (*connect.Response[v1.AbandonResponse], error)
@@ -680,6 +726,18 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(storeServiceMethods.ByName("Done")),
 		connect.WithHandlerOptions(opts...),
 	)
+	storeServiceFailHandler := connect.NewUnaryHandler(
+		StoreServiceFailProcedure,
+		svc.Fail,
+		connect.WithSchema(storeServiceMethods.ByName("Fail")),
+		connect.WithHandlerOptions(opts...),
+	)
+	storeServiceResumeHandler := connect.NewUnaryHandler(
+		StoreServiceResumeProcedure,
+		svc.Resume,
+		connect.WithSchema(storeServiceMethods.ByName("Resume")),
+		connect.WithHandlerOptions(opts...),
+	)
 	storeServiceAbandonHandler := connect.NewUnaryHandler(
 		StoreServiceAbandonProcedure,
 		svc.Abandon,
@@ -784,6 +842,10 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 			storeServiceSetCompleteRequestIdHandler.ServeHTTP(w, r)
 		case StoreServiceDoneProcedure:
 			storeServiceDoneHandler.ServeHTTP(w, r)
+		case StoreServiceFailProcedure:
+			storeServiceFailHandler.ServeHTTP(w, r)
+		case StoreServiceResumeProcedure:
+			storeServiceResumeHandler.ServeHTTP(w, r)
 		case StoreServiceAbandonProcedure:
 			storeServiceAbandonHandler.ServeHTTP(w, r)
 		case StoreServiceCancelProcedure:
@@ -865,6 +927,14 @@ func (UnimplementedStoreServiceHandler) SetCompleteRequestId(context.Context, *c
 
 func (UnimplementedStoreServiceHandler) Done(context.Context, *connect.Request[v1.DoneRequest]) (*connect.Response[v1.DoneResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.Done is not implemented"))
+}
+
+func (UnimplementedStoreServiceHandler) Fail(context.Context, *connect.Request[v1.FailRequest]) (*connect.Response[v1.FailResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.Fail is not implemented"))
+}
+
+func (UnimplementedStoreServiceHandler) Resume(context.Context, *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.Resume is not implemented"))
 }
 
 func (UnimplementedStoreServiceHandler) Abandon(context.Context, *connect.Request[v1.AbandonRequest]) (*connect.Response[v1.AbandonResponse], error) {

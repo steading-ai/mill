@@ -96,6 +96,24 @@ func (s *Service) Done(ctx context.Context, leaseID, runID string) (*millv1.Run,
 	return s.store.Done(ctx, leaseID, runID)
 }
 
+// Fail ends a run a gate denied. The node's own result already carries the
+// gate's deny_result: this is the ledger catching up with what dagger was
+// told, in the order docs/ledger.md fixes.
+func (s *Service) Fail(ctx context.Context, leaseID, runID, reason string) (*millv1.Run, error) {
+	if err := s.checkTransition(ctx, runID, millv1.RunStatus_RUN_STATUS_FAILED); err != nil {
+		return nil, err
+	}
+	return s.store.Failed(ctx, leaseID, runID, reason)
+}
+
+// Resume clears the gate an answered run stopped on, so the run carries no
+// gate and the next gate step files its own. There is no transition to
+// judge: the claim that resumed the run has already made it running, and
+// this is the write that catches the gate up with that.
+func (s *Service) Resume(ctx context.Context, leaseID, runID string) (*millv1.Run, error) {
+	return s.store.ClearGate(ctx, leaseID, runID)
+}
+
 // Abandon marks a run abandoned so a new generation can be created: the
 // restart path.
 func (s *Service) Abandon(ctx context.Context, leaseID, runID, reason string) (*millv1.Run, error) {

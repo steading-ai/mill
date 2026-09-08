@@ -1491,6 +1491,220 @@ func (x *DoneResponse) GetRun() *Run {
 	return nil
 }
 
+// FailRequest ends a run a gate denied.
+type FailRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The lease the caller holds, compared against the run's current lease
+	// inside the writing transaction.
+	LeaseId string `protobuf:"bytes,1,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
+	// The run to fail.
+	RunId string `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	// Why, for the event log. The node's own result carries the gate's
+	// deny_result, which is what a human reads.
+	Reason        string `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FailRequest) Reset() {
+	*x = FailRequest{}
+	mi := &file_mill_v1_store_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FailRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FailRequest) ProtoMessage() {}
+
+func (x *FailRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_mill_v1_store_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FailRequest.ProtoReflect.Descriptor instead.
+func (*FailRequest) Descriptor() ([]byte, []int) {
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *FailRequest) GetLeaseId() string {
+	if x != nil {
+		return x.LeaseId
+	}
+	return ""
+}
+
+func (x *FailRequest) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *FailRequest) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+// FailResponse carries the failed run.
+type FailResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The run, now failed.
+	Run           *Run `protobuf:"bytes,1,opt,name=run,proto3" json:"run,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FailResponse) Reset() {
+	*x = FailResponse{}
+	mi := &file_mill_v1_store_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FailResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FailResponse) ProtoMessage() {}
+
+func (x *FailResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_mill_v1_store_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FailResponse.ProtoReflect.Descriptor instead.
+func (*FailResponse) Descriptor() ([]byte, []int) {
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *FailResponse) GetRun() *Run {
+	if x != nil {
+		return x.Run
+	}
+	return nil
+}
+
+// ResumeRequest clears the gate an answered run stopped on.
+type ResumeRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The lease the caller holds, compared against the run's current lease
+	// inside the writing transaction.
+	LeaseId string `protobuf:"bytes,1,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
+	// The run whose gate has been answered.
+	RunId         string `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResumeRequest) Reset() {
+	*x = ResumeRequest{}
+	mi := &file_mill_v1_store_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResumeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResumeRequest) ProtoMessage() {}
+
+func (x *ResumeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_mill_v1_store_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResumeRequest.ProtoReflect.Descriptor instead.
+func (*ResumeRequest) Descriptor() ([]byte, []int) {
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *ResumeRequest) GetLeaseId() string {
+	if x != nil {
+		return x.LeaseId
+	}
+	return ""
+}
+
+func (x *ResumeRequest) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+// ResumeResponse carries the run with no gate on it.
+type ResumeResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The run, running, with gate_node_id cleared.
+	Run           *Run `protobuf:"bytes,1,opt,name=run,proto3" json:"run,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResumeResponse) Reset() {
+	*x = ResumeResponse{}
+	mi := &file_mill_v1_store_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResumeResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResumeResponse) ProtoMessage() {}
+
+func (x *ResumeResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_mill_v1_store_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResumeResponse.ProtoReflect.Descriptor instead.
+func (*ResumeResponse) Descriptor() ([]byte, []int) {
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *ResumeResponse) GetRun() *Run {
+	if x != nil {
+		return x.Run
+	}
+	return nil
+}
+
 // AbandonRequest marks a run abandoned so a new generation can be created.
 type AbandonRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -1509,7 +1723,7 @@ type AbandonRequest struct {
 
 func (x *AbandonRequest) Reset() {
 	*x = AbandonRequest{}
-	mi := &file_mill_v1_store_proto_msgTypes[24]
+	mi := &file_mill_v1_store_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1521,7 +1735,7 @@ func (x *AbandonRequest) String() string {
 func (*AbandonRequest) ProtoMessage() {}
 
 func (x *AbandonRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[24]
+	mi := &file_mill_v1_store_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1534,7 +1748,7 @@ func (x *AbandonRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AbandonRequest.ProtoReflect.Descriptor instead.
 func (*AbandonRequest) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{24}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *AbandonRequest) GetLeaseId() string {
@@ -1569,7 +1783,7 @@ type AbandonResponse struct {
 
 func (x *AbandonResponse) Reset() {
 	*x = AbandonResponse{}
-	mi := &file_mill_v1_store_proto_msgTypes[25]
+	mi := &file_mill_v1_store_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1581,7 +1795,7 @@ func (x *AbandonResponse) String() string {
 func (*AbandonResponse) ProtoMessage() {}
 
 func (x *AbandonResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[25]
+	mi := &file_mill_v1_store_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1594,7 +1808,7 @@ func (x *AbandonResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AbandonResponse.ProtoReflect.Descriptor instead.
 func (*AbandonResponse) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{25}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *AbandonResponse) GetRun() *Run {
@@ -1619,7 +1833,7 @@ type CancelRequest struct {
 
 func (x *CancelRequest) Reset() {
 	*x = CancelRequest{}
-	mi := &file_mill_v1_store_proto_msgTypes[26]
+	mi := &file_mill_v1_store_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1631,7 +1845,7 @@ func (x *CancelRequest) String() string {
 func (*CancelRequest) ProtoMessage() {}
 
 func (x *CancelRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[26]
+	mi := &file_mill_v1_store_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1644,7 +1858,7 @@ func (x *CancelRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelRequest.ProtoReflect.Descriptor instead.
 func (*CancelRequest) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{26}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *CancelRequest) GetRunId() string {
@@ -1673,7 +1887,7 @@ type CancelResponse struct {
 
 func (x *CancelResponse) Reset() {
 	*x = CancelResponse{}
-	mi := &file_mill_v1_store_proto_msgTypes[27]
+	mi := &file_mill_v1_store_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1685,7 +1899,7 @@ func (x *CancelResponse) String() string {
 func (*CancelResponse) ProtoMessage() {}
 
 func (x *CancelResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[27]
+	mi := &file_mill_v1_store_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1698,7 +1912,7 @@ func (x *CancelResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelResponse.ProtoReflect.Descriptor instead.
 func (*CancelResponse) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{27}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *CancelResponse) GetRun() *Run {
@@ -1724,7 +1938,7 @@ type IssueStepTokenRequest struct {
 
 func (x *IssueStepTokenRequest) Reset() {
 	*x = IssueStepTokenRequest{}
-	mi := &file_mill_v1_store_proto_msgTypes[28]
+	mi := &file_mill_v1_store_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1736,7 +1950,7 @@ func (x *IssueStepTokenRequest) String() string {
 func (*IssueStepTokenRequest) ProtoMessage() {}
 
 func (x *IssueStepTokenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[28]
+	mi := &file_mill_v1_store_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1749,7 +1963,7 @@ func (x *IssueStepTokenRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IssueStepTokenRequest.ProtoReflect.Descriptor instead.
 func (*IssueStepTokenRequest) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{28}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *IssueStepTokenRequest) GetLeaseId() string {
@@ -1785,7 +1999,7 @@ type IssueStepTokenResponse struct {
 
 func (x *IssueStepTokenResponse) Reset() {
 	*x = IssueStepTokenResponse{}
-	mi := &file_mill_v1_store_proto_msgTypes[29]
+	mi := &file_mill_v1_store_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1797,7 +2011,7 @@ func (x *IssueStepTokenResponse) String() string {
 func (*IssueStepTokenResponse) ProtoMessage() {}
 
 func (x *IssueStepTokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[29]
+	mi := &file_mill_v1_store_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1810,7 +2024,7 @@ func (x *IssueStepTokenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IssueStepTokenResponse.ProtoReflect.Descriptor instead.
 func (*IssueStepTokenResponse) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{29}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *IssueStepTokenResponse) GetStepToken() *StepToken {
@@ -1834,7 +2048,7 @@ type RevokeStepTokenRequest struct {
 
 func (x *RevokeStepTokenRequest) Reset() {
 	*x = RevokeStepTokenRequest{}
-	mi := &file_mill_v1_store_proto_msgTypes[30]
+	mi := &file_mill_v1_store_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1846,7 +2060,7 @@ func (x *RevokeStepTokenRequest) String() string {
 func (*RevokeStepTokenRequest) ProtoMessage() {}
 
 func (x *RevokeStepTokenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[30]
+	mi := &file_mill_v1_store_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1859,7 +2073,7 @@ func (x *RevokeStepTokenRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeStepTokenRequest.ProtoReflect.Descriptor instead.
 func (*RevokeStepTokenRequest) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{30}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *RevokeStepTokenRequest) GetLeaseId() string {
@@ -1887,7 +2101,7 @@ type RevokeStepTokenResponse struct {
 
 func (x *RevokeStepTokenResponse) Reset() {
 	*x = RevokeStepTokenResponse{}
-	mi := &file_mill_v1_store_proto_msgTypes[31]
+	mi := &file_mill_v1_store_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1899,7 +2113,7 @@ func (x *RevokeStepTokenResponse) String() string {
 func (*RevokeStepTokenResponse) ProtoMessage() {}
 
 func (x *RevokeStepTokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[31]
+	mi := &file_mill_v1_store_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1912,7 +2126,7 @@ func (x *RevokeStepTokenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeStepTokenResponse.ProtoReflect.Descriptor instead.
 func (*RevokeStepTokenResponse) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{31}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *RevokeStepTokenResponse) GetStepToken() *StepToken {
@@ -1938,7 +2152,7 @@ type RecordUsageRequest struct {
 
 func (x *RecordUsageRequest) Reset() {
 	*x = RecordUsageRequest{}
-	mi := &file_mill_v1_store_proto_msgTypes[32]
+	mi := &file_mill_v1_store_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1950,7 +2164,7 @@ func (x *RecordUsageRequest) String() string {
 func (*RecordUsageRequest) ProtoMessage() {}
 
 func (x *RecordUsageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[32]
+	mi := &file_mill_v1_store_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1963,7 +2177,7 @@ func (x *RecordUsageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RecordUsageRequest.ProtoReflect.Descriptor instead.
 func (*RecordUsageRequest) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{32}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *RecordUsageRequest) GetLeaseId() string {
@@ -1998,7 +2212,7 @@ type RecordUsageResponse struct {
 
 func (x *RecordUsageResponse) Reset() {
 	*x = RecordUsageResponse{}
-	mi := &file_mill_v1_store_proto_msgTypes[33]
+	mi := &file_mill_v1_store_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2010,7 +2224,7 @@ func (x *RecordUsageResponse) String() string {
 func (*RecordUsageResponse) ProtoMessage() {}
 
 func (x *RecordUsageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[33]
+	mi := &file_mill_v1_store_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2023,7 +2237,7 @@ func (x *RecordUsageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RecordUsageResponse.ProtoReflect.Descriptor instead.
 func (*RecordUsageResponse) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{33}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *RecordUsageResponse) GetUsage() []*Usage {
@@ -2047,7 +2261,7 @@ type MarkUsagePostedRequest struct {
 
 func (x *MarkUsagePostedRequest) Reset() {
 	*x = MarkUsagePostedRequest{}
-	mi := &file_mill_v1_store_proto_msgTypes[34]
+	mi := &file_mill_v1_store_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2059,7 +2273,7 @@ func (x *MarkUsagePostedRequest) String() string {
 func (*MarkUsagePostedRequest) ProtoMessage() {}
 
 func (x *MarkUsagePostedRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[34]
+	mi := &file_mill_v1_store_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2072,7 +2286,7 @@ func (x *MarkUsagePostedRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MarkUsagePostedRequest.ProtoReflect.Descriptor instead.
 func (*MarkUsagePostedRequest) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{34}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *MarkUsagePostedRequest) GetLeaseId() string {
@@ -2100,7 +2314,7 @@ type MarkUsagePostedResponse struct {
 
 func (x *MarkUsagePostedResponse) Reset() {
 	*x = MarkUsagePostedResponse{}
-	mi := &file_mill_v1_store_proto_msgTypes[35]
+	mi := &file_mill_v1_store_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2112,7 +2326,7 @@ func (x *MarkUsagePostedResponse) String() string {
 func (*MarkUsagePostedResponse) ProtoMessage() {}
 
 func (x *MarkUsagePostedResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[35]
+	mi := &file_mill_v1_store_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2125,7 +2339,7 @@ func (x *MarkUsagePostedResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MarkUsagePostedResponse.ProtoReflect.Descriptor instead.
 func (*MarkUsagePostedResponse) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{35}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *MarkUsagePostedResponse) GetMarked() int64 {
@@ -2154,7 +2368,7 @@ type GetWorkflowRequest struct {
 
 func (x *GetWorkflowRequest) Reset() {
 	*x = GetWorkflowRequest{}
-	mi := &file_mill_v1_store_proto_msgTypes[36]
+	mi := &file_mill_v1_store_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2166,7 +2380,7 @@ func (x *GetWorkflowRequest) String() string {
 func (*GetWorkflowRequest) ProtoMessage() {}
 
 func (x *GetWorkflowRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[36]
+	mi := &file_mill_v1_store_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2179,7 +2393,7 @@ func (x *GetWorkflowRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetWorkflowRequest.ProtoReflect.Descriptor instead.
 func (*GetWorkflowRequest) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{36}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *GetWorkflowRequest) GetId() string {
@@ -2228,7 +2442,7 @@ type GetWorkflowResponse struct {
 
 func (x *GetWorkflowResponse) Reset() {
 	*x = GetWorkflowResponse{}
-	mi := &file_mill_v1_store_proto_msgTypes[37]
+	mi := &file_mill_v1_store_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2240,7 +2454,7 @@ func (x *GetWorkflowResponse) String() string {
 func (*GetWorkflowResponse) ProtoMessage() {}
 
 func (x *GetWorkflowResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[37]
+	mi := &file_mill_v1_store_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2253,7 +2467,7 @@ func (x *GetWorkflowResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetWorkflowResponse.ProtoReflect.Descriptor instead.
 func (*GetWorkflowResponse) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{37}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *GetWorkflowResponse) GetWorkflow() *Workflow {
@@ -2280,7 +2494,7 @@ type ListWorkflowsRequest struct {
 
 func (x *ListWorkflowsRequest) Reset() {
 	*x = ListWorkflowsRequest{}
-	mi := &file_mill_v1_store_proto_msgTypes[38]
+	mi := &file_mill_v1_store_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2292,7 +2506,7 @@ func (x *ListWorkflowsRequest) String() string {
 func (*ListWorkflowsRequest) ProtoMessage() {}
 
 func (x *ListWorkflowsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[38]
+	mi := &file_mill_v1_store_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2305,7 +2519,7 @@ func (x *ListWorkflowsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListWorkflowsRequest.ProtoReflect.Descriptor instead.
 func (*ListWorkflowsRequest) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{38}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *ListWorkflowsRequest) GetName() string {
@@ -2347,7 +2561,7 @@ type ListWorkflowsResponse struct {
 
 func (x *ListWorkflowsResponse) Reset() {
 	*x = ListWorkflowsResponse{}
-	mi := &file_mill_v1_store_proto_msgTypes[39]
+	mi := &file_mill_v1_store_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2359,7 +2573,7 @@ func (x *ListWorkflowsResponse) String() string {
 func (*ListWorkflowsResponse) ProtoMessage() {}
 
 func (x *ListWorkflowsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[39]
+	mi := &file_mill_v1_store_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2372,7 +2586,7 @@ func (x *ListWorkflowsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListWorkflowsResponse.ProtoReflect.Descriptor instead.
 func (*ListWorkflowsResponse) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{39}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *ListWorkflowsResponse) GetWorkflows() []*Workflow {
@@ -2400,7 +2614,7 @@ type PutWorkflowRequest struct {
 
 func (x *PutWorkflowRequest) Reset() {
 	*x = PutWorkflowRequest{}
-	mi := &file_mill_v1_store_proto_msgTypes[40]
+	mi := &file_mill_v1_store_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2412,7 +2626,7 @@ func (x *PutWorkflowRequest) String() string {
 func (*PutWorkflowRequest) ProtoMessage() {}
 
 func (x *PutWorkflowRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[40]
+	mi := &file_mill_v1_store_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2425,7 +2639,7 @@ func (x *PutWorkflowRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PutWorkflowRequest.ProtoReflect.Descriptor instead.
 func (*PutWorkflowRequest) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{40}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *PutWorkflowRequest) GetLeaseId() string {
@@ -2455,7 +2669,7 @@ type PutWorkflowResponse struct {
 
 func (x *PutWorkflowResponse) Reset() {
 	*x = PutWorkflowResponse{}
-	mi := &file_mill_v1_store_proto_msgTypes[41]
+	mi := &file_mill_v1_store_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2467,7 +2681,7 @@ func (x *PutWorkflowResponse) String() string {
 func (*PutWorkflowResponse) ProtoMessage() {}
 
 func (x *PutWorkflowResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[41]
+	mi := &file_mill_v1_store_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2480,7 +2694,7 @@ func (x *PutWorkflowResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PutWorkflowResponse.ProtoReflect.Descriptor instead.
 func (*PutWorkflowResponse) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{41}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *PutWorkflowResponse) GetWorkflow() *Workflow {
@@ -2512,7 +2726,7 @@ type PutSkillRequest struct {
 
 func (x *PutSkillRequest) Reset() {
 	*x = PutSkillRequest{}
-	mi := &file_mill_v1_store_proto_msgTypes[42]
+	mi := &file_mill_v1_store_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2524,7 +2738,7 @@ func (x *PutSkillRequest) String() string {
 func (*PutSkillRequest) ProtoMessage() {}
 
 func (x *PutSkillRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[42]
+	mi := &file_mill_v1_store_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2537,7 +2751,7 @@ func (x *PutSkillRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PutSkillRequest.ProtoReflect.Descriptor instead.
 func (*PutSkillRequest) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{42}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *PutSkillRequest) GetLeaseId() string {
@@ -2567,7 +2781,7 @@ type PutSkillResponse struct {
 
 func (x *PutSkillResponse) Reset() {
 	*x = PutSkillResponse{}
-	mi := &file_mill_v1_store_proto_msgTypes[43]
+	mi := &file_mill_v1_store_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2579,7 +2793,7 @@ func (x *PutSkillResponse) String() string {
 func (*PutSkillResponse) ProtoMessage() {}
 
 func (x *PutSkillResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[43]
+	mi := &file_mill_v1_store_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2592,7 +2806,7 @@ func (x *PutSkillResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PutSkillResponse.ProtoReflect.Descriptor instead.
 func (*PutSkillResponse) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{43}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *PutSkillResponse) GetSkill() *Skill {
@@ -2622,7 +2836,7 @@ type GetSkillRequest struct {
 
 func (x *GetSkillRequest) Reset() {
 	*x = GetSkillRequest{}
-	mi := &file_mill_v1_store_proto_msgTypes[44]
+	mi := &file_mill_v1_store_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2634,7 +2848,7 @@ func (x *GetSkillRequest) String() string {
 func (*GetSkillRequest) ProtoMessage() {}
 
 func (x *GetSkillRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[44]
+	mi := &file_mill_v1_store_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2647,7 +2861,7 @@ func (x *GetSkillRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSkillRequest.ProtoReflect.Descriptor instead.
 func (*GetSkillRequest) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{44}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *GetSkillRequest) GetName() string {
@@ -2675,7 +2889,7 @@ type GetSkillResponse struct {
 
 func (x *GetSkillResponse) Reset() {
 	*x = GetSkillResponse{}
-	mi := &file_mill_v1_store_proto_msgTypes[45]
+	mi := &file_mill_v1_store_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2687,7 +2901,7 @@ func (x *GetSkillResponse) String() string {
 func (*GetSkillResponse) ProtoMessage() {}
 
 func (x *GetSkillResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[45]
+	mi := &file_mill_v1_store_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2700,7 +2914,7 @@ func (x *GetSkillResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSkillResponse.ProtoReflect.Descriptor instead.
 func (*GetSkillResponse) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{45}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *GetSkillResponse) GetSkill() *Skill {
@@ -2723,7 +2937,7 @@ type StatusRequest struct {
 
 func (x *StatusRequest) Reset() {
 	*x = StatusRequest{}
-	mi := &file_mill_v1_store_proto_msgTypes[46]
+	mi := &file_mill_v1_store_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2735,7 +2949,7 @@ func (x *StatusRequest) String() string {
 func (*StatusRequest) ProtoMessage() {}
 
 func (x *StatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[46]
+	mi := &file_mill_v1_store_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2748,7 +2962,7 @@ func (x *StatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusRequest.ProtoReflect.Descriptor instead.
 func (*StatusRequest) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{46}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *StatusRequest) GetStatuses() []RunStatus {
@@ -2776,7 +2990,7 @@ type StatusResponse struct {
 
 func (x *StatusResponse) Reset() {
 	*x = StatusResponse{}
-	mi := &file_mill_v1_store_proto_msgTypes[47]
+	mi := &file_mill_v1_store_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2788,7 +3002,7 @@ func (x *StatusResponse) String() string {
 func (*StatusResponse) ProtoMessage() {}
 
 func (x *StatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[47]
+	mi := &file_mill_v1_store_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2801,7 +3015,7 @@ func (x *StatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusResponse.ProtoReflect.Descriptor instead.
 func (*StatusResponse) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{47}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *StatusResponse) GetRuns() []*RunSummary {
@@ -2824,7 +3038,7 @@ type InspectRequest struct {
 
 func (x *InspectRequest) Reset() {
 	*x = InspectRequest{}
-	mi := &file_mill_v1_store_proto_msgTypes[48]
+	mi := &file_mill_v1_store_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2836,7 +3050,7 @@ func (x *InspectRequest) String() string {
 func (*InspectRequest) ProtoMessage() {}
 
 func (x *InspectRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[48]
+	mi := &file_mill_v1_store_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2849,7 +3063,7 @@ func (x *InspectRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InspectRequest.ProtoReflect.Descriptor instead.
 func (*InspectRequest) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{48}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *InspectRequest) GetId() string {
@@ -2881,7 +3095,7 @@ type InspectResponse struct {
 
 func (x *InspectResponse) Reset() {
 	*x = InspectResponse{}
-	mi := &file_mill_v1_store_proto_msgTypes[49]
+	mi := &file_mill_v1_store_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2893,7 +3107,7 @@ func (x *InspectResponse) String() string {
 func (*InspectResponse) ProtoMessage() {}
 
 func (x *InspectResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_store_proto_msgTypes[49]
+	mi := &file_mill_v1_store_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2906,7 +3120,7 @@ func (x *InspectResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InspectResponse.ProtoReflect.Descriptor instead.
 func (*InspectResponse) Descriptor() ([]byte, []int) {
-	return file_mill_v1_store_proto_rawDescGZIP(), []int{49}
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *InspectResponse) GetSummary() *RunSummary {
@@ -3029,6 +3243,17 @@ const file_mill_v1_store_proto_rawDesc = "" +
 	"\blease_id\x18\x01 \x01(\tR\aleaseId\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\".\n" +
 	"\fDoneResponse\x12\x1e\n" +
+	"\x03run\x18\x01 \x01(\v2\f.mill.v1.RunR\x03run\"W\n" +
+	"\vFailRequest\x12\x19\n" +
+	"\blease_id\x18\x01 \x01(\tR\aleaseId\x12\x15\n" +
+	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x16\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\".\n" +
+	"\fFailResponse\x12\x1e\n" +
+	"\x03run\x18\x01 \x01(\v2\f.mill.v1.RunR\x03run\"A\n" +
+	"\rResumeRequest\x12\x19\n" +
+	"\blease_id\x18\x01 \x01(\tR\aleaseId\x12\x15\n" +
+	"\x06run_id\x18\x02 \x01(\tR\x05runId\"0\n" +
+	"\x0eResumeResponse\x12\x1e\n" +
 	"\x03run\x18\x01 \x01(\v2\f.mill.v1.RunR\x03run\"Z\n" +
 	"\x0eAbandonRequest\x12\x19\n" +
 	"\blease_id\x18\x01 \x01(\tR\aleaseId\x12\x15\n" +
@@ -3108,7 +3333,7 @@ const file_mill_v1_store_proto_rawDesc = "" +
 	"\x0fInspectResponse\x12-\n" +
 	"\asummary\x18\x01 \x01(\v2\x13.mill.v1.RunSummaryR\asummary\x12-\n" +
 	"\bworkflow\x18\x02 \x01(\v2\x11.mill.v1.WorkflowR\bworkflow\x12,\n" +
-	"\x05steps\x18\x03 \x03(\v2\x16.mill.v1.StepRunDetailR\x05steps2\xad\x0e\n" +
+	"\x05steps\x18\x03 \x03(\v2\x16.mill.v1.StepRunDetailR\x05steps2\x9d\x0f\n" +
 	"\fStoreService\x12K\n" +
 	"\fGetRunByNode\x12\x1c.mill.v1.GetRunByNodeRequest\x1a\x1d.mill.v1.GetRunByNodeResponse\x12B\n" +
 	"\tCreateRun\x12\x19.mill.v1.CreateRunRequest\x1a\x1a.mill.v1.CreateRunResponse\x12?\n" +
@@ -3121,7 +3346,9 @@ const file_mill_v1_store_proto_rawDesc = "" +
 	"\vMarkWaiting\x12\x1b.mill.v1.MarkWaitingRequest\x1a\x1c.mill.v1.MarkWaitingResponse\x123\n" +
 	"\x04Park\x12\x14.mill.v1.ParkRequest\x1a\x15.mill.v1.ParkResponse\x12c\n" +
 	"\x14SetCompleteRequestId\x12$.mill.v1.SetCompleteRequestIdRequest\x1a%.mill.v1.SetCompleteRequestIdResponse\x123\n" +
-	"\x04Done\x12\x14.mill.v1.DoneRequest\x1a\x15.mill.v1.DoneResponse\x12<\n" +
+	"\x04Done\x12\x14.mill.v1.DoneRequest\x1a\x15.mill.v1.DoneResponse\x123\n" +
+	"\x04Fail\x12\x14.mill.v1.FailRequest\x1a\x15.mill.v1.FailResponse\x129\n" +
+	"\x06Resume\x12\x16.mill.v1.ResumeRequest\x1a\x17.mill.v1.ResumeResponse\x12<\n" +
 	"\aAbandon\x12\x17.mill.v1.AbandonRequest\x1a\x18.mill.v1.AbandonResponse\x129\n" +
 	"\x06Cancel\x12\x16.mill.v1.CancelRequest\x1a\x17.mill.v1.CancelResponse\x12Q\n" +
 	"\x0eIssueStepToken\x12\x1e.mill.v1.IssueStepTokenRequest\x1a\x1f.mill.v1.IssueStepTokenResponse\x12T\n" +
@@ -3148,7 +3375,7 @@ func file_mill_v1_store_proto_rawDescGZIP() []byte {
 	return file_mill_v1_store_proto_rawDescData
 }
 
-var file_mill_v1_store_proto_msgTypes = make([]protoimpl.MessageInfo, 50)
+var file_mill_v1_store_proto_msgTypes = make([]protoimpl.MessageInfo, 54)
 var file_mill_v1_store_proto_goTypes = []any{
 	(*GetRunByNodeRequest)(nil),          // 0: mill.v1.GetRunByNodeRequest
 	(*GetRunByNodeResponse)(nil),         // 1: mill.v1.GetRunByNodeResponse
@@ -3174,144 +3401,154 @@ var file_mill_v1_store_proto_goTypes = []any{
 	(*SetCompleteRequestIdResponse)(nil), // 21: mill.v1.SetCompleteRequestIdResponse
 	(*DoneRequest)(nil),                  // 22: mill.v1.DoneRequest
 	(*DoneResponse)(nil),                 // 23: mill.v1.DoneResponse
-	(*AbandonRequest)(nil),               // 24: mill.v1.AbandonRequest
-	(*AbandonResponse)(nil),              // 25: mill.v1.AbandonResponse
-	(*CancelRequest)(nil),                // 26: mill.v1.CancelRequest
-	(*CancelResponse)(nil),               // 27: mill.v1.CancelResponse
-	(*IssueStepTokenRequest)(nil),        // 28: mill.v1.IssueStepTokenRequest
-	(*IssueStepTokenResponse)(nil),       // 29: mill.v1.IssueStepTokenResponse
-	(*RevokeStepTokenRequest)(nil),       // 30: mill.v1.RevokeStepTokenRequest
-	(*RevokeStepTokenResponse)(nil),      // 31: mill.v1.RevokeStepTokenResponse
-	(*RecordUsageRequest)(nil),           // 32: mill.v1.RecordUsageRequest
-	(*RecordUsageResponse)(nil),          // 33: mill.v1.RecordUsageResponse
-	(*MarkUsagePostedRequest)(nil),       // 34: mill.v1.MarkUsagePostedRequest
-	(*MarkUsagePostedResponse)(nil),      // 35: mill.v1.MarkUsagePostedResponse
-	(*GetWorkflowRequest)(nil),           // 36: mill.v1.GetWorkflowRequest
-	(*GetWorkflowResponse)(nil),          // 37: mill.v1.GetWorkflowResponse
-	(*ListWorkflowsRequest)(nil),         // 38: mill.v1.ListWorkflowsRequest
-	(*ListWorkflowsResponse)(nil),        // 39: mill.v1.ListWorkflowsResponse
-	(*PutWorkflowRequest)(nil),           // 40: mill.v1.PutWorkflowRequest
-	(*PutWorkflowResponse)(nil),          // 41: mill.v1.PutWorkflowResponse
-	(*PutSkillRequest)(nil),              // 42: mill.v1.PutSkillRequest
-	(*PutSkillResponse)(nil),             // 43: mill.v1.PutSkillResponse
-	(*GetSkillRequest)(nil),              // 44: mill.v1.GetSkillRequest
-	(*GetSkillResponse)(nil),             // 45: mill.v1.GetSkillResponse
-	(*StatusRequest)(nil),                // 46: mill.v1.StatusRequest
-	(*StatusResponse)(nil),               // 47: mill.v1.StatusResponse
-	(*InspectRequest)(nil),               // 48: mill.v1.InspectRequest
-	(*InspectResponse)(nil),              // 49: mill.v1.InspectResponse
-	(*Run)(nil),                          // 50: mill.v1.Run
-	(StepKind)(0),                        // 51: mill.v1.StepKind
-	(*StepRun)(nil),                      // 52: mill.v1.StepRun
-	(*Evidence)(nil),                     // 53: mill.v1.Evidence
-	(Tier)(0),                            // 54: mill.v1.Tier
-	(*v1.ProcessExit)(nil),               // 55: harness.v1.ProcessExit
-	(ParkedReason)(0),                    // 56: mill.v1.ParkedReason
-	(Capability)(0),                      // 57: mill.v1.Capability
-	(*StepToken)(nil),                    // 58: mill.v1.StepToken
-	(*Usage)(nil),                        // 59: mill.v1.Usage
-	(Scope)(0),                           // 60: mill.v1.Scope
-	(*Workflow)(nil),                     // 61: mill.v1.Workflow
-	(*Skill)(nil),                        // 62: mill.v1.Skill
-	(RunStatus)(0),                       // 63: mill.v1.RunStatus
-	(*RunSummary)(nil),                   // 64: mill.v1.RunSummary
-	(*StepRunDetail)(nil),                // 65: mill.v1.StepRunDetail
+	(*FailRequest)(nil),                  // 24: mill.v1.FailRequest
+	(*FailResponse)(nil),                 // 25: mill.v1.FailResponse
+	(*ResumeRequest)(nil),                // 26: mill.v1.ResumeRequest
+	(*ResumeResponse)(nil),               // 27: mill.v1.ResumeResponse
+	(*AbandonRequest)(nil),               // 28: mill.v1.AbandonRequest
+	(*AbandonResponse)(nil),              // 29: mill.v1.AbandonResponse
+	(*CancelRequest)(nil),                // 30: mill.v1.CancelRequest
+	(*CancelResponse)(nil),               // 31: mill.v1.CancelResponse
+	(*IssueStepTokenRequest)(nil),        // 32: mill.v1.IssueStepTokenRequest
+	(*IssueStepTokenResponse)(nil),       // 33: mill.v1.IssueStepTokenResponse
+	(*RevokeStepTokenRequest)(nil),       // 34: mill.v1.RevokeStepTokenRequest
+	(*RevokeStepTokenResponse)(nil),      // 35: mill.v1.RevokeStepTokenResponse
+	(*RecordUsageRequest)(nil),           // 36: mill.v1.RecordUsageRequest
+	(*RecordUsageResponse)(nil),          // 37: mill.v1.RecordUsageResponse
+	(*MarkUsagePostedRequest)(nil),       // 38: mill.v1.MarkUsagePostedRequest
+	(*MarkUsagePostedResponse)(nil),      // 39: mill.v1.MarkUsagePostedResponse
+	(*GetWorkflowRequest)(nil),           // 40: mill.v1.GetWorkflowRequest
+	(*GetWorkflowResponse)(nil),          // 41: mill.v1.GetWorkflowResponse
+	(*ListWorkflowsRequest)(nil),         // 42: mill.v1.ListWorkflowsRequest
+	(*ListWorkflowsResponse)(nil),        // 43: mill.v1.ListWorkflowsResponse
+	(*PutWorkflowRequest)(nil),           // 44: mill.v1.PutWorkflowRequest
+	(*PutWorkflowResponse)(nil),          // 45: mill.v1.PutWorkflowResponse
+	(*PutSkillRequest)(nil),              // 46: mill.v1.PutSkillRequest
+	(*PutSkillResponse)(nil),             // 47: mill.v1.PutSkillResponse
+	(*GetSkillRequest)(nil),              // 48: mill.v1.GetSkillRequest
+	(*GetSkillResponse)(nil),             // 49: mill.v1.GetSkillResponse
+	(*StatusRequest)(nil),                // 50: mill.v1.StatusRequest
+	(*StatusResponse)(nil),               // 51: mill.v1.StatusResponse
+	(*InspectRequest)(nil),               // 52: mill.v1.InspectRequest
+	(*InspectResponse)(nil),              // 53: mill.v1.InspectResponse
+	(*Run)(nil),                          // 54: mill.v1.Run
+	(StepKind)(0),                        // 55: mill.v1.StepKind
+	(*StepRun)(nil),                      // 56: mill.v1.StepRun
+	(*Evidence)(nil),                     // 57: mill.v1.Evidence
+	(Tier)(0),                            // 58: mill.v1.Tier
+	(*v1.ProcessExit)(nil),               // 59: harness.v1.ProcessExit
+	(ParkedReason)(0),                    // 60: mill.v1.ParkedReason
+	(Capability)(0),                      // 61: mill.v1.Capability
+	(*StepToken)(nil),                    // 62: mill.v1.StepToken
+	(*Usage)(nil),                        // 63: mill.v1.Usage
+	(Scope)(0),                           // 64: mill.v1.Scope
+	(*Workflow)(nil),                     // 65: mill.v1.Workflow
+	(*Skill)(nil),                        // 66: mill.v1.Skill
+	(RunStatus)(0),                       // 67: mill.v1.RunStatus
+	(*RunSummary)(nil),                   // 68: mill.v1.RunSummary
+	(*StepRunDetail)(nil),                // 69: mill.v1.StepRunDetail
 }
 var file_mill_v1_store_proto_depIdxs = []int32{
-	50, // 0: mill.v1.GetRunByNodeResponse.run:type_name -> mill.v1.Run
-	50, // 1: mill.v1.CreateRunResponse.run:type_name -> mill.v1.Run
-	50, // 2: mill.v1.SetLeaseResponse.run:type_name -> mill.v1.Run
-	51, // 3: mill.v1.StartStepRunRequest.kind:type_name -> mill.v1.StepKind
-	52, // 4: mill.v1.StartStepRunResponse.step_run:type_name -> mill.v1.StepRun
-	53, // 5: mill.v1.CloseStepRunRequest.evidence:type_name -> mill.v1.Evidence
-	54, // 6: mill.v1.CloseStepRunRequest.tier:type_name -> mill.v1.Tier
-	52, // 7: mill.v1.CloseStepRunResponse.step_run:type_name -> mill.v1.StepRun
-	53, // 8: mill.v1.CloseStepRunResponse.evidence:type_name -> mill.v1.Evidence
-	55, // 9: mill.v1.FailStepRunRequest.exit:type_name -> harness.v1.ProcessExit
-	52, // 10: mill.v1.FailStepRunResponse.step_run:type_name -> mill.v1.StepRun
-	52, // 11: mill.v1.AbortOpenStepRunsResponse.step_runs:type_name -> mill.v1.StepRun
-	52, // 12: mill.v1.SupersedeStepsResponse.step_runs:type_name -> mill.v1.StepRun
-	50, // 13: mill.v1.MarkWaitingResponse.run:type_name -> mill.v1.Run
-	56, // 14: mill.v1.ParkRequest.reason:type_name -> mill.v1.ParkedReason
-	50, // 15: mill.v1.ParkResponse.run:type_name -> mill.v1.Run
-	50, // 16: mill.v1.SetCompleteRequestIdResponse.run:type_name -> mill.v1.Run
-	50, // 17: mill.v1.DoneResponse.run:type_name -> mill.v1.Run
-	50, // 18: mill.v1.AbandonResponse.run:type_name -> mill.v1.Run
-	50, // 19: mill.v1.CancelResponse.run:type_name -> mill.v1.Run
-	57, // 20: mill.v1.IssueStepTokenRequest.capabilities:type_name -> mill.v1.Capability
-	58, // 21: mill.v1.IssueStepTokenResponse.step_token:type_name -> mill.v1.StepToken
-	58, // 22: mill.v1.RevokeStepTokenResponse.step_token:type_name -> mill.v1.StepToken
-	59, // 23: mill.v1.RecordUsageRequest.usage:type_name -> mill.v1.Usage
-	59, // 24: mill.v1.RecordUsageResponse.usage:type_name -> mill.v1.Usage
-	60, // 25: mill.v1.GetWorkflowRequest.scope:type_name -> mill.v1.Scope
-	61, // 26: mill.v1.GetWorkflowResponse.workflow:type_name -> mill.v1.Workflow
-	60, // 27: mill.v1.ListWorkflowsRequest.scope:type_name -> mill.v1.Scope
-	61, // 28: mill.v1.ListWorkflowsResponse.workflows:type_name -> mill.v1.Workflow
-	61, // 29: mill.v1.PutWorkflowRequest.workflow:type_name -> mill.v1.Workflow
-	61, // 30: mill.v1.PutWorkflowResponse.workflow:type_name -> mill.v1.Workflow
-	62, // 31: mill.v1.PutSkillRequest.skill:type_name -> mill.v1.Skill
-	62, // 32: mill.v1.PutSkillResponse.skill:type_name -> mill.v1.Skill
-	62, // 33: mill.v1.GetSkillResponse.skill:type_name -> mill.v1.Skill
-	63, // 34: mill.v1.StatusRequest.statuses:type_name -> mill.v1.RunStatus
-	64, // 35: mill.v1.StatusResponse.runs:type_name -> mill.v1.RunSummary
-	64, // 36: mill.v1.InspectResponse.summary:type_name -> mill.v1.RunSummary
-	61, // 37: mill.v1.InspectResponse.workflow:type_name -> mill.v1.Workflow
-	65, // 38: mill.v1.InspectResponse.steps:type_name -> mill.v1.StepRunDetail
-	0,  // 39: mill.v1.StoreService.GetRunByNode:input_type -> mill.v1.GetRunByNodeRequest
-	2,  // 40: mill.v1.StoreService.CreateRun:input_type -> mill.v1.CreateRunRequest
-	4,  // 41: mill.v1.StoreService.SetLease:input_type -> mill.v1.SetLeaseRequest
-	6,  // 42: mill.v1.StoreService.StartStepRun:input_type -> mill.v1.StartStepRunRequest
-	8,  // 43: mill.v1.StoreService.CloseStepRun:input_type -> mill.v1.CloseStepRunRequest
-	10, // 44: mill.v1.StoreService.FailStepRun:input_type -> mill.v1.FailStepRunRequest
-	12, // 45: mill.v1.StoreService.AbortOpenStepRuns:input_type -> mill.v1.AbortOpenStepRunsRequest
-	14, // 46: mill.v1.StoreService.SupersedeSteps:input_type -> mill.v1.SupersedeStepsRequest
-	16, // 47: mill.v1.StoreService.MarkWaiting:input_type -> mill.v1.MarkWaitingRequest
-	18, // 48: mill.v1.StoreService.Park:input_type -> mill.v1.ParkRequest
-	20, // 49: mill.v1.StoreService.SetCompleteRequestId:input_type -> mill.v1.SetCompleteRequestIdRequest
-	22, // 50: mill.v1.StoreService.Done:input_type -> mill.v1.DoneRequest
-	24, // 51: mill.v1.StoreService.Abandon:input_type -> mill.v1.AbandonRequest
-	26, // 52: mill.v1.StoreService.Cancel:input_type -> mill.v1.CancelRequest
-	28, // 53: mill.v1.StoreService.IssueStepToken:input_type -> mill.v1.IssueStepTokenRequest
-	30, // 54: mill.v1.StoreService.RevokeStepToken:input_type -> mill.v1.RevokeStepTokenRequest
-	32, // 55: mill.v1.StoreService.RecordUsage:input_type -> mill.v1.RecordUsageRequest
-	34, // 56: mill.v1.StoreService.MarkUsagePosted:input_type -> mill.v1.MarkUsagePostedRequest
-	36, // 57: mill.v1.StoreService.GetWorkflow:input_type -> mill.v1.GetWorkflowRequest
-	38, // 58: mill.v1.StoreService.ListWorkflows:input_type -> mill.v1.ListWorkflowsRequest
-	40, // 59: mill.v1.StoreService.PutWorkflow:input_type -> mill.v1.PutWorkflowRequest
-	42, // 60: mill.v1.StoreService.PutSkill:input_type -> mill.v1.PutSkillRequest
-	44, // 61: mill.v1.StoreService.GetSkill:input_type -> mill.v1.GetSkillRequest
-	46, // 62: mill.v1.StoreService.Status:input_type -> mill.v1.StatusRequest
-	48, // 63: mill.v1.StoreService.Inspect:input_type -> mill.v1.InspectRequest
-	1,  // 64: mill.v1.StoreService.GetRunByNode:output_type -> mill.v1.GetRunByNodeResponse
-	3,  // 65: mill.v1.StoreService.CreateRun:output_type -> mill.v1.CreateRunResponse
-	5,  // 66: mill.v1.StoreService.SetLease:output_type -> mill.v1.SetLeaseResponse
-	7,  // 67: mill.v1.StoreService.StartStepRun:output_type -> mill.v1.StartStepRunResponse
-	9,  // 68: mill.v1.StoreService.CloseStepRun:output_type -> mill.v1.CloseStepRunResponse
-	11, // 69: mill.v1.StoreService.FailStepRun:output_type -> mill.v1.FailStepRunResponse
-	13, // 70: mill.v1.StoreService.AbortOpenStepRuns:output_type -> mill.v1.AbortOpenStepRunsResponse
-	15, // 71: mill.v1.StoreService.SupersedeSteps:output_type -> mill.v1.SupersedeStepsResponse
-	17, // 72: mill.v1.StoreService.MarkWaiting:output_type -> mill.v1.MarkWaitingResponse
-	19, // 73: mill.v1.StoreService.Park:output_type -> mill.v1.ParkResponse
-	21, // 74: mill.v1.StoreService.SetCompleteRequestId:output_type -> mill.v1.SetCompleteRequestIdResponse
-	23, // 75: mill.v1.StoreService.Done:output_type -> mill.v1.DoneResponse
-	25, // 76: mill.v1.StoreService.Abandon:output_type -> mill.v1.AbandonResponse
-	27, // 77: mill.v1.StoreService.Cancel:output_type -> mill.v1.CancelResponse
-	29, // 78: mill.v1.StoreService.IssueStepToken:output_type -> mill.v1.IssueStepTokenResponse
-	31, // 79: mill.v1.StoreService.RevokeStepToken:output_type -> mill.v1.RevokeStepTokenResponse
-	33, // 80: mill.v1.StoreService.RecordUsage:output_type -> mill.v1.RecordUsageResponse
-	35, // 81: mill.v1.StoreService.MarkUsagePosted:output_type -> mill.v1.MarkUsagePostedResponse
-	37, // 82: mill.v1.StoreService.GetWorkflow:output_type -> mill.v1.GetWorkflowResponse
-	39, // 83: mill.v1.StoreService.ListWorkflows:output_type -> mill.v1.ListWorkflowsResponse
-	41, // 84: mill.v1.StoreService.PutWorkflow:output_type -> mill.v1.PutWorkflowResponse
-	43, // 85: mill.v1.StoreService.PutSkill:output_type -> mill.v1.PutSkillResponse
-	45, // 86: mill.v1.StoreService.GetSkill:output_type -> mill.v1.GetSkillResponse
-	47, // 87: mill.v1.StoreService.Status:output_type -> mill.v1.StatusResponse
-	49, // 88: mill.v1.StoreService.Inspect:output_type -> mill.v1.InspectResponse
-	64, // [64:89] is the sub-list for method output_type
-	39, // [39:64] is the sub-list for method input_type
-	39, // [39:39] is the sub-list for extension type_name
-	39, // [39:39] is the sub-list for extension extendee
-	0,  // [0:39] is the sub-list for field type_name
+	54, // 0: mill.v1.GetRunByNodeResponse.run:type_name -> mill.v1.Run
+	54, // 1: mill.v1.CreateRunResponse.run:type_name -> mill.v1.Run
+	54, // 2: mill.v1.SetLeaseResponse.run:type_name -> mill.v1.Run
+	55, // 3: mill.v1.StartStepRunRequest.kind:type_name -> mill.v1.StepKind
+	56, // 4: mill.v1.StartStepRunResponse.step_run:type_name -> mill.v1.StepRun
+	57, // 5: mill.v1.CloseStepRunRequest.evidence:type_name -> mill.v1.Evidence
+	58, // 6: mill.v1.CloseStepRunRequest.tier:type_name -> mill.v1.Tier
+	56, // 7: mill.v1.CloseStepRunResponse.step_run:type_name -> mill.v1.StepRun
+	57, // 8: mill.v1.CloseStepRunResponse.evidence:type_name -> mill.v1.Evidence
+	59, // 9: mill.v1.FailStepRunRequest.exit:type_name -> harness.v1.ProcessExit
+	56, // 10: mill.v1.FailStepRunResponse.step_run:type_name -> mill.v1.StepRun
+	56, // 11: mill.v1.AbortOpenStepRunsResponse.step_runs:type_name -> mill.v1.StepRun
+	56, // 12: mill.v1.SupersedeStepsResponse.step_runs:type_name -> mill.v1.StepRun
+	54, // 13: mill.v1.MarkWaitingResponse.run:type_name -> mill.v1.Run
+	60, // 14: mill.v1.ParkRequest.reason:type_name -> mill.v1.ParkedReason
+	54, // 15: mill.v1.ParkResponse.run:type_name -> mill.v1.Run
+	54, // 16: mill.v1.SetCompleteRequestIdResponse.run:type_name -> mill.v1.Run
+	54, // 17: mill.v1.DoneResponse.run:type_name -> mill.v1.Run
+	54, // 18: mill.v1.FailResponse.run:type_name -> mill.v1.Run
+	54, // 19: mill.v1.ResumeResponse.run:type_name -> mill.v1.Run
+	54, // 20: mill.v1.AbandonResponse.run:type_name -> mill.v1.Run
+	54, // 21: mill.v1.CancelResponse.run:type_name -> mill.v1.Run
+	61, // 22: mill.v1.IssueStepTokenRequest.capabilities:type_name -> mill.v1.Capability
+	62, // 23: mill.v1.IssueStepTokenResponse.step_token:type_name -> mill.v1.StepToken
+	62, // 24: mill.v1.RevokeStepTokenResponse.step_token:type_name -> mill.v1.StepToken
+	63, // 25: mill.v1.RecordUsageRequest.usage:type_name -> mill.v1.Usage
+	63, // 26: mill.v1.RecordUsageResponse.usage:type_name -> mill.v1.Usage
+	64, // 27: mill.v1.GetWorkflowRequest.scope:type_name -> mill.v1.Scope
+	65, // 28: mill.v1.GetWorkflowResponse.workflow:type_name -> mill.v1.Workflow
+	64, // 29: mill.v1.ListWorkflowsRequest.scope:type_name -> mill.v1.Scope
+	65, // 30: mill.v1.ListWorkflowsResponse.workflows:type_name -> mill.v1.Workflow
+	65, // 31: mill.v1.PutWorkflowRequest.workflow:type_name -> mill.v1.Workflow
+	65, // 32: mill.v1.PutWorkflowResponse.workflow:type_name -> mill.v1.Workflow
+	66, // 33: mill.v1.PutSkillRequest.skill:type_name -> mill.v1.Skill
+	66, // 34: mill.v1.PutSkillResponse.skill:type_name -> mill.v1.Skill
+	66, // 35: mill.v1.GetSkillResponse.skill:type_name -> mill.v1.Skill
+	67, // 36: mill.v1.StatusRequest.statuses:type_name -> mill.v1.RunStatus
+	68, // 37: mill.v1.StatusResponse.runs:type_name -> mill.v1.RunSummary
+	68, // 38: mill.v1.InspectResponse.summary:type_name -> mill.v1.RunSummary
+	65, // 39: mill.v1.InspectResponse.workflow:type_name -> mill.v1.Workflow
+	69, // 40: mill.v1.InspectResponse.steps:type_name -> mill.v1.StepRunDetail
+	0,  // 41: mill.v1.StoreService.GetRunByNode:input_type -> mill.v1.GetRunByNodeRequest
+	2,  // 42: mill.v1.StoreService.CreateRun:input_type -> mill.v1.CreateRunRequest
+	4,  // 43: mill.v1.StoreService.SetLease:input_type -> mill.v1.SetLeaseRequest
+	6,  // 44: mill.v1.StoreService.StartStepRun:input_type -> mill.v1.StartStepRunRequest
+	8,  // 45: mill.v1.StoreService.CloseStepRun:input_type -> mill.v1.CloseStepRunRequest
+	10, // 46: mill.v1.StoreService.FailStepRun:input_type -> mill.v1.FailStepRunRequest
+	12, // 47: mill.v1.StoreService.AbortOpenStepRuns:input_type -> mill.v1.AbortOpenStepRunsRequest
+	14, // 48: mill.v1.StoreService.SupersedeSteps:input_type -> mill.v1.SupersedeStepsRequest
+	16, // 49: mill.v1.StoreService.MarkWaiting:input_type -> mill.v1.MarkWaitingRequest
+	18, // 50: mill.v1.StoreService.Park:input_type -> mill.v1.ParkRequest
+	20, // 51: mill.v1.StoreService.SetCompleteRequestId:input_type -> mill.v1.SetCompleteRequestIdRequest
+	22, // 52: mill.v1.StoreService.Done:input_type -> mill.v1.DoneRequest
+	24, // 53: mill.v1.StoreService.Fail:input_type -> mill.v1.FailRequest
+	26, // 54: mill.v1.StoreService.Resume:input_type -> mill.v1.ResumeRequest
+	28, // 55: mill.v1.StoreService.Abandon:input_type -> mill.v1.AbandonRequest
+	30, // 56: mill.v1.StoreService.Cancel:input_type -> mill.v1.CancelRequest
+	32, // 57: mill.v1.StoreService.IssueStepToken:input_type -> mill.v1.IssueStepTokenRequest
+	34, // 58: mill.v1.StoreService.RevokeStepToken:input_type -> mill.v1.RevokeStepTokenRequest
+	36, // 59: mill.v1.StoreService.RecordUsage:input_type -> mill.v1.RecordUsageRequest
+	38, // 60: mill.v1.StoreService.MarkUsagePosted:input_type -> mill.v1.MarkUsagePostedRequest
+	40, // 61: mill.v1.StoreService.GetWorkflow:input_type -> mill.v1.GetWorkflowRequest
+	42, // 62: mill.v1.StoreService.ListWorkflows:input_type -> mill.v1.ListWorkflowsRequest
+	44, // 63: mill.v1.StoreService.PutWorkflow:input_type -> mill.v1.PutWorkflowRequest
+	46, // 64: mill.v1.StoreService.PutSkill:input_type -> mill.v1.PutSkillRequest
+	48, // 65: mill.v1.StoreService.GetSkill:input_type -> mill.v1.GetSkillRequest
+	50, // 66: mill.v1.StoreService.Status:input_type -> mill.v1.StatusRequest
+	52, // 67: mill.v1.StoreService.Inspect:input_type -> mill.v1.InspectRequest
+	1,  // 68: mill.v1.StoreService.GetRunByNode:output_type -> mill.v1.GetRunByNodeResponse
+	3,  // 69: mill.v1.StoreService.CreateRun:output_type -> mill.v1.CreateRunResponse
+	5,  // 70: mill.v1.StoreService.SetLease:output_type -> mill.v1.SetLeaseResponse
+	7,  // 71: mill.v1.StoreService.StartStepRun:output_type -> mill.v1.StartStepRunResponse
+	9,  // 72: mill.v1.StoreService.CloseStepRun:output_type -> mill.v1.CloseStepRunResponse
+	11, // 73: mill.v1.StoreService.FailStepRun:output_type -> mill.v1.FailStepRunResponse
+	13, // 74: mill.v1.StoreService.AbortOpenStepRuns:output_type -> mill.v1.AbortOpenStepRunsResponse
+	15, // 75: mill.v1.StoreService.SupersedeSteps:output_type -> mill.v1.SupersedeStepsResponse
+	17, // 76: mill.v1.StoreService.MarkWaiting:output_type -> mill.v1.MarkWaitingResponse
+	19, // 77: mill.v1.StoreService.Park:output_type -> mill.v1.ParkResponse
+	21, // 78: mill.v1.StoreService.SetCompleteRequestId:output_type -> mill.v1.SetCompleteRequestIdResponse
+	23, // 79: mill.v1.StoreService.Done:output_type -> mill.v1.DoneResponse
+	25, // 80: mill.v1.StoreService.Fail:output_type -> mill.v1.FailResponse
+	27, // 81: mill.v1.StoreService.Resume:output_type -> mill.v1.ResumeResponse
+	29, // 82: mill.v1.StoreService.Abandon:output_type -> mill.v1.AbandonResponse
+	31, // 83: mill.v1.StoreService.Cancel:output_type -> mill.v1.CancelResponse
+	33, // 84: mill.v1.StoreService.IssueStepToken:output_type -> mill.v1.IssueStepTokenResponse
+	35, // 85: mill.v1.StoreService.RevokeStepToken:output_type -> mill.v1.RevokeStepTokenResponse
+	37, // 86: mill.v1.StoreService.RecordUsage:output_type -> mill.v1.RecordUsageResponse
+	39, // 87: mill.v1.StoreService.MarkUsagePosted:output_type -> mill.v1.MarkUsagePostedResponse
+	41, // 88: mill.v1.StoreService.GetWorkflow:output_type -> mill.v1.GetWorkflowResponse
+	43, // 89: mill.v1.StoreService.ListWorkflows:output_type -> mill.v1.ListWorkflowsResponse
+	45, // 90: mill.v1.StoreService.PutWorkflow:output_type -> mill.v1.PutWorkflowResponse
+	47, // 91: mill.v1.StoreService.PutSkill:output_type -> mill.v1.PutSkillResponse
+	49, // 92: mill.v1.StoreService.GetSkill:output_type -> mill.v1.GetSkillResponse
+	51, // 93: mill.v1.StoreService.Status:output_type -> mill.v1.StatusResponse
+	53, // 94: mill.v1.StoreService.Inspect:output_type -> mill.v1.InspectResponse
+	68, // [68:95] is the sub-list for method output_type
+	41, // [41:68] is the sub-list for method input_type
+	41, // [41:41] is the sub-list for extension type_name
+	41, // [41:41] is the sub-list for extension extendee
+	0,  // [0:41] is the sub-list for field type_name
 }
 
 func init() { file_mill_v1_store_proto_init() }
@@ -3326,7 +3563,7 @@ func file_mill_v1_store_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_mill_v1_store_proto_rawDesc), len(file_mill_v1_store_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   50,
+			NumMessages:   54,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -1,0 +1,15 @@
+{
+  "id": 9001,
+  "iid": 7,
+  "project_id": 42,
+  "title": "mill#13: the forge adapter",
+  "state": "closed",
+  "web_url": "https://gitlab.example.test/group/thing/-/merge_requests/7",
+  "source_branch": "mill/mill-13",
+  "target_branch": "main",
+  "sha": "9a1f0c3f2b6d4e5a7c8b9d0e1f2a3b4c5d6e7f80",
+  "squash": true,
+  "merge_commit_sha": null,
+  "squash_commit_sha": null,
+  "detailed_merge_status": "not_open"
+}

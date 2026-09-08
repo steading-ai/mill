@@ -246,6 +246,15 @@ type Forge interface {
 	// became: the squash commit when it was squashed, the merge commit
 	// otherwise. [ErrNotMerged] until it has landed.
 	MergeCommit(ctx context.Context, pr PullRequest) (string, error)
+	// ClosePR comments on a pull request and closes it without merging.
+	// `mill restart` uses it, and only it: a run that has gone sideways
+	// leaves a pull request nobody should merge, and the comment is what
+	// tells the next reader why it was abandoned. Closing one that is
+	// already closed or merged is not an error.
+	ClosePR(ctx context.Context, pr PullRequest, comment string) error
+	// DeleteBranch removes a branch from the forge. A branch that is not
+	// there is not an error: the point is that it is gone.
+	DeleteBranch(ctx context.Context, branch string) error
 }
 
 // The failures a caller distinguishes.

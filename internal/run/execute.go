@@ -40,7 +40,7 @@ type result struct {
 }
 
 // execute runs one attempt by kind.
-func (r *Runner) execute(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, token *millv1.StepToken, feedback string) (result, error) {
+func (r *Runner) execute(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, detail *millv1.InspectResponse, token *millv1.StepToken, feedback string) (result, error) {
 	stepCtx := ctx
 	if timeout := step.GetTimeout().AsDuration(); timeout > 0 {
 		var cancel context.CancelFunc
@@ -53,7 +53,7 @@ func (r *Runner) execute(ctx context.Context, s *state, step *millv1.Step, sr *m
 	case millv1.StepKind_STEP_KIND_CHECK:
 		return r.runCheck(stepCtx, s, step)
 	case millv1.StepKind_STEP_KIND_GATE:
-		return r.runGate(stepCtx, s, step, sr)
+		return r.runGate(stepCtx, s, step, sr, detail)
 	default:
 		return result{}, fmt.Errorf("run %s: step %s has no kind", s.run.GetId(), step.GetName())
 	}
@@ -115,7 +115,7 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 		out.feedback = terminal.FinalMessage
 		return out, fmt.Errorf("step %s: the session ended %s", step.GetName(), exitText(terminal.Exit))
 	}
-	out.claim, err = r.observe(ctx, s, step, terminal)
+	out.claim, err = r.observe(ctx, s, step, sr, terminal)
 	if err != nil {
 		return out, err
 	}
@@ -126,7 +126,7 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 // thing offered as a claim. Nothing the session said is consulted: a session
 // that reports a commit it did not make reports it into a transcript nothing
 // reads (docs/domain-model.md §Evidence).
-func (r *Runner) observe(ctx context.Context, s *state, step *millv1.Step, terminal *harness.Terminal) (string, error) {
+func (r *Runner) observe(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, terminal *harness.Terminal) (string, error) {
 	switch step.GetEvidence() {
 	case millv1.EvidenceKind_EVIDENCE_KIND_COMMIT:
 		// The head of the run's branch, read through the workspace. The
@@ -148,7 +148,7 @@ func (r *Runner) observe(ctx context.Context, s *state, step *millv1.Step, termi
 		return pr.URL, nil
 
 	case millv1.EvidenceKind_EVIDENCE_KIND_ARTIFACT:
-		return r.attachArtifact(ctx, s, step, terminal.FinalMessage)
+		return r.attachArtifact(ctx, s, step, sr, terminal.FinalMessage)
 
 	default:
 		return "", nil
@@ -199,12 +199,16 @@ func exitText(exit harness.ProcessExit) string {
 }
 
 // SessionID is the deterministic id of one session in one run: UUIDv5 over
-// the run's context id and the session's name, in the URL namespace.
+// the run's context id, its generation and the session's name, in the URL
+// namespace.
 //
 // Deterministic is the whole point. A step interrupted and re-run finds the
-// same session, so the model picks up its own prior context; a restart's new
-// generation yields ids no harness has seen (docs/ledger.md §sessions).
-func SessionID(contextID, name string) string {
+// same session, so the model picks up its own prior context. The generation
+// is in the name because a restart must not: `mill restart` opens the next
+// generation precisely so that every session in it is one the harness has
+// never seen, and resuming the abandoned run's transcripts would be the one
+// thing restart exists to avoid (docs/domain-model.md §Session, §Restart).
+func SessionID(contextID string, generation int64, name string) string {
 	// RFC 9562 §5.5: the UUIDv5 name is the namespace's bytes followed by
 	// the name's. The URL namespace is used because a context id and a
 	// session name together are a name, not a DNS label.
@@ -212,7 +216,8 @@ func SessionID(contextID, name string) string {
 		0x6b, 0xa7, 0xb8, 0x11, 0x9d, 0xad, 0x11, 0xd1,
 		0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8,
 	}
-	sum := sha1.Sum(append(namespace[:], []byte(contextID+"/"+name)...)) //nolint:gosec // see above
+	key := contextID + "/" + strconv.FormatInt(generation, 10) + "/" + name
+	sum := sha1.Sum(append(namespace[:], []byte(key)...)) //nolint:gosec // see above
 	var id [16]byte
 	copy(id[:], sum[:16])
 	id[6] = (id[6] & 0x0f) | 0x50

@@ -214,3 +214,55 @@ func (c *Client) Artifacts(ctx context.Context, ref string) ([]*daggerv1.Artifac
 	}
 	return res.Msg.GetArtifacts(), nil
 }
+
+// GateLabels are the labels mill puts on every gate it files: one saying
+// mill filed it, one naming the run, one naming the step.
+//
+// They are how a gate is found again. Dagger resolves references — `mill#7`
+// — and never ids, so the id the ledger holds is not something dagger can be
+// asked for; a run's own gates are found among its node's children by these
+// labels and matched on the id there. They are also how a worker finds a
+// gate it filed before it crashed.
+func GateLabels(runID, step string) []string {
+	return []string{GateLabel, RunLabel(runID), StepLabel(step)}
+}
+
+// RunLabel names the run a gate belongs to.
+func RunLabel(runID string) string { return "mill-run-" + runID }
+
+// StepLabel names the step a gate belongs to.
+func StepLabel(step string) string { return "mill-step-" + step }
+
+// GateLabel marks every node mill files as a gate.
+const GateLabel = "mill-gate"
+
+// Gates are the user-assigned children of a node carrying every one of the
+// given labels: the gates mill filed on it, and nothing a human filed for
+// their own reasons.
+//
+// It exists for the one window the write order of docs/ledger.md §Resume
+// cannot close. Filing a gate is dagger first, store second: a crash between
+// them leaves a gate dagger has and the store does not, and a rerun that
+// trusted the store alone would file a second one for the same step.
+// Dagger's graph is the source of truth for that single check, so the worker
+// asks it before it files (docs/domain-model.md §Gate, "A gate is filed
+// once").
+//
+// Status is deliberately not filtered. The gate is usually still open — that
+// is what the crash left behind — but the node it blocks is not claimable
+// until somebody answers it, so the rerun that finds it is often the one
+// that follows the answer, and a search for open gates alone would miss the
+// gate precisely when it is about to file a second.
+func (c *Client) Gates(ctx context.Context, parent string, labels ...string) ([]*daggerv1.Node, error) {
+	res, err := c.graph.ListNodes(ctx, connect.NewRequest(&daggerv1.ListNodesRequest{
+		Project:      c.project,
+		Parent:       parent,
+		AssigneeKind: daggerv1.AssigneeKind_ASSIGNEE_KIND_USER,
+		Labels:       labels,
+		View:         daggerv1.View_VIEW_FULL,
+	}))
+	if err != nil {
+		return nil, wrap("dagger: list the gates on "+parent, err)
+	}
+	return res.Msg.GetNodes(), nil
+}

@@ -114,6 +114,21 @@ func (c *Client) Node(ctx context.Context, ref string) (*daggerv1.Node, error) {
 	return res.Msg.GetNode(), nil
 }
 
+// Result is what a node was completed with, or nil while it is open. It is
+// read by reference like every other node read, and it is separate from
+// [Client.Node] because the node message carries no result of its own.
+func (c *Client) Result(ctx context.Context, ref string) (*daggerv1.Result, error) {
+	res, err := c.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{
+		Project: c.project,
+		Node:    ref,
+		View:    daggerv1.View_VIEW_FULL,
+	}))
+	if err != nil {
+		return nil, wrap("dagger: get result of "+ref, err)
+	}
+	return res.Msg.GetResult(), nil
+}
+
 // Inputs are the results of the predecessors that satisfy a node. They are
 // other principals' claims and are rendered into a prompt as attributed
 // data, never as instructions (docs/architecture.md §"Trust boundaries").

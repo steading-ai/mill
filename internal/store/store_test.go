@@ -59,6 +59,13 @@ var _ = Describe("SetLease", Label(testsupport.DBLabel), func() {
 		Entry("selecting, whose run already holds the lease that created it", func(l *ledger, ctx SpecContext) *millv1.Run {
 			return l.run(ctx, "mill#8")
 		}, false),
+		Entry("selecting, opened by a restart and holding no lease", func(l *ledger, ctx SpecContext) *millv1.Run {
+			run, err := l.store.CreateRun(ctx, "", store.CreateRunParams{
+				NodeID: "node-restarted", NodeRef: "mill#9", Generation: 2, Branch: "mill/9",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			return run
+		}, true),
 		Entry("failed", func(l *ledger, ctx SpecContext) *millv1.Run {
 			run, _ := l.runWithWorkflow(ctx, "mill#8")
 			failed, err := l.store.Failed(ctx, l.lease, run.GetId(), "denied")

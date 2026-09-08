@@ -153,6 +153,25 @@ func (s *StoreService) Done(ctx context.Context, req *connect.Request[millv1.Don
 	return connect.NewResponse(&millv1.DoneResponse{Run: run}), nil
 }
 
+// Fail ends a run a gate denied, after dagger has been told with the gate's
+// deny_result.
+func (s *StoreService) Fail(ctx context.Context, req *connect.Request[millv1.FailRequest]) (*connect.Response[millv1.FailResponse], error) {
+	run, err := s.svc.Fail(ctx, req.Msg.GetLeaseId(), req.Msg.GetRunId(), req.Msg.GetReason())
+	if err != nil {
+		return nil, connectError(err)
+	}
+	return connect.NewResponse(&millv1.FailResponse{Run: run}), nil
+}
+
+// Resume clears the gate an answered run stopped on.
+func (s *StoreService) Resume(ctx context.Context, req *connect.Request[millv1.ResumeRequest]) (*connect.Response[millv1.ResumeResponse], error) {
+	run, err := s.svc.Resume(ctx, req.Msg.GetLeaseId(), req.Msg.GetRunId())
+	if err != nil {
+		return nil, connectError(err)
+	}
+	return connect.NewResponse(&millv1.ResumeResponse{Run: run}), nil
+}
+
 // Abandon marks a run abandoned so a new generation can be created.
 func (s *StoreService) Abandon(ctx context.Context, req *connect.Request[millv1.AbandonRequest]) (*connect.Response[millv1.AbandonResponse], error) {
 	run, err := s.svc.Abandon(ctx, req.Msg.GetLeaseId(), req.Msg.GetRunId(), req.Msg.GetReason())

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -107,6 +108,58 @@ var _ = Describe("The GitLab forge adapter", Label("unit"), func() {
 			Entry("a red pipeline is failed", "pipelines_failed.json", forge.Failed),
 			Entry("no pipeline at all is success: the project configures none", "pipelines_empty.json", forge.Success),
 		)
+	})
+
+	Describe("closing a merge request the mill is abandoning", func() {
+		It("comments first, then closes, so the close is never unexplained", func(ctx context.Context) {
+			api.on(http.MethodGet, escaped+"/merge_requests", http.StatusOK, "merge_requests_open.json")
+			api.on(http.MethodPost, escaped+"/merge_requests/7/notes", http.StatusCreated, "note_created.json")
+			api.on(http.MethodGet, escaped+"/merge_requests/7", http.StatusOK, "merge_request_opened.json")
+			api.on(http.MethodPut, escaped+"/merge_requests/7", http.StatusOK, "merge_request_closed.json")
+
+			pr, err := client.PR(ctx, branch)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(client.ClosePR(ctx, pr, "Superseded: the run was restarted.")).To(Succeed())
+
+			var order []string
+			for _, seen := range api.calls() {
+				switch {
+				case seen.Method == http.MethodPost && strings.HasSuffix(seen.Path, "/notes"):
+					order = append(order, "note")
+					Expect(seen.Body).To(ContainSubstring("restarted"))
+				case seen.Method == http.MethodPut:
+					order = append(order, "close")
+					Expect(seen.Body).To(ContainSubstring(`"state_event":"close"`))
+				}
+			}
+			Expect(order).To(Equal([]string{"note", "close"}))
+		})
+
+		It("leaves a merge request that is already merged alone", func(ctx context.Context) {
+			api.on(http.MethodGet, escaped+"/merge_requests", http.StatusOK, "merge_requests_squash_merged.json")
+			api.on(http.MethodGet, escaped+"/merge_requests/7", http.StatusOK, "merge_request_squash_merged.json")
+
+			pr, err := client.PR(ctx, branch)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(client.ClosePR(ctx, pr, "")).To(Succeed())
+
+			Expect(api.count(http.MethodPut, escaped+"/merge_requests/7")).To(BeZero())
+		})
+	})
+
+	Describe("deleting a branch", func() {
+		It("deletes it", func(ctx context.Context) {
+			api.on(http.MethodDelete, escaped+"/repository/branches/mill%2Fmill-13", http.StatusNoContent, "empty.json")
+
+			Expect(client.DeleteBranch(ctx, "mill/mill-13")).To(Succeed())
+			Expect(api.count(http.MethodDelete, escaped+"/repository/branches")).To(Equal(1))
+		})
+
+		It("treats a branch GitLab does not have as the state it was asked for", func(ctx context.Context) {
+			// No route: the stub answers 404, which is what GitLab answers
+			// for a branch that is not there.
+			Expect(client.DeleteBranch(ctx, "mill/gone")).To(Succeed())
+		})
 	})
 
 	Describe("merging", func() {

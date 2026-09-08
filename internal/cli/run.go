@@ -47,6 +47,7 @@ type runOptions struct {
 	daggerSocket string
 	project      string
 	workflow     string
+	tier         string
 	workflowDir  string
 	origin       string
 	ref          string
@@ -54,6 +55,7 @@ type runOptions struct {
 	ttl          time.Duration
 	interval     time.Duration
 	dryRun       bool
+	noAsk        bool
 }
 
 // newRunCommand is "work" with the claim replaced by an argument: one node,
@@ -86,6 +88,7 @@ would be selected, its steps in order, and the evidence each one closes on.`,
 	f.StringVar(&opts.daggerSocket, "dagger-socket", envOr(daggerSocketEnv, defaultDaggerSocket), "path of dagger's unix socket (default: $"+daggerSocketEnv+")")
 	f.StringVar(&opts.project, "project", os.Getenv(daggerProjectEnv), "dagger project a bare #7 reference resolves in (default: $"+daggerProjectEnv+")")
 	f.StringVar(&opts.workflow, "workflow", "quick-fix", "workflow to select when the run has none")
+	f.StringVar(&opts.tier, "tier", "quick-fix", "tier that workflow stands for, which gate policies compare against")
 	f.StringVar(&opts.workflowDir, "workflow-dir", "", "directory the workflow was loaded from, for a check step's scripts")
 	f.StringVar(&opts.origin, "origin", "", "repository a new workspace clones")
 	f.StringVar(&opts.ref, "ref", "", "ref a new workspace checks out (default: the repository's own HEAD)")
@@ -93,6 +96,7 @@ would be selected, its steps in order, and the evidence each one closes on.`,
 	f.DurationVar(&opts.ttl, "ttl", run.DefaultTTL, "lease TTL to ask dagger for")
 	f.DurationVar(&opts.interval, "heartbeat", 0, "how often to renew the lease (default: a third of the TTL)")
 	f.BoolVar(&opts.dryRun, "dry-run", false, "print the workflow and its steps; claim nothing and execute nothing")
+	f.BoolVar(&opts.noAsk, "no-ask", false, "leave a filed gate for a human elsewhere instead of asking on this terminal")
 	return cmd
 }
 
@@ -152,6 +156,20 @@ func execute(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 		return err
 	}
 
+	// A gate filed under `mill run` is put to whoever is watching. The run
+	// stops either way — the gate is filed, the lease released — and the
+	// answer is written to dagger as theirs; answering just saves them
+	// finding it in another window (docs/domain-model.md §Gate).
+	var answers run.Answerer
+	if !opts.noAsk {
+		answers = NewTerminalAnswerer(cmd.InOrStdin(), cmd.OutOrStdout())
+	}
+
+	tier, err := tierNamed(opts.tier)
+	if err != nil {
+		return err
+	}
+
 	runner := run.New(run.Options{
 		Store:       storeClient(opts.socket),
 		Dagger:      client,
@@ -160,15 +178,29 @@ func execute(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 		Harnesses:   harnesses,
 		WorkerRef:   worker,
 		Workflow:    opts.workflow,
+		Tier:        tier,
 		WorkflowDir: opts.workflowDir,
 		Origin:      opts.origin,
 		Ref:         opts.ref,
 		TTL:         opts.ttl,
 		Interval:    opts.interval,
+		Answers:     answers,
 		Out:         cmd.OutOrStdout(),
 		Log:         slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: slog.LevelInfo})),
 	})
 	return runner.Execute(cmd.Context(), nodeRef)
+}
+
+// tierNamed reads the project default's tier. It is a flag rather than a
+// lookup because dagger's projects carry no tier and mill stores no project
+// row yet; the assessment step that would name one is the router's work
+// (docs/domain-model.md §"Workflow selection").
+func tierNamed(name string) (millv1.Tier, error) {
+	tier := millv1.Tier(millv1.Tier_value["TIER_"+strings.ToUpper(strings.ReplaceAll(name, "-", "_"))])
+	if tier == millv1.Tier_TIER_UNSPECIFIED {
+		return tier, fmt.Errorf("mill run: %q is not a tier: quick-fix, small, feature or large", name)
+	}
+	return tier, nil
 }
 
 // localWorkspaces makes a workspace under the worker's own account,

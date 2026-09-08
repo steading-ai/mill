@@ -13,7 +13,10 @@ import (
 // that a spec compares the code against the document rather than against
 // itself.
 var drawn = map[millv1.RunStatus][]millv1.RunStatus{
-	millv1.RunStatus_RUN_STATUS_SELECTING: {millv1.RunStatus_RUN_STATUS_RUNNING},
+	millv1.RunStatus_RUN_STATUS_SELECTING: {
+		millv1.RunStatus_RUN_STATUS_RUNNING,
+		millv1.RunStatus_RUN_STATUS_ABANDONED,
+	},
 	millv1.RunStatus_RUN_STATUS_RUNNING: {
 		millv1.RunStatus_RUN_STATUS_DONE,
 		millv1.RunStatus_RUN_STATUS_WAITING,
@@ -21,7 +24,14 @@ var drawn = map[millv1.RunStatus][]millv1.RunStatus{
 		millv1.RunStatus_RUN_STATUS_FAILED,
 		millv1.RunStatus_RUN_STATUS_ABANDONED,
 	},
-	millv1.RunStatus_RUN_STATUS_WAITING: {millv1.RunStatus_RUN_STATUS_RUNNING},
+	millv1.RunStatus_RUN_STATUS_WAITING: {
+		millv1.RunStatus_RUN_STATUS_RUNNING,
+		millv1.RunStatus_RUN_STATUS_ABANDONED,
+	},
+	millv1.RunStatus_RUN_STATUS_PARKED: {
+		millv1.RunStatus_RUN_STATUS_RUNNING,
+		millv1.RunStatus_RUN_STATUS_ABANDONED,
+	},
 }
 
 func isDrawn(from, to millv1.RunStatus) bool {

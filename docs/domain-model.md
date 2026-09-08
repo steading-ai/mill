@@ -33,11 +33,14 @@ Derived, never stored: `current_step` (the first step whose latest step run is n
 selecting ──▶ running ──▶ done
                 │  ▲
                 │  └──── waiting   (gate filed; lease released with reason `gate`)
+                │  ▲
+                │  └──── parked    (circuit breaker; lease released with reason `budget` or `crash`)
                 │
-                ├──────▶ parked    (circuit breaker; lease released with reason `budget` or `crash`)
                 ├──────▶ failed    (terminal; gate denied, or the node was dropped)
                 └──────▶ abandoned (terminal; a human restarted the node — a new generation exists)
 ```
+
+`abandoned` is reachable from every state a run can still be live in — `selecting`, `running`, `waiting`, `parked` — because [Restart](#restart) applies to the live run whatever it is doing, and a run waiting on a human is the ordinary thing to restart. `parked` returns to `running` the same way `waiting` does: the gate is answered, the node becomes ready, and the next claim resumes the run at the step it stopped on.
 
 - `selecting` — claimed, no workflow yet. The assessment step runs here.
 - `running` — a lease is held and a step is executing or about to.

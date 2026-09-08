@@ -101,6 +101,8 @@ If the run's `gate_node_id` is already set for this step — this is a resume �
 
 Otherwise, build the gate node from the step's `ask` template and the run's artifacts. Evaluate `auto` over prior evidence and the run's `tier`: if it holds, record an auto-approval and continue. If not, three writes in this order: `ApplyPatch` creates the gate node as a child of this node with a `blocks` edge into it and returns its id; the store records `gate_node_id` and marks the run `waiting`; `Release` ends the lease with reason `gate`. Then return to `ClaimNext`. Post any unposted usage before the release, because the release ends the lease `ReportUsage` needs.
 
+Single-run mode is the one exception to "then return to `ClaimNext`", because there is a person at the terminal. `mill run` files and records the gate exactly as a worker does, then puts the ask on the terminal, writes the answer to dagger as that person — never as the mill — and carries on under the lease it still holds. It does not release, and it must not: dagger's rule is that a dropped gate never satisfies the edge out of it, so a node whose gate was denied is never ready again, and a run that had given its lease back could not be claimed to record the denial. `mill work` has nobody to ask and always releases.
+
 The mill never notifies anyone. Dagger's notifier — thicket, to Slack or a phone — carries the gate. Until that bridge exists, the stopgap is a `thicket send` from the gate step naming the ask and the node; it is a stopgap and lives behind one function.
 
 ## The workspace

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/types/known/structpb"
@@ -65,6 +66,7 @@ func (r *Runner) selectWorkflow(ctx context.Context, s *state) error {
 	chosen, err := structpb.NewStruct(map[string]any{
 		"workflow": workflow.GetName(),
 		"version":  workflow.GetVersion(),
+		"tier":     tierName(r.options.Tier),
 		"basis":    "project default",
 	})
 	if err != nil {
@@ -74,7 +76,7 @@ func (r *Runner) selectWorkflow(ctx context.Context, s *state) error {
 		LeaseId:    s.lease,
 		StepRunId:  sr.GetStepRun().GetId(),
 		WorkflowId: workflow.GetId(),
-		Tier:       millv1.Tier_TIER_QUICK_FIX,
+		Tier:       r.options.Tier,
 		Evidence: &millv1.Evidence{
 			StepRunId:  sr.GetStepRun().GetId(),
 			Kind:       millv1.EvidenceKind_EVIDENCE_KIND_STRUCTURED,
@@ -159,7 +161,7 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 
 	sessionID := ""
 	if step.GetSession() != "" {
-		sessionID = SessionID(s.run.GetContextId(), step.GetSession())
+		sessionID = SessionID(s.run.GetContextId(), s.run.GetGeneration(), step.GetSession())
 	}
 	started, err := call(ctx, r.options.Store.StartStepRun, &millv1.StartStepRunRequest{
 		LeaseId:      s.lease,
@@ -188,7 +190,24 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 		return outcome{}, fmt.Errorf("run %s: rotate the workspace token: %w", s.run.GetId(), err)
 	}
 
-	result, execErr := r.execute(ctx, s, step, sr, token.GetStepToken(), feedback)
+	s.token = token.GetStepToken().GetId()
+	result, execErr := r.execute(ctx, s, step, sr, detail, token.GetStepToken(), feedback)
+
+	// A gate step that filed its gate has ended the run's turn: the lease is
+	// released and this attempt is deliberately left open, so that the
+	// answer closes the attempt that asked rather than opening a second one
+	// (docs/domain-model.md §Gate). Nothing below it may run — every one of
+	// those writes is fenced by a lease this run no longer holds.
+	if errors.Is(execErr, errReleased) || errors.Is(execErr, errAborted) {
+		return outcome{}, execErr
+	}
+	// The gate was answered on the spot. The attempt stays open and the
+	// loop goes round: the next pass finds the gate recorded on the run and
+	// takes the resume branch, which closes this very attempt on the
+	// answer.
+	if errors.Is(execErr, errAnswered) {
+		return outcome{}, nil
+	}
 
 	// A step stopped by the heartbeat is the end of this worker's run, and
 	// what happens next is not this loop's to decide: a fence writes
@@ -271,6 +290,12 @@ func (r *Runner) closeStep(ctx context.Context, s *state, sr *millv1.StepRun, st
 	}
 	r.printf("  closed on %s evidence\n", evidenceName(value.GetKind()))
 	return nil
+}
+
+// tierName is a tier as the project default names it, which is the word a
+// gate predicate compares against.
+func tierName(tier millv1.Tier) string {
+	return strings.ToLower(strings.ReplaceAll(strings.TrimPrefix(tier.String(), "TIER_"), "_", "-"))
 }
 
 // projectOf is the project half of a node reference such as `mill#12`.

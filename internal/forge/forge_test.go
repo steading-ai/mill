@@ -29,6 +29,8 @@ func (s *stubForge) Merge(context.Context, forge.PullRequest) (forge.PullRequest
 func (s *stubForge) MergeCommit(context.Context, forge.PullRequest) (string, error) {
 	return "", forge.ErrNotMerged
 }
+func (s *stubForge) ClosePR(context.Context, forge.PullRequest, string) error { return nil }
+func (s *stubForge) DeleteBranch(context.Context, string) error               { return nil }
 
 var _ = Describe("The forge registry", Label("unit"), func() {
 	var registry *forge.Registry

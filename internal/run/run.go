@@ -120,6 +120,34 @@ type Options struct {
 	Log *slog.Logger
 	// Now is the clock. Nil means [time.Now].
 	Now func() time.Time
+	// Answers puts a gate's ask to a person and reports their decision.
+	// Only single-run mode sets it: a worker files a gate and goes back to
+	// ClaimNext, because there is nobody at its terminal. Nil never asks.
+	Answers Answerer
+	// Tier is what this run is worth, which gate `auto` predicates compare
+	// against. It is the project default's tier until an assessment step
+	// exists to name one (docs/domain-model.md §"Workflow selection").
+	Tier millv1.Tier
+}
+
+// Answerer is a person at a terminal, asked a gate's question. It is the
+// only seam through which a run in this process learns a human's decision;
+// every other run learns it by being claimed again after the gate closed.
+type Answerer interface {
+	// Answer puts the ask to the person and reports whether they approved.
+	Answer(ctx context.Context, ask Ask) (bool, error)
+}
+
+// Ask is a filed gate as a person sees it.
+type Ask struct {
+	// NodeRef is the node the gate blocks.
+	NodeRef string
+	// GateRef is the gate node itself.
+	GateRef string
+	// Title and Body are the ask, already rendered.
+	Title string
+	// Body is the ask's body.
+	Body string
 }
 
 // Runner drives one node's run.
@@ -140,6 +168,9 @@ func New(options Options) *Runner {
 	}
 	if options.Now == nil {
 		options.Now = time.Now
+	}
+	if options.Tier == millv1.Tier_TIER_UNSPECIFIED {
+		options.Tier = millv1.Tier_TIER_QUICK_FIX
 	}
 	if options.Log == nil {
 		options.Log = slog.New(slog.DiscardHandler)
@@ -179,6 +210,39 @@ type state struct {
 	// mergeCommit is the commit the branch became once a merge gate was
 	// approved and the merge made.
 	mergeCommit string
+	// token is the step token issued for the attempt in flight, so a gate
+	// step can revoke it before the run stops waiting on a human.
+	token string
+	// parked says this claim took over a run the circuit breaker parked, so
+	// the park gate is read before any step runs.
+	parked bool
+	// findings is what each attempt at a step failed on, in order, so the
+	// comment the circuit breaker leaves carries every round rather than
+	// only the last. It is this worker's memory: a run resumed elsewhere
+	// comments the rounds that worker saw.
+	findings map[string][]string
+	// retried is the attempt each step's retry count is measured from. A
+	// human answering a park gate pays for a fresh set of attempts, and
+	// this is where that is recorded (docs/architecture.md §"The circuit
+	// breaker").
+	retried map[string]int64
+}
+
+// record appends what one failed attempt at a step reported.
+func (s *state) record(step, findings string) {
+	if findings == "" {
+		return
+	}
+	if s.findings == nil {
+		s.findings = map[string][]string{}
+	}
+	s.findings[step] = append(s.findings[step], findings)
+}
+
+// attemptsAt is how many attempts at a step count against its retries: every
+// attempt since the last one a human paid for.
+func (s *state) attemptsAt(step string, attempt int64) int64 {
+	return attempt - s.retried[step]
 }
 
 // markResumed records that this worker has spoken to a session.
@@ -215,7 +279,7 @@ func (r *Runner) Execute(ctx context.Context, nodeRef string) error {
 	if err != nil {
 		return err
 	}
-	s := &state{node: claimed.Node, lease: claimed.Lease.GetId()}
+	s := &state{node: claimed.Node, lease: claimed.Lease.GetId(), retried: map[string]int64{}}
 	r.printf("claimed %s under lease %s\n", s.node.GetReference(), s.lease)
 
 	if err := r.openRun(ctx, s); err != nil {
@@ -229,6 +293,9 @@ func (r *Runner) Execute(ctx context.Context, nodeRef string) error {
 		return r.stop(ctx, s, err)
 	}
 	if err := r.selectWorkflow(s.beat.ctx, s); err != nil {
+		return r.stop(ctx, s, err)
+	}
+	if err := r.resumePark(s.beat.ctx, s); err != nil {
 		return r.stop(ctx, s, err)
 	}
 	return r.stop(ctx, s, r.walk(s.beat.ctx, s))
@@ -293,14 +360,26 @@ func (r *Runner) openRun(ctx context.Context, s *state) error {
 		return fmt.Errorf("%w: run %s is done but %s is open", ErrRefused, run.GetId(), s.node.GetReference())
 
 	default:
-		// A `running` row here belongs to a worker that died or was fenced
-		// out. The next attempt at that step starts from the top.
-		if _, err := call(ctx, r.options.Store.AbortOpenStepRuns, &millv1.AbortOpenStepRunsRequest{
-			LeaseId: run.GetLeaseId(),
-			RunId:   run.GetId(),
-			Reason:  "the worker that held this run is gone",
-		}); err != nil {
-			return err
+		// The circuit breaker parked this run and a human has been asked
+		// what to do. Whether they answered is read after the workflow is
+		// known, because the answer resumes the run at the parked step.
+		s.parked = run.GetStatus() == millv1.RunStatus_RUN_STATUS_PARKED && run.GetGateNodeId() != ""
+
+		// A `running` row under a `running` run belongs to a worker that
+		// died or was fenced out, and the next attempt at that step starts
+		// from the top. A `waiting` run's open row is not that: it is the
+		// gate step's own attempt, left open on purpose so that the answer
+		// closes the attempt that asked it (docs/domain-model.md §Gate, "a
+		// gate is filed once"; the gate step has one step run, not two).
+		if run.GetStatus() == millv1.RunStatus_RUN_STATUS_RUNNING ||
+			run.GetStatus() == millv1.RunStatus_RUN_STATUS_SELECTING {
+			if _, err := call(ctx, r.options.Store.AbortOpenStepRuns, &millv1.AbortOpenStepRunsRequest{
+				LeaseId: run.GetLeaseId(),
+				RunId:   run.GetId(),
+				Reason:  "the worker that held this run is gone",
+			}); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -320,8 +399,14 @@ func (r *Runner) openRun(ctx context.Context, s *state) error {
 // one. The loader guarantees the branch is on the forge before any gate that
 // follows a write, so a worker elsewhere can always recreate it.
 func (r *Runner) openWorkspace(ctx context.Context, s *state) error {
+	// A run that has not selected a workflow has run no step, so its branch
+	// is not on the forge and there is nothing to clone but the default
+	// ref. The workflow id says that and the status does not: the claim
+	// that takes a run over has already marked it running, and a run
+	// `mill restart` opened at the next generation starts from the default
+	// branch exactly as the first generation did.
 	ref := r.options.Ref
-	if s.run.GetStatus() != millv1.RunStatus_RUN_STATUS_SELECTING {
+	if s.run.GetWorkflowId() != "" {
 		ref = s.run.GetBranch()
 	}
 	ws, err := r.options.Workspaces(ctx, workspace.Spec{

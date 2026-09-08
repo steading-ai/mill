@@ -80,6 +80,15 @@ service StoreService {
   // completing patch: a run marked done before that would strand a node
   // nothing can claim.
   rpc Done(DoneRequest) returns (DoneResponse);
+  // Fail ends a run a human refused: the gate on its way out was denied, or
+  // the node was dropped underneath it. The node's result already says why;
+  // this is the ledger catching up with it.
+  rpc Fail(FailRequest) returns (FailResponse);
+  // Resume clears the gate a run stopped on once it has been answered, so
+  // the run is running again and the next gate step files its own. A run
+  // parked by the circuit breaker needs it: its current step is not a gate
+  // step, so nothing else would ever clear the park gate.
+  rpc Resume(ResumeRequest) returns (ResumeResponse);
   // Abandon marks a run abandoned so a new generation can be created. The
   // restart path, and the only caller of it is a human.
   rpc Abandon(AbandonRequest) returns (AbandonResponse);
@@ -365,6 +374,39 @@ message DoneRequest {
 // DoneResponse carries the finished run.
 message DoneResponse {
   // The run, now done.
+  Run run = 1;
+}
+
+// FailRequest ends a run a gate denied.
+message FailRequest {
+  // The lease the caller holds, compared against the run's current lease
+  // inside the writing transaction.
+  string lease_id = 1;
+  // The run to fail.
+  string run_id = 2;
+  // Why, for the event log. The node's own result carries the gate's
+  // deny_result, which is what a human reads.
+  string reason = 3;
+}
+
+// FailResponse carries the failed run.
+message FailResponse {
+  // The run, now failed.
+  Run run = 1;
+}
+
+// ResumeRequest clears the gate an answered run stopped on.
+message ResumeRequest {
+  // The lease the caller holds, compared against the run's current lease
+  // inside the writing transaction.
+  string lease_id = 1;
+  // The run whose gate has been answered.
+  string run_id = 2;
+}
+
+// ResumeResponse carries the run with no gate on it.
+message ResumeResponse {
+  // The run, running, with gate_node_id cleared.
   Run run = 1;
 }
 

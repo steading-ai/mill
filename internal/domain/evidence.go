@@ -130,6 +130,13 @@ func validateValue(evidence *millv1.Evidence) error {
 // name. A step definition names one evidence kind (docs/domain-model.md
 // §Evidence), so evidence of another kind closes nothing whatever it proves.
 // A run that is still selecting has no definition to check against.
+//
+// A gate step has one more kind it may close on, whatever it declares:
+// `gate` itself. "A gate step produces no evidence of its own; it closes
+// when the gate node completes, and the gate's result is the evidence"
+// (docs/domain-model.md §Step) — so a gate a human answered closes the step
+// on the answer, while the same step auto-approved closes on the fact its
+// definition names, which is what the approval authorized.
 func checkDeclaredKind(workflow *millv1.Workflow, stepName string, evidence *millv1.Evidence) error {
 	for _, step := range workflow.GetSteps() {
 		if step.GetName() != stepName {
@@ -137,6 +144,10 @@ func checkDeclaredKind(workflow *millv1.Workflow, stepName string, evidence *mil
 		}
 		declared := step.GetEvidence()
 		if declared == millv1.EvidenceKind_EVIDENCE_KIND_UNSPECIFIED || declared == evidence.GetKind() {
+			return nil
+		}
+		if step.GetKind() == millv1.StepKind_STEP_KIND_GATE &&
+			evidence.GetKind() == millv1.EvidenceKind_EVIDENCE_KIND_GATE {
 			return nil
 		}
 		return &EvidenceError{Kind: evidence.GetKind(), Reason: fmt.Sprintf(

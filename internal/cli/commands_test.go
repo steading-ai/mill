@@ -41,8 +41,16 @@ var _ = Describe("The command tree", Label("unit"), func() {
 			Expect(stdout.String()).To(ContainSubstring(name))
 		},
 		Entry("work", "work"),
-		Entry("restart", "restart"),
 	)
+
+	It("restart is wired into the tree and takes the node it restarts", func() {
+		Expect(run("restart", "--help")).To(BeZero(), stderr.String())
+		Expect(stdout.String()).To(ContainSubstring("--project"))
+		Expect(stdout.String()).To(ContainSubstring("generation"))
+		// Restarting is a deliberate act on one named node: without one
+		// there is nothing to abandon.
+		Expect(run("restart")).NotTo(BeZero())
+	})
 
 	It("run is wired into the tree and takes the node it drives", func() {
 		Expect(run("run", "--help")).To(BeZero(), stderr.String())

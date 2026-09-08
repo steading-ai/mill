@@ -1,8 +1,11 @@
 package run_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -12,10 +15,13 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/durationpb"
 
 	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
 	"github.com/ivy/mill/gen/dagger/v1/daggerv1connect"
@@ -262,6 +268,8 @@ type fixtureForge struct {
 	merged   bool
 	refuse   error
 	checksAt forge.Status
+	comments []string
+	deleted  []string
 }
 
 func (f *fixtureForge) Push(_ context.Context, request forge.PushRequest) (string, error) {
@@ -301,6 +309,21 @@ func (f *fixtureForge) Merge(_ context.Context, pr forge.PullRequest) (forge.Pul
 	f.pr.State = "merged"
 	f.pr.MergeCommit = strings.Repeat("b", 40)
 	return f.pr, nil
+}
+
+func (f *fixtureForge) ClosePR(_ context.Context, pr forge.PullRequest, comment string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pr.State = "closed"
+	f.comments = append(f.comments, comment)
+	return nil
+}
+
+func (f *fixtureForge) DeleteBranch(_ context.Context, branch string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleted = append(f.deleted, branch)
+	return nil
 }
 
 func (f *fixtureForge) MergeCommit(_ context.Context, pr forge.PullRequest) (string, error) {
@@ -530,4 +553,407 @@ func (f *fencing) CloseStepRun(ctx context.Context, req *connect.Request[millv1.
 	f.calls.Add(1)
 	return nil, connect.NewError(connect.CodeFailedPrecondition,
 		errors.New("run: presented lease is not the run's current lease: write is fenced"))
+}
+
+// variant is the quick-fix definition under a new name with the changes a
+// spec needs: a gate policy that does not hold, a review step that always
+// fails. Pushing a mutated definition rather than writing a fixture
+// workflow keeps the specs against the real steps, capabilities and skills
+// the repository ships.
+func (f *fixture) variant(ctx context.Context, name string, mutate func(*millv1.Workflow)) string {
+	GinkgoHelper()
+	definition := proto.Clone(f.workflow).(*millv1.Workflow)
+	definition.Id = ""
+	definition.Name = name
+	mutate(definition)
+	version, err := workflow.Version(definition)
+	Expect(err).NotTo(HaveOccurred())
+	definition.Version = version
+	stored, err := f.store.PutWorkflow(ctx, connect.NewRequest(&millv1.PutWorkflowRequest{Workflow: definition}))
+	Expect(err).NotTo(HaveOccurred())
+	Expect(stored.Msg.GetWorkflow().GetName()).To(Equal(name))
+	return name
+}
+
+// stepOf finds a step in a definition so a spec can change it in place.
+func stepOf(definition *millv1.Workflow, name string) *millv1.Step {
+	GinkgoHelper()
+	for _, step := range definition.GetSteps() {
+		if step.GetName() == name {
+			return step
+		}
+	}
+	Fail("the workflow has no step " + name)
+	return nil
+}
+
+// insertAfter puts a step into a definition immediately after a named one.
+func insertAfter(definition *millv1.Workflow, after string, step *millv1.Step) {
+	GinkgoHelper()
+	steps := make([]*millv1.Step, 0, len(definition.GetSteps())+1)
+	for _, existing := range definition.GetSteps() {
+		steps = append(steps, existing)
+		if existing.GetName() == after {
+			steps = append(steps, step)
+		}
+	}
+	Expect(steps).To(HaveLen(len(definition.GetSteps()) + 1))
+	definition.Steps = steps
+}
+
+// reviewStep is a skill step that reviews what implement did and sends the
+// work back when it does not like it. quick-fix has none — a quick fix that
+// needs a review is the wrong tier — so the specs about revise and the
+// circuit breaker add one.
+func reviewStep(skill *millv1.SkillRef) *millv1.Step {
+	return &millv1.Step{
+		Name:         "review",
+		Kind:         millv1.StepKind_STEP_KIND_SKILL,
+		Session:      "review",
+		Skill:        skill,
+		Evidence:     millv1.EvidenceKind_EVIDENCE_KIND_EXIT,
+		Capabilities: []millv1.Capability{millv1.Capability_CAPABILITY_READ},
+		OnFailure: &millv1.OnFailure{
+			Kind:         millv1.OnFailureKind_ON_FAILURE_KIND_REVISE,
+			ReviseTarget: "implement",
+		},
+		Retries: 3,
+		Timeout: durationpb.New(time.Minute),
+	}
+}
+
+// failed is a session that ran, said what it found, and ended badly. Its
+// final message is what the mill hands the revise target as feedback.
+func failed(final string) fake.Script {
+	return fake.Script{Terminal: &harness.Terminal{
+		FinalMessage: final,
+		Exit:         harness.ProcessExit{Status: 1},
+		Usage:        usage(1),
+	}}
+}
+
+// ok is a session that ran and finished.
+func ok(final string) fake.Script {
+	return fake.Script{Terminal: fake.Terminal(final, nil, usage(1))}
+}
+
+// gatesOn is every user-assigned child of the node: the gates, and nothing
+// else, because nothing else in these specs is assigned to a person.
+func (f *fixture) gatesOn(ctx context.Context) []*daggerv1.Node {
+	GinkgoHelper()
+	return f.gatesOnNode(ctx, f.nodeRef)
+}
+
+// theGate is the node's one gate, and fails the spec when there is not
+// exactly one.
+func (f *fixture) theGate(ctx context.Context) *daggerv1.Node {
+	GinkgoHelper()
+	gates := f.gatesOn(ctx)
+	Expect(gates).To(HaveLen(1), "exactly one gate is filed")
+	return gates[0]
+}
+
+// comments are what the node carries, oldest first.
+func (f *fixture) comments(ctx context.Context) []string {
+	GinkgoHelper()
+	res, err := f.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{
+		Project: project, Node: f.nodeRef, View: daggerv1.View_VIEW_FULL,
+	}))
+	Expect(err).NotTo(HaveOccurred())
+	bodies := make([]string, 0, len(res.Msg.GetComments()))
+	for _, comment := range res.Msg.GetComments() {
+		bodies = append(bodies, comment.GetBody())
+	}
+	return bodies
+}
+
+// approveGate is a person answering a gate out of band, by completing it —
+// the only answer that satisfies the edge and lets the node be claimed
+// again. It writes as a human does: no lease, and no mill request id.
+//
+// A denial is the other half of the same story and is not here, because a
+// person who denies drops the gate, and dagger never lets the node it blocks
+// become ready again. The run that records a denial is therefore the one
+// still holding the lease, which is single-run mode; see the specs that put
+// an [answerer] at the terminal.
+func (f *fixture) approveGate(ctx context.Context, ref string) {
+	GinkgoHelper()
+	_, err := f.graph.ApplyPatch(ctx, connect.NewRequest(&daggerv1.ApplyPatchRequest{
+		RequestId: "spec-answer-" + ref, Project: project,
+		Ops: []*daggerv1.PatchOp{{Op: &daggerv1.PatchOp_CompleteNode{CompleteNode: &daggerv1.CompleteNodeOp{
+			Node: ref, Result: &daggerv1.Result{Body: "the spec says yes"},
+		}}}},
+	}))
+	Expect(err).NotTo(HaveOccurred())
+}
+
+// stepRuns is every attempt at a named step, oldest first.
+func stepRuns(detail *millv1.InspectResponse, name string) []*millv1.StepRun {
+	var runs []*millv1.StepRun
+	for _, d := range detail.GetSteps() {
+		if d.GetStepRun().GetStepName() == name {
+			runs = append(runs, d.GetStepRun())
+		}
+	}
+	return runs
+}
+
+// sessionsOf is the session id each attempt at a step ran in.
+func sessionsOf(detail *millv1.InspectResponse, name string) []string {
+	var ids []string
+	for _, sr := range stepRuns(detail, name) {
+		ids = append(ids, sr.GetSessionId())
+	}
+	return ids
+}
+
+// failingStore refuses one named write, which is how a spec stages a
+// process that died between two writes of an ordered sequence.
+type failingStore struct {
+	millv1connect.StoreServiceClient
+	calls atomic.Int64
+}
+
+func (f *failingStore) MarkWaiting(context.Context, *connect.Request[millv1.MarkWaitingRequest]) (*connect.Response[millv1.MarkWaitingResponse], error) {
+	f.calls.Add(1)
+	return nil, errors.New("the process died before the store write")
+}
+
+// releases records every lease release the run made, with its reason, by
+// reading the requests on their way to dagger. The reason is part of the
+// contract — a gate, a budget stop and a preemption are three different
+// things to whoever reads dagger's leases afterwards — and nothing dagger
+// returns afterwards says which one was sent.
+type releases struct {
+	socket string
+	mu     sync.Mutex
+	seen   []daggerv1.ReleaseReason
+}
+
+func (r *releases) RoundTrip(req *http.Request) (*http.Response, error) {
+	if strings.HasSuffix(req.URL.Path, "/Release") && req.Body != nil {
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			return nil, err
+		}
+		_ = req.Body.Close()
+		var release daggerv1.ReleaseRequest
+		if err := proto.Unmarshal(body, &release); err == nil {
+			r.mu.Lock()
+			r.seen = append(r.seen, release.GetReason())
+			r.mu.Unlock()
+		}
+		req.Body = io.NopCloser(bytes.NewReader(body))
+		req.ContentLength = int64(len(body))
+	}
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", r.socket)
+		},
+	}
+	return transport.RoundTrip(req)
+}
+
+// reasons is what has been released so far.
+func (r *releases) reasons() []daggerv1.ReleaseReason {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]daggerv1.ReleaseReason{}, r.seen...)
+}
+
+// watching builds a dagger client whose releases this spec can read.
+func (f *fixture) watching() (*dagger.Client, *releases) {
+	watcher := &releases{socket: f.dagger.Socket}
+	return dagger.New(&http.Client{Transport: watcher}, f.dagger.BaseURL(), project,
+		dagger.WithAgentRef(f.worker), dagger.WithSessionRef("spec")), watcher
+}
+
+// reviewer is a harness whose review sessions always find something and
+// whose every other session finishes cleanly.
+//
+// The scripted harness replays a fixed list, and a revise loop's turns
+// interleave by a rule the spec would have to predict; routing on the
+// session's model instead makes the spec say what it means — "the review
+// fails every time" — and leaves the ordering to the loop under test, which
+// is the thing being specified.
+type reviewer struct {
+	// Model is the model the review step declares, which is how a turn in
+	// that step is told from the rest.
+	model string
+
+	mu       sync.Mutex
+	rounds   int
+	sessions []string
+	verbs    []string
+}
+
+// Start begins a turn.
+func (r *reviewer) Start(_ context.Context, session harness.Session, _ harness.Prompt, _ []harness.Attachment, _ harness.Policy) (*harness.Turn, error) {
+	return r.play("start", session), nil
+}
+
+// Resume continues one.
+func (r *reviewer) Resume(_ context.Context, session harness.Session, _ harness.Prompt, _ []harness.Attachment, _ harness.Policy) (*harness.Turn, error) {
+	return r.play("resume", session), nil
+}
+
+// Cancel ends a turn that is not running, which is not an error.
+func (r *reviewer) Cancel(context.Context, harness.Session) error { return nil }
+
+func (r *reviewer) play(verb string, session harness.Session) *harness.Turn {
+	r.mu.Lock()
+	r.sessions = append(r.sessions, session.ID)
+	r.verbs = append(r.verbs, verb)
+	reviewing := session.Model == r.model
+	if reviewing {
+		r.rounds++
+	}
+	round := r.rounds
+	r.mu.Unlock()
+
+	turn := harness.NewTurn()
+	go func() {
+		if reviewing {
+			turn.Finish(&harness.Terminal{
+				FinalMessage: fmt.Sprintf("round %d: the change still does the wrong thing", round),
+				Exit:         harness.ProcessExit{Status: 1},
+				Usage:        usage(1),
+			}, nil)
+			return
+		}
+		turn.Finish(fake.Terminal("done", nil, usage(1)), nil)
+	}()
+	return turn
+}
+
+var _ harness.Harness = (*reviewer)(nil)
+
+// withHarness runs the loop against an adapter of the spec's own, in place
+// of the scripted one.
+func withHarness(adapter harness.Harness) func(*run.Options) {
+	return func(o *run.Options) {
+		registry := harness.NewRegistry()
+		Expect(registry.Register(run.DefaultHarness, adapter)).To(Succeed())
+		o.Harnesses = registry
+	}
+}
+
+// reviewedFix is quick-fix with a review step after the check, which is what
+// the revise and circuit-breaker specs need: a step that fails, sends the
+// work back to implement, and eventually runs out of attempts.
+func (f *fixture) reviewedFix(ctx context.Context, model string) string {
+	GinkgoHelper()
+	return f.variant(ctx, "reviewed-fix", func(definition *millv1.Workflow) {
+		review := reviewStep(stepOf(definition, "implement").GetSkill())
+		review.Harness = map[string]*millv1.HarnessSettings{run.DefaultHarness: {Model: model}}
+		insertAfter(definition, "clean-tree", review)
+	})
+}
+
+// gatesOnNode is every user-assigned child of a named node.
+func (f *fixture) gatesOnNode(ctx context.Context, ref string) []*daggerv1.Node {
+	GinkgoHelper()
+	res, err := f.graph.ListNodes(ctx, connect.NewRequest(&daggerv1.ListNodesRequest{
+		Project:      project,
+		Parent:       ref,
+		AssigneeKind: daggerv1.AssigneeKind_ASSIGNEE_KIND_USER,
+		View:         daggerv1.View_VIEW_FULL,
+	}))
+	Expect(err).NotTo(HaveOccurred())
+	return res.Msg.GetNodes()
+}
+
+// blockedBy is the id of every node with a blocks edge into the run's node.
+func (f *fixture) blockedBy(ctx context.Context) []string {
+	GinkgoHelper()
+	res, err := f.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{
+		Project: project, Node: f.nodeRef, View: daggerv1.View_VIEW_FULL,
+	}))
+	Expect(err).NotTo(HaveOccurred())
+	var blockers []string
+	for _, edge := range res.Msg.GetEdges() {
+		if edge.GetKind() == daggerv1.EdgeKind_EDGE_KIND_BLOCKS && edge.GetTo() == res.Msg.GetNode().GetId() {
+			blockers = append(blockers, edge.GetFrom())
+		}
+	}
+	return blockers
+}
+
+// evidenceOf is the evidence that closed a step's latest attempt.
+func evidenceOf(detail *millv1.InspectResponse, name string) *millv1.Evidence {
+	var latest *millv1.Evidence
+	for _, d := range detail.GetSteps() {
+		if d.GetStepRun().GetStepName() == name && d.GetEvidence() != nil {
+			latest = d.GetEvidence()
+		}
+	}
+	return latest
+}
+
+// answerer is the person at the terminal, scripted: it says the same thing
+// to every gate and keeps what it was asked.
+type answerer struct {
+	approve bool
+
+	mu   sync.Mutex
+	asks []run.Ask
+}
+
+// Answer records the ask and gives the scripted answer.
+func (a *answerer) Answer(_ context.Context, ask run.Ask) (bool, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.asks = append(a.asks, ask)
+	return a.approve, nil
+}
+
+// answered is every gate this person was shown.
+func (a *answerer) answered() []run.Ask {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]run.Ask{}, a.asks...)
+}
+
+var _ run.Answerer = (*answerer)(nil)
+
+// withAnswers puts a person at the run's terminal, which is what `mill run`
+// does and what `mill work` never does.
+func withAnswers(a *answerer) func(*run.Options) {
+	return func(o *run.Options) { o.Answers = a }
+}
+
+// after is the step whose attempt started next after the first attempt at a
+// named step ended: what the ledger says the current step became.
+func after(detail *millv1.InspectResponse, name string) string {
+	for i, d := range detail.GetSteps() {
+		if d.GetStepRun().GetStepName() != name {
+			continue
+		}
+		if i+1 < len(detail.GetSteps()) {
+			return detail.GetSteps()[i+1].GetStepRun().GetStepName()
+		}
+	}
+	return ""
+}
+
+// inspectRun reads one run's every attempt by its id, which is how a spec
+// looks at a generation the node no longer points at.
+func (f *fixture) inspectRun(ctx context.Context, runID string) *millv1.InspectResponse {
+	GinkgoHelper()
+	res, err := f.store.Inspect(ctx, connect.NewRequest(&millv1.InspectRequest{Id: runID}))
+	Expect(err).NotTo(HaveOccurred())
+	return res.Msg
+}
+
+// branchesDeleted and closingComments are what a restart did to the forge.
+func (f *fixtureForge) branchesDeleted() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string{}, f.deleted...)
+}
+
+func (f *fixtureForge) closingComments() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string{}, f.comments...)
 }

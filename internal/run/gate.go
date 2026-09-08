@@ -2,6 +2,7 @@ package run
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"text/template"
@@ -12,35 +13,40 @@ import (
 	"github.com/ivy/mill/internal/evidence"
 )
 
-// The gate branch of the loop. What is here is the shape docs/ledger.md
-// §Resume and docs/architecture.md §"Gate steps" fix, with one deliberate
-// hole: the `auto` predicate is a language this node does not implement.
-// Only the literal `true` — quick-fix's merge gate, and the only predicate
-// any workflow in the tree carries — is evaluated; anything else is filed
-// for a human. The `gates` node fills the language in, and until it does a
-// gate is answered by a person, which is the safe direction to be wrong in.
+// The gate branch of the loop: docs/architecture.md §"Gate steps" and
+// docs/domain-model.md §Gate, in that order.
+//
+// A gate step evaluates its `auto` predicate over the evidence prior steps
+// closed on and the run's tier ([evaluate]). If it holds, the ledger records
+// an auto-approval and nothing reaches dagger at all. If it does not, the
+// gate is filed in the three writes whose order is the whole of Invariant
+// 12, and the run stops until somebody answers — except in single-run mode,
+// where somebody is watching and [Runner.askNow] asks them.
 
 // runGate evaluates a gate step's auto predicate and either records an
 // auto-approval or files the gate.
-func (r *Runner) runGate(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun) (result, error) {
-	if autoApproves(step.GetGate().GetAuto()) {
-		r.printf("  gate %s auto-approved\n", step.GetName())
-		out := result{autoApproved: true}
-		claim, err := r.approve(ctx, s, step)
-		if err != nil {
-			return out, err
-		}
-		out.claim = claim
-		return out, nil
+func (r *Runner) runGate(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, detail *millv1.InspectResponse) (result, error) {
+	predicate := step.GetGate().GetAuto()
+	approved, err := evaluate(predicate, newPredicateEnv(s.run, detail))
+	if err != nil {
+		// A predicate that does not parse is a workflow bug, and the safe
+		// direction to be wrong in is a human: the gate is filed and the
+		// reason is on the record.
+		r.options.Log.Warn("gate predicate", "step", step.GetName(), "auto", predicate, "error", err)
+		r.printf("  gate %s: %v; asking a human\n", step.GetName(), err)
+		approved = false
 	}
-	return result{}, r.fileGate(ctx, s, step, sr)
-}
-
-// autoApproves reports whether a gate's predicate holds without a human.
-// docs/domain-model.md §Gate defines a predicate over prior evidence and the
-// run's tier; until that language exists, `true` is the whole of it.
-func autoApproves(predicate string) bool {
-	return strings.TrimSpace(predicate) == "true"
+	if !approved {
+		return result{}, r.fileGate(ctx, s, step, sr)
+	}
+	r.printf("  gate %s auto-approved by %s\n", step.GetName(), predicate)
+	out := result{autoApproved: true}
+	claim, err := r.approve(ctx, s, step)
+	if err != nil {
+		return out, err
+	}
+	out.claim = claim
+	return out, nil
 }
 
 // approve is what an approved gate authorizes. A gate is a decision, and the
@@ -76,19 +82,65 @@ func (r *Runner) approve(ctx context.Context, s *state, step *millv1.Step) (stri
 
 // fileGate is the three writes, in the one order that survives a crash at
 // any point: the patch that creates the gate and its blocking edge, the
-// store's record of the gate id, then the release. A crash before the store
-// write leaves a lease that expires harmlessly; a crash after it leaves a
-// gate the store already knows about and will not file twice (Invariant 12).
+// store's record of the gate id, then the release. A crash between the last
+// two leaves a gate the store already knows about and will not file twice
+// (Invariant 12); a crash between the first two is what [findFiledGate]
+// exists for.
 func (r *Runner) fileGate(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun) error {
-	ask, err := r.renderAsk(s, step)
+	err := r.file(ctx, s, step, sr)
+	switch {
+	case err == nil:
+		return errReleased
+	case errors.Is(err, errAnswered), errors.Is(err, errReleased):
+		return err
+	default:
+		// Filing is the mill's own bookkeeping, not the step's work: a
+		// patch dagger refused or a store write that failed is not a gate
+		// a human declined, and parking the run on it would ask somebody to
+		// answer a question that was never put to them.
+		return fmt.Errorf("%w: filing the %s gate: %w", errAborted, step.GetName(), err)
+	}
+}
+
+// errAborted ends a run without parking it. The circuit breaker is for work
+// that failed; this is for the mill failing to keep its own record, which a
+// human answers by looking at the worker, not at the node.
+var errAborted = errors.New("run: aborted")
+
+// file is fileGate's three writes, so that everything they can go wrong with
+// is one error to classify.
+func (r *Runner) file(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun) error {
+	gate, err := r.findFiledGate(ctx, s, step)
 	if err != nil {
 		return err
 	}
-	gate, err := r.options.Dagger.CreateGate(ctx,
-		dagger.RequestID(s.run.GetId(), step.GetName(), sr.GetAttempt()), s.lease,
-		dagger.Gate{Title: ask.title, Body: ask.body, Blocks: s.node.GetReference()})
-	if err != nil {
-		return err
+	if gate == nil {
+		ask, err := r.renderAsk(s, step)
+		if err != nil {
+			return err
+		}
+		gate, err = r.options.Dagger.CreateGate(ctx,
+			dagger.RequestID(s.run.GetId(), step.GetName(), sr.GetAttempt()), s.lease,
+			dagger.Gate{
+				Title:  ask.title,
+				Body:   ask.body,
+				Blocks: s.node.GetReference(),
+				Labels: dagger.GateLabels(s.run.GetId(), step.GetName()),
+			})
+		if err != nil {
+			return err
+		}
+	}
+	// The attempt stays open across the wait; its credential does not. The
+	// token is revoked before the store forgets which lease fences this
+	// run, because a revocation is a store write like any other.
+	if s.token != "" {
+		if _, err := call(ctx, r.options.Store.RevokeStepToken, &millv1.RevokeStepTokenRequest{
+			LeaseId:     s.lease,
+			StepTokenId: s.token,
+		}); err != nil {
+			return err
+		}
 	}
 	if _, err := call(ctx, r.options.Store.MarkWaiting, &millv1.MarkWaitingRequest{
 		LeaseId:    s.lease,
@@ -98,18 +150,136 @@ func (r *Runner) fileGate(ctx context.Context, s *state, step *millv1.Step, sr *
 	}); err != nil {
 		return err
 	}
+	// Single-run mode: there is a person watching, so the ask goes to them
+	// rather than to nobody. The lease is not released and this attempt is
+	// not closed; the next pass of the loop is the ordinary resume through
+	// a gate, reading the answer they just wrote.
+	if r.options.Answers != nil {
+		return r.askNow(ctx, s, gate)
+	}
 	if err := r.options.Dagger.Release(ctx, s.lease, daggerv1.ReleaseReason_RELEASE_REASON_GATE, "gate "+gate.GetReference()); err != nil {
 		return err
 	}
 	r.printf("  gate %s filed as %s; waiting on a human\n", step.GetName(), gate.GetReference())
-	return errReleased
+	return nil
+}
+
+// askNow puts a gate to the person running `mill run` and writes their
+// answer to dagger as theirs.
+//
+// The gate is filed and recorded first, in the same writes and the same
+// order a worker uses, so a process killed while the question is on screen
+// leaves exactly what a worker's crash leaves. What single-run mode skips is
+// the release: the lease is still held, so the run reads the answer instead
+// of waiting to be claimed again.
+//
+// That matters beyond convenience. Dagger's rule is that a dropped gate
+// never satisfies the edge out of it, so a node whose gate was denied is
+// never ready again — a run that had released its lease could not be claimed
+// back to record the denial (dagger's docs/domain-model.md §Gates).
+func (r *Runner) askNow(ctx context.Context, s *state, gate *daggerv1.Node) error {
+	approved, err := r.options.Answers.Answer(ctx, Ask{
+		NodeRef: s.node.GetReference(),
+		GateRef: gate.GetReference(),
+		Title:   gate.GetTitle(),
+		Body:    gate.GetBody(),
+	})
+	if err != nil {
+		return err
+	}
+	answer := "Denied at the terminal, under `mill run`, by the person the gate was put to."
+	if approved {
+		answer = "Approved at the terminal, under `mill run`, by the person the gate was put to."
+	}
+	// As the person, never as the mill: no lease, and a request id that
+	// does not begin with mill's prefix (docs/domain-model.md §Principal).
+	if err := r.options.Dagger.AnswerGate(ctx,
+		dagger.UserRequestIDPrefix+gate.GetId(), gate.GetReference(), approved,
+		&daggerv1.Result{Body: answer}); err != nil {
+		return err
+	}
+	// MarkWaiting took the lease off the run, because for a worker that is
+	// where the run stops. This one has not stopped: the same lease, which
+	// dagger still holds, goes back on so that the writes which follow are
+	// fenced by it again.
+	leased, err := call(ctx, r.options.Store.SetLease, &millv1.SetLeaseRequest{
+		LeaseId:   s.lease,
+		RunId:     s.run.GetId(),
+		WorkerRef: r.options.WorkerRef,
+	})
+	if err != nil {
+		return err
+	}
+	s.run = leased.GetRun()
+	r.printf("  gate %s answered at the terminal: %s\n", gate.GetReference(), decision(approved))
+	return errAnswered
+}
+
+// errAnswered ends a gate step's attempt without closing or failing it: the
+// gate has an answer, and the loop's next pass reads it on the same branch a
+// worker takes when it is claimed again.
+var errAnswered = errors.New("run: the gate was answered")
+
+// findFiledGate is the answer to the one window the write order cannot
+// close. `ApplyPatch` comes before the store's record of the gate id, so a
+// process that dies between them leaves a gate dagger has and the ledger
+// does not; a rerun that trusted the ledger alone would file a second one
+// for the same step. Dagger's graph is the source of truth for that single
+// check, and mill's own labels — the run and the step — say which gate is
+// this step's rather than some other child a human filed.
+//
+// A gate found this way is recorded and waited on exactly as one just filed
+// is, whether or not it has already been answered. Making the answered case
+// its own path would buy one claim cycle in a crash recovery and cost a
+// second way for a gate to close; the run is marked waiting, the lease goes
+// back, and the ordinary resume branch reads the answer on the next claim.
+//
+// Nothing else in the loop reads dagger to decide what to write. This does,
+// and the reason is written into docs/ledger.md §Resume beside it.
+func (r *Runner) findFiledGate(ctx context.Context, s *state, step *millv1.Step) (*daggerv1.Node, error) {
+	gates, err := r.options.Dagger.Gates(ctx, s.node.GetReference(),
+		dagger.GateLabels(s.run.GetId(), step.GetName())...)
+	if err != nil {
+		return nil, err
+	}
+	if len(gates) == 0 {
+		return nil, nil
+	}
+	// The newest, in the vanishing case of more than one: a gate filed by a
+	// generation that restart has already retired shares no run id, so the
+	// labels have narrowed this to this run's own attempts at this step.
+	filed := gates[len(gates)-1]
+	r.printf("  gate %s was already filed as %s; not filing another\n", step.GetName(), filed.GetReference())
+	return filed, nil
+}
+
+// gateByID is the gate the ledger recorded, read back from dagger.
+//
+// It is a search rather than a lookup because dagger resolves references and
+// not ids — `mill#7` is a reference, the ULID beside it is not something the
+// API can be asked for — and what the ledger holds, correctly, is the id.
+// Mill's own labels narrow the node's children to this run's gates, and the
+// id picks the one out.
+func (r *Runner) gateByID(ctx context.Context, s *state, id string) (*daggerv1.Node, error) {
+	gates, err := r.options.Dagger.Gates(ctx, s.node.GetReference(),
+		dagger.GateLabel, dagger.RunLabel(s.run.GetId()))
+	if err != nil {
+		return nil, err
+	}
+	for _, gate := range gates {
+		if gate.GetId() == id {
+			return gate, nil
+		}
+	}
+	return nil, fmt.Errorf("run %s: gate %s is not a gate on %s", s.run.GetId(), id, s.node.GetReference())
 }
 
 // resumeGate is the branch at the top of the loop: a run whose gate is
-// already filed reads it rather than filing another. Done closes the step
-// with `gate` evidence; a denial fails the run with the gate's deny_result.
+// already filed reads it rather than filing another. A gate that is done
+// closes the step with `gate` evidence; a gate a human disposed of instead
+// of completing is a denial, and fails the run with the step's deny_result.
 func (r *Runner) resumeGate(ctx context.Context, s *state, step *millv1.Step, detail *millv1.InspectResponse) error {
-	gate, err := r.options.Dagger.Node(ctx, s.run.GetGateNodeId())
+	gate, err := r.gateByID(ctx, s, s.run.GetGateNodeId())
 	if err != nil {
 		return err
 	}
@@ -117,26 +287,44 @@ func (r *Runner) resumeGate(ctx context.Context, s *state, step *millv1.Step, de
 	if sr == nil {
 		return fmt.Errorf("run %s: gate %s is filed but has no attempt", s.run.GetId(), step.GetName())
 	}
-	if gate.GetStatus() != daggerv1.Status_STATUS_DONE {
+	switch gate.GetStatus() {
+	case daggerv1.Status_STATUS_DONE:
+		verified, err := evidence.Verify(ctx, millv1.EvidenceKind_EVIDENCE_KIND_GATE, evidence.Step{
+			Name:       step.GetName(),
+			Definition: step,
+			Workflow:   s.workflow,
+			Claim:      gate.GetId(),
+			Gates:      gates{runner: r, state: s},
+			Now:        r.options.Now,
+		})
+		if err != nil {
+			return err
+		}
+		// The attempt that filed the gate is the attempt that closes on it:
+		// the step has one step run, not two, because waiting for a human
+		// is not a second try at anything.
+		return r.closeStep(ctx, s, sr, step, verified, result{claim: gate.GetId()})
+
+	case daggerv1.Status_STATUS_OPEN:
+		// Nobody has answered yet. A node blocked by an open gate is not in
+		// the ready set, so this is a `mill run` aimed at it by hand; give
+		// the lease back and leave the run exactly as it was.
+		if err := r.options.Dagger.Release(ctx, s.lease,
+			daggerv1.ReleaseReason_RELEASE_REASON_GATE, "gate "+gate.GetReference()); err != nil {
+			return err
+		}
+		r.printf("  gate %s is still open; %s waits\n", gate.GetReference(), s.node.GetReference())
+		return errReleased
+
+	default:
 		return r.denyGate(ctx, s, step, gate)
 	}
-	verified, err := evidence.Verify(ctx, millv1.EvidenceKind_EVIDENCE_KIND_GATE, evidence.Step{
-		Name:       step.GetName(),
-		Definition: step,
-		Workflow:   s.workflow,
-		Claim:      gate.GetId(),
-		Gates:      gates{client: r.options.Dagger},
-		Now:        r.options.Now,
-	})
-	if err != nil {
-		return err
-	}
-	return r.closeStep(ctx, s, sr, step, verified, result{claim: gate.GetId()})
 }
 
-// denyGate ends a run whose gate a human did not approve. The node is
-// completed with the gate's deny_result, so whoever asked for the work is
-// told, and the run is failed.
+// denyGate ends a run whose gate a human disposed of rather than completing.
+// The node is completed with the step's deny_result, so whoever asked for
+// the work is told why it stopped, and only then is the run failed: dagger
+// first, store second, as everywhere else.
 func (r *Runner) denyGate(ctx context.Context, s *state, step *millv1.Step, gate *daggerv1.Node) error {
 	body := step.GetGate().GetDenyResult()
 	if body == "" {
@@ -147,11 +335,10 @@ func (r *Runner) denyGate(ctx context.Context, s *state, step *millv1.Step, gate
 		s.node.GetReference(), &daggerv1.Result{Body: body}); err != nil {
 		return err
 	}
-	if _, err := call(ctx, r.options.Store.Park, &millv1.ParkRequest{
-		LeaseId:    s.lease,
-		RunId:      s.run.GetId(),
-		GateNodeId: gate.GetId(),
-		Reason:     millv1.ParkedReason_PARKED_REASON_DENIED,
+	if _, err := call(ctx, r.options.Store.Fail, &millv1.FailRequest{
+		LeaseId: s.lease,
+		RunId:   s.run.GetId(),
+		Reason:  fmt.Sprintf("gate %s was denied at step %s", gate.GetReference(), step.GetName()),
 	}); err != nil {
 		return err
 	}
@@ -206,18 +393,32 @@ func render(text string, data map[string]any) (string, error) {
 	return b.String(), nil
 }
 
-// gates adapts the dagger client to the `gate` verifier's seam.
-type gates struct{ client *dagger.Client }
+// gates adapts the run's own gate lookup to the `gate` verifier's seam. The
+// verifier is handed an id and asks for that node; finding it among the
+// node's children is [Runner.gateByID]'s business and not the verifier's.
+type gates struct {
+	runner *Runner
+	state  *state
+}
 
 func (g gates) Node(ctx context.Context, id string) (evidence.GateNode, error) {
-	node, err := g.client.Node(ctx, id)
+	node, err := g.runner.gateByID(ctx, g.state, id)
 	if err != nil {
 		return evidence.GateNode{}, err
 	}
-	return evidence.GateNode{
-		ID:     node.GetId(),
-		Status: daggerStatus(node.GetStatus()),
-	}, nil
+	gate := evidence.GateNode{ID: node.GetId(), Status: daggerStatus(node.GetStatus())}
+	if gate.Status != "done" {
+		return gate, nil
+	}
+	// The gate's result is the evidence. A node message carries none, so
+	// the one node dagger is asked about twice is the one whose answer the
+	// ledger is about to record.
+	result, err := g.runner.options.Dagger.Result(ctx, node.GetReference())
+	if err != nil {
+		return evidence.GateNode{}, err
+	}
+	gate.Result = result.GetBody()
+	return gate, nil
 }
 
 // daggerStatus is a node status as the `gate` verifier reads it.
@@ -247,4 +448,12 @@ func latestStepRun(detail *millv1.InspectResponse, name string) *millv1.StepRun 
 		}
 	}
 	return latest
+}
+
+// decision renders an answer for the run's output.
+func decision(approved bool) string {
+	if approved {
+		return "approved"
+	}
+	return "denied"
 }

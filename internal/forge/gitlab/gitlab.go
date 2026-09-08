@@ -394,6 +394,50 @@ func (c *Client) MergeCommit(ctx context.Context, pr forge.PullRequest) (string,
 	return mapped.MergeCommit, nil
 }
 
+// ClosePR comments on a merge request and closes it without merging. The
+// comment goes first: a merge request that closes with no explanation is the
+// thing a person finds a week later and cannot account for.
+//
+// A merge request that is already closed or merged is left as it is. This is
+// `mill restart` tidying up after a run that went sideways, and it is asked
+// for an end state, not for a transition.
+func (c *Client) ClosePR(ctx context.Context, pr forge.PullRequest, comment string) error {
+	if pr.Number == 0 {
+		return errors.New("gitlab: closing needs a merge request number")
+	}
+	if comment != "" {
+		if err := c.call(ctx, http.MethodPost,
+			c.path("merge_requests", strconv.Itoa(pr.Number), "notes"), nil,
+			map[string]any{"body": comment}, nil); err != nil {
+			return err
+		}
+	}
+	var current mergeRequest
+	if err := c.call(ctx, http.MethodGet, c.path("merge_requests", strconv.Itoa(pr.Number)), nil, nil, &current); err != nil {
+		return err
+	}
+	if state := current.pullRequest().State; state != "open" {
+		return nil
+	}
+	return c.call(ctx, http.MethodPut, c.path("merge_requests", strconv.Itoa(pr.Number)), nil,
+		map[string]any{"state_event": "close"}, nil)
+}
+
+// DeleteBranch removes a branch from the repository. A branch GitLab does
+// not have is the state asked for, so a 404 is success.
+func (c *Client) DeleteBranch(ctx context.Context, branch string) error {
+	if branch == "" {
+		return errors.New("gitlab: deleting needs a branch")
+	}
+	err := c.call(ctx, http.MethodDelete,
+		c.path("repository", "branches", url.PathEscape(branch)), nil, nil, nil)
+	var failure *apiError
+	if errors.As(err, &failure) && failure.Status == http.StatusNotFound {
+		return nil
+	}
+	return err
+}
+
 // projectInfo is GitLab's record of the repository, fetched once.
 func (c *Client) projectInfo(ctx context.Context) (projectInfo, error) {
 	c.mu.Lock()

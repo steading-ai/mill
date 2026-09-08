@@ -66,6 +66,21 @@ var claimableStatuses = map[string]bool{
 	"done":    true,
 }
 
+// claimable admits a run a new claim may take over.
+//
+// The one addition to [claimableStatuses] is a `selecting` run holding no
+// lease, which is the run `mill restart` opens at the next generation: it is
+// created outside any claim, precisely because the restarting human holds
+// none, so there is a lease to set rather than nothing to take over. A
+// selecting run that does hold a lease is still refused — that is the run
+// its own claim created, and there is nothing to take over there.
+func claimable(state fenceState) bool {
+	if claimableStatuses[state.status] {
+		return true
+	}
+	return state.status == "selecting" && state.lease == nil
+}
+
 // Store owns the connection pool and the transactions the queries run in.
 type Store struct {
 	pool *pgxpool.Pool
@@ -253,7 +268,7 @@ func (s *Store) SetLease(ctx context.Context, runID, leaseID, workerRef string) 
 		if err != nil {
 			return err
 		}
-		if !claimableStatuses[state.status] {
+		if !claimable(state) {
 			return fmt.Errorf("run %s is %s: %w", runID, state.status, ErrNotClaimable)
 		}
 		row, err := q.SetRunLease(ctx, SetRunLeaseParams{ID: runID, LeaseID: nullable(leaseID), WorkerRef: workerRef})
@@ -330,6 +345,39 @@ func (s *Store) Park(ctx context.Context, leaseID, runID, gateNodeID string, rea
 			op:        "park",
 			before:    map[string]any{"status": state.status},
 			after:     map[string]any{"status": row.Status, "gate_node_id": gateNodeID, "reason": enumText(reason)},
+			workerRef: row.WorkerRef,
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return run, nil
+}
+
+// ClearGate takes the answered gate off a run and leaves it running, which
+// is what lets the next gate step file one of its own (Invariant 12).
+//
+// Closing a gate step already does this in the same transaction that records
+// its evidence. This is the other case: a run the circuit breaker parked,
+// whose current step is not a gate step at all, so nothing else would ever
+// clear the park gate.
+func (s *Store) ClearGate(ctx context.Context, leaseID, runID string) (*millv1.Run, error) {
+	var run *millv1.Run
+	err := s.withTx(ctx, func(ctx context.Context, tx pgx.Tx, q *Queries) error {
+		state, err := fence(ctx, tx, runID, leaseID)
+		if err != nil {
+			return err
+		}
+		row, err := q.ClearRunGate(ctx, runID)
+		if err != nil {
+			return fmt.Errorf("clear gate of run %s: %w", runID, err)
+		}
+		run = runProto(row)
+		return record(ctx, q, event{
+			runID:     runID,
+			op:        "resume",
+			before:    map[string]any{"status": state.status},
+			after:     map[string]any{"status": row.Status, "gate_node_id": nil},
 			workerRef: row.WorkerRef,
 		})
 	})
@@ -716,7 +764,7 @@ func (s *Store) AbortOpenStepRuns(ctx context.Context, leaseID, runID, reason st
 		}
 		if state.lease != nil && *state.lease == leaseID {
 			// The caller already holds the run: an ordinary fenced write.
-		} else if !claimableStatuses[state.status] {
+		} else if !claimable(state) {
 			return fmt.Errorf("run %s is %s: %w", runID, state.status, ErrNotClaimable)
 		}
 		rows, err := q.AbortOpenStepRuns(ctx, runID)

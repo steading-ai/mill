@@ -14,11 +14,15 @@ import (
 //	selecting ──▶ running ──▶ done
 //	                │  ▲
 //	                │  └──── waiting
-//	                ├──────▶ parked
+//	                │  ▲
+//	                │  └──── parked
 //	                ├──────▶ failed
 //	                └──────▶ abandoned
 //
 // done, failed and abandoned are terminal and have no outgoing edges.
+// abandoned is reachable from every live state, because a restart applies to
+// the live run whatever it is doing and a run stopped at a gate is the
+// ordinary thing to restart.
 //
 // One write is deliberately not governed by this table: SetLease, the
 // takeover a new claim performs. The proto and docs/ledger.md Invariant 9
@@ -28,7 +32,8 @@ import (
 // [Service.SetLease].
 var runTransitions = map[millv1.RunStatus]map[millv1.RunStatus]bool{
 	millv1.RunStatus_RUN_STATUS_SELECTING: {
-		millv1.RunStatus_RUN_STATUS_RUNNING: true,
+		millv1.RunStatus_RUN_STATUS_RUNNING:   true,
+		millv1.RunStatus_RUN_STATUS_ABANDONED: true,
 	},
 	millv1.RunStatus_RUN_STATUS_RUNNING: {
 		millv1.RunStatus_RUN_STATUS_DONE:      true,
@@ -38,7 +43,12 @@ var runTransitions = map[millv1.RunStatus]map[millv1.RunStatus]bool{
 		millv1.RunStatus_RUN_STATUS_ABANDONED: true,
 	},
 	millv1.RunStatus_RUN_STATUS_WAITING: {
-		millv1.RunStatus_RUN_STATUS_RUNNING: true,
+		millv1.RunStatus_RUN_STATUS_RUNNING:   true,
+		millv1.RunStatus_RUN_STATUS_ABANDONED: true,
+	},
+	millv1.RunStatus_RUN_STATUS_PARKED: {
+		millv1.RunStatus_RUN_STATUS_RUNNING:   true,
+		millv1.RunStatus_RUN_STATUS_ABANDONED: true,
 	},
 }
 
