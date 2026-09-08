@@ -235,7 +235,7 @@ def scope_epic(dg, epic_ref, label):
     children = dg.list(parent=epic_ref)
     for node in children:
         labels = set(node.get("labels", []))
-        if node["status"] != "STATUS_OPEN" or label in labels or BLOCKED_LABEL in labels:
+        if not is_(node["status"], "STATUS_", "open") or label in labels or BLOCKED_LABEL in labels:
             continue
         dg.set_labels(node, labels | {label})
         say(f"  .. labelled {dg.ref(node)} {label}")
@@ -247,17 +247,22 @@ def predecessors(dg, node, by_id):
     shown = dg.show(dg.ref(node))
     out = []
     for edge in shown.get("edges", []):
-        if edge.get("to") != node["id"] or edge.get("kind") != "EDGE_KIND_BLOCKS":
+        if edge.get("to") != node["id"] or not is_(edge.get("kind"), "EDGE_KIND_", "blocks"):
             continue
         pred = by_id.get(edge["from"])
-        if pred and pred["status"] == "STATUS_DONE":
+        if pred and is_(pred["status"], "STATUS_", "done"):
             out.append(dg.show(dg.ref(pred)))
     return sorted(out, key=lambda s: int(s["node"]["number"]))
 
 
 def short(value, prefix):
-    """PRIORITY_P2 -> p2. The wire form until the codec lands."""
+    """PRIORITY_P2 -> p2; p2 -> p2. Accepts both enum wire forms."""
     return value[len(prefix):].lower() if value and value.startswith(prefix) else value
+
+
+def is_(value, prefix, want):
+    """True when an enum field is `want` in either wire form."""
+    return short(value, prefix) == want
 
 
 def work_order_text(dg, node, by_id):
@@ -791,15 +796,15 @@ async def main():
 
     say(f"{epic_ref}: scoping by label {label}")
     children = scope_epic(dg, epic_ref, label)
-    open_children = [c for c in children if c["status"] == "STATUS_OPEN"]
+    open_children = [c for c in children if is_(c["status"], "STATUS_", "open")]
 
     if args.dry_run:
         ready = dg.ready(label)
-        done = sum(1 for c in children if c["status"] == "STATUS_DONE")
+        done = sum(1 for c in children if is_(c["status"], "STATUS_", "done"))
         print(f"\n{epic_ref}: {done} done, {len(ready)} ready of {len(children)} children\n")
         for n in ready:
             print(f"  {short(n.get('priority'), 'PRIORITY_')}  {dg.ref(n)}  {n['title']}")
-        waiting = [c for c in open_children if c.get("assignee_kind") == "ASSIGNEE_KIND_USER"]
+        waiting = [c for c in open_children if is_(c.get("assignee_kind"), "ASSIGNEE_KIND_", "user")]
         for n in waiting:
             print(f"  gate  {dg.ref(n)}  {n['title']}  (waiting on a person)")
         return 0
@@ -809,7 +814,7 @@ async def main():
         node, lease = dg.claim(label, session)
         if node is None:
             children = dg.list(parent=epic_ref)
-            still_open = [dg.ref(c) for c in children if c["status"] == "STATUS_OPEN"]
+            still_open = [dg.ref(c) for c in children if is_(c["status"], "STATUS_", "open")]
             blocked = [dg.ref(c) for c in children if BLOCKED_LABEL in c.get("labels", [])]
             titles = {dg.ref(n): n["title"] for n in children}
             if blocked:
