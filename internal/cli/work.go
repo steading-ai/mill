@@ -88,6 +88,9 @@ func bindWorkFlags(cmd *cobra.Command, opts *workOptions) {
 // socket flag is not declared here — `work` and `serve` each declare their
 // own — so it is passed in.
 func applyConfig(cmd *cobra.Command, opts *workOptions, socket *string) error {
+	if err := checkNamedConfig(cmd, opts.config); err != nil {
+		return err
+	}
 	config, err := LoadConfig(opts.config)
 	if err != nil {
 		return err

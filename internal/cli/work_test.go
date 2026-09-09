@@ -26,15 +26,20 @@ var _ = Describe("mill serve --work", Label(testsupport.DBLabel), func() {
 		databaseURL := pg.Database(ctx).Config().ConnString()
 		socket := filepath.Join(GinkgoT().TempDir(), "mill.sock")
 
+		// An empty configuration file, so the flags on the command line
+		// below are the whole of the worker's settings. It has to exist:
+		// a named file that is not there is refused rather than read as
+		// empty.
+		config := filepath.Join(GinkgoT().TempDir(), "empty.yaml")
+		Expect(os.WriteFile(config, []byte("{}\n"), 0o600)).To(Succeed())
+
 		var stdout, stderr bytes.Buffer
 		root := cli.NewRootCommand(&stdout, &stderr)
 		root.SetArgs([]string{
 			"serve", "--work",
 			"--socket", socket,
 			"--database-url", databaseURL,
-			// A configuration file that does not exist, so the flags on
-			// this line are the whole of the worker's settings.
-			"--config", filepath.Join(GinkgoT().TempDir(), "absent.yaml"),
+			"--config", config,
 			"--project", daggerProject,
 			// A label no node carries, so the worker blocks in ClaimNext
 			// for the whole spec: what is under test is the service beside

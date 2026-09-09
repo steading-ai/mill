@@ -111,3 +111,28 @@ func unset(cmd *cobra.Command, name string) bool {
 	flag := cmd.Flags().Lookup(name)
 	return flag != nil && !flag.Changed
 }
+
+// checkNamedConfig refuses a configuration file the operator named and that
+// is not there.
+//
+// The default location is a place to look rather than an instruction:
+// nothing named it, every setting in it has a default, and a mill with no
+// file at all is a working mill. A path given as --config or as $MILL_CONFIG
+// is the opposite. Reading it as an empty file starts a worker on defaults
+// nobody asked for — the projects, the socket and the credential all falling
+// back to whatever the environment happens to hold, which for a worker means
+// claiming from a project the operator never named. A typo is a mistake, not
+// a default.
+func checkNamedConfig(cmd *cobra.Command, path string) error {
+	if path == "" || (unset(cmd, "config") && os.Getenv(configEnv) == "") {
+		return nil
+	}
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("mill: configuration file %s does not exist; "+
+				"name one that does with --config or $%s, or name none and run on the defaults", path, configEnv)
+		}
+		return fmt.Errorf("mill: %s: %w", path, err)
+	}
+	return nil
+}

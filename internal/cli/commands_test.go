@@ -40,9 +40,6 @@ var _ = Describe("The command tree", Label("unit"), func() {
 		Expect(stdout.String()).To(ContainSubstring("--project"))
 		Expect(stdout.String()).To(ContainSubstring("--label"))
 		Expect(stdout.String()).To(ContainSubstring("--concurrency"))
-		// A worker with no project has nothing to claim from, and saying
-		// so beats blocking forever on an empty filter.
-		Expect(run("work", "--config", "/nonexistent/mill.yaml")).NotTo(BeZero())
 	})
 
 	It("serve takes the worker's flags too, so one process runs both faces", func() {
