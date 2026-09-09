@@ -45,7 +45,7 @@ func adrBody(name string) string {
 }
 
 var _ = Describe("The architecture decision records", Label("unit"), func() {
-	It("numbers twelve of them, 001 through 012", func() {
+	It("numbers seventeen of them, 001 through 017", func() {
 		names := adrFiles()
 
 		var numbers []string
@@ -56,7 +56,34 @@ var _ = Describe("The architecture decision records", Label("unit"), func() {
 		Expect(numbers).To(Equal([]string{
 			"001", "002", "003", "004", "005", "006",
 			"007", "008", "009", "010", "011", "012",
+			"013", "014", "015", "016", "017",
 		}))
+	})
+
+	// mill#28: O1's own decisions, recorded when the milestone forced them.
+	It("The decisions are on record", func() {
+		var records []string
+		for _, name := range adrFiles() {
+			if number := name[:3]; number >= "013" && number <= "017" {
+				records = append(records, name)
+			}
+		}
+
+		Expect(records).To(HaveLen(5), "O1 files five records, 013 through 017")
+
+		for _, name := range records {
+			body := adrBody(name)
+
+			Expect(len(strings.Fields(body))).To(BeNumerically("<", adrWordLimit), name)
+			Expect(adrCitation.FindAllString(body, -1)).NotTo(BeEmpty(),
+				"%s cites no section of a design document", name)
+
+			Expect(body).To(ContainSubstring("## Rejected Options"), name)
+			_, rejected, _ := strings.Cut(body, "## Rejected Options")
+			rejected, _, _ = strings.Cut(rejected, "## More Information")
+			Expect(adrSubheading.FindAllString(rejected, -1)).NotTo(BeEmpty(),
+				"%s lists no rejected alternative", name)
+		}
 	})
 
 	It("keeps every record under the word limit", func() {
