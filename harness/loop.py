@@ -23,6 +23,8 @@ import asyncio
 import io
 import json
 import os
+import re
+import signal
 import socket
 import subprocess
 import sys
@@ -35,6 +37,7 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    HookMatcher,
     ResultMessage,
     TaskNotificationMessage,
     TaskStartedMessage,
@@ -63,6 +66,30 @@ HARNESS_RUNTIME = ("harness/state.json", "harness/logs/", "harness/STOP", "harne
 # Leases are bounded by the server at one hour. Renew well inside that.
 HEARTBEAT_EVERY = 600
 LEASE_TTL = "1h"
+
+# A turn that ends with a background task still running keeps the session
+# open: the CLI wakes the agent when the task ends. Every HEARTBEAT seconds of
+# that wait the harness looks at the task's output file. Growing output is
+# work and earns silence. No output earns a heartbeat turn that asks the agent
+# whether it is done. HEARTBEAT_STRIKES silent heartbeats trip the breaker:
+# the task's processes are killed and the result already in hand is taken.
+# Twice a session waited on `until ! pgrep -f "ginkgo"` — a loop whose own
+# shell matches the pattern — and the only thing that ended it was the hour.
+HEARTBEAT = 180
+HEARTBEAT_STRIKES = 3
+
+# The CLI backgrounds a foreground command that runs past this, and a
+# backgrounded test run is what taught sessions to poll. Ten minutes: the
+# suite takes half a minute warm and a little over one cold.
+BASH_TIMEOUT_MS = "600000"
+
+HEARTBEAT_PROMPT = """\
+You ended your turn {minutes} minutes ago with a background task still running and \
+it has produced no output since: {tasks}. Is your work done, or is that task \
+still needed? If you are done, stop the task (TaskStop) and say so in one line. \
+If it is needed, say what it is doing and wait on it with TaskOutput, not a shell \
+loop. This is heartbeat {strike} of {strikes}; after the last one the task is killed \
+and your last summary is taken as your result."""
 
 # A node that exhausts its attempts trades the scope label for this one, so
 # the claim filter stops returning it. Put the scope label back to retry it.
@@ -409,6 +436,71 @@ def commit_and_push(ref, node, summary, args):
 # --- agents ------------------------------------------------------------------
 
 
+def task_output_path(session_id, task_id):
+    """Where the CLI writes a background task's output for this checkout."""
+    slug = str(ROOT).replace("/", "-").replace(".", "-")
+    return Path(f"/tmp/claude-{os.getuid()}") / slug / session_id / "tasks" / f"{task_id}.output"
+
+
+def output_size(path):
+    try:
+        return path.stat().st_size
+    except OSError:
+        return -1
+
+
+def descendants(pid):
+    """Every process under pid, deepest first, from /proc."""
+    out = []
+    try:
+        children = Path(f"/proc/{pid}/task/{pid}/children").read_text().split()
+    except OSError:
+        return out
+    for child in children:
+        out.extend(descendants(int(child)))
+        out.append(int(child))
+    return out
+
+
+def cli_pid(client):
+    """The CLI subprocess behind a client, when the transport exposes it."""
+    transport = getattr(client, "_transport", None)
+    process = getattr(transport, "_process", None)
+    return getattr(process, "pid", None)
+
+
+def kill_tasks(client, log):
+    pid = cli_pid(client)
+    if pid is None:
+        log.line("  !! breaker: the CLI's pid is not exposed; nothing killed")
+        return
+    for child in descendants(pid):
+        try:
+            os.kill(child, signal.SIGTERM)
+        except OSError:
+            continue
+
+
+POLL_LOOP = re.compile(r"\b(until|while)\b[^\n]*\bpgrep\s+-f|\bpgrep\s+-f[^\n]*;\s*do\b")
+
+
+async def deny_poll_loops(hook_input, tool_use_id, context):
+    """PreToolUse on Bash: a loop that polls with `pgrep -f` matches the shell
+    running the loop, so it never ends. Backgrounding stays allowed; the wait
+    has a tool."""
+    command = (hook_input.get("tool_input") or {}).get("command", "")
+    if not POLL_LOOP.search(command):
+        return {}
+    return {"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": (
+            "A loop that polls with `pgrep -f` matches the shell running the loop and "
+            "never ends. Wait on a background task with TaskOutput, or end your turn: "
+            "the task's completion wakes you."),
+    }}
+
+
 async def run_agent(kind, system_prompt, prompt, log_path, args):
     """Run one agent to completion. Returns (final_text, cost, turns, usage).
 
@@ -428,6 +520,8 @@ async def run_agent(kind, system_prompt, prompt, log_path, args):
         model=args.model,
         effort=args.effort,
         max_turns=200,
+        env={"BASH_DEFAULT_TIMEOUT_MS": BASH_TIMEOUT_MS},
+        hooks={"PreToolUse": [HookMatcher(matcher="Bash", hooks=[deny_poll_loops])]},
     )
     if kind == "reviewer":
         # A reviewer that can edit is a reviewer that fixes what it should fail.
@@ -439,7 +533,46 @@ async def run_agent(kind, system_prompt, prompt, log_path, args):
         log.section(f"{kind} @ {now()}")
         async with ClaudeSDKClient(options=options) as client:
             await client.query(prompt)
-            async for message in client.receive_messages():
+            stream = client.receive_messages()
+            session_id = None
+            waiting_since = None   # when a turn ended with tasks still active
+            heartbeat_turn = False # the current turn answers a heartbeat, not the work
+            strikes = 0
+            seen = {}              # task id -> output size at the last look
+            final = ""             # the last text of the last working turn
+            while True:
+                try:
+                    timeout = HEARTBEAT if waiting_since else None
+                    message = await asyncio.wait_for(stream.__anext__(), timeout=timeout)
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError:
+                    if not active:
+                        break
+                    busy = []
+                    for task_id, description in active.items():
+                        size = output_size(task_output_path(session_id or "", task_id))
+                        if size > seen.get(task_id, -1):
+                            busy.append(description)
+                        seen[task_id] = size
+                    if busy:
+                        log.line(f"  .. heartbeat: still producing output: {'; '.join(busy)}")
+                        continue
+                    strikes += 1
+                    minutes = int((time.time() - waiting_since) // 60)
+                    if strikes < HEARTBEAT_STRIKES:
+                        log.line(f"  .. heartbeat {strikes}/{HEARTBEAT_STRIKES}: no output from "
+                                 + "; ".join(active.values()) + "; asking")
+                        heartbeat_turn = True
+                        await client.query(HEARTBEAT_PROMPT.format(
+                            minutes=minutes, tasks="; ".join(active.values()),
+                            strike=strikes, strikes=HEARTBEAT_STRIKES))
+                        continue
+                    log.line(f"  !! breaker: silent through {HEARTBEAT_STRIKES} heartbeats: "
+                             + "; ".join(active.values()) + "; killing the task's processes")
+                    kill_tasks(client, log)
+                    active.clear()
+                    break
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, ToolUseBlock):
@@ -453,7 +586,9 @@ async def run_agent(kind, system_prompt, prompt, log_path, args):
                         if isinstance(block, ToolResultBlock):
                             log.line(describe_result(block))
                 elif isinstance(message, TaskStartedMessage):
+                    session_id = session_id or message.session_id
                     active[message.task_id] = message.description
+                    seen[message.task_id] = output_size(task_output_path(session_id, message.task_id))
                     log.line(f"task started: {message.description}")
                 elif isinstance(message, TaskNotificationMessage):
                     active.pop(message.task_id, None)
@@ -462,6 +597,7 @@ async def run_agent(kind, system_prompt, prompt, log_path, args):
                     if (message.patch or {}).get("status") in TERMINAL_TASK_STATUSES:
                         log.line(f"task ended: {active.pop(message.task_id, message.task_id)}")
                 elif isinstance(message, ResultMessage):
+                    session_id = session_id or message.session_id
                     # Totals are cumulative across the session's turns, so the
                     # latest result message carries the whole session.
                     cost = message.total_cost_usd or 0.0
@@ -480,13 +616,19 @@ async def run_agent(kind, system_prompt, prompt, log_path, args):
                         })
                     if message.is_error:
                         log.line(f"ERROR: {message.result}")
+                    # A heartbeat's answer is not the work's summary.
+                    if not heartbeat_turn and texts:
+                        final = texts[-1].strip()
+                    heartbeat_turn = False
                     if active:
+                        waiting_since = waiting_since or time.time()
                         log.line(f"turn ended; waiting on {len(active)} task(s): "
                                  + "; ".join(active.values()))
                         continue
                     log.line(f"done: {turns} turns, ${cost:.2f}")
                     break
-        final = texts[-1].strip() if texts else ""
+        if not final and texts:
+            final = texts[-1].strip()
         log.section("final")
         log.text(final)
     return final, cost, turns, usage
