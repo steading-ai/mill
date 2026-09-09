@@ -40,7 +40,7 @@ attempt. Use "mill restart" to throw the work away instead.`,
 			return runCancel(cmd, opts, args[0])
 		},
 	}
-	cmd.Flags().StringVar(&opts.socket, "socket", defaultSocketPath(), "path of the service's unix socket")
+	cmd.Flags().StringVar(&opts.socket, "socket", defaultSocketPath(), "path of the service's unix socket (default: $"+socketEnv+")")
 	cmd.Flags().StringVar(&opts.reason, "reason", "", "why, recorded on the run's audit trail")
 	return cmd
 }

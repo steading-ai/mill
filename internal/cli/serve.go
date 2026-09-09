@@ -28,10 +28,19 @@ const databaseURLEnv = "DATABASE_URL"
 // readyProbe bounds the database ping the service reports readiness on.
 const readyProbe = 5 * time.Second
 
-// defaultSocketPath is the runtime directory of the invoking user when
-// there is one, and the system runtime directory otherwise, which is where a
-// systemd RuntimeDirectory= puts it.
+// socketEnv names the socket every face of the binary reaches the service
+// on when no --socket is given. A session started by the `plugin/mill`
+// .mcp.json inherits it from the environment, which is the only channel a
+// plugin has for it.
+const socketEnv = "MILL_SOCKET"
+
+// defaultSocketPath is $MILL_SOCKET, then the runtime directory of the
+// invoking user when there is one, and the system runtime directory
+// otherwise, which is where a systemd RuntimeDirectory= puts it.
 func defaultSocketPath() string {
+	if path := os.Getenv(socketEnv); path != "" {
+		return path
+	}
 	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
 		return filepath.Join(dir, "mill", "mill.sock")
 	}
@@ -78,7 +87,7 @@ drains after it, because the worker is one of the store's clients.`,
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&opts.socket, "socket", defaultSocketPath(), "path of the unix socket to listen on")
+	f.StringVar(&opts.socket, "socket", defaultSocketPath(), "path of the unix socket to listen on (default: $"+socketEnv+")")
 	f.StringVar(&opts.databaseURL, "database-url", os.Getenv(databaseURLEnv), "PostgreSQL connection URL (default: $"+databaseURLEnv+")")
 	f.StringVar(&opts.roles, "roles", "", "path of the uid-to-role map (default: only the service's own uid)")
 	f.DurationVar(&opts.shutdownTimeout, "shutdown-timeout", server.DefaultShutdownTimeout, "how long to wait for in-flight requests on shutdown")

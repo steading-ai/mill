@@ -92,7 +92,7 @@ failed.`,
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&opts.socket, "socket", defaultSocketPath(), "path of the service's unix socket")
+	f.StringVar(&opts.socket, "socket", defaultSocketPath(), "path of the service's unix socket (default: $"+socketEnv+")")
 	f.StringVar(&opts.daggerSocket, "dagger-socket", envOr(daggerSocketEnv, defaultDaggerSocket), "path of dagger's unix socket (default: $"+daggerSocketEnv+")")
 	f.StringVar(&opts.project, "project", os.Getenv(daggerProjectEnv), "dagger project to probe readiness in (default: $"+daggerProjectEnv+")")
 	f.StringVar(&opts.sidecar, "sidecar", envOr(sidecarEnv, claude.DefaultEntrypoint), "path of the harness sidecar's entrypoint (default: $"+sidecarEnv+")")

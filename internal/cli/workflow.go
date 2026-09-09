@@ -56,7 +56,7 @@ what its failure does to the run.`,
 			return cmd.Help()
 		},
 	}
-	cmd.PersistentFlags().StringVar(&opts.socket, "socket", defaultSocketPath(), "path of the service's unix socket")
+	cmd.PersistentFlags().StringVar(&opts.socket, "socket", defaultSocketPath(), "path of the service's unix socket (default: $"+socketEnv+")")
 	cmd.AddCommand(
 		newWorkflowPushCommand(&opts),
 		newWorkflowPullCommand(&opts),

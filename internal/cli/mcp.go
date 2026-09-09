@@ -152,6 +152,7 @@ type mcpServer struct {
 
 func newMCPCommand() *cobra.Command {
 	opts := readOptions{}
+	var describe bool
 	cmd := &cobra.Command{
 		Use:   "mcp",
 		Short: "Serve the read and operate tools as an MCP server over stdio",
@@ -166,17 +167,36 @@ says: the store maps that account's uid to a role, and a reader is refused.
 
 "run" is deliberately absent. It executes in the calling process and is
 local to the mill's host and account; a session that wants work done files a
-dagger node instead.`,
+dagger node instead.
+
+--describe prints the tool list as JSON and connects to nothing, which is
+how the plugin's reference document is checked against this server.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if describe {
+				return describeMCP(cmd, opts)
+			}
 			return runMCP(cmd, opts)
 		},
 	}
+	cmd.Flags().BoolVar(&describe, "describe", false, "print the tool list as JSON and exit, without serving")
 	addReadFlags(cmd, &opts)
 	addDaggerFlags(cmd, &opts)
 	cmd.Flags().StringVar(&opts.logDir, "log-dir", defaultLogDir(), "directory the worker writes step logs under")
 	cmd.Flags().StringVar(&opts.workspaceDir, "workspace-dir", defaultWorkspaceDir(), "directory run workspaces live under")
 	return cmd
+}
+
+// describeMCP prints what `tools/list` would answer, and connects to
+// nothing. It is how the plugin's reference document is checked against the
+// server it documents (plugin/mill/skills/mill/references/tools.md), so its
+// shape is that answer verbatim: a "tools" array of name, description and
+// inputSchema.
+func describeMCP(cmd *cobra.Command, opts readOptions) error {
+	server := newMCPServer(opts, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+	encoder := json.NewEncoder(cmd.OutOrStdout())
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(map[string]any{"tools": server.toolInfos()})
 }
 
 func runMCP(cmd *cobra.Command, opts readOptions) error {
@@ -294,11 +314,7 @@ func (s *mcpServer) handle(ctx context.Context, req jsonrpcRequest) (any, *jsonr
 	case "ping":
 		return struct{}{}, nil
 	case "tools/list":
-		infos := make([]mcpToolInfo, 0, len(s.tools))
-		for _, t := range s.tools {
-			infos = append(infos, mcpToolInfo{Name: t.name, Description: t.description, InputSchema: t.schema})
-		}
-		return map[string]any{"tools": infos}, nil
+		return map[string]any{"tools": s.toolInfos()}, nil
 	case "tools/call":
 		var params mcpCallParams
 		if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -313,6 +329,17 @@ func (s *mcpServer) handle(ctx context.Context, req jsonrpcRequest) (any, *jsonr
 	default:
 		return nil, rpcError(jsonrpcMethodNotFound, "method %q is not supported", req.Method)
 	}
+}
+
+// toolInfos advertises every registered tool. One list answers both
+// `tools/list` and `--describe`, so a tool cannot be offered to a session and
+// missing from the description, or the other way round.
+func (s *mcpServer) toolInfos() []mcpToolInfo {
+	infos := make([]mcpToolInfo, 0, len(s.tools))
+	for _, t := range s.tools {
+		infos = append(infos, mcpToolInfo{Name: t.name, Description: t.description, InputSchema: t.schema})
+	}
+	return infos
 }
 
 func (s *mcpServer) initialize(raw json.RawMessage) (any, *jsonrpcError) {

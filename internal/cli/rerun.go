@@ -61,7 +61,7 @@ has.`,
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&opts.socket, "socket", defaultSocketPath(), "path of the service's unix socket")
+	f.StringVar(&opts.socket, "socket", defaultSocketPath(), "path of the service's unix socket (default: $"+socketEnv+")")
 	f.StringVar(&from, "from", "", "the step to redo from; every step from it through the current one is superseded")
 	f.StringVar(&opts.reason, "reason", "", "why, recorded on the run's audit trail")
 	return cmd

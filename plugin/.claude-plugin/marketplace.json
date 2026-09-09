@@ -1,0 +1,14 @@
+{
+  "name": "mill",
+  "description": "The mill plugin: registers `mill mcp` and teaches a session to read a run, say why it is stuck, and file work rather than run it.",
+  "owner": {
+    "name": "Ivy Evans"
+  },
+  "plugins": [
+    {
+      "name": "mill",
+      "source": "./mill",
+      "version": "0.1.0"
+    }
+  ]
+}

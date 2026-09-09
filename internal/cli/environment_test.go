@@ -30,6 +30,7 @@ import (
 var workerEnvironment = []string{
 	"DG_PROJECT",
 	"DG_SOCKET",
+	"MILL_SOCKET",
 	"MILL_VCS_URL",
 	"MILL_FORGE_TOKEN",
 	"MILL_FORGE_USER",
@@ -58,6 +59,7 @@ func setEnvironment() {
 	for name, value := range map[string]string{
 		"DG_PROJECT":       "mill",
 		"DG_SOCKET":        filepath.Join(GinkgoT().TempDir(), "dg.sock"),
+		"MILL_SOCKET":      filepath.Join(GinkgoT().TempDir(), "from-the-environment.sock"),
 		"MILL_VCS_URL":     "https://forge.test/mill/mill.git",
 		"MILL_FORGE_TOKEN": "not-a-real-token",
 		"MILL_FORGE_USER":  "mill",
@@ -131,6 +133,19 @@ var _ = Describe("A face's environment", Label("unit"), func() {
 		Expect(stderr.String()).To(ContainSubstring("does not exist"))
 		Expect(stderr.String()).NotTo(ContainSubstring("mill work starting"),
 			"the refusal came before the worker was built, so nothing was claimed")
+	})
+
+	// The plugin's registration is `mill mcp` with no --socket, so the
+	// environment is the only channel it has for a service that is not on
+	// the default path (docs/tools.md §"The plugin").
+	It("reaches the socket $MILL_SOCKET names when no flag says otherwise", func() {
+		setEnvironment()
+		path := os.Getenv("MILL_SOCKET")
+
+		Expect(invoke("mcp", "--help")).To(BeZero())
+
+		Expect(stdout.String()).To(ContainSubstring(path))
+		Expect(stdout.String()).To(ContainSubstring("MILL_SOCKET"))
 	})
 
 	It("refuses a configuration file $MILL_CONFIG names and nothing is at", func() {

@@ -544,6 +544,25 @@ than ignored.
 named, what the views mean, and that a gate is a person's to answer. Reading
 them is enough to use the rest.
 
+The socket resolves as it does for every other face: `--socket`, then
+`$MILL_SOCKET`, then `$XDG_RUNTIME_DIR/mill/mill.sock`, then
+`/run/mill/mill.sock`. The environment variable is what a plugin has, since a
+registration is a command line fixed at install time and not one an operator
+edits per host.
+
+`mill mcp --describe` prints the tool list as JSON — name, description and
+input schema, exactly what `tools/list` answers — and connects to nothing. It
+is how the plugin's reference document is checked against the server it
+documents.
+
+```
+$ mill mcp --describe | jq -r '.tools[].name'
+status
+inspect
+explain
+…
+```
+
 ## When a tool cannot start
 
 Two of mill's paths bind a unix socket, and a unix socket path has a hard
@@ -571,7 +590,65 @@ The workspace one is the expensive one to find late: its path is derived from
 `--workspace-dir` and the run's id, so without the check it fails on the bind
 after the node has been claimed and its repository cloned.
 
-## Not built yet
+## The plugin
 
-The `plugin/mill` Claude Code plugin — a skill plus the `.mcp.json` that
-registers `mill mcp` — is O1 ([roadmap.md](roadmap.md)).
+`plugin/mill` is how a session picks these tools up the way it picks up
+dagger's ([prd.md](prd.md) R-56). It carries three things:
+
+| Path | What it is |
+|---|---|
+| `plugin/mill/.mcp.json` | the registration: a `mill` server, run as `mill mcp` over stdio |
+| `plugin/mill/skills/mill/SKILL.md` | when to reach for which tool, the role rules, and the rule that a session wanting work done files a dagger node |
+| `plugin/mill/skills/mill/references/tools.md` | every tool with its arguments and an example response |
+
+The reference is checked against the binary rather than maintained beside it:
+a spec compares the `## <tool>` sections with `mill mcp --describe` and fails
+when they disagree about which tools exist.
+
+### Into a Claude Code session
+
+```sh
+claude plugin marketplace add ./plugin       # from a checkout of this repo
+claude plugin install mill@mill
+```
+
+Restart the session, or start a new one, and `/mcp` lists the `mill` server.
+While working on the plugin itself, `claude --plugin-dir ./plugin/mill` reads
+the tree directly and skips the install cache, which is keyed by the version
+in the two manifests. `plugin/mill/README.md` has the rest.
+
+The registration passes no `--socket`, so a session reaching a service
+anywhere but the default path is started with `MILL_SOCKET` in its
+environment. It is also what a session's role follows from: the server runs as
+whatever account started the session, and the store maps that uid.
+
+### Into thicket's agent provisioning
+
+A thicket agent is an account on a host, declared in thicket's roster —
+[`agents.yaml`](https://github.com/ivy/thicket) at the repository root, whose
+schema is `packages/roster/src/schema.ts`. That file is what an operator
+edits, and it fixes the two things that decide whether mill's tools are
+reachable: `user`, the unix account whose uid the role map must name, and
+`workspaces`, the directories a conversation binds to.
+
+The roster has no field for a plugin. Thicket's executor passes the SDK its
+own toolbelt server and leaves `settingSources` unset, so a session loads the
+filesystem settings of the account it runs as: installing the plugin into that
+account — `claude plugin install mill@mill` as the roster's `user`, or a
+`.mcp.json` in the bound workspace — is what puts the tools in front of the
+agent today. Carrying a plugin list in the roster is thicket's to add, and
+this repository does not edit thicket.
+
+Two things to get right on the host, both administrative rather than
+configurable from here:
+
+- The agent's uid must be in mill's role map, or every call is refused as
+  unauthenticated. `operator` if it should be able to `cancel`, `rerun` or
+  `workspace clean`; `reader` otherwise.
+- `MILL_SOCKET` must be in the agent's environment when the service is not on
+  the default path. A thicket agent runs as its own account, so
+  `$XDG_RUNTIME_DIR` is its own, not the mill's.
+
+An agent that reaches the tools should still not be asked to run work: `run`
+is not exposed, and a session that wants something built files a dagger node
+([prd.md](prd.md) R-55).

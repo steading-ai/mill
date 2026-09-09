@@ -700,7 +700,7 @@ func parseWindow(text string) (time.Duration, error) {
 
 // addReadFlags puts the flags every read tool takes on a command.
 func addReadFlags(cmd *cobra.Command, opts *readOptions) {
-	cmd.Flags().StringVar(&opts.socket, "socket", defaultSocketPath(), "path of the service's unix socket")
+	cmd.Flags().StringVar(&opts.socket, "socket", defaultSocketPath(), "path of the service's unix socket (default: $"+socketEnv+")")
 	cmd.Flags().StringVar(&opts.view, "view", string(viewSummary), "how much to show: "+strings.Join(views, ", "))
 }
 

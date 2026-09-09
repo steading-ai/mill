@@ -61,7 +61,7 @@ run, reached by its session over a unix socket.
 		},
 	}
 	f := cmd.PersistentFlags()
-	f.StringVar(&opts.socket, "socket", defaultSocketPath(), "path of the service's unix socket")
+	f.StringVar(&opts.socket, "socket", defaultSocketPath(), "path of the service's unix socket (default: $"+socketEnv+")")
 	f.StringVar(&opts.workspaceDir, "workspace-dir", defaultWorkspaceDir(), "directory run workspaces live under")
 	cmd.AddCommand(newWorkspaceShowCommand(&opts), newWorkspaceCleanCommand(&opts))
 	return cmd
