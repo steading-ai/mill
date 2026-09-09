@@ -55,6 +55,11 @@ service StoreService {
   // step's session process: what the step asked to have passed through, and
   // what the deny list removed.
   rpc RecordStepEnvironment(RecordStepEnvironmentRequest) returns (RecordStepEnvironmentResponse);
+  // MarkSessionStarted records that the harness has produced an event in an
+  // attempt's session, so the session exists to be resumed. Called when the
+  // first event arrives rather than when the turn ends, so an attempt the
+  // worker died in still says its session was started.
+  rpc MarkSessionStarted(MarkSessionStartedRequest) returns (MarkSessionStartedResponse);
   // CloseStepRun records the evidence that closes an attempt and marks it
   // closed, in one transaction. The only way a step becomes closed.
   rpc CloseStepRun(CloseStepRunRequest) returns (CloseStepRunResponse);
@@ -251,6 +256,23 @@ message RecordStepEnvironmentRequest {
 // RecordStepEnvironmentResponse carries the attempt with its environment
 // recorded.
 message RecordStepEnvironmentResponse {
+  // The attempt.
+  StepRun step_run = 1;
+}
+
+// MarkSessionStartedRequest records that an attempt's session has produced
+// its first event, which is what makes the session resumable.
+message MarkSessionStartedRequest {
+  // The lease the caller holds, compared against the run's current lease
+  // inside the writing transaction.
+  string lease_id = 1;
+  // The attempt whose session spoke.
+  string step_run_id = 2;
+}
+
+// MarkSessionStartedResponse carries the attempt with its session recorded
+// as started.
+message MarkSessionStartedResponse {
   // The attempt.
   StepRun step_run = 1;
 }

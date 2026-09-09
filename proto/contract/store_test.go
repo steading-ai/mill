@@ -33,7 +33,7 @@ var leaselessRPCs = map[string]bool{
 // service.
 var wantedRPCs = []string{
 	"GetRunByNode", "CreateRun", "SetLease",
-	"StartStepRun", "RecordStepEnvironment", "CloseStepRun", "FailStepRun",
+	"StartStepRun", "RecordStepEnvironment", "MarkSessionStarted", "CloseStepRun", "FailStepRun",
 	"AbortOpenStepRuns", "SupersedeSteps",
 	"MarkWaiting", "Park", "SetCompleteRequestId", "Done", "Fail", "Resume", "Abandon", "Cancel",
 	"IssueStepToken", "RevokeStepToken",

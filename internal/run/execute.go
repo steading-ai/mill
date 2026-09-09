@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	harnessv1 "github.com/ivy/mill/gen/harness/v1"
@@ -113,7 +114,7 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 		Options:   settings.GetOptions().AsMap(),
 		Workspace: harness.Workspace{Socket: handle.Socket, Token: token.GetToken()},
 		Cwd:       handle.Root,
-		Events:    logSink(logFile, r.options.Redactor, r.options.Now),
+		Events:    r.sessionEvents(ctx, s, sr, logSink(logFile, r.options.Redactor, r.options.Now)),
 	}
 
 	// The prompt heads the attempt's log. What a session was asked is the
@@ -123,15 +124,18 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 	// (docs/architecture.md §Observability).
 	logPrompt(logFile, r.options.Redactor, r.options.Now, prompt.Text)
 
+	// Start or resume is the ledger's answer, not the attempt number's: a
+	// session is resumable once the harness has produced an event in it, and
+	// an attempt that ended before it did left no conversation for a resume
+	// to find (docs/ledger.md §Resume, the session-started rule).
 	begin := adapter.Start
-	if sr.GetAttempt() > 1 || s.resumed[sr.GetSessionId()] {
+	if sessionStarted(detail, sr.GetSessionId()) {
 		begin = adapter.Resume
 	}
 	turn, err := begin(ctx, session, prompt, nil)
 	if err != nil {
 		return result{}, err
 	}
-	s.markResumed(sr.GetSessionId())
 
 	// What the adapter gave the session's process, on the attempt, before
 	// the session's own outcome is known: a step that asked for a variable
@@ -174,6 +178,56 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 		return out, err
 	}
 	return out, nil
+}
+
+// sessionEvents is the sink the harness reports a turn's events to: the
+// ledger's record that the session has started, written once when the first
+// event arrives, and then the step's log.
+//
+// The write is at the first event rather than at the end of the turn because
+// that is when the fact becomes true. A worker killed mid-turn has left a
+// conversation behind, and the attempt that follows it must resume that
+// conversation rather than start a second one; a worker that dies before the
+// first event has left nothing, and starting is the only thing that can
+// work. Which of the two happened is not derivable from the attempt number,
+// from the log directory, or from the harness's own transcript files: it is
+// a fact the ledger holds (Invariant 10).
+func (r *Runner) sessionEvents(ctx context.Context, s *state, sr *millv1.StepRun, log harness.Sink) harness.Sink {
+	if sr.GetSessionId() == "" {
+		return log
+	}
+	var once sync.Once
+	return func(event *harnessv1.Event) {
+		once.Do(func() {
+			// Not the step's context: a session that spoke and was then
+			// cancelled has still spoken, and the ledger has to say so
+			// before the next attempt asks how to begin.
+			if _, err := call(context.WithoutCancel(ctx), r.options.Store.MarkSessionStarted, &millv1.MarkSessionStartedRequest{
+				LeaseId:   s.lease,
+				StepRunId: sr.GetId(),
+			}); err != nil {
+				r.options.Log.Warn("recording that the session started",
+					"run", s.run.GetId(), "step_run", sr.GetId(), "error", err)
+			}
+		})
+		log.Send(event)
+	}
+}
+
+// sessionStarted reports whether any attempt the ledger holds has produced
+// an event in a session. It is what says a session exists to be resumed:
+// every attempt at every step is considered, because a session outlives the
+// step that opened it and a workflow may run several steps in one.
+func sessionStarted(detail *millv1.InspectResponse, sessionID string) bool {
+	if sessionID == "" {
+		return false
+	}
+	for _, d := range detail.GetSteps() {
+		if d.GetStepRun().GetSessionId() == sessionID && d.GetStepRun().GetSessionStarted() {
+			return true
+		}
+	}
+	return false
 }
 
 // recordEnvironment writes what the harness gave the session's process. An

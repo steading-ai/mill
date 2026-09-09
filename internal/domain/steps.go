@@ -63,6 +63,12 @@ func (s *Service) RecordStepEnvironment(ctx context.Context, leaseID string, p R
 	})
 }
 
+// MarkSessionStarted records that the harness has produced an event in an
+// attempt's session, which is what makes the session resumable.
+func (s *Service) MarkSessionStarted(ctx context.Context, leaseID, stepRunID string) (*millv1.StepRun, error) {
+	return s.store.MarkSessionStarted(ctx, leaseID, stepRunID)
+}
+
 // CloseStepRun records the evidence that closes an attempt and marks it
 // closed, in one transaction.
 //

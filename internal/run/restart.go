@@ -80,6 +80,13 @@ func (r *Runner) Restart(ctx context.Context, nodeRef, reason string) (*millv1.R
 // a worker still alive learns why at its next heartbeat; the release is what
 // actually takes the node back, with the reason docs/domain-model.md names —
 // an operator taking a lease away is what `preempted` means.
+//
+// A lease dagger says is not live is not an error here. The run whose worker
+// died holding one is the very run a human restarts, and the release exists
+// only to stop a worker that is still alive: there is nothing to take back
+// from a lease that is already gone. It is named in the output and the
+// restart carries on, because a restart that stopped there would leave the
+// node recoverable by nothing.
 func (r *Runner) preempt(ctx context.Context, old *millv1.Run, reason string) error {
 	lease := old.GetLeaseId()
 	if lease == "" {
@@ -91,8 +98,11 @@ func (r *Runner) preempt(ctx context.Context, old *millv1.Run, reason string) er
 	}); err != nil && !errors.Is(err, ErrFenced) {
 		return err
 	}
-	if err := r.options.Dagger.Release(ctx, lease,
-		daggerv1.ReleaseReason_RELEASE_REASON_PREEMPTED, reason); err != nil {
+	switch err := r.options.Dagger.Release(ctx, lease,
+		daggerv1.ReleaseReason_RELEASE_REASON_PREEMPTED, reason); {
+	case errors.Is(err, dagger.ErrFenced):
+		r.printf("lease %s is no longer live in dagger; skipped the release\n", lease)
+	case err != nil:
 		return err
 	}
 	if _, err := call(ctx, r.options.Store.AbortOpenStepRuns, &millv1.AbortOpenStepRunsRequest{

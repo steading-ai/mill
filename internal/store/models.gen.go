@@ -89,6 +89,7 @@ type StepRun struct {
 	EnvPassthrough []string
 	EnvStripped    []string
 	BaseCommit     string
+	SessionStarted bool
 }
 
 type StepToken struct {

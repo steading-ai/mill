@@ -230,11 +230,6 @@ type state struct {
 	// runs under, and what says that work is no longer worth waiting for.
 	process context.Context
 
-	// resumed is the set of sessions this worker has already spoken to, so
-	// a second step in the same session resumes it rather than starting it
-	// again. A session a *previous* worker started is resumed too: the
-	// ledger's attempt count says so.
-	resumed map[string]bool
 	// summary is the implementer's last word, which becomes the node's
 	// result body.
 	summary string
@@ -289,17 +284,6 @@ func (s *state) record(step, findings string) {
 // attempt since the last one a human paid for.
 func (s *state) attemptsAt(step string, attempt int64) int64 {
 	return attempt - s.retried[step]
-}
-
-// markResumed records that this worker has spoken to a session.
-func (s *state) markResumed(id string) {
-	if id == "" {
-		return
-	}
-	if s.resumed == nil {
-		s.resumed = map[string]bool{}
-	}
-	s.resumed[id] = true
 }
 
 // Execute drives one node from a claim to a result. It is docs/ledger.md
@@ -439,12 +423,21 @@ func (r *Runner) openRun(ctx context.Context, s *state) error {
 		// known, because the answer resumes the run at the parked step.
 		s.parked = run.GetStatus() == millv1.RunStatus_RUN_STATUS_PARKED && run.GetGateNodeId() != ""
 
-		// A `running` row under a `running` run belongs to a worker that
-		// died or was fenced out, and the next attempt at that step starts
-		// from the top. A `waiting` run's open row is not that: it is the
-		// gate step's own attempt, left open on purpose so that the answer
-		// closes the attempt that asked it (docs/domain-model.md §Gate, "a
-		// gate is filed once"; the gate step has one step run, not two).
+		// A `selecting` run is one whose worker died before it chose a
+		// workflow — between CreateRun and the selection, which is where a
+		// workspace is made. It is resumed like any other: the lease is
+		// taken over below, and selectWorkflow chooses again. Selection is
+		// idempotent — the same node, the same project default, the same
+		// version — so choosing again is choosing the same thing, recorded
+		// as a second attempt at the selection step.
+		//
+		// A `running` row under a `running` or `selecting` run belongs to a
+		// worker that died or was fenced out, and the next attempt at that
+		// step starts from the top. A `waiting` run's open row is not that:
+		// it is the gate step's own attempt, left open on purpose so that
+		// the answer closes the attempt that asked it
+		// (docs/domain-model.md §Gate, "a gate is filed once"; the gate step
+		// has one step run, not two).
 		if run.GetStatus() == millv1.RunStatus_RUN_STATUS_RUNNING ||
 			run.GetStatus() == millv1.RunStatus_RUN_STATUS_SELECTING {
 			if _, err := call(ctx, r.options.Store.AbortOpenStepRuns, &millv1.AbortOpenStepRunsRequest{

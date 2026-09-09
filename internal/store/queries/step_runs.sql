@@ -64,3 +64,9 @@ RETURNING *;
 -- the ledger records rather than inferring later.
 -- name: MarkStepRunAutoApproved :one
 UPDATE step_runs SET auto_approved = true WHERE id = $1 RETURNING *;
+
+-- The harness has spoken in this attempt's session, so the session exists to
+-- be resumed. Written when the first event arrives, not when the turn ends: a
+-- worker that dies mid-turn must still resume rather than start again.
+-- name: MarkStepRunSessionStarted :one
+UPDATE step_runs SET session_started = true WHERE id = $1 RETURNING *;

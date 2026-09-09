@@ -53,35 +53,30 @@ var (
 )
 
 // claimableStatuses are the run statuses a new claim may take over, from
-// Invariant 9: running with an expired or absent lease, waiting, parked, or
-// done with the node still open. Whether a lease has expired is dagger's
-// judgement, not the ledger's — dagger issues a new lease only when the old
-// one is gone — so `running` is admitted on the strength of the caller
-// holding a lease dagger just granted.
+// Invariant 9: selecting, running with an expired or absent lease, waiting,
+// parked, or done with the node still open. Whether a lease has expired is
+// dagger's judgement, not the ledger's — dagger issues a new lease only when
+// the old one is gone — so a status is admitted on the strength of the
+// caller holding a lease dagger just granted.
 //
-// `selecting` is deliberately absent: a run is created with the lease of
-// the claim that created it, so there is nothing for a later SetLease to
-// take over.
+// `selecting` is among them for the same reason `running` is. A run is
+// created holding the lease of the claim that created it, so ordinarily
+// there is nothing for a later SetLease to take over; but a worker that died
+// between CreateRun and the selection left the run exactly there, holding a
+// lease dagger has since expired, and refusing that claim leaves the node
+// unrecoverable by any mill command. A selecting run is never a reason to
+// refuse a claim: dagger has already decided who holds the node.
 var claimableStatuses = map[string]bool{
-	"running": true,
-	"waiting": true,
-	"parked":  true,
-	"done":    true,
+	"selecting": true,
+	"running":   true,
+	"waiting":   true,
+	"parked":    true,
+	"done":      true,
 }
 
 // claimable admits a run a new claim may take over.
-//
-// The one addition to [claimableStatuses] is a `selecting` run holding no
-// lease, which is the run `mill restart` opens at the next generation: it is
-// created outside any claim, precisely because the restarting human holds
-// none, so there is a lease to set rather than nothing to take over. A
-// selecting run that does hold a lease is still refused — that is the run
-// its own claim created, and there is nothing to take over there.
 func claimable(state fenceState) bool {
-	if claimableStatuses[state.status] {
-		return true
-	}
-	return state.status == "selecting" && state.lease == nil
+	return claimableStatuses[state.status]
 }
 
 // Store owns the connection pool and the transactions the queries run in.
@@ -651,6 +646,54 @@ func (s *Store) RecordStepEnvironment(ctx context.Context, leaseID string, p Rec
 				"env_passthrough": row.EnvPassthrough,
 				"env_stripped":    row.EnvStripped,
 			},
+			workerRef: row.WorkerRef,
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return stepRun, nil
+}
+
+// MarkSessionStarted records that the harness has produced an event in an
+// attempt's session. The fact is the ledger's, not the transcript's: which
+// of Start and Resume the next attempt at the session asks for is decided
+// from it, and an attempt that died before the harness said anything has no
+// conversation for a Resume to find.
+//
+// It is written when the first event arrives rather than when the turn ends,
+// so a worker killed mid-turn leaves the fact behind. A second call is not
+// an error: the column is set to the value it already has.
+func (s *Store) MarkSessionStarted(ctx context.Context, leaseID, stepRunID string) (*millv1.StepRun, error) {
+	var stepRun *millv1.StepRun
+	err := s.withTx(ctx, func(ctx context.Context, tx pgx.Tx, q *Queries) error {
+		open, err := q.GetStepRun(ctx, stepRunID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("step run %s: %w", stepRunID, ErrNotFound)
+		}
+		if err != nil {
+			return fmt.Errorf("get step run %s: %w", stepRunID, err)
+		}
+		if _, err := fence(ctx, tx, open.RunID, leaseID); err != nil {
+			return err
+		}
+		if open.SessionStarted {
+			stepRun, err = stepRunProto(open)
+			return err
+		}
+		row, err := q.MarkStepRunSessionStarted(ctx, stepRunID)
+		if err != nil {
+			return fmt.Errorf("mark the session of step run %s started: %w", stepRunID, err)
+		}
+		stepRun, err = stepRunProto(row)
+		if err != nil {
+			return err
+		}
+		return record(ctx, q, event{
+			runID:     row.RunID,
+			stepRunID: row.ID,
+			op:        "session_started",
+			after:     map[string]any{"session_id": text(row.SessionID)},
 			workerRef: row.WorkerRef,
 		})
 	})

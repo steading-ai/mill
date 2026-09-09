@@ -1311,9 +1311,15 @@ type StepRun struct {
 	// the branch already pointed at. Every kind records it: it is what a
 	// rerun of a superseded span has to reason about what that span
 	// produced. Empty when the run had no checkout to read a head from.
-	BaseCommit    string `protobuf:"bytes,17,opt,name=base_commit,json=baseCommit,proto3" json:"base_commit,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	BaseCommit string `protobuf:"bytes,17,opt,name=base_commit,json=baseCommit,proto3" json:"base_commit,omitempty"`
+	// Skill steps: the harness produced at least one event in this attempt's
+	// session, so a conversation exists under that session id. It is what says
+	// whether the next attempt at the session starts it or resumes it; the
+	// attempt number does not, because an attempt that died before the harness
+	// said anything left nothing to resume.
+	SessionStarted bool `protobuf:"varint,18,opt,name=session_started,json=sessionStarted,proto3" json:"session_started,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *StepRun) Reset() {
@@ -1463,6 +1469,13 @@ func (x *StepRun) GetBaseCommit() string {
 		return x.BaseCommit
 	}
 	return ""
+}
+
+func (x *StepRun) GetSessionStarted() bool {
+	if x != nil {
+		return x.SessionStarted
+	}
+	return false
 }
 
 // Finding is one thing a reviewer found, tied to an acceptance criterion.
@@ -3814,7 +3827,7 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"\n" +
 	"updated_at\x18\x10 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x125\n" +
 	"\bended_at\x18\x11 \x01(\v2\x1a.google.protobuf.TimestampR\aendedAt\x12.\n" +
-	"\x13complete_request_id\x18\x12 \x01(\tR\x11completeRequestId\"\xed\x04\n" +
+	"\x13complete_request_id\x18\x12 \x01(\tR\x11completeRequestId\"\x96\x05\n" +
 	"\aStepRun\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x1b\n" +
@@ -3837,7 +3850,8 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"\x0fenv_passthrough\x18\x0f \x03(\tR\x0eenvPassthrough\x12!\n" +
 	"\fenv_stripped\x18\x10 \x03(\tR\venvStripped\x12\x1f\n" +
 	"\vbase_commit\x18\x11 \x01(\tR\n" +
-	"baseCommit\"\x93\x01\n" +
+	"baseCommit\x12'\n" +
+	"\x0fsession_started\x18\x12 \x01(\bR\x0esessionStarted\"\x93\x01\n" +
 	"\aFinding\x12\x1c\n" +
 	"\tcriterion\x18\x01 \x01(\tR\tcriterion\x124\n" +
 	"\bseverity\x18\x02 \x01(\x0e2\x18.mill.v1.FindingSeverityR\bseverity\x12\x18\n" +

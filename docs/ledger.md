@@ -81,6 +81,7 @@ One row per attempt at a step. Append-only.
 | `lease_id` | The dagger lease held when this attempt ran |
 | `worker_ref` | |
 | `status` | `running`, `closed`, `failed`, `aborted`, `superseded` |
+| `session_started` | Skill steps: the harness produced at least one event in this attempt's session. What says the next attempt at that session resumes it rather than starts it |
 | `exit` | JSONB `ProcessExit{status, signal, reason}` for skill and check steps. `status = -1` means never ran |
 | `feedback_from` | The `step_runs.id` whose failure this attempt is the `revise` for, or null |
 | `auto_approved` | Gate steps: true when the `auto` predicate closed it without a human |
@@ -90,6 +91,8 @@ One row per attempt at a step. Append-only.
 | `started_at`, `ended_at` | |
 
 `base_commit` is what makes `commit` evidence a fact about the step rather than about the branch: a commit step closes only on a commit that descends from its attempt's base and is not it, made by the mill (docs/domain-model.md §Evidence). Every kind records it, because what a superseded or interrupted span produced is the range from its base to the branch head, which is what a rerun reads. An attempt that continues an *aborted* one inherits that attempt's base rather than taking the current head: a worker killed between the session's commit and the write that closes the step left its work on the branch, and the next attempt closes on it without a second session. A failed or superseded attempt is not continued, so it carries nothing forward.
+
+`session_started` is written when the session's first event arrives, not when the turn ends. Which of `Start` and `Resume` the harness is sent cannot be derived from the attempt number: an attempt that ended before the harness said anything left no conversation behind, and resuming one fails for a reason that has nothing to do with the work — while an attempt killed mid-turn did leave one, and starting a second under the same id loses it. The log directory and the harness's own transcript files are not the record either (Invariant 10); this column is.
 
 `closed` means evidence exists for this row. `failed` means the attempt ended and `on_failure` applies. `aborted` means the worker stopped or was fenced out before the attempt ended; the next worker starts a new attempt. `superseded` means a later `revise` reopened this step; the row and its evidence stay as the record of pass one.
 
@@ -174,7 +177,7 @@ The store enforces these with constraints or in the writing transaction. A viola
 6. **Evidence is never updated or deleted.** No `UPDATE` or `DELETE` grants on the table for the application role.
 7. **Attempts are contiguous.** `attempt` for `(run_id, step_name)` is `max + 1`, assigned in the insert.
 8. **A live token belongs to a `running` step run.** Revocation is written in the same transaction that moves the step run out of `running`.
-9. **Every store write is fenced by the lease, atomically.** Every statement that mutates `step_runs`, `evidence`, `step_tokens`, `usage`, or `runs` for a run takes the `runs` row lock (`SELECT … FOR UPDATE`), re-reads `lease_id` in a separate statement after the lock is granted — a locked row is not re-read, so a lease a concurrent claim committed while waiting would otherwise be missed, which is exactly the trap dagger's `fence()` comments on — compares it to the lease the worker presented, and rolls back on mismatch. This is the mechanism behind "a stale worker cannot corrupt the record," and it lives in the store, not in the worker's good behaviour. The one exception is `SetLease` itself, which is the write that changes what later writes compare against; it takes the same lock and requires the run's current status to be one a new claim may take over (`running` with an expired lease, `waiting`, `parked`, `done` with the node still open, or `selecting` holding no lease — the run `restart` opens at the next generation, created outside any claim because the human restarting holds none).
+9. **Every store write is fenced by the lease, atomically.** Every statement that mutates `step_runs`, `evidence`, `step_tokens`, `usage`, or `runs` for a run takes the `runs` row lock (`SELECT … FOR UPDATE`), re-reads `lease_id` in a separate statement after the lock is granted — a locked row is not re-read, so a lease a concurrent claim committed while waiting would otherwise be missed, which is exactly the trap dagger's `fence()` comments on — compares it to the lease the worker presented, and rolls back on mismatch. This is the mechanism behind "a stale worker cannot corrupt the record," and it lives in the store, not in the worker's good behaviour. The one exception is `SetLease` itself, which is the write that changes what later writes compare against; it takes the same lock and requires the run's current status to be one a new claim may take over (`selecting`, `running` with an expired lease, `waiting`, `parked`, or `done` with the node still open). `selecting` is among them for the same reason `running` is: a run created holding its claim's lease, whose worker then died before it chose a workflow, is otherwise a node no mill command can recover — and dagger, which grants a second lease only once the first is gone, has already decided who holds the node.
 10. **`current_step` is derived.** There is no column to drift.
 11. **Dagger first, store second.** A run is marked `done` only after dagger has confirmed the completing patch; `gate_node_id` is recorded only after dagger has returned the gate's id and before the lease is released. The store never asserts a fact about dagger that dagger has not yet made true.
 12. **A gate is filed once per step run.** `gate_node_id` set and the current step a gate step means resume reads the gate; it never files another. Invariant 11's order leaves one window this cannot close on its own: the patch that files the gate lands and the process dies before the store write, so dagger has a gate the ledger knows nothing about. A worker therefore asks dagger before it files — the node's user-assigned children carrying the run's and the step's labels — and records what it finds instead of filing a second one. That is the only place in the loop where dagger's graph, rather than the ledger, decides what to write, and it is the only place it can be: the gate exists in exactly one of them.
@@ -191,9 +194,12 @@ switch:
   run.status == done:                              # dagger confirmed Complete but the store missed it?
       if dagger.Node(node.id).status == done: store.Done(run); return   # no — the node is done; nothing to do
       # else: a done run on an open node is Invariant 11 violated; park with reason `refused` and alert
-  run.status == running:
+  run.status in (running, selecting):
       store.AbortOpenStepRuns(run)                 # a 'running' row here belongs to a dead or fenced-out worker
       # not when waiting: that open row is the gate step's own attempt, left open so the answer closes it
+      # selecting: the worker died before the workflow was chosen. Nothing else is special —
+      #   the lease is taken over below and the selection is made again, which is idempotent:
+      #   same node, same project default, same version. A selecting run never refuses a claim
 store.SetLease(run, node.lease_id, self)          # from here every write is fenced by this lease
 
 go heartbeat(node.lease_id) until run leaves this worker   # renews well inside the TTL; a fenced heartbeat, or cancel_requested, cancels the step
@@ -217,7 +223,10 @@ for step in run.workflow.steps starting at run.current_step():
     sr := store.StartStepRun(run, step)            # attempt = max+1 for (run, step)
     tok := store.IssueToken(sr, step.capabilities)
     ws.Rotate(tok)
-    result := execute(step, sr, ws)                # by kind; skill steps Resume a session by its UUIDv5
+    result := execute(step, sr, ws)                # by kind; skill steps speak to the session with the UUIDv5 id
+    #   Resume when some attempt of that session id has session_started, else Start.
+    #   The harness sets it on the session's first event, so an attempt that died before the
+    #   harness spoke is started and one killed mid-turn is resumed
     store.RevokeToken(tok)
     dagger.ReportUsage(node.lease_id, usage(sr))   # one record per model; renews the lease
 
@@ -257,7 +266,7 @@ ws.Destroy()
 
 Three properties fall out:
 
-- **Steps are re-run, sessions are resumed.** An interrupted step starts a new attempt from the top; the session it runs in is the same one, found by its deterministic id, so the model picks up its own prior context. A step is never resumed mid-flight — there is no mid-flight state to resume into.
+- **Steps are re-run, sessions are resumed.** An interrupted step starts a new attempt from the top; the session it runs in is the same one, found by its deterministic id, so the model picks up its own prior context. A step is never resumed mid-flight — there is no mid-flight state to resume into. Whether the session is resumed or started is `session_started`'s answer and not the attempt number's: the id is deterministic, so a session that was never begun has an id and no conversation.
 - **Resume is the same code as a first run.** There is no separate recovery path except the gate branch at the top of the loop. `current_step()` is derived from step-run status, and a fresh run's `current_step()` is simply the first step.
 - **A stale worker cannot corrupt the record.** Its dagger writes are fenced out by dagger; its store writes are rejected by Invariant 9. Its heartbeat fails first, which is how it learns.
 - **`revise` actually revises.** Superseding every step from the target through the failure means the revised work is re-simplified, re-committed, re-pushed, and re-reviewed; the ledger never claims pass-one evidence closed pass-two work.
@@ -292,7 +301,7 @@ Every artifact's metadata carries `run_id`. Every `ApplyPatch` mill sends uses `
 - `inspect <run>`: every step run in order with its evidence, exit, session, and usage.
 - `history <run>`: the `events` rows.
 - `cost --since`: usage rolled up by run, by workflow, by step name, by model, priced by the rate table.
-- `restart <node>`: release, abandon, destroy, create the next generation — one transaction on the store side, with the dagger release first.
+- `restart <node>`: release, abandon, destroy, create the next generation — one transaction on the store side, with the dagger release first. A lease dagger says is not live is skipped rather than fatal: the run a human restarts is usually the one whose worker died holding it, and there is nothing to take back.
 - `explain <run>`: current step, its latest step run's status and exit, the evidence kind that would close it, the gate it waits on if any, the attempts used against `retries`.
 - `logs <run> [--step]`: the per-step-run log files, redacted at write time; `--follow` tails the running one.
 - `cancel <run>`, `rerun <run> --from <step>`: set `cancel_requested`; `rerun` also supersedes from the step once the worker has released.

@@ -91,6 +91,16 @@ func (s *StoreService) RecordStepEnvironment(ctx context.Context, req *connect.R
 	return connect.NewResponse(&millv1.RecordStepEnvironmentResponse{StepRun: stepRun}), nil
 }
 
+// MarkSessionStarted records that an attempt's session has produced its first
+// event.
+func (s *StoreService) MarkSessionStarted(ctx context.Context, req *connect.Request[millv1.MarkSessionStartedRequest]) (*connect.Response[millv1.MarkSessionStartedResponse], error) {
+	stepRun, err := s.svc.MarkSessionStarted(ctx, req.Msg.GetLeaseId(), req.Msg.GetStepRunId())
+	if err != nil {
+		return nil, connectError(err)
+	}
+	return connect.NewResponse(&millv1.MarkSessionStartedResponse{StepRun: stepRun}), nil
+}
+
 // CloseStepRun records the evidence that closes an attempt.
 func (s *StoreService) CloseStepRun(ctx context.Context, req *connect.Request[millv1.CloseStepRunRequest]) (*connect.Response[millv1.CloseStepRunResponse], error) {
 	stepRun, evidence, err := s.svc.CloseStepRun(ctx, req.Msg.GetLeaseId(), domain.CloseStepRunParams{

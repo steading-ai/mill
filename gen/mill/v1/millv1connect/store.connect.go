@@ -57,6 +57,9 @@ const (
 	// StoreServiceRecordStepEnvironmentProcedure is the fully-qualified name of the StoreService's
 	// RecordStepEnvironment RPC.
 	StoreServiceRecordStepEnvironmentProcedure = "/mill.v1.StoreService/RecordStepEnvironment"
+	// StoreServiceMarkSessionStartedProcedure is the fully-qualified name of the StoreService's
+	// MarkSessionStarted RPC.
+	StoreServiceMarkSessionStartedProcedure = "/mill.v1.StoreService/MarkSessionStarted"
 	// StoreServiceCloseStepRunProcedure is the fully-qualified name of the StoreService's CloseStepRun
 	// RPC.
 	StoreServiceCloseStepRunProcedure = "/mill.v1.StoreService/CloseStepRun"
@@ -142,6 +145,11 @@ type StoreServiceClient interface {
 	// step's session process: what the step asked to have passed through, and
 	// what the deny list removed.
 	RecordStepEnvironment(context.Context, *connect.Request[v1.RecordStepEnvironmentRequest]) (*connect.Response[v1.RecordStepEnvironmentResponse], error)
+	// MarkSessionStarted records that the harness has produced an event in an
+	// attempt's session, so the session exists to be resumed. Called when the
+	// first event arrives rather than when the turn ends, so an attempt the
+	// worker died in still says its session was started.
+	MarkSessionStarted(context.Context, *connect.Request[v1.MarkSessionStartedRequest]) (*connect.Response[v1.MarkSessionStartedResponse], error)
 	// CloseStepRun records the evidence that closes an attempt and marks it
 	// closed, in one transaction. The only way a step becomes closed.
 	CloseStepRun(context.Context, *connect.Request[v1.CloseStepRunRequest]) (*connect.Response[v1.CloseStepRunResponse], error)
@@ -272,6 +280,12 @@ func NewStoreServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			httpClient,
 			baseURL+StoreServiceRecordStepEnvironmentProcedure,
 			connect.WithSchema(storeServiceMethods.ByName("RecordStepEnvironment")),
+			connect.WithClientOptions(opts...),
+		),
+		markSessionStarted: connect.NewClient[v1.MarkSessionStartedRequest, v1.MarkSessionStartedResponse](
+			httpClient,
+			baseURL+StoreServiceMarkSessionStartedProcedure,
+			connect.WithSchema(storeServiceMethods.ByName("MarkSessionStarted")),
 			connect.WithClientOptions(opts...),
 		),
 		closeStepRun: connect.NewClient[v1.CloseStepRunRequest, v1.CloseStepRunResponse](
@@ -440,6 +454,7 @@ type storeServiceClient struct {
 	setLease              *connect.Client[v1.SetLeaseRequest, v1.SetLeaseResponse]
 	startStepRun          *connect.Client[v1.StartStepRunRequest, v1.StartStepRunResponse]
 	recordStepEnvironment *connect.Client[v1.RecordStepEnvironmentRequest, v1.RecordStepEnvironmentResponse]
+	markSessionStarted    *connect.Client[v1.MarkSessionStartedRequest, v1.MarkSessionStartedResponse]
 	closeStepRun          *connect.Client[v1.CloseStepRunRequest, v1.CloseStepRunResponse]
 	failStepRun           *connect.Client[v1.FailStepRunRequest, v1.FailStepRunResponse]
 	abortOpenStepRuns     *connect.Client[v1.AbortOpenStepRunsRequest, v1.AbortOpenStepRunsResponse]
@@ -491,6 +506,11 @@ func (c *storeServiceClient) StartStepRun(ctx context.Context, req *connect.Requ
 // RecordStepEnvironment calls mill.v1.StoreService.RecordStepEnvironment.
 func (c *storeServiceClient) RecordStepEnvironment(ctx context.Context, req *connect.Request[v1.RecordStepEnvironmentRequest]) (*connect.Response[v1.RecordStepEnvironmentResponse], error) {
 	return c.recordStepEnvironment.CallUnary(ctx, req)
+}
+
+// MarkSessionStarted calls mill.v1.StoreService.MarkSessionStarted.
+func (c *storeServiceClient) MarkSessionStarted(ctx context.Context, req *connect.Request[v1.MarkSessionStartedRequest]) (*connect.Response[v1.MarkSessionStartedResponse], error) {
+	return c.markSessionStarted.CallUnary(ctx, req)
 }
 
 // CloseStepRun calls mill.v1.StoreService.CloseStepRun.
@@ -641,6 +661,11 @@ type StoreServiceHandler interface {
 	// step's session process: what the step asked to have passed through, and
 	// what the deny list removed.
 	RecordStepEnvironment(context.Context, *connect.Request[v1.RecordStepEnvironmentRequest]) (*connect.Response[v1.RecordStepEnvironmentResponse], error)
+	// MarkSessionStarted records that the harness has produced an event in an
+	// attempt's session, so the session exists to be resumed. Called when the
+	// first event arrives rather than when the turn ends, so an attempt the
+	// worker died in still says its session was started.
+	MarkSessionStarted(context.Context, *connect.Request[v1.MarkSessionStartedRequest]) (*connect.Response[v1.MarkSessionStartedResponse], error)
 	// CloseStepRun records the evidence that closes an attempt and marks it
 	// closed, in one transaction. The only way a step becomes closed.
 	CloseStepRun(context.Context, *connect.Request[v1.CloseStepRunRequest]) (*connect.Response[v1.CloseStepRunResponse], error)
@@ -767,6 +792,12 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 		StoreServiceRecordStepEnvironmentProcedure,
 		svc.RecordStepEnvironment,
 		connect.WithSchema(storeServiceMethods.ByName("RecordStepEnvironment")),
+		connect.WithHandlerOptions(opts...),
+	)
+	storeServiceMarkSessionStartedHandler := connect.NewUnaryHandler(
+		StoreServiceMarkSessionStartedProcedure,
+		svc.MarkSessionStarted,
+		connect.WithSchema(storeServiceMethods.ByName("MarkSessionStarted")),
 		connect.WithHandlerOptions(opts...),
 	)
 	storeServiceCloseStepRunHandler := connect.NewUnaryHandler(
@@ -937,6 +968,8 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 			storeServiceStartStepRunHandler.ServeHTTP(w, r)
 		case StoreServiceRecordStepEnvironmentProcedure:
 			storeServiceRecordStepEnvironmentHandler.ServeHTTP(w, r)
+		case StoreServiceMarkSessionStartedProcedure:
+			storeServiceMarkSessionStartedHandler.ServeHTTP(w, r)
 		case StoreServiceCloseStepRunProcedure:
 			storeServiceCloseStepRunHandler.ServeHTTP(w, r)
 		case StoreServiceFailStepRunProcedure:
@@ -1016,6 +1049,10 @@ func (UnimplementedStoreServiceHandler) StartStepRun(context.Context, *connect.R
 
 func (UnimplementedStoreServiceHandler) RecordStepEnvironment(context.Context, *connect.Request[v1.RecordStepEnvironmentRequest]) (*connect.Response[v1.RecordStepEnvironmentResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.RecordStepEnvironment is not implemented"))
+}
+
+func (UnimplementedStoreServiceHandler) MarkSessionStarted(context.Context, *connect.Request[v1.MarkSessionStartedRequest]) (*connect.Response[v1.MarkSessionStartedResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.MarkSessionStarted is not implemented"))
 }
 
 func (UnimplementedStoreServiceHandler) CloseStepRun(context.Context, *connect.Request[v1.CloseStepRunRequest]) (*connect.Response[v1.CloseStepRunResponse], error) {

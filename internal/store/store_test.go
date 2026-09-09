@@ -56,9 +56,9 @@ var _ = Describe("SetLease", Label(testsupport.DBLabel), func() {
 			Expect(err).NotTo(HaveOccurred())
 			return done
 		}, true),
-		Entry("selecting, whose run already holds the lease that created it", func(l *ledger, ctx SpecContext) *millv1.Run {
+		Entry("selecting, still holding the lease of the claim that died before it chose a workflow", func(l *ledger, ctx SpecContext) *millv1.Run {
 			return l.run(ctx, "mill#8")
-		}, false),
+		}, true),
 		Entry("selecting, opened by a restart and holding no lease", func(l *ledger, ctx SpecContext) *millv1.Run {
 			run, err := l.store.CreateRun(ctx, "", store.CreateRunParams{
 				NodeID: "node-restarted", NodeRef: "mill#9", Generation: 2, Branch: "mill/9",
