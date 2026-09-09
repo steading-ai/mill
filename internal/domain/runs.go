@@ -81,6 +81,12 @@ func (s *Service) Park(ctx context.Context, leaseID, runID, gateNodeID string, r
 	return s.store.Park(ctx, leaseID, runID, gateNodeID, reason)
 }
 
+// RecordNotice appends what carrying a filed gate to a person did. There is
+// no transition to check: it records an errand, not a change to the run.
+func (s *Service) RecordNotice(ctx context.Context, leaseID, runID, stepRunID, kind, gateRef string, exitCode int32, detail string) error {
+	return s.store.RecordNotice(ctx, leaseID, runID, stepRunID, kind, gateRef, exitCode, detail)
+}
+
 // SetCompleteRequestID mints the completing patch's idempotency key, or
 // returns the one the run already carries. There is no transition to check:
 // it records a key against a run that is still running, before the patch

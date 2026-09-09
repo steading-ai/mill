@@ -77,6 +77,7 @@ func bindWorkFlags(cmd *cobra.Command, opts *workOptions) {
 	f.StringVar(&opts.run.workspaceDir, "workspace-dir", defaultWorkspaceDir(), "directory run workspaces are made under")
 	f.StringVar(&opts.run.logDir, "log-dir", defaultLogDir(), "directory step logs are written under, one file per attempt")
 	f.StringVar(&opts.run.envMode, "env-mode", string(claude.DefaultEnvMode), envModeUsage)
+	f.StringVar(&opts.run.notifyCommand, "notify-command", "", notifyCommandUsage)
 	f.StringVar(&opts.run.identity, "identity", "", "address the mill commits under (default: mill@<host>)")
 	f.StringVar(&opts.run.name, "name", defaultForgeUser, "name on the mill's commits")
 	f.DurationVar(&opts.run.ttl, "ttl", run.DefaultTTL, "lease TTL to ask dagger for")
@@ -98,7 +99,7 @@ func applyConfig(cmd *cobra.Command, opts *workOptions, socket *string) error {
 		"vcs-url": &opts.run.vcsURL, "origin": &opts.run.origin, "ref": &opts.run.ref,
 		"identity": &opts.run.identity, "name": &opts.run.name,
 		"workspace-dir": &opts.run.workspaceDir, "log-dir": &opts.run.logDir,
-		"env-mode": &opts.run.envMode,
+		"env-mode": &opts.run.envMode, "notify-command": &opts.run.notifyCommand,
 	}
 	values := map[string]string{
 		"socket": config.Socket, "dagger-socket": config.DaggerSocket,
@@ -107,7 +108,7 @@ func applyConfig(cmd *cobra.Command, opts *workOptions, socket *string) error {
 		"vcs-url": config.VCSURL, "origin": config.Origin, "ref": config.Ref,
 		"identity": config.Identity, "name": config.Name,
 		"workspace-dir": config.WorkspaceDir, "log-dir": config.LogDir,
-		"env-mode": config.EnvMode,
+		"env-mode": config.EnvMode, "notify-command": config.NotifyCommand,
 	}
 	for name, target := range targets {
 		if value := values[name]; value != "" && unset(cmd, name) {

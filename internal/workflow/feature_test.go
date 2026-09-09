@@ -89,13 +89,22 @@ var _ = Describe("The feature workflow", Label("unit"), func() {
 		Expect(s.GetOnFailure().GetReviseTarget()).To(Equal("plan"))
 	})
 
-	It("plan-approval is a gate the run answers itself, for now", func() {
+	It("plan-approval auto-approves an approved plan at this tier or below, and asks otherwise", func() {
 		s := step(loaded, "plan-approval")
 		Expect(s.GetKind()).To(Equal(millv1.StepKind_STEP_KIND_GATE))
-		Expect(s.GetGate().GetAuto()).To(Equal("true"))
-		Expect(s.GetGate().GetAsk().GetTitle()).NotTo(BeEmpty())
-		Expect(s.GetGate().GetDenyResult()).NotTo(BeEmpty())
+		Expect(s.GetGate().GetAuto()).To(Equal(
+			"verdict('review-plan').decision == approve && tier <= feature"))
 		Expect(s.GetEvidence()).To(Equal(millv1.EvidenceKind_EVIDENCE_KIND_GATE))
+
+		// The ask has to be answerable where it is read: it names the node
+		// and quotes the plan, so a person carrying it to Slack carries the
+		// plan with it (docs/prd.md R-21).
+		Expect(s.GetGate().GetAsk().GetTitle()).To(ContainSubstring("{{.NodeRef}}"))
+		body := s.GetGate().GetAsk().GetBody()
+		Expect(body).To(ContainSubstring("{{.NodeRef}}"))
+		Expect(body).To(ContainSubstring(`{{head 40 (artifact "plan")}}`))
+		Expect(s.GetGate().GetDenyResult()).To(ContainSubstring("rejected"))
+		Expect(s.GetGate().GetDenyResult()).To(ContainSubstring("the run stopped"))
 	})
 
 	It("merge auto-approves on an approving verdict at this tier or below", func() {

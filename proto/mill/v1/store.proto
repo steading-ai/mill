@@ -80,6 +80,12 @@ service StoreService {
   // Park trips the circuit breaker: the run stops, a gate asks a human what
   // to do, and the reason says what stopped it.
   rpc Park(ParkRequest) returns (ParkResponse);
+  // RecordNotice appends what carrying a filed gate to a person did: which
+  // gate, how the configured notify command ended, and what it said. The
+  // mill's notification is not the run's work — a command that fails or
+  // never runs does not fail the run — so it is a row of the audit trail
+  // and nothing else.
+  rpc RecordNotice(RecordNoticeRequest) returns (RecordNoticeResponse);
   // SetCompleteRequestId mints and stores the idempotency key of the patch
   // that completes the node, before that patch is sent. Minting is once per
   // run: a second call returns the key already stored, so a worker resuming
@@ -404,6 +410,34 @@ message ParkRequest {
 message ParkResponse {
   // The run, now parked and holding no lease.
   Run run = 1;
+}
+
+// RecordNoticeRequest records one attempt to carry a gate to a person.
+message RecordNoticeRequest {
+  // The lease the caller holds, compared against the run's current lease
+  // inside the writing transaction. The notice is written while the gate's
+  // lease is still held, before the write that parks or waits the run and
+  // takes the lease off it.
+  string lease_id = 1;
+  // The run whose gate was carried.
+  string run_id = 2;
+  // The attempt that filed the gate, when it was a step's.
+  string step_run_id = 3;
+  // What the gate decides: `plan`, `merge` or `park`.
+  string kind = 4;
+  // The gate node the person is being pointed at.
+  string gate_ref = 5;
+  // How the command ended: its exit status, or -1 when a signal ended it or
+  // it never ran at all.
+  int32 exit_code = 6;
+  // What the command said for itself: its standard error, or why it could
+  // not be run.
+  string detail = 7;
+}
+
+// RecordNoticeResponse carries nothing: the event is the record.
+message RecordNoticeResponse {
+  // Reserved: the event the call wrote is the whole of the answer.
 }
 
 // SetCompleteRequestIdRequest asks for the run's completing request id.

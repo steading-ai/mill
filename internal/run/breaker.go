@@ -10,6 +10,7 @@ import (
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/dagger"
 	"github.com/ivy/mill/internal/harness"
+	"github.com/ivy/mill/internal/notify"
 )
 
 // The circuit breaker: docs/architecture.md §"Failure and stop".
@@ -45,6 +46,12 @@ func (r *Runner) park(ctx context.Context, s *state, step *millv1.Step, sr *mill
 	if err != nil {
 		return err
 	}
+	r.notified(ctx, s, sr.GetId(), notify.Notice{
+		Kind:  notify.KindPark,
+		Gate:  gate.GetReference(),
+		Title: gate.GetTitle(),
+		Body:  gate.GetBody(),
+	})
 	if _, err := call(ctx, r.options.Store.Park, &millv1.ParkRequest{
 		LeaseId:    s.lease,
 		RunId:      s.run.GetId(),

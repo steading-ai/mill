@@ -24,6 +24,7 @@ import (
 	"github.com/ivy/mill/internal/forge/gitlab"
 	"github.com/ivy/mill/internal/harness"
 	"github.com/ivy/mill/internal/harness/claude"
+	"github.com/ivy/mill/internal/notify"
 	"github.com/ivy/mill/internal/run"
 	"github.com/ivy/mill/internal/workflow"
 	"github.com/ivy/mill/internal/workspace"
@@ -140,6 +141,7 @@ type runOptions struct {
 	workspaceDir  string
 	logDir        string
 	envMode       string
+	notifyCommand string
 	skillOverride map[string]string
 	ttl           time.Duration
 	interval      time.Duration
@@ -202,9 +204,18 @@ between.`,
 	f.StringVar(&opts.identity, "identity", "", "address the mill commits under, and the principal of its allowed_signers line (default: mill@<host>)")
 	f.StringVar(&opts.name, "name", defaultForgeUser, "name on the mill's commits")
 	f.StringToStringVar(&opts.skillOverride, "skill-override", nil, skillOverrideUsage)
+	f.StringVar(&opts.notifyCommand, "notify-command", "", notifyCommandUsage)
 	f.BoolVar(&opts.noAsk, "no-ask", false, "leave a filed gate for a human elsewhere instead of asking on this terminal")
 	return cmd
 }
+
+// notifyCommandUsage is what --notify-command says for itself on every
+// command that has it. The seam is internal/notify: a command that receives
+// the gate as JSON on its standard input and carries it wherever the
+// deployment wants it carried.
+const notifyCommandUsage = "command run with a filed gate as JSON on its standard input, " +
+	"so a person hears about it; empty files the gate and tells nobody " +
+	"(example: contrib/notify/thicket-send.sh)"
 
 // dryRun prints what a run would do. It reads the workflow and nothing else:
 // no claim, no lease, no run, no workspace, no session.
@@ -384,6 +395,7 @@ func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, 
 
 	return run.New(run.Options{
 		Store:          storeClient(opts.socket),
+		Notifier:       notifier(opts.notifyCommand),
 		Dagger:         client,
 		Workspaces:     localWorkspaces(opts, f, redactor),
 		Forges:         func(context.Context) (forge.Forge, error) { return f, nil },
@@ -403,6 +415,16 @@ func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, 
 		SkillOverrides: overrides,
 		Log:            slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: slog.LevelInfo})),
 	}), nil
+}
+
+// notifier is the deployment's notify command, or nothing at all. It is a
+// typed nil that must not reach the interface: a run whose Notifier is
+// non-nil and empty would try to spawn nothing at every gate.
+func notifier(command string) notify.Notifier {
+	if parsed := notify.Parse(command); parsed != nil {
+		return parsed
+	}
+	return nil
 }
 
 // tierNamed reads the project default's tier. It is a flag rather than a

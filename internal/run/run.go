@@ -37,6 +37,7 @@ import (
 	"github.com/ivy/mill/internal/dagger"
 	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/harness"
+	"github.com/ivy/mill/internal/notify"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/redact"
 )
@@ -135,6 +136,11 @@ type Options struct {
 	Log *slog.Logger
 	// Now is the clock. Nil means [time.Now].
 	Now func() time.Time
+	// Notifier carries a filed gate to a person, through whatever command
+	// the deployment configured. Nil never notifies, which is a deployment
+	// that has not configured one: the gate is still filed, and whoever
+	// answers it finds it in dagger (docs/architecture.md §"Gate steps").
+	Notifier notify.Notifier
 	// Answers puts a gate's ask to a person and reports their decision.
 	// Only single-run mode sets it: a worker files a gate and goes back to
 	// ClaimNext, because there is nobody at its terminal. Nil never asks.

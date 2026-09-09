@@ -22,6 +22,15 @@ var _ = Describe("A gate's auto predicate", Label("unit"), func() {
 			&millv1.Run{Tier: millv1.Tier_TIER_FEATURE},
 			&millv1.InspectResponse{Steps: []*millv1.StepRunDetail{
 				{
+					StepRun: &millv1.StepRun{StepName: "review-plan"},
+					Evidence: &millv1.Evidence{
+						Kind: millv1.EvidenceKind_EVIDENCE_KIND_VERDICT,
+						Value: &millv1.Evidence_Verdict{Verdict: &millv1.Verdict{
+							Decision: millv1.VerdictDecision_VERDICT_DECISION_REVISE,
+						}},
+					},
+				},
+				{
 					StepRun: &millv1.StepRun{StepName: "review"},
 					Evidence: &millv1.Evidence{
 						Kind: millv1.EvidenceKind_EVIDENCE_KIND_VERDICT,
@@ -91,6 +100,34 @@ var _ = Describe("A gate's auto predicate", Label("unit"), func() {
 	It("compares numbers numerically", func() {
 		Expect(holds("verdict.blocking == 0")).To(BeTrue())
 		Expect(holds("verdict.findings < 1")).To(BeTrue())
+	})
+
+	Describe("verdict(<step>)", func() {
+		It("reads the named step's verdict, which a run with two reviewers needs", func() {
+			Expect(holds("verdict('review').decision == approve")).To(BeTrue())
+			Expect(holds("verdict('review-plan').decision == revise")).To(BeTrue())
+			Expect(holds("verdict('review-plan').decision == approve")).To(BeFalse())
+			Expect(holds("verdict('review-plan').decision == approve && tier <= feature")).To(BeFalse())
+			Expect(holds("verdict('review').decision == approve && tier <= feature")).To(BeTrue())
+		})
+
+		It("is false for a step that produced no verdict, and records the reason", func() {
+			Expect(holds("verdict('review-nothing').decision == approve")).To(BeFalse())
+			Expect(holds("verdict('pr').decision == approve")).To(BeFalse(),
+				"pr closed on a url, not a verdict")
+			Expect(holds("verdict('review').missing == approve")).To(BeFalse())
+
+			Expect(env.why()).To(ConsistOf(
+				ContainSubstring("no step named review-nothing has closed on a verdict"),
+				ContainSubstring("no step named pr has closed on a verdict"),
+				ContainSubstring("the verdict of review has no missing"),
+			))
+		})
+
+		It("refuses a call with no step to name", func() {
+			_, err := evaluate("verdict() == approve", env)
+			Expect(err).To(MatchError(ContainSubstring("needs the name of a step")))
+		})
 	})
 
 	It("refuses a predicate that is not one, naming what it choked on", func() {

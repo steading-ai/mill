@@ -107,6 +107,7 @@ concurrency: 4
 workflow: feature
 dagger-socket: /run/dagger/other.sock
 env_mode: strict
+notify_command: /usr/local/bin/thicket-send.sh
 `), 0o600)).To(Succeed())
 	})
 
@@ -132,10 +133,15 @@ env_mode: strict
 		// setting a unit must not forget; the file says it the way the
 		// deployment does.
 		Expect(opts.run.envMode).To(Equal("strict"))
+		// The notify command is the deployment's, spelled the way env_mode
+		// is: a filed gate reaches a person through it.
+		Expect(opts.run.notifyCommand).To(Equal("/usr/local/bin/thicket-send.sh"))
 	})
 
 	It("leaves a flag the command line set alone", func() {
-		opts := parse("--concurrency", "2", "--project", "just-this-one", "--env-mode", "inherit")
+		opts := parse("--concurrency", "2", "--project", "just-this-one", "--env-mode", "inherit",
+			"--notify-command", "/opt/notify")
+		Expect(opts.run.notifyCommand).To(Equal("/opt/notify"))
 		Expect(opts.run.envMode).To(Equal("inherit"))
 		Expect(opts.concurrency).To(Equal(2))
 		Expect(opts.projects).To(Equal([]string{"just-this-one"}))

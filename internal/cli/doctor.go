@@ -18,6 +18,7 @@ import (
 	"github.com/ivy/mill/internal/dagger"
 	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/harness/claude"
+	"github.com/ivy/mill/internal/notify"
 	"github.com/ivy/mill/internal/workspace/signing"
 )
 
@@ -54,15 +55,17 @@ func fail(name, format string, args ...any) probe {
 }
 
 type doctorOptions struct {
-	socket       string
-	daggerSocket string
-	project      string
-	sidecar      string
-	envMode      string
-	workspaceDir string
-	vcsURL       string
-	identity     string
-	name         string
+	socket        string
+	daggerSocket  string
+	project       string
+	sidecar       string
+	envMode       string
+	workspaceDir  string
+	vcsURL        string
+	identity      string
+	name          string
+	config        string
+	notifyCommand string
 }
 
 func newDoctorCommand() *cobra.Command {
@@ -79,6 +82,7 @@ func newDoctorCommand() *cobra.Command {
             would spawn it with, and answers a no-op
   signing   the commit signing key exists and some project trusts it
   forge     the forge credential is accepted
+  notify    the configured notify command runs and accepts a probe notice
 
 Every probe is reported. The command exits non-zero when any of them
 failed.`,
@@ -97,6 +101,8 @@ failed.`,
 	f.StringVar(&opts.vcsURL, "vcs-url", os.Getenv(vcsURLEnv), "repository the forge credential is probed against (default: $"+vcsURLEnv+")")
 	f.StringVar(&opts.identity, "identity", "", "address the mill commits under (default: mill@<host>)")
 	f.StringVar(&opts.name, "name", defaultForgeUser, "name on the mill's commits")
+	f.StringVar(&opts.config, "config", defaultConfigPath(), "path of the configuration file the notify command is read from when no flag names one")
+	f.StringVar(&opts.notifyCommand, "notify-command", "", notifyCommandUsage)
 	return cmd
 }
 
@@ -107,6 +113,16 @@ var ErrUnhealthy = errors.New("doctor: a probe failed")
 func runDoctor(cmd *cobra.Command, opts doctorOptions) error {
 	if opts.identity == "" {
 		opts.identity = defaultIdentity()
+	}
+	// The notify command is a deployment's setting and lives in its
+	// configuration file; a doctor that probed only what the command line
+	// repeated would report on a notifier no run uses.
+	if opts.notifyCommand == "" && unset(cmd, "notify-command") {
+		config, err := LoadConfig(opts.config)
+		if err != nil {
+			return err
+		}
+		opts.notifyCommand = config.NotifyCommand
 	}
 	probes := doctor(cmd.Context(), opts)
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
@@ -129,7 +145,7 @@ func runDoctor(cmd *cobra.Command, opts doctorOptions) error {
 
 // doctor runs every probe in order and returns what each found. It is the
 // value `mill mcp` renders too, so an agent asked to look at a sick host is
-// told the same six things.
+// told the same seven things.
 func doctor(ctx context.Context, opts doctorOptions) []probe {
 	socket, schema := probeService(ctx, opts)
 	return []probe{
@@ -139,6 +155,7 @@ func doctor(ctx context.Context, opts doctorOptions) []probe {
 		probeSidecar(ctx, opts),
 		probeSigning(opts),
 		probeForge(ctx, opts),
+		probeNotify(ctx, opts),
 	}
 }
 
@@ -295,6 +312,36 @@ func probeForge(ctx context.Context, opts doctorOptions) probe {
 		return pass("forge", "%s accepts the credential", opts.vcsURL)
 	}
 	return fail("forge", "%s refused the credential: %v", opts.vcsURL, err)
+}
+
+// probeNotify runs the configured notify command with a probe notice. It is
+// the one probe whose subject is somebody else's script: what it proves is
+// that the command exists, starts, reads the notice, and exits zero — which
+// is the whole of the contract internal/notify holds it to.
+//
+// The notice carries `kind: probe` and no gate, so a notifier that routes on
+// kind can tell a health check from a person's decision and stay quiet
+// (contrib/notify/thicket-send.sh).
+//
+// A deployment with no notify command passes. Filing a gate that reaches
+// nobody is a choice the mill supports — the answer is written in dagger
+// either way — and a probe that failed for it would make every mill without
+// a notifier report itself sick.
+func probeNotify(ctx context.Context, opts doctorOptions) probe {
+	command := notify.Parse(opts.notifyCommand)
+	if command == nil {
+		return pass("notify", "no notify command is configured; a filed gate waits in dagger for somebody to find it")
+	}
+	ctx, cancel := context.WithTimeout(ctx, notify.Timeout)
+	defer cancel()
+	result, err := command.Notify(ctx, notify.Notice{Kind: notify.KindProbe})
+	if err != nil {
+		return fail("notify", "%s could not be run: %v", opts.notifyCommand, err)
+	}
+	if !result.OK() {
+		return fail("notify", "%s refused the probe notice: %s", opts.notifyCommand, result)
+	}
+	return pass("notify", "%s accepts a probe notice", opts.notifyCommand)
 }
 
 // firstLine is a message trimmed to one line, for a probe's reason.

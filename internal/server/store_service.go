@@ -161,6 +161,15 @@ func (s *StoreService) Park(ctx context.Context, req *connect.Request[millv1.Par
 	return connect.NewResponse(&millv1.ParkResponse{Run: run}), nil
 }
 
+// RecordNotice appends what carrying a filed gate to a person did.
+func (s *StoreService) RecordNotice(ctx context.Context, req *connect.Request[millv1.RecordNoticeRequest]) (*connect.Response[millv1.RecordNoticeResponse], error) {
+	if err := s.svc.RecordNotice(ctx, req.Msg.GetLeaseId(), req.Msg.GetRunId(), req.Msg.GetStepRunId(),
+		req.Msg.GetKind(), req.Msg.GetGateRef(), req.Msg.GetExitCode(), req.Msg.GetDetail()); err != nil {
+		return nil, connectError(err)
+	}
+	return connect.NewResponse(&millv1.RecordNoticeResponse{}), nil
+}
+
 // Done marks a run done, after dagger has confirmed the completing patch.
 // SetCompleteRequestId mints the completing patch's idempotency key before
 // that patch is sent.

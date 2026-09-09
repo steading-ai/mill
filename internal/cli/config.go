@@ -49,7 +49,10 @@ type Config struct {
 	WorkspaceDir string   `yaml:"workspace-dir"`
 	LogDir       string   `yaml:"log-dir"`
 	EnvMode      string   `yaml:"env_mode"`
-	Work         bool     `yaml:"work"`
+	// NotifyCommand is spelled the way env_mode is, for the same reason: a
+	// deployment sets it, and a deployment spells it with an underscore.
+	NotifyCommand string `yaml:"notify_command"`
+	Work          bool   `yaml:"work"`
 }
 
 // defaultConfigPath is where the file lives when nothing names one.
@@ -87,6 +90,19 @@ func LoadConfig(path string) (Config, error) {
 		return config, fmt.Errorf("mill: %s: %w", path, err)
 	}
 	return config, nil
+}
+
+// configuredNotifyCommand is the notify command the deployment's own
+// configuration file names, for a caller with no flag of its own to read it
+// from. A file that does not parse yields nothing rather than an error: the
+// caller is `mill mcp`'s doctor tool, and a probe that cannot be configured
+// reports that it is not configured.
+func configuredNotifyCommand() string {
+	config, err := LoadConfig(defaultConfigPath())
+	if err != nil {
+		return ""
+	}
+	return config.NotifyCommand
 }
 
 // unset reports whether the command line left a flag alone, which is the

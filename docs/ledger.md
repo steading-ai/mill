@@ -161,7 +161,7 @@ One row per turn, per model, as the adapter reports — a turn that bills two mo
 
 ### `events`
 
-Append-only. Every change to `runs.status`, every step run start and close, every token issue and revoke, every gate filed and every auto-approval. Fields: `id` (ULID), `run_id`, `step_run_id` (nullable), `op`, `before`, `after`, `worker_ref`, `occurred_at`. This is the audit trail and what `mill status --history` reads. It is not a change stream for consumers; nothing subscribes to it.
+Append-only. Every change to `runs.status`, every step run start and close, every token issue and revoke, every gate filed and every auto-approval, and every attempt to carry a filed gate to a person (`notified`: the kind, the gate, the notify command's exit status and its diagnostic). Fields: `id` (ULID), `run_id`, `step_run_id` (nullable), `op`, `before`, `after`, `worker_ref`, `occurred_at`. This is the audit trail and what `mill status --history` reads. It is not a change stream for consumers; nothing subscribes to it.
 
 Not time-partitioned, unlike dagger's events. Dagger's are partitioned from the start because they are a change stream many consumers resume from; these are neither, and one operator running tens of runs a day does not justify the machinery. Partitioning is a migration away if volume ever asks for it.
 

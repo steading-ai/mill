@@ -28,9 +28,36 @@ import (
 //   - `tier` compares by rank, not by spelling, so `tier <= feature` means
 //     what it reads as.
 
-// predicateEnv is what a predicate may see: the run's tier, and the evidence
-// prior steps closed on, under both the step's name and its evidence kind.
-type predicateEnv map[string]any
+// predicateEnv is what a predicate may see: the run's tier, the evidence
+// prior steps closed on — under both the step's name and its evidence kind —
+// and the verdicts `verdict(<step>)` names a step to reach.
+//
+// The reasons are a pointer so that a copy of the environment shares them: a
+// predicate that could not be answered — a step that closed on no verdict,
+// or none at all — is false, and a false predicate files a gate for a human.
+// What that human should not have to do is guess why, so the environment
+// collects the reason as it evaluates and the run prints it
+// ([Runner.runGate]).
+type predicateEnv struct {
+	values   map[string]any
+	verdicts map[string]map[string]any
+	reasons  *[]string
+}
+
+// note records why a name resolved to nothing.
+func (e predicateEnv) note(format string, args ...any) {
+	if e.reasons != nil {
+		*e.reasons = append(*e.reasons, fmt.Sprintf(format, args...))
+	}
+}
+
+// why is every reason the environment collected, in order.
+func (e predicateEnv) why() []string {
+	if e.reasons == nil {
+		return nil
+	}
+	return *e.reasons
+}
 
 // tierValue is a tier as an operand: comparable by rank against another
 // tier's name.
@@ -43,7 +70,11 @@ type undefined struct{}
 
 // newPredicateEnv builds the environment from the run and its ledger.
 func newPredicateEnv(run *millv1.Run, detail *millv1.InspectResponse) predicateEnv {
-	env := predicateEnv{"tier": tierValue(run.GetTier())}
+	env := predicateEnv{
+		values:   map[string]any{"tier": tierValue(run.GetTier())},
+		verdicts: map[string]map[string]any{},
+		reasons:  &[]string{},
+	}
 	for _, d := range detail.GetSteps() {
 		value := evidenceValue(d.GetEvidence())
 		if value == nil {
@@ -52,8 +83,11 @@ func newPredicateEnv(run *millv1.Run, detail *millv1.InspectResponse) predicateE
 		// Under the step's name, and under the kind of fact it is. The
 		// ledger is in order, so a later attempt's evidence replaces an
 		// earlier one's.
-		env[d.GetStepRun().GetStepName()] = value
-		env[evidenceName(d.GetEvidence().GetKind())] = value
+		env.values[d.GetStepRun().GetStepName()] = value
+		env.values[evidenceName(d.GetEvidence().GetKind())] = value
+		if d.GetEvidence().GetKind() == millv1.EvidenceKind_EVIDENCE_KIND_VERDICT {
+			env.verdicts[d.GetStepRun().GetStepName()] = value
+		}
 	}
 	return env
 }
@@ -270,6 +304,9 @@ func (p *parser) operand() (any, error) {
 	if token == "" {
 		return nil, fmt.Errorf("gate predicate: an operand is missing")
 	}
+	if token == verdictOf && p.next+1 < len(p.tokens) && p.tokens[p.next+1] == "(" {
+		return p.verdict()
+	}
 	p.next++
 	switch {
 	case token == "true":
@@ -288,6 +325,68 @@ func (p *parser) operand() (any, error) {
 	return p.lookup(token), nil
 }
 
+// verdictOf is the one function the language has.
+const verdictOf = "verdict"
+
+// verdict resolves `verdict(<step>).<field>`: the named step's latest closed
+// verdict, as the ledger holds it.
+//
+// The bare name `verdict` reaches the newest verdict of the run whatever
+// step produced it, which is enough for a workflow with one reviewer and
+// wrong for a workflow with two. `feature` has two — review-plan and review
+// — and its plan gate is about the first of them, so the step has to be
+// nameable. Nothing else in the language takes an argument, and nothing else
+// needs to.
+//
+// A step that does not exist, or exists and closed on something other than a
+// verdict, is undefined: the comparison is false, the gate is filed, and the
+// reason is on the record rather than in a workflow author's head.
+func (p *parser) verdict() (any, error) {
+	p.next += 2 // the name and the (
+	name := p.peek()
+	if name == "" || name == ")" {
+		return nil, fmt.Errorf("gate predicate: %s() needs the name of a step", verdictOf)
+	}
+	p.next++
+	if len(name) > 1 && (name[0] == '\'' || name[0] == '"') {
+		name = name[1 : len(name)-1]
+	}
+	if !p.take(")") {
+		return nil, fmt.Errorf("gate predicate: expected ) after %s(%s at %q", verdictOf, name, p.peek())
+	}
+	fields, ok := p.env.verdicts[name]
+	if !ok {
+		p.env.note("no step named %s has closed on a verdict", name)
+		p.skipField()
+		return undefined{}, nil
+	}
+	field := p.field()
+	if field == "" {
+		return undefined{}, nil
+	}
+	value, ok := fields[field]
+	if !ok {
+		p.env.note("the verdict of %s has no %s", name, field)
+		return undefined{}, nil
+	}
+	return value, nil
+}
+
+// field is the `.decision` a call is followed by, if it is followed by one.
+func (p *parser) field() string {
+	token := p.peek()
+	if len(token) < 2 || token[0] != '.' {
+		return ""
+	}
+	p.next++
+	return token[1:]
+}
+
+// skipField consumes a field access whose call resolved to nothing, so that
+// `verdict('nobody').decision` is one undefined operand rather than an
+// operand and a stray token.
+func (p *parser) skipField() { p.field() }
+
 // isName reports whether a token could name something rather than being an
 // operator.
 func isName(token string) bool {
@@ -303,7 +402,7 @@ func isName(token string) bool {
 // is a string literal; a dotted path that resolves to nothing is undefined.
 func (p *parser) lookup(name string) any {
 	head, rest, dotted := strings.Cut(name, ".")
-	value, ok := p.env[head]
+	value, ok := p.env.values[head]
 	if !ok {
 		if dotted {
 			return undefined{}

@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -42,10 +43,11 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 			"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
 			"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
 			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
+			"--config", filepath.Join(GinkgoT().TempDir(), "no-config.yaml"),
 			"--project", "", "--vcs-url", "")
 		Expect(err).To(HaveOccurred(), "a failed probe is a non-zero exit")
 
-		for _, name := range []string{"socket", "schema", "dagger", "sidecar", "signing", "forge"} {
+		for _, name := range []string{"socket", "schema", "dagger", "sidecar", "signing", "forge", "notify"} {
 			verdict, reason := probe(out, name)
 			Expect(verdict).To(BeElementOf("pass", "fail"), "probe %s: %s", name, out)
 			Expect(reason).NotTo(BeEmpty(), "probe %s carries no reason", name)
@@ -78,6 +80,56 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 		forge, reason := probe(out, "forge")
 		Expect(forge).To(Equal("fail"))
 		Expect(reason).To(ContainSubstring("no repository to probe"))
+	})
+
+	Describe("the notify probe", func() {
+		// The probe runs the deployment's own notify command with a probe
+		// notice, which is the only way to find out that a filed gate would
+		// reach nobody before a gate is filed.
+		notifyCommand := func(body string) string {
+			GinkgoHelper()
+			path := filepath.Join(GinkgoT().TempDir(), "notify.sh")
+			Expect(os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o700)).To(Succeed()) //nolint:gosec // a spec's own scratch script
+			return path
+		}
+
+		doctorWith := func(command string) string {
+			GinkgoHelper()
+			m := serving(ctx)
+			out, _ := runCLI(ctx, m.socket, "doctor",
+				"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
+				"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
+				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
+				"--config", filepath.Join(GinkgoT().TempDir(), "no-config.yaml"),
+				"--notify-command", command,
+				"--project", "", "--vcs-url", "")
+			return out
+		}
+
+		It("passes when the command accepts a probe notice", func() {
+			out := doctorWith(notifyCommand(`grep -q '"kind":"probe"'`))
+
+			verdict, reason := probe(out, "notify")
+			Expect(verdict).To(Equal("pass"), out)
+			Expect(reason).To(ContainSubstring("accepts a probe notice"))
+		})
+
+		It("fails when the command refuses it, and says what it said", func() {
+			out := doctorWith(notifyCommand("echo 'no agent named ops' >&2; exit 3"))
+
+			verdict, reason := probe(out, "notify")
+			Expect(verdict).To(Equal("fail"), out)
+			Expect(reason).To(ContainSubstring("exit 3"))
+			Expect(reason).To(ContainSubstring("no agent named ops"))
+		})
+
+		It("passes and says so when no notify command is configured", func() {
+			out := doctorWith("")
+
+			verdict, reason := probe(out, "notify")
+			Expect(verdict).To(Equal("pass"), out)
+			Expect(reason).To(ContainSubstring("no notify command is configured"))
+		})
 	})
 
 	It("reports the environment mode a run would spawn the sidecar under", func() {

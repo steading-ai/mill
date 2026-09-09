@@ -119,10 +119,17 @@ steps:
     retries: 2
     timeout: 30m
 
-  # Plan approval. Auto-approved for now: this node builds the workflow, and
-  # the `plan-gate` node makes the gate a person actually answers. The step
-  # exists already so the shape of the run is the shape it will keep, and so
-  # dropping `auto` is the whole of the change when it does.
+  # Plan approval: the last decision that is cheap to change, and the one
+  # gate this workflow files for a person by default (docs/prd.md R-21,
+  # docs/domain-model.md §Gate).
+  #
+  # `auto` is the policy, and it is deliberately narrow: the reviewer
+  # approved, and the work is worth at most a feature. Anything larger, or
+  # any verdict but approve, is a person's decision — and a revised plan
+  # never arrives here at all, because review-plan's on_failure returns the
+  # run to plan. When the gate is filed, the ask carries the plan itself:
+  # a person reading it in dagger, or in whatever the deployment's notify
+  # command carries it to, can answer without opening the checkout.
   #
   # It is a gate after a step that wrote, which the loader would ordinarily
   # refuse — but what plan wrote is the file its artifact evidence was read
@@ -133,17 +140,26 @@ steps:
       ask:
         title: 'Approve the plan for {{.NodeRef}}?'
         body: |
-          {{.NodeRef}} — {{.NodeTitle}} — has a plan, and the reviewer
-          approved it.
+          {{.NodeRef}} — {{.NodeTitle}} — has a plan, and it needs a
+          decision before anything is implemented.
 
           The plan is attached to this node as an artifact of run
-          {{.RunID}}, and it is in the run's checkout at
-          docs/plans/, where it will be committed with the change.
+          {{.RunID}}, and it is in the run's checkout at docs/plans/,
+          where it will be committed with the change. Its first forty
+          lines:
+
+          ```
+          {{head 40 (artifact "plan")}}
+          ```
 
           Complete this node to implement it. Drop it to stop; the run
           records the denial on {{.NodeRef}} and leaves the plan behind.
-      auto: true
-      deny_result: Plan denied by a human; nothing was implemented and the plan is on the node.
+      auto: verdict('review-plan').decision == approve && tier <= feature
+      deny_result: |
+        The plan for this node was rejected at the plan-approval gate, so
+        nothing was implemented and the run stopped there. The plan it was
+        asked about is an artifact on this node; file the work again with
+        what the plan got wrong, or drop it.
     evidence: gate
     retries: 1
     timeout: 168h

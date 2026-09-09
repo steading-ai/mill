@@ -77,6 +77,9 @@ const (
 	StoreServiceMarkWaitingProcedure = "/mill.v1.StoreService/MarkWaiting"
 	// StoreServiceParkProcedure is the fully-qualified name of the StoreService's Park RPC.
 	StoreServiceParkProcedure = "/mill.v1.StoreService/Park"
+	// StoreServiceRecordNoticeProcedure is the fully-qualified name of the StoreService's RecordNotice
+	// RPC.
+	StoreServiceRecordNoticeProcedure = "/mill.v1.StoreService/RecordNotice"
 	// StoreServiceSetCompleteRequestIdProcedure is the fully-qualified name of the StoreService's
 	// SetCompleteRequestId RPC.
 	StoreServiceSetCompleteRequestIdProcedure = "/mill.v1.StoreService/SetCompleteRequestId"
@@ -170,6 +173,12 @@ type StoreServiceClient interface {
 	// Park trips the circuit breaker: the run stops, a gate asks a human what
 	// to do, and the reason says what stopped it.
 	Park(context.Context, *connect.Request[v1.ParkRequest]) (*connect.Response[v1.ParkResponse], error)
+	// RecordNotice appends what carrying a filed gate to a person did: which
+	// gate, how the configured notify command ended, and what it said. The
+	// mill's notification is not the run's work — a command that fails or
+	// never runs does not fail the run — so it is a row of the audit trail
+	// and nothing else.
+	RecordNotice(context.Context, *connect.Request[v1.RecordNoticeRequest]) (*connect.Response[v1.RecordNoticeResponse], error)
 	// SetCompleteRequestId mints and stores the idempotency key of the patch
 	// that completes the node, before that patch is sent. Minting is once per
 	// run: a second call returns the key already stored, so a worker resuming
@@ -324,6 +333,12 @@ func NewStoreServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(storeServiceMethods.ByName("Park")),
 			connect.WithClientOptions(opts...),
 		),
+		recordNotice: connect.NewClient[v1.RecordNoticeRequest, v1.RecordNoticeResponse](
+			httpClient,
+			baseURL+StoreServiceRecordNoticeProcedure,
+			connect.WithSchema(storeServiceMethods.ByName("RecordNotice")),
+			connect.WithClientOptions(opts...),
+		),
 		setCompleteRequestId: connect.NewClient[v1.SetCompleteRequestIdRequest, v1.SetCompleteRequestIdResponse](
 			httpClient,
 			baseURL+StoreServiceSetCompleteRequestIdProcedure,
@@ -461,6 +476,7 @@ type storeServiceClient struct {
 	supersedeSteps        *connect.Client[v1.SupersedeStepsRequest, v1.SupersedeStepsResponse]
 	markWaiting           *connect.Client[v1.MarkWaitingRequest, v1.MarkWaitingResponse]
 	park                  *connect.Client[v1.ParkRequest, v1.ParkResponse]
+	recordNotice          *connect.Client[v1.RecordNoticeRequest, v1.RecordNoticeResponse]
 	setCompleteRequestId  *connect.Client[v1.SetCompleteRequestIdRequest, v1.SetCompleteRequestIdResponse]
 	done                  *connect.Client[v1.DoneRequest, v1.DoneResponse]
 	fail                  *connect.Client[v1.FailRequest, v1.FailResponse]
@@ -541,6 +557,11 @@ func (c *storeServiceClient) MarkWaiting(ctx context.Context, req *connect.Reque
 // Park calls mill.v1.StoreService.Park.
 func (c *storeServiceClient) Park(ctx context.Context, req *connect.Request[v1.ParkRequest]) (*connect.Response[v1.ParkResponse], error) {
 	return c.park.CallUnary(ctx, req)
+}
+
+// RecordNotice calls mill.v1.StoreService.RecordNotice.
+func (c *storeServiceClient) RecordNotice(ctx context.Context, req *connect.Request[v1.RecordNoticeRequest]) (*connect.Response[v1.RecordNoticeResponse], error) {
+	return c.recordNotice.CallUnary(ctx, req)
 }
 
 // SetCompleteRequestId calls mill.v1.StoreService.SetCompleteRequestId.
@@ -686,6 +707,12 @@ type StoreServiceHandler interface {
 	// Park trips the circuit breaker: the run stops, a gate asks a human what
 	// to do, and the reason says what stopped it.
 	Park(context.Context, *connect.Request[v1.ParkRequest]) (*connect.Response[v1.ParkResponse], error)
+	// RecordNotice appends what carrying a filed gate to a person did: which
+	// gate, how the configured notify command ended, and what it said. The
+	// mill's notification is not the run's work — a command that fails or
+	// never runs does not fail the run — so it is a row of the audit trail
+	// and nothing else.
+	RecordNotice(context.Context, *connect.Request[v1.RecordNoticeRequest]) (*connect.Response[v1.RecordNoticeResponse], error)
 	// SetCompleteRequestId mints and stores the idempotency key of the patch
 	// that completes the node, before that patch is sent. Minting is once per
 	// run: a second call returns the key already stored, so a worker resuming
@@ -836,6 +863,12 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(storeServiceMethods.ByName("Park")),
 		connect.WithHandlerOptions(opts...),
 	)
+	storeServiceRecordNoticeHandler := connect.NewUnaryHandler(
+		StoreServiceRecordNoticeProcedure,
+		svc.RecordNotice,
+		connect.WithSchema(storeServiceMethods.ByName("RecordNotice")),
+		connect.WithHandlerOptions(opts...),
+	)
 	storeServiceSetCompleteRequestIdHandler := connect.NewUnaryHandler(
 		StoreServiceSetCompleteRequestIdProcedure,
 		svc.SetCompleteRequestId,
@@ -982,6 +1015,8 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 			storeServiceMarkWaitingHandler.ServeHTTP(w, r)
 		case StoreServiceParkProcedure:
 			storeServiceParkHandler.ServeHTTP(w, r)
+		case StoreServiceRecordNoticeProcedure:
+			storeServiceRecordNoticeHandler.ServeHTTP(w, r)
 		case StoreServiceSetCompleteRequestIdProcedure:
 			storeServiceSetCompleteRequestIdHandler.ServeHTTP(w, r)
 		case StoreServiceDoneProcedure:
@@ -1077,6 +1112,10 @@ func (UnimplementedStoreServiceHandler) MarkWaiting(context.Context, *connect.Re
 
 func (UnimplementedStoreServiceHandler) Park(context.Context, *connect.Request[v1.ParkRequest]) (*connect.Response[v1.ParkResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.Park is not implemented"))
+}
+
+func (UnimplementedStoreServiceHandler) RecordNotice(context.Context, *connect.Request[v1.RecordNoticeRequest]) (*connect.Response[v1.RecordNoticeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.RecordNotice is not implemented"))
 }
 
 func (UnimplementedStoreServiceHandler) SetCompleteRequestId(context.Context, *connect.Request[v1.SetCompleteRequestIdRequest]) (*connect.Response[v1.SetCompleteRequestIdResponse], error) {

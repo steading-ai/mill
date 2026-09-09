@@ -11,6 +11,7 @@ import (
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/dagger"
 	"github.com/ivy/mill/internal/evidence"
+	"github.com/ivy/mill/internal/notify"
 )
 
 // The gate branch of the loop: docs/architecture.md §"Gate steps" and
@@ -27,7 +28,16 @@ import (
 // auto-approval or files the gate.
 func (r *Runner) runGate(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, detail *millv1.InspectResponse) (result, error) {
 	predicate := step.GetGate().GetAuto()
-	approved, err := evaluate(predicate, newPredicateEnv(s.run, detail))
+	env := newPredicateEnv(s.run, detail)
+	approved, err := evaluate(predicate, env)
+	// Why a name resolved to nothing, said out loud. A predicate that could
+	// not be answered is false, and a human about to be asked a question
+	// deserves to know it was the mill that could not answer rather than the
+	// workflow that decided not to.
+	for _, reason := range env.why() {
+		r.options.Log.Info("gate predicate", "step", step.GetName(), "auto", predicate, "reason", reason)
+		r.printf("  gate %s: %s\n", step.GetName(), reason)
+	}
 	if err != nil {
 		// A predicate that does not parse is a workflow bug, and the safe
 		// direction to be wrong in is a human: the gate is filed and the
@@ -37,7 +47,7 @@ func (r *Runner) runGate(ctx context.Context, s *state, step *millv1.Step, sr *m
 		approved = false
 	}
 	if !approved {
-		return result{}, r.fileGate(ctx, s, step, sr)
+		return result{}, r.fileGate(ctx, s, step, sr, detail)
 	}
 	r.printf("  gate %s auto-approved by %s\n", step.GetName(), predicate)
 	out := result{autoApproved: true}
@@ -86,8 +96,8 @@ func (r *Runner) approve(ctx context.Context, s *state, step *millv1.Step) (stri
 // two leaves a gate the store already knows about and will not file twice
 // (Invariant 12); a crash between the first two is what [findFiledGate]
 // exists for.
-func (r *Runner) fileGate(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun) error {
-	err := r.file(ctx, s, step, sr)
+func (r *Runner) fileGate(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, detail *millv1.InspectResponse) error {
+	err := r.file(ctx, s, step, sr, detail)
 	switch {
 	case err == nil:
 		return errReleased
@@ -109,13 +119,13 @@ var errAborted = errors.New("run: aborted")
 
 // file is fileGate's three writes, so that everything they can go wrong with
 // is one error to classify.
-func (r *Runner) file(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun) error {
+func (r *Runner) file(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, detail *millv1.InspectResponse) error {
 	gate, err := r.findFiledGate(ctx, s, step)
 	if err != nil {
 		return err
 	}
 	if gate == nil {
-		ask, err := r.renderAsk(s, step)
+		ask, err := r.renderAsk(ctx, s, step, detail)
 		if err != nil {
 			return err
 		}
@@ -130,6 +140,15 @@ func (r *Runner) file(ctx context.Context, s *state, step *millv1.Step, sr *mill
 		if err != nil {
 			return err
 		}
+		// Only for a gate this attempt filed. A gate found already filed is
+		// one somebody has already been told about, and telling them again
+		// is the second message a crash recovery must not send.
+		r.notified(ctx, s, sr.GetId(), notify.Notice{
+			Kind:  noticeKind(step),
+			Gate:  gate.GetReference(),
+			Title: ask.title,
+			Body:  ask.body,
+		})
 	}
 	// The attempt stays open across the wait; its credential does not. The
 	// token is revoked before the store forgets which lease fences this
@@ -360,22 +379,92 @@ type ask struct {
 // renderAsk fills the gate's templates from the run. The fields are the ones
 // docs/domain-model.md §Gate names: which node, which step, and the
 // artifacts the decision is about.
-func (r *Runner) renderAsk(s *state, step *millv1.Step) (ask, error) {
+func (r *Runner) renderAsk(ctx context.Context, s *state, step *millv1.Step, detail *millv1.InspectResponse) (ask, error) {
 	data := r.templateData(s, step)
-	title, err := render(step.GetGate().GetAsk().GetTitle(), data)
+	funcs := r.askFuncs(ctx, s, detail)
+	title, err := renderWith(step.GetGate().GetAsk().GetTitle(), data, funcs)
 	if err != nil {
 		return ask{}, err
 	}
-	body, err := render(step.GetGate().GetAsk().GetBody(), data)
+	body, err := renderWith(step.GetGate().GetAsk().GetBody(), data, funcs)
 	if err != nil {
 		return ask{}, err
 	}
 	return ask{title: title, body: body}, nil
 }
 
+// askFuncs are the two functions a gate's ask may call, and the reason the
+// ask is more than the run's own facts.
+//
+// A gate is answered by reading, and what is being read is regularly a step's
+// artifact: `feature`'s plan gate asks a person to approve a plan, and a
+// question that does not carry the plan is a question that cannot be answered
+// where it is asked. The artifact is on the node in dagger, so `artifact`
+// fetches it and `head` cuts it to the length a notification can carry.
+//
+// Neither ever fails the ask. An artifact that is not there yields a line
+// saying so and the gate is filed regardless: a person who has to open dagger
+// to read the plan is a worse outcome than a run that stops, and stopping the
+// run is what an error here would do (docs/domain-model.md §Gate).
+func (r *Runner) askFuncs(ctx context.Context, s *state, detail *millv1.InspectResponse) template.FuncMap {
+	return template.FuncMap{
+		"artifact": func(step string) string { return r.artifactOf(ctx, s, detail, step) },
+		"head":     head,
+	}
+}
+
+// artifactOf is the text of a step's artifact evidence, read from dagger.
+// The ledger holds the digest of what was attached, not the bytes, so the
+// node is where the bytes are.
+func (r *Runner) artifactOf(ctx context.Context, s *state, detail *millv1.InspectResponse, step string) string {
+	digest := ""
+	for _, d := range detail.GetSteps() {
+		if d.GetStepRun().GetStepName() == step &&
+			d.GetEvidence().GetKind() == millv1.EvidenceKind_EVIDENCE_KIND_ARTIFACT {
+			digest = d.GetEvidence().GetArtifact()
+		}
+	}
+	if digest == "" {
+		return fmt.Sprintf("(step %s has attached no artifact to %s)", step, s.node.GetReference())
+	}
+	held, err := r.options.Dagger.Artifacts(ctx, s.node.GetReference())
+	if err != nil {
+		r.options.Log.Warn("gate ask", "artifact", step, "error", err)
+		return fmt.Sprintf("(the artifact of %s could not be read from %s: %v)", step, s.node.GetReference(), err)
+	}
+	for _, artifact := range held {
+		if artifact.GetMetadata().GetFields()["digest"].GetStringValue() != digest {
+			continue
+		}
+		var b strings.Builder
+		for _, part := range artifact.GetParts() {
+			b.WriteString(part.GetText().GetText())
+		}
+		return b.String()
+	}
+	return fmt.Sprintf("(the artifact %s of step %s is not on %s)", short(digest), step, s.node.GetReference())
+}
+
+// head is the first n lines of a text, with a line saying what was left out.
+// A gate's body travels: it is read in dagger, and carried to a person by
+// whatever the deployment configured (internal/notify). Quoting a whole plan
+// there is quoting it into a chat message.
+func head(n int, text string) string {
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	if n <= 0 || len(lines) <= n {
+		return strings.Join(lines, "\n")
+	}
+	return strings.Join(lines[:n], "\n") + fmt.Sprintf("\n\n… %d more lines; the whole of it is the artifact on this node.", len(lines)-n)
+}
+
 // render expands one gate template.
 func render(text string, data map[string]any) (string, error) {
-	t, err := template.New("ask").Option("missingkey=zero").Parse(text)
+	return renderWith(text, data, nil)
+}
+
+// renderWith expands a template that may call the ask's own functions.
+func renderWith(text string, data map[string]any, funcs template.FuncMap) (string, error) {
+	t, err := template.New("ask").Option("missingkey=zero").Funcs(funcs).Parse(text)
 	if err != nil {
 		return "", fmt.Errorf("gate ask: %w", err)
 	}

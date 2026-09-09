@@ -436,14 +436,15 @@ func (s *mcpServer) logs(ctx context.Context, reference, step string, tail int) 
 // doctorOptions is what the server's flags mean to the doctor tool.
 func (s *mcpServer) doctorOptions() doctorOptions {
 	return doctorOptions{
-		socket:       s.opts.socket,
-		daggerSocket: s.opts.daggerSocket,
-		project:      s.opts.project,
-		sidecar:      envOr(sidecarEnv, "sidecar/dist/main.js"),
-		workspaceDir: defaultWorkspaceDir(),
-		vcsURL:       os.Getenv(vcsURLEnv),
-		identity:     defaultIdentity(),
-		name:         defaultForgeUser,
+		socket:        s.opts.socket,
+		daggerSocket:  s.opts.daggerSocket,
+		project:       s.opts.project,
+		sidecar:       envOr(sidecarEnv, "sidecar/dist/main.js"),
+		workspaceDir:  defaultWorkspaceDir(),
+		vcsURL:        os.Getenv(vcsURLEnv),
+		identity:      defaultIdentity(),
+		name:          defaultForgeUser,
+		notifyCommand: configuredNotifyCommand(),
 	}
 }
 

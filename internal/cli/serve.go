@@ -169,7 +169,7 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 	go func() {
 		<-ctx.Done()
 		log.Info("shutdown signal received")
-		notify(log, sdnotify.Stopping)
+		notifySystemd(log, sdnotify.Stopping)
 		<-stopped
 		drain()
 	}()
@@ -200,12 +200,12 @@ func announceReady(ctx context.Context, svc *domain.Service, log *slog.Logger) {
 		return
 	}
 	log.Info("database reachable; ready")
-	notify(log, sdnotify.Ready, sdnotify.Status("serving"))
+	notifySystemd(log, sdnotify.Ready, sdnotify.Status("serving"))
 }
 
-// notify sends states to systemd, logging a failure to reach the
+// notifySystemd sends states to systemd, logging a failure to reach the
 // notification socket rather than failing the service over it.
-func notify(log *slog.Logger, states ...string) {
+func notifySystemd(log *slog.Logger, states ...string) {
 	if _, err := sdnotify.Send(states...); err != nil {
 		log.Warn("notify systemd", "err", err)
 	}

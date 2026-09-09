@@ -298,7 +298,7 @@ unchanged`.
 
 ## doctor
 
-Six probes, one line of reason each. Every probe is reported; the command
+Seven probes, one line of reason each. Every probe is reported; the command
 exits non-zero when any of them failed.
 
 ```
@@ -309,6 +309,7 @@ pass  dagger   /run/dagger/dg.sock answers; this account is a principal on mill,
 fail  sidecar  sidecar/dist/main.js did not answer: claude: the sidecar answered nothing before it exited
 fail  signing  no signing key under ~/.local/state/mill/workspaces/signing
 fail  forge    no repository to probe: pass --vcs-url or set MILL_VCS_URL
+pass  notify   contrib/notify/thicket-send.sh accepts a probe notice
 ```
 
 | Probe | What it checks |
@@ -319,11 +320,21 @@ fail  forge    no repository to probe: pass --vcs-url or set MILL_VCS_URL
 | `sidecar` | The harness sidecar starts, parses one frame, and answers |
 | `signing` | The commit signing key exists and some project's `allowed_signers` names it |
 | `forge` | The forge accepts the credential |
+| `notify` | The configured notify command runs and accepts a probe notice |
 
 The sidecar probe sends a `cancel` request on stdin. Cancellation reaches a
 running sidecar as SIGTERM, so a cancel on stdin is a frame the sidecar
 understands and refuses by contract: it never starts a session, never reaches
 the Claude API, and bills nothing. Its refusal is the answer the probe wants.
+
+The notify probe runs the deployment's `--notify-command` — the file's
+`notify_command`, when no flag names one — with `{"kind":"probe"}` on its
+standard input and nothing else: no gate, no node, no run. A notifier that
+routes on `kind` can tell a health check from a person's decision and stay
+quiet, and the shipped example does. A host with no notify command configured
+passes and says so: filing a gate that reaches nobody is a supported choice,
+because the answer is written in dagger either way (docs/architecture.md
+§"Gate steps").
 
 **What the dagger probe cannot check.** Dagger's API exposes no whoami and its
 principals carry no name ([dagger's domain model](https://github.com/ivy/dagger)

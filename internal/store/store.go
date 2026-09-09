@@ -352,6 +352,31 @@ func (s *Store) Park(ctx context.Context, leaseID, runID, gateNodeID string, rea
 	return run, nil
 }
 
+// RecordNotice appends what carrying a filed gate to a person did. It
+// changes no run state: the notification is the mill's own errand, and the
+// only trace it leaves is the row of the audit trail written here. It is
+// fenced like every other write, which is why it is called while the gate's
+// lease is still held rather than after the run has been parked or set
+// waiting (docs/ledger.md §events).
+func (s *Store) RecordNotice(ctx context.Context, leaseID, runID, stepRunID, kind, gateRef string, exitCode int32, detail string) error {
+	return s.withTx(ctx, func(ctx context.Context, tx pgx.Tx, q *Queries) error {
+		if _, err := fence(ctx, tx, runID, leaseID); err != nil {
+			return err
+		}
+		return record(ctx, q, event{
+			runID:     runID,
+			stepRunID: stepRunID,
+			op:        "notified",
+			after: map[string]any{
+				"kind":      kind,
+				"gate":      gateRef,
+				"exit_code": exitCode,
+				"detail":    detail,
+			},
+		})
+	})
+}
+
 // ClearGate takes the answered gate off a run and leaves it running, which
 // is what lets the next gate step file one of its own (Invariant 12).
 //
