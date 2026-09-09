@@ -81,15 +81,19 @@ when there is none:
   closed step runs each with the evidence its step names, the merge by the
   mill's forge identity, the commit verified with `git verify-commit` against
   the mill's `allowed_signers`, and the run's cost in dagger's usage rollup.
-- **The same node twice is the same run.** The first run is killed during
-  `implement` — the ledger, not the log, says when — and a second is
-  invoked. It reattaches rather than cloning, `implement` shows attempt 1
-  `aborted` and attempt 2 `closed` in the same session, and the node is
-  delivered anyway.
-- **Fenced out, and finished by the next worker.** A run in flight has its
-  lease released and the node claimed by a second worker. The running `mill
-  run` exits `75`, and a fresh run finishes the node with no second merge
-  request on the branch.
+- **A killed worker's node is resumed by the next run.** The first run is
+  killed during `implement` — the ledger, not the log, says when — its lease
+  taken from it, and a second run invoked. The second reattaches rather than
+  cloning, `implement` shows attempt 1 `aborted` and attempt 2 `closed` in
+  the same session, and the node is delivered anyway. It takes about a minute
+  and a half and one quick-fix run's tokens: 1.7k in, 4.0k out, 532k read
+  from cache, 38k written to it.
+- **A worker fenced out writes nothing.** A run in flight has its lease taken
+  and the node claimed by a second worker. The running `mill run` exits `75`,
+  and a fresh run finishes the node with no second merge request on the
+  branch. It takes about three minutes — a fenced worker notices at its next
+  heartbeat, and the scenario gives it a short one — and one quick-fix run's
+  tokens: 0.05k in, 5.3k out, 694k read from cache, 37k written to it.
 - **One node, planned and delivered.** The `feature` workflow end to end:
   every step through `pr` closed on the evidence its definition names, the
   plan in the branch under `docs/plans` naming the run, the reviewer in a
@@ -103,6 +107,16 @@ The fifth needs no forge and runs on every host that can start the suite:
 The forge scenarios fit inside fifteen minutes on the host because they run
 concurrently; the suite's wall clock is its slowest scenario, not their sum.
 *The reviewer says no* is the slowest, at up to seventy-five minutes.
+
+The two lease scenarios take the lease away rather than waiting it out,
+because killing a worker releases nothing and dagger hands a node to nobody
+while its lease is live: the next claim would be refused until the TTL had
+passed, which is longer than either scenario's patience. The reason is
+`preempted` — an operator taking a lease from a worker that is not coming
+back — and it is the only one dagger accepts here: `expired` is the server's
+own, set by its expiry timer and refused from a client. Nothing about the
+resume turns on it: the next worker reads the ledger, not the release reason
+([ledger.md](ledger.md) §Resume).
 
 ## What it leaves behind
 

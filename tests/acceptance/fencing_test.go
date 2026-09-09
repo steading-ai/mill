@@ -20,31 +20,29 @@ const (
 )
 
 var _ = Describe("Acceptance", Label("acceptance"), func() {
-	// Scenario: Fenced out, and finished by the next worker
-	//   Given a run in flight holding the node's lease
-	//   When the lease is expired and a second worker claims the node
-	//   Then the running mill exits with the fenced exit code
-	//   And a fresh run completes the node without a duplicate merge request
-	It("Fenced out, and finished by the next worker", func(ctx SpecContext) {
+	// Scenario: A worker fenced out writes nothing
+	//   Given a worker whose lease was taken by another
+	//   When its next heartbeat is refused
+	//   Then it abandons the run locally and the other worker finishes it
+	It("A worker fenced out writes nothing", func(ctx SpecContext) {
 		needsForge()
 
 		s := typo.stage(ctx)
 
-		By("given a run in flight holding the node's lease")
+		By("given a worker whose lease was taken by another")
 		fenced := s.start(ctx, runOptions{TTL: fencedTTL, Heartbeat: fencedHeartbeat})
 		runningStep(ctx, s.NodeRef, "gather-context", implementReached)
 		held := s.Graph.leaseID(ctx, s.NodeRef)
 		Expect(held).NotTo(BeEmpty(), "the run holds the node's lease")
 
-		By("when the lease is expired and a second worker claims the node")
-		s.Graph.expire(ctx, held)
+		s.Graph.preempt(ctx, held, "the acceptance suite taking the lease from a live worker")
 		taken := s.Graph.claimAs(ctx, "acceptance-second-worker")
 		Expect(taken).NotTo(Equal(held), "the node is held under a lease that is not the run's")
 
-		By("then the running mill exits with the fenced exit code")
+		By("when its next heartbeat is refused")
 		Expect(fenced.wait(fencedNoticed)).To(Equal(cli.ExitFenced))
 
-		By("and a fresh run completes the node without a duplicate merge request")
+		By("then it abandons the run locally and the other worker finishes it")
 		s.Graph.handBack(ctx, taken)
 
 		Expect(s.start(ctx, runOptions{}).wait(deliveredTimeout)).To(BeZero())

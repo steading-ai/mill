@@ -204,15 +204,22 @@ func (v nodeView) artifact(name string) string {
 	return ""
 }
 
-// expire ends a lease as `dg reap` would once its TTL had run out. It is how
-// the fencing scenario takes a node away from a worker that is still holding
-// it, without waiting out the lease: dagger records the same reason either
-// way, and the holder cannot tell the difference — its next heartbeat is
-// refused whichever route got there.
-func (g *scratchGraph) expire(ctx context.Context, leaseID string) {
+// preempt takes a live lease away from the worker holding it, which is how a
+// scenario reaches the state a crash or a fence leaves behind without waiting
+// out the TTL.
+//
+// The reason is `preempted` because that is the only one dagger accepts for
+// this act: `expired` is the server's own, set by the expiry timer and
+// refused from a client (dagger's docs/domain-model.md §Lease), and an
+// operator taking a lease away is exactly what `preempted` means — mill's own
+// `restart` and `cancel` release under it for the same reason
+// (internal/run/restart.go). The holder cannot tell the routes apart: its
+// next heartbeat is refused whichever one got there, and the next claim reads
+// the ledger rather than the release reason (docs/ledger.md §Resume).
+func (g *scratchGraph) preempt(ctx context.Context, leaseID, detail string) {
 	GinkgoHelper()
-	g.cli.json(ctx, nil, "release", leaseID,
-		"--reason", "expired", "--detail", "the acceptance suite expiring the lease under a live worker")
+	Expect(leaseID).NotTo(BeEmpty(), "there is a live lease to take")
+	g.cli.json(ctx, nil, "release", leaseID, "--reason", "preempted", "--detail", detail)
 }
 
 // leaseID is the lease the node is held under, empty when it is held under

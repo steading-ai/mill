@@ -14,12 +14,16 @@ import (
 const implementReached = 6 * time.Minute
 
 var _ = Describe("Acceptance", Label("acceptance"), func() {
-	It("The same node twice is the same run", func(ctx SpecContext) {
+	// Scenario: A killed worker's node is resumed by the next run
+	//   Given a run whose worker was killed mid-step
+	//   When the node is run again within the scenario's patience
+	//   Then the second run resumes at the interrupted step and delivers
+	It("A killed worker's node is resumed by the next run", func(ctx SpecContext) {
 		needsForge()
 
 		s := typo.stage(ctx)
 
-		By("given a run killed during implement")
+		By("given a run whose worker was killed mid-step")
 		first := s.start(ctx, runOptions{})
 		// The ledger is what says the step is in flight, not the log: a
 		// worker that has written `running` has a session the resume has to
@@ -31,7 +35,17 @@ var _ = Describe("Acceptance", Label("acceptance"), func() {
 		afterKill := workspaceDirs(s.WorkspaceDir)
 		Expect(afterKill).To(HaveLen(1), "the killed run left exactly one workspace behind")
 
-		By("when mill run is invoked again")
+		// A killed worker releases nothing, and dagger hands the node to
+		// nobody while the lease is live: the second claim would be refused
+		// until the TTL passed, which is longer than this scenario waits.
+		// Taking the lease is what an operator does for a worker that is not
+		// coming back, and it changes nothing the resume reads — the next
+		// claim resumes from the ledger, not from the release reason
+		// (docs/ledger.md §Resume, docs/architecture.md §Heartbeat).
+		s.Graph.preempt(ctx, s.Graph.leaseID(ctx, s.NodeRef),
+			"the acceptance suite taking the lease from a killed worker")
+
+		By("when the node is run again within the scenario's patience")
 		second := s.start(ctx, runOptions{})
 		// Every directory that appears while the second run is in flight is
 		// collected, because the workspace is destroyed when the run
@@ -42,11 +56,11 @@ var _ = Describe("Acceptance", Label("acceptance"), func() {
 		seen := watcher.stop()
 		Expect(exit).To(BeZero(), "the second run completed the node")
 
-		By("then no second workspace directory is created if the first is present")
+		By("then the second run resumes at the interrupted step")
 		Expect(seen).To(HaveLen(1), "the resume reattached rather than cloning again")
 		Expect(seen).To(HaveKey(afterKill[0]))
 
-		By("and the second attempt resumes the implement session")
+		By("and both attempts ran in one session")
 		detail := inspect(ctx, s.NodeRef)
 		tries := attempts(detail, "implement")
 		Expect(len(tries)).To(BeNumerically(">=", 2), "implement was attempted twice")
@@ -63,7 +77,7 @@ var _ = Describe("Acceptance", Label("acceptance"), func() {
 			"both attempts ran in the same session")
 		Expect(resumed.GetStepRun().GetSessionId()).NotTo(BeEmpty())
 
-		By("and the node is delivered all the same")
+		By("and delivers")
 		Expect(s.Graph.show(ctx, s.NodeRef).Node.Status).To(Equal("done"))
 		Expect(s.Project.file(ctx, "README.md", s.Project.DefaultBranch)).To(ContainSubstring(correction))
 	})
