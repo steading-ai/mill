@@ -250,13 +250,13 @@ func renderInspect(cmd *cobra.Command, detail *millv1.InspectResponse, v view) e
 			stepRunStatusName(sr.GetStatus()),
 			exitText(sr.GetExit()),
 			evidenceKindName(step.GetEvidence().GetKind()),
-			evidenceValue(step.GetEvidence()),
+			stepValue(sr, step.GetEvidence()),
 		}
 		if v == viewFull {
 			row = []string{
 				sr.GetStepName(), fmt.Sprint(sr.GetAttempt()), stepKindName(sr.GetKind()),
 				stepRunStatusName(sr.GetStatus()), exitText(sr.GetExit()),
-				evidenceKindName(step.GetEvidence().GetKind()), evidenceValue(step.GetEvidence()),
+				evidenceKindName(step.GetEvidence().GetKind()), stepValue(sr, step.GetEvidence()),
 				dash(sr.GetSessionId()), tokenText(step.GetTotals()),
 			}
 		}
@@ -649,6 +649,18 @@ func sum(totals []*millv1.ModelTotals) (in, out, read, write int64) {
 		write += total.GetCacheWriteTokens()
 	}
 	return in, out, read, write
+}
+
+// stepValue is an attempt's evidence as inspect prints it. A commit is shown
+// as the range it closed on — the head the attempt started at, then the
+// commit it made, both abbreviated — because "what did this step add" is the
+// question the base commit exists to answer.
+func stepValue(sr *millv1.StepRun, value *millv1.Evidence) string {
+	commit, ok := value.GetValue().(*millv1.Evidence_Commit)
+	if !ok || sr.GetBaseCommit() == "" {
+		return evidenceValue(value)
+	}
+	return short(sr.GetBaseCommit()) + ".." + short(commit.Commit)
 }
 
 // evidenceValue is the evidence a step closed on, as one cell. The claim

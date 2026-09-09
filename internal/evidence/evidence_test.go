@@ -24,14 +24,21 @@ var _ = Describe("The commit verifier", Label("unit"), func() {
 	var (
 		ctx  context.Context
 		repo *repository
+		base,
 		onBranch,
 		offBranch string
 	)
 
+	// mill is the identity the workspace commits under, which is what the
+	// verifier compares a commit's author and committer against.
+	mill := evidence.Committer{Name: "mill", Email: "mill@example.test"}
+
 	BeforeEach(func() {
 		ctx = context.Background()
 		repo = newRepository(branch)
-		repo.commit("README.md", "the default branch")
+		// The head the commit step started at: what the branch already
+		// pointed at, and what closing on it would be closing on nothing.
+		base = repo.commit("README.md", "the default branch")
 		onBranch = repo.commit("change.txt", "the run's own work")
 		// A commit that exists in the repository and is not on the run's
 		// branch: made on another branch, which is where a session that
@@ -48,6 +55,8 @@ var _ = Describe("The commit verifier", Label("unit"), func() {
 			Name:       "commit",
 			Definition: &millv1.Step{Name: "commit", Kind: millv1.StepKind_STEP_KIND_SKILL},
 			Branch:     branch,
+			Base:       base,
+			Committer:  mill,
 			Git:        repo,
 			Session:    session("Done — committed as abc123.", nil),
 		}
@@ -66,7 +75,8 @@ var _ = Describe("The commit verifier", Label("unit"), func() {
 	})
 
 	It("refuses a SHA that is not on the run's branch even though the object exists", func() {
-		step := evidence.Step{Name: "commit", Branch: branch, Git: repo, Claim: offBranch}
+		step := evidence.Step{Name: "commit", Branch: branch, Base: base, Committer: mill,
+			Git: repo, Claim: offBranch}
 
 		result, err := evidence.Verify(ctx, millv1.EvidenceKind_EVIDENCE_KIND_COMMIT, step)
 
@@ -79,7 +89,8 @@ var _ = Describe("The commit verifier", Label("unit"), func() {
 	})
 
 	It("closes the step with a commit that resolves on the run's branch", func() {
-		step := evidence.Step{Name: "commit", Branch: branch, Git: repo, Claim: onBranch,
+		step := evidence.Step{Name: "commit", Branch: branch, Base: base, Committer: mill,
+			Git: repo, Claim: onBranch,
 			Now: func() time.Time { return time.Unix(1700000000, 0) }}
 
 		result, err := evidence.Verify(ctx, millv1.EvidenceKind_EVIDENCE_KIND_COMMIT, step)
@@ -91,9 +102,55 @@ var _ = Describe("The commit verifier", Label("unit"), func() {
 		Expect(result.Value.GetVerifiedAt().AsTime()).To(BeTemporally("==", time.Unix(1700000000, 0).UTC()))
 	})
 
+	It("refuses the head the step started at", func() {
+		// The branch head is the base: whatever the session did, it did not
+		// commit, and the commit already on the branch is not this step's.
+		step := evidence.Step{Name: "commit", Branch: branch, Base: base, Committer: mill,
+			Git: repo, Claim: base}
+
+		result, err := evidence.Verify(ctx, millv1.EvidenceKind_EVIDENCE_KIND_COMMIT, step)
+
+		Expect(result.Value).To(BeNil())
+		Expect(err).To(MatchError(ContainSubstring(base + " is the head the step started at")))
+	})
+
+	It("refuses a commit that does not descend from the base", func() {
+		// The base is on another branch entirely, so the claim is on the
+		// run's branch and yet says nothing about what this step added.
+		step := evidence.Step{Name: "commit", Branch: branch, Base: offBranch, Committer: mill,
+			Git: repo, Claim: onBranch}
+
+		result, err := evidence.Verify(ctx, millv1.EvidenceKind_EVIDENCE_KIND_COMMIT, step)
+
+		Expect(result.Value).To(BeNil())
+		Expect(err).To(MatchError(ContainSubstring("does not descend from " + offBranch)))
+	})
+
+	It("refuses a commit made under another identity, naming the identity found", func() {
+		theirs := repo.commitAs("Someone Else", "else@example.test", "theirs.txt", "not the mill's work")
+		step := evidence.Step{Name: "commit", Branch: branch, Base: base, Committer: mill,
+			Git: repo, Claim: theirs}
+
+		result, err := evidence.Verify(ctx, millv1.EvidenceKind_EVIDENCE_KIND_COMMIT, step)
+
+		Expect(result.Value).To(BeNil())
+		Expect(err).To(MatchError(ContainSubstring("Someone Else <else@example.test>")))
+		Expect(err).To(MatchError(ContainSubstring("not by mill <mill@example.test>")))
+	})
+
+	It("refuses a claim with no base commit recorded for the attempt", func() {
+		step := evidence.Step{Name: "commit", Branch: branch, Committer: mill,
+			Git: repo, Claim: onBranch}
+
+		_, err := evidence.Verify(ctx, millv1.EvidenceKind_EVIDENCE_KIND_COMMIT, step)
+
+		Expect(err).To(MatchError(ContainSubstring("no base commit was recorded")))
+	})
+
 	It("refuses a claim that is not a git object name without asking git", func() {
 		repo.calls = nil
-		step := evidence.Step{Name: "commit", Branch: branch, Git: repo, Claim: "--upload-pack=touch /tmp/x"}
+		step := evidence.Step{Name: "commit", Branch: branch, Base: base, Committer: mill,
+			Git: repo, Claim: "--upload-pack=touch /tmp/x"}
 
 		_, err := evidence.Verify(ctx, millv1.EvidenceKind_EVIDENCE_KIND_COMMIT, step)
 

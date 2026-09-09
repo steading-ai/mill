@@ -480,6 +480,9 @@ func inspectFields(detail *millv1.InspectResponse, v view) map[string]any {
 			row["exit"] = exitText(sr.GetExit())
 			row["evidence_kind"] = evidenceKindName(step.GetEvidence().GetKind())
 			row["evidence"] = evidenceValue(step.GetEvidence())
+			if sr.GetBaseCommit() != "" {
+				row["base_commit"] = sr.GetBaseCommit()
+			}
 		}
 		steps = append(steps, row)
 	}

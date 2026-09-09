@@ -1304,7 +1304,14 @@ type StepRun struct {
 	// Skill steps: the deny-listed variables that were present in the mill's
 	// environment and removed before the session's process was spawned. The
 	// deny list is not configurable, so this is a record and not a setting.
-	EnvStripped   []string `protobuf:"bytes,16,rep,name=env_stripped,json=envStripped,proto3" json:"env_stripped,omitempty"`
+	EnvStripped []string `protobuf:"bytes,16,rep,name=env_stripped,json=envStripped,proto3" json:"env_stripped,omitempty"`
+	// The head of the run's branch when this attempt started. A `commit`
+	// step closes on a commit that descends from it and is not it, which is
+	// what makes the evidence a commit the step made rather than whatever
+	// the branch already pointed at. Every kind records it: it is what a
+	// rerun of a superseded span has to reason about what that span
+	// produced. Empty when the run had no checkout to read a head from.
+	BaseCommit    string `protobuf:"bytes,17,opt,name=base_commit,json=baseCommit,proto3" json:"base_commit,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1449,6 +1456,13 @@ func (x *StepRun) GetEnvStripped() []string {
 		return x.EnvStripped
 	}
 	return nil
+}
+
+func (x *StepRun) GetBaseCommit() string {
+	if x != nil {
+		return x.BaseCommit
+	}
+	return ""
 }
 
 // Finding is one thing a reviewer found, tied to an acceptance criterion.
@@ -3737,7 +3751,7 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"\n" +
 	"updated_at\x18\x10 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x125\n" +
 	"\bended_at\x18\x11 \x01(\v2\x1a.google.protobuf.TimestampR\aendedAt\x12.\n" +
-	"\x13complete_request_id\x18\x12 \x01(\tR\x11completeRequestId\"\xcc\x04\n" +
+	"\x13complete_request_id\x18\x12 \x01(\tR\x11completeRequestId\"\xed\x04\n" +
 	"\aStepRun\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x1b\n" +
@@ -3758,7 +3772,9 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"started_at\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x125\n" +
 	"\bended_at\x18\x0e \x01(\v2\x1a.google.protobuf.TimestampR\aendedAt\x12'\n" +
 	"\x0fenv_passthrough\x18\x0f \x03(\tR\x0eenvPassthrough\x12!\n" +
-	"\fenv_stripped\x18\x10 \x03(\tR\venvStripped\"\x93\x01\n" +
+	"\fenv_stripped\x18\x10 \x03(\tR\venvStripped\x12\x1f\n" +
+	"\vbase_commit\x18\x11 \x01(\tR\n" +
+	"baseCommit\"\x93\x01\n" +
 	"\aFinding\x12\x1c\n" +
 	"\tcriterion\x18\x01 \x01(\tR\tcriterion\x124\n" +
 	"\bseverity\x18\x02 \x01(\x0e2\x18.mill.v1.FindingSeverityR\bseverity\x12\x18\n" +

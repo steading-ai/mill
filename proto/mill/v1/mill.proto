@@ -387,6 +387,13 @@ message StepRun {
   // environment and removed before the session's process was spawned. The
   // deny list is not configurable, so this is a record and not a setting.
   repeated string env_stripped = 16;
+  // The head of the run's branch when this attempt started. A `commit`
+  // step closes on a commit that descends from it and is not it, which is
+  // what makes the evidence a commit the step made rather than whatever
+  // the branch already pointed at. Every kind records it: it is what a
+  // rerun of a superseded span has to reason about what that span
+  // produced. Empty when the run had no checkout to read a head from.
+  string base_commit = 17;
 }
 
 // Finding is one thing a reviewer found, tied to an acceptance criterion.

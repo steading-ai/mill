@@ -346,6 +346,20 @@ type ForgeVerbs interface {
 	Checks(ctx context.Context, request ChecksRequest) (ChecksResult, error)
 }
 
+// Committer is the identity a workspace's own commits carry: the name and
+// address git is given for every commit made in the checkout. It is the
+// mill's, never a session's, which is what makes it something the `commit`
+// verifier can compare a commit against.
+type Committer struct {
+	// Name is the name on the commit, the mill's `--name`.
+	Name string `json:"name"`
+	// Email is the address it commits under, the mill's `--identity`.
+	Email string `json:"email"`
+}
+
+// String renders an identity the way git does: `Name <email>`.
+func (c Committer) String() string { return c.Name + " <" + c.Email + ">" }
+
 // Workspace is what a step is given instead of a path and a keychain.
 //
 // Create, Attach, Destroy and Rotate belong to the worker and are never

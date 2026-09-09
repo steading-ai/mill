@@ -78,7 +78,7 @@ var _ = Describe("A step's harness options", Label(testsupport.DBLabel), func() 
 				})},
 			}
 		})
-		f.script(quickFixScripts()...)
+		f.script(f.quickFixScripts()...)
 
 		By("when the step starts")
 		// The refusal parks the run rather than erroring out of the loop:
@@ -105,7 +105,7 @@ var _ = Describe("A step's harness options", Label(testsupport.DBLabel), func() 
 				"other": {Options: options(map[string]any{"model": "sonnet"})},
 			}
 		})
-		f.script(quickFixScripts()...)
+		f.script(f.quickFixScripts()...)
 
 		By("when the run starts")
 		err := f.runner(func(o *run.Options) { o.Workflow = definition }).Execute(ctx, f.nodeRef)

@@ -88,6 +88,7 @@ type StepRun struct {
 	EndedAt        *time.Time
 	EnvPassthrough []string
 	EnvStripped    []string
+	BaseCommit     string
 }
 
 type StepToken struct {

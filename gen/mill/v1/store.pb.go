@@ -404,7 +404,11 @@ type StartStepRunRequest struct {
 	// The worker running it.
 	WorkerRef string `protobuf:"bytes,6,opt,name=worker_ref,json=workerRef,proto3" json:"worker_ref,omitempty"`
 	// The step run whose failure this attempt is the revise for, or empty.
-	FeedbackFrom  string `protobuf:"bytes,7,opt,name=feedback_from,json=feedbackFrom,proto3" json:"feedback_from,omitempty"`
+	FeedbackFrom string `protobuf:"bytes,7,opt,name=feedback_from,json=feedbackFrom,proto3" json:"feedback_from,omitempty"`
+	// The head of the run's branch when the attempt started, so what the
+	// attempt made is what the branch gained. Empty when the run has no
+	// checkout to read a head from.
+	BaseCommit    string `protobuf:"bytes,8,opt,name=base_commit,json=baseCommit,proto3" json:"base_commit,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -484,6 +488,13 @@ func (x *StartStepRunRequest) GetWorkerRef() string {
 func (x *StartStepRunRequest) GetFeedbackFrom() string {
 	if x != nil {
 		return x.FeedbackFrom
+	}
+	return ""
+}
+
+func (x *StartStepRunRequest) GetBaseCommit() string {
+	if x != nil {
+		return x.BaseCommit
 	}
 	return ""
 }
@@ -3652,7 +3663,7 @@ const file_mill_v1_store_proto_rawDesc = "" +
 	"\n" +
 	"worker_ref\x18\x03 \x01(\tR\tworkerRef\"2\n" +
 	"\x10SetLeaseResponse\x12\x1e\n" +
-	"\x03run\x18\x01 \x01(\v2\f.mill.v1.RunR\x03run\"\xee\x01\n" +
+	"\x03run\x18\x01 \x01(\v2\f.mill.v1.RunR\x03run\"\x8f\x02\n" +
 	"\x13StartStepRunRequest\x12\x19\n" +
 	"\blease_id\x18\x01 \x01(\tR\aleaseId\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x1b\n" +
@@ -3662,7 +3673,9 @@ const file_mill_v1_store_proto_rawDesc = "" +
 	"session_id\x18\x05 \x01(\tR\tsessionId\x12\x1d\n" +
 	"\n" +
 	"worker_ref\x18\x06 \x01(\tR\tworkerRef\x12#\n" +
-	"\rfeedback_from\x18\a \x01(\tR\ffeedbackFrom\"C\n" +
+	"\rfeedback_from\x18\a \x01(\tR\ffeedbackFrom\x12\x1f\n" +
+	"\vbase_commit\x18\b \x01(\tR\n" +
+	"baseCommit\"C\n" +
 	"\x14StartStepRunResponse\x12+\n" +
 	"\bstep_run\x18\x01 \x01(\v2\x10.mill.v1.StepRunR\astepRun\"\xa5\x01\n" +
 	"\x1cRecordStepEnvironmentRequest\x12\x19\n" +

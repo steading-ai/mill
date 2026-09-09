@@ -69,6 +69,7 @@ func (s *StoreService) StartStepRun(ctx context.Context, req *connect.Request[mi
 		SessionID:    req.Msg.GetSessionId(),
 		WorkerRef:    req.Msg.GetWorkerRef(),
 		FeedbackFrom: req.Msg.GetFeedbackFrom(),
+		BaseCommit:   req.Msg.GetBaseCommit(),
 	})
 	if err != nil {
 		return nil, connectError(err)

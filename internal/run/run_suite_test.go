@@ -2,6 +2,7 @@ package run_test
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -22,6 +23,18 @@ var needsDatabase bool
 
 func TestRun(t *testing.T) {
 	RegisterFailHandler(Fail)
+	// The commit specs assert whose commit the branch head is, and git hands
+	// GIT_AUTHOR_* and GIT_COMMITTER_* to the hooks it runs. Left in place,
+	// they would displace the identity the workspace and the fixture commit
+	// under, and whether the suite passed would depend on who ran it.
+	for _, name := range []string{
+		"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
+		"GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
+	} {
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatalf("unset %s: %v", name, err)
+		}
+	}
 	needsDatabase = previewNeedsDatabase()
 	RunSpecs(t, "run")
 }

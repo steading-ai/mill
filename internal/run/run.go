@@ -69,6 +69,12 @@ type Workspace interface {
 	Handle() *workspace.Handle
 	// GitRunner runs git in the checkout, through the same chokepoint.
 	GitRunner() forge.Git
+	// Committer is the identity the workspace's own commits carry. The
+	// `commit` verifier compares a commit's author and committer against
+	// it, and it comes from the workspace rather than from this loop's
+	// options so that what is checked is the identity git was actually
+	// given.
+	Committer() workspace.Committer
 }
 
 // Workspaces makes the workspace a run works in: reattached when this worker

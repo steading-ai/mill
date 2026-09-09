@@ -12,7 +12,7 @@ import (
 const abortOpenStepRuns = `-- name: AbortOpenStepRuns :many
 UPDATE step_runs SET status = 'aborted', ended_at = now()
 WHERE run_id = $1 AND status = 'running'
-RETURNING id, run_id, step_name, attempt, kind, session_id, lease_id, worker_ref, status, exit, feedback_from, auto_approved, started_at, ended_at, env_passthrough, env_stripped
+RETURNING id, run_id, step_name, attempt, kind, session_id, lease_id, worker_ref, status, exit, feedback_from, auto_approved, started_at, ended_at, env_passthrough, env_stripped, base_commit
 `
 
 // A running row on resume belongs to a dead or fenced-out worker; the next
@@ -43,6 +43,7 @@ func (q *Queries) AbortOpenStepRuns(ctx context.Context, runID string) ([]StepRu
 			&i.EndedAt,
 			&i.EnvPassthrough,
 			&i.EnvStripped,
+			&i.BaseCommit,
 		); err != nil {
 			return nil, err
 		}
@@ -57,7 +58,7 @@ func (q *Queries) AbortOpenStepRuns(ctx context.Context, runID string) ([]StepRu
 const closeStepRun = `-- name: CloseStepRun :one
 UPDATE step_runs SET status = 'closed', ended_at = now()
 WHERE id = $1 AND status = 'running'
-RETURNING id, run_id, step_name, attempt, kind, session_id, lease_id, worker_ref, status, exit, feedback_from, auto_approved, started_at, ended_at, env_passthrough, env_stripped
+RETURNING id, run_id, step_name, attempt, kind, session_id, lease_id, worker_ref, status, exit, feedback_from, auto_approved, started_at, ended_at, env_passthrough, env_stripped, base_commit
 `
 
 func (q *Queries) CloseStepRun(ctx context.Context, id string) (StepRun, error) {
@@ -80,6 +81,7 @@ func (q *Queries) CloseStepRun(ctx context.Context, id string) (StepRun, error) 
 		&i.EndedAt,
 		&i.EnvPassthrough,
 		&i.EnvStripped,
+		&i.BaseCommit,
 	)
 	return i, err
 }
@@ -87,7 +89,7 @@ func (q *Queries) CloseStepRun(ctx context.Context, id string) (StepRun, error) 
 const failStepRun = `-- name: FailStepRun :one
 UPDATE step_runs SET status = 'failed', ended_at = now(), exit = $2
 WHERE id = $1 AND status = 'running'
-RETURNING id, run_id, step_name, attempt, kind, session_id, lease_id, worker_ref, status, exit, feedback_from, auto_approved, started_at, ended_at, env_passthrough, env_stripped
+RETURNING id, run_id, step_name, attempt, kind, session_id, lease_id, worker_ref, status, exit, feedback_from, auto_approved, started_at, ended_at, env_passthrough, env_stripped, base_commit
 `
 
 type FailStepRunParams struct {
@@ -115,12 +117,13 @@ func (q *Queries) FailStepRun(ctx context.Context, arg FailStepRunParams) (StepR
 		&i.EndedAt,
 		&i.EnvPassthrough,
 		&i.EnvStripped,
+		&i.BaseCommit,
 	)
 	return i, err
 }
 
 const getStepRun = `-- name: GetStepRun :one
-SELECT id, run_id, step_name, attempt, kind, session_id, lease_id, worker_ref, status, exit, feedback_from, auto_approved, started_at, ended_at, env_passthrough, env_stripped FROM step_runs WHERE id = $1
+SELECT id, run_id, step_name, attempt, kind, session_id, lease_id, worker_ref, status, exit, feedback_from, auto_approved, started_at, ended_at, env_passthrough, env_stripped, base_commit FROM step_runs WHERE id = $1
 `
 
 func (q *Queries) GetStepRun(ctx context.Context, id string) (StepRun, error) {
@@ -143,18 +146,19 @@ func (q *Queries) GetStepRun(ctx context.Context, id string) (StepRun, error) {
 		&i.EndedAt,
 		&i.EnvPassthrough,
 		&i.EnvStripped,
+		&i.BaseCommit,
 	)
 	return i, err
 }
 
 const insertStepRun = `-- name: InsertStepRun :one
 
-INSERT INTO step_runs (id, run_id, step_name, attempt, kind, session_id, lease_id, worker_ref, feedback_from)
+INSERT INTO step_runs (id, run_id, step_name, attempt, kind, session_id, lease_id, worker_ref, feedback_from, base_commit)
 VALUES (
     $1, $2, $3,
     coalesce((SELECT max(attempt) FROM step_runs WHERE run_id = $2 AND step_name = $3), 0) + 1,
-    $4, $7, $5, $6, $8)
-RETURNING id, run_id, step_name, attempt, kind, session_id, lease_id, worker_ref, status, exit, feedback_from, auto_approved, started_at, ended_at, env_passthrough, env_stripped
+    $4, $8, $5, $6, $9, $7)
+RETURNING id, run_id, step_name, attempt, kind, session_id, lease_id, worker_ref, status, exit, feedback_from, auto_approved, started_at, ended_at, env_passthrough, env_stripped, base_commit
 `
 
 type InsertStepRunParams struct {
@@ -164,6 +168,7 @@ type InsertStepRunParams struct {
 	Kind         string
 	LeaseID      *string
 	WorkerRef    string
+	BaseCommit   string
 	SessionID    *string
 	FeedbackFrom *string
 }
@@ -180,6 +185,7 @@ func (q *Queries) InsertStepRun(ctx context.Context, arg InsertStepRunParams) (S
 		arg.Kind,
 		arg.LeaseID,
 		arg.WorkerRef,
+		arg.BaseCommit,
 		arg.SessionID,
 		arg.FeedbackFrom,
 	)
@@ -201,12 +207,13 @@ func (q *Queries) InsertStepRun(ctx context.Context, arg InsertStepRunParams) (S
 		&i.EndedAt,
 		&i.EnvPassthrough,
 		&i.EnvStripped,
+		&i.BaseCommit,
 	)
 	return i, err
 }
 
 const latestStepRuns = `-- name: LatestStepRuns :many
-SELECT DISTINCT ON (step_name) id, run_id, step_name, attempt, kind, session_id, lease_id, worker_ref, status, exit, feedback_from, auto_approved, started_at, ended_at, env_passthrough, env_stripped FROM step_runs
+SELECT DISTINCT ON (step_name) id, run_id, step_name, attempt, kind, session_id, lease_id, worker_ref, status, exit, feedback_from, auto_approved, started_at, ended_at, env_passthrough, env_stripped, base_commit FROM step_runs
 WHERE run_id = $1
 ORDER BY step_name, attempt DESC
 `
@@ -239,6 +246,7 @@ func (q *Queries) LatestStepRuns(ctx context.Context, runID string) ([]StepRun, 
 			&i.EndedAt,
 			&i.EnvPassthrough,
 			&i.EnvStripped,
+			&i.BaseCommit,
 		); err != nil {
 			return nil, err
 		}
@@ -251,7 +259,7 @@ func (q *Queries) LatestStepRuns(ctx context.Context, runID string) ([]StepRun, 
 }
 
 const listStepRuns = `-- name: ListStepRuns :many
-SELECT id, run_id, step_name, attempt, kind, session_id, lease_id, worker_ref, status, exit, feedback_from, auto_approved, started_at, ended_at, env_passthrough, env_stripped FROM step_runs WHERE run_id = $1 ORDER BY started_at, id
+SELECT id, run_id, step_name, attempt, kind, session_id, lease_id, worker_ref, status, exit, feedback_from, auto_approved, started_at, ended_at, env_passthrough, env_stripped, base_commit FROM step_runs WHERE run_id = $1 ORDER BY started_at, id
 `
 
 func (q *Queries) ListStepRuns(ctx context.Context, runID string) ([]StepRun, error) {
@@ -280,6 +288,7 @@ func (q *Queries) ListStepRuns(ctx context.Context, runID string) ([]StepRun, er
 			&i.EndedAt,
 			&i.EnvPassthrough,
 			&i.EnvStripped,
+			&i.BaseCommit,
 		); err != nil {
 			return nil, err
 		}
@@ -292,7 +301,7 @@ func (q *Queries) ListStepRuns(ctx context.Context, runID string) ([]StepRun, er
 }
 
 const markStepRunAutoApproved = `-- name: MarkStepRunAutoApproved :one
-UPDATE step_runs SET auto_approved = true WHERE id = $1 RETURNING id, run_id, step_name, attempt, kind, session_id, lease_id, worker_ref, status, exit, feedback_from, auto_approved, started_at, ended_at, env_passthrough, env_stripped
+UPDATE step_runs SET auto_approved = true WHERE id = $1 RETURNING id, run_id, step_name, attempt, kind, session_id, lease_id, worker_ref, status, exit, feedback_from, auto_approved, started_at, ended_at, env_passthrough, env_stripped, base_commit
 `
 
 // Gate steps: the auto predicate closed this attempt without a human, which
@@ -317,6 +326,7 @@ func (q *Queries) MarkStepRunAutoApproved(ctx context.Context, id string) (StepR
 		&i.EndedAt,
 		&i.EnvPassthrough,
 		&i.EnvStripped,
+		&i.BaseCommit,
 	)
 	return i, err
 }
@@ -324,7 +334,7 @@ func (q *Queries) MarkStepRunAutoApproved(ctx context.Context, id string) (StepR
 const recordStepRunEnvironment = `-- name: RecordStepRunEnvironment :one
 UPDATE step_runs SET env_passthrough = $2, env_stripped = $3
 WHERE id = $1
-RETURNING id, run_id, step_name, attempt, kind, session_id, lease_id, worker_ref, status, exit, feedback_from, auto_approved, started_at, ended_at, env_passthrough, env_stripped
+RETURNING id, run_id, step_name, attempt, kind, session_id, lease_id, worker_ref, status, exit, feedback_from, auto_approved, started_at, ended_at, env_passthrough, env_stripped, base_commit
 `
 
 type RecordStepRunEnvironmentParams struct {
@@ -355,6 +365,7 @@ func (q *Queries) RecordStepRunEnvironment(ctx context.Context, arg RecordStepRu
 		&i.EndedAt,
 		&i.EnvPassthrough,
 		&i.EnvStripped,
+		&i.BaseCommit,
 	)
 	return i, err
 }
@@ -366,7 +377,7 @@ WHERE id IN (
     WHERE latest.run_id = $1 AND latest.step_name = ANY($2::text[])
     ORDER BY latest.step_name, latest.attempt DESC)
   AND status <> 'superseded'
-RETURNING id, run_id, step_name, attempt, kind, session_id, lease_id, worker_ref, status, exit, feedback_from, auto_approved, started_at, ended_at, env_passthrough, env_stripped
+RETURNING id, run_id, step_name, attempt, kind, session_id, lease_id, worker_ref, status, exit, feedback_from, auto_approved, started_at, ended_at, env_passthrough, env_stripped, base_commit
 `
 
 type SupersedeStepRunsParams struct {
@@ -403,6 +414,7 @@ func (q *Queries) SupersedeStepRuns(ctx context.Context, arg SupersedeStepRunsPa
 			&i.EndedAt,
 			&i.EnvPassthrough,
 			&i.EnvStripped,
+			&i.BaseCommit,
 		); err != nil {
 			return nil, err
 		}

@@ -55,7 +55,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 				Title: "the work behind the decision", Body: "Change the README's first line.",
 				BlockedBy: []string{blocker},
 			})
-			f.script(quickFixScripts()...)
+			f.script(f.quickFixScripts()...)
 
 			client, counter := f.counted()
 			worker := f.workerOver(f.runner(quick, func(o *run.Options) { o.Dagger = client }),
@@ -127,7 +127,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 		It("claims nothing outside its project and label filters", func() {
 			mine := f.labelledNode(ctx, "work this mill takes", "Change the README's first line.", "mill")
 			theirs := f.labelledNode(ctx, "work for somebody else", "Not this mill's.")
-			f.script(quickFixScripts()...)
+			f.script(f.quickFixScripts()...)
 
 			worker := f.workerOver(f.runner(quick), func(o *run.WorkerOptions) { o.Labels = []string{"mill"} })
 			done := startWorker(ctx, worker)
@@ -145,7 +145,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 		It("completes two ready nodes in sequence at concurrency one, and exits only on signal", func() {
 			first := f.node(ctx, "the first fix", "Change the README's first line.")
 			second := f.node(ctx, "the second fix", "Change the README's second line.")
-			f.script(quickFixScripts()...)
+			f.script(f.quickFixScripts()...)
 
 			worker := f.workerOver(f.runner(quick), func(o *run.WorkerOptions) { o.Concurrency = 1 })
 			done := startWorker(ctx, worker)
@@ -205,7 +205,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
 
 			By("and the next work claims N and starts attempt 2 of implement in the same session")
-			f.script(quickFixScripts()...)
+			f.script(f.quickFixScripts()...)
 			next := f.workerOver(f.runner(quick))
 			resumed := startWorker(ctx, next)
 			Eventually(func() daggerv1.Status { return f.statusOf(ctx, node) }, 3*time.Minute, 200*time.Millisecond).

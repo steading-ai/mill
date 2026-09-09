@@ -534,6 +534,8 @@ type StartStepRunParams struct {
 	WorkerRef string
 	// FeedbackFrom is the step run whose failure this attempt revises.
 	FeedbackFrom string
+	// BaseCommit is the head of the run's branch as the attempt starts.
+	BaseCommit string
 }
 
 // StartStepRun opens the next attempt at a step, numbered max + 1 for the
@@ -555,6 +557,7 @@ func (s *Store) StartStepRun(ctx context.Context, leaseID string, p StartStepRun
 			LeaseID:      nullable(leaseID),
 			WorkerRef:    p.WorkerRef,
 			FeedbackFrom: nullable(p.FeedbackFrom),
+			BaseCommit:   p.BaseCommit,
 		})
 		if err != nil {
 			return fmt.Errorf("start step run %s on run %s: %w", p.StepName, p.RunID, err)

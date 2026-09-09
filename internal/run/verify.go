@@ -14,13 +14,15 @@ import (
 // verify asks the verifier for the step's declared evidence kind whether the
 // fact the mill observed holds. Every seam it can consult is wired here and
 // nowhere else, which is what keeps internal/evidence free of the run loop.
-func (r *Runner) verify(ctx context.Context, s *state, step *millv1.Step, detail *millv1.InspectResponse, res result) (evidence.Evidence, error) {
+func (r *Runner) verify(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, detail *millv1.InspectResponse, res result) (evidence.Evidence, error) {
 	asked := evidence.Step{
 		Name:       step.GetName(),
 		Definition: step,
 		Workflow:   s.workflow,
 		Branch:     s.run.GetBranch(),
 		Claim:      res.claim,
+		Base:       sr.GetBaseCommit(),
+		Committer:  committer(s.workspace),
 		Exit:       res.exit,
 		Session:    res.session,
 		Elapsed:    elapsed(detail, step.GetName(), r.options.Now()),
@@ -31,6 +33,18 @@ func (r *Runner) verify(ctx context.Context, s *state, step *millv1.Step, detail
 		Now:        r.options.Now,
 	}
 	return evidence.Verify(ctx, step.GetEvidence(), asked)
+}
+
+// committer is the identity the run's workspace commits under, as the
+// `commit` verifier compares against. A run with no workspace has none, and
+// the verifier refuses rather than accepting a commit nobody's identity
+// stands behind.
+func committer(ws Workspace) evidence.Committer {
+	if ws == nil {
+		return evidence.Committer{}
+	}
+	identity := ws.Committer()
+	return evidence.Committer{Name: identity.Name, Email: identity.Email}
 }
 
 // forgeReader is the read half of the project's forge, resolved lazily: a

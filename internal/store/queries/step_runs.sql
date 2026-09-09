@@ -4,11 +4,11 @@
 -- (run, step) pair, which is Invariant 7. The trigger in
 -- 00005_step_runs.sql refuses any other value, so this is the only way in.
 -- name: InsertStepRun :one
-INSERT INTO step_runs (id, run_id, step_name, attempt, kind, session_id, lease_id, worker_ref, feedback_from)
+INSERT INTO step_runs (id, run_id, step_name, attempt, kind, session_id, lease_id, worker_ref, feedback_from, base_commit)
 VALUES (
     $1, $2, $3,
     coalesce((SELECT max(attempt) FROM step_runs WHERE run_id = $2 AND step_name = $3), 0) + 1,
-    $4, sqlc.narg('session_id'), $5, $6, sqlc.narg('feedback_from'))
+    $4, sqlc.narg('session_id'), $5, $6, sqlc.narg('feedback_from'), $7)
 RETURNING *;
 
 -- name: GetStepRun :one

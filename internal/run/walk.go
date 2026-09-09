@@ -54,12 +54,17 @@ func (r *Runner) selectWorkflow(ctx context.Context, s *state) error {
 		return fmt.Errorf("run %s: no workflow named %q", s.run.GetId(), r.options.Workflow)
 	}
 
+	base, err := r.head(ctx, s)
+	if err != nil {
+		return err
+	}
 	sr, err := call(ctx, r.options.Store.StartStepRun, &millv1.StartStepRunRequest{
-		LeaseId:   s.lease,
-		RunId:     s.run.GetId(),
-		StepName:  selectionStep,
-		Kind:      millv1.StepKind_STEP_KIND_SKILL,
-		WorkerRef: r.options.WorkerRef,
+		LeaseId:    s.lease,
+		RunId:      s.run.GetId(),
+		StepName:   selectionStep,
+		Kind:       millv1.StepKind_STEP_KIND_SKILL,
+		WorkerRef:  r.options.WorkerRef,
+		BaseCommit: base,
 	})
 	if err != nil {
 		return err
@@ -194,6 +199,10 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 	if step.GetSession() != "" {
 		sessionID = SessionID(s.run.GetContextId(), s.run.GetGeneration(), step.GetSession())
 	}
+	base, err := r.baseCommit(ctx, s, step, detail)
+	if err != nil {
+		return outcome{}, err
+	}
 	started, err := call(ctx, r.options.Store.StartStepRun, &millv1.StartStepRunRequest{
 		LeaseId:      s.lease,
 		RunId:        s.run.GetId(),
@@ -202,6 +211,7 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 		SessionId:    sessionID,
 		WorkerRef:    r.options.WorkerRef,
 		FeedbackFrom: feedbackFrom,
+		BaseCommit:   base,
 	})
 	if err != nil {
 		return outcome{}, err
@@ -264,7 +274,7 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 	if err := r.postUsage(ctx, s, sr); err != nil {
 		return outcome{}, err
 	}
-	verified, verifyErr := r.verify(ctx, s, step, detail, result)
+	verified, verifyErr := r.verify(ctx, s, step, sr, detail, result)
 	switch {
 	case verifyErr == nil && execErr == nil:
 		if err := r.closeStep(ctx, s, sr, step, verified, result); err != nil {

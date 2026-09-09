@@ -82,6 +82,64 @@ type fixture struct {
 	// workspace is the one the last call to Workspaces made, so a spec can
 	// act on it the way a session does through the socket.
 	workspace run.Workspace
+
+	// keepWorkspace leaves the run's checkout on disk after the run
+	// finishes, for a spec that reads the branch the run left behind.
+	keepWorkspace bool
+
+	// mu guards made.
+	mu sync.Mutex
+	// made is every commit a scripted session left on the run's branch, in
+	// order. The `commit` step closes on one of them, so a spec that says
+	// which one is saying what the step's evidence has to be.
+	made []string
+}
+
+// commits is what a scripted session does to the checkout: it writes a file
+// and commits it on the run's branch through the workspace's own git verb, so
+// the commit carries the mill's identity and signature exactly as a session's
+// `git.commit` does.
+//
+// A `commit` step closes only on a commit that was not on the branch when the
+// attempt started (docs/domain-model.md §Evidence), so a scripted session
+// that leaves the tree alone leaves that step nothing to close on. Which is
+// the point: the specs that make a commit and the specs that do not are
+// asserting opposite things.
+func (f *fixture) commits(harness.Session) {
+	defer GinkgoRecover()
+	ctx := context.Background()
+	f.mu.Lock()
+	n := len(f.made) + 1
+	f.mu.Unlock()
+
+	name := fmt.Sprintf("session-%d.txt", n)
+	Expect(f.workspace).NotTo(BeNil(), "the run made a workspace before the session ran")
+	Expect(f.workspace.Write(ctx, name, []byte("what the session changed\n"))).To(Succeed())
+	info, err := f.workspace.Git().Commit(ctx, workspace.CommitRequest{
+		Message: fmt.Sprintf("the session's change %d", n),
+	})
+	Expect(err).NotTo(HaveOccurred())
+
+	f.mu.Lock()
+	f.made = append(f.made, info.SHA)
+	f.mu.Unlock()
+}
+
+// commitsMade is every commit the scripted sessions made, in order.
+func (f *fixture) commitsMade() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string{}, f.made...)
+}
+
+// head is where the run's branch points now, read the way the run loop reads
+// it: through the workspace, not through the session.
+func (f *fixture) head(ctx context.Context) string {
+	GinkgoHelper()
+	commits, err := f.workspace.Git().Log(ctx, workspace.LogRequest{Limit: 1})
+	Expect(err).NotTo(HaveOccurred())
+	Expect(commits).NotTo(BeEmpty())
+	return commits[0].SHA
 }
 
 // start builds the world: a dagger with a project in it, the ledger behind
@@ -210,20 +268,31 @@ func (f *fixture) runner(options ...func(*run.Options)) *run.Runner {
 // reattaching one an earlier invocation left behind.
 func (f *fixture) workspaces() run.Workspaces {
 	return func(ctx context.Context, spec workspace.Spec) (run.Workspace, error) {
-		ws := local.New(local.Options{
+		local := local.New(local.Options{
 			Root:     filepath.Join(f.root, "workspaces"),
 			Redactor: f.redactor,
 		})
+		var ws run.Workspace = local
+		if f.keepWorkspace {
+			ws = keeping{Workspace: ws}
+		}
 		f.workspace = ws
-		if _, err := ws.Attach(ctx, spec); err == nil {
+		if _, err := local.Attach(ctx, spec); err == nil {
 			return ws, nil
 		}
-		if _, err := ws.Create(ctx, spec); err != nil {
+		if _, err := local.Create(ctx, spec); err != nil {
 			return nil, err
 		}
 		return ws, nil
 	}
 }
+
+// keeping is the run's workspace with Destroy taken out. A run that finishes
+// removes its checkout, which is what it should do and what leaves a spec
+// asking git about the branch nothing to ask.
+type keeping struct{ run.Workspace }
+
+func (keeping) Destroy(context.Context) error { return nil }
 
 // runOf reads the ledger's record of the node's run.
 func (f *fixture) runOf(ctx context.Context) *millv1.Run {
@@ -261,13 +330,23 @@ func (f *fixture) script(scripts ...fake.Script) {
 }
 
 // quickFixScripts is one clean pass of quick-fix: four skill steps, each
-// ending well, each billing something.
-func quickFixScripts() []fake.Script {
+// ending well, each billing something. Every turn leaves a commit on the
+// branch, because the `commit` step closes on a commit that was not there
+// when it started and on nothing else.
+//
+// Every turn rather than the commit step's alone: scripts are replayed in
+// order, the last is reused once they run out, and the fake harness has no
+// idea which step it is replaying. A run resumed mid-workflow, or one a
+// check sends round again, reaches the commit step on a different script
+// every time, and a turn that committed nothing there would fail the step
+// for a reason the spec is not about. A step whose evidence is not `commit`
+// is unaffected by a head that moved.
+func (f *fixture) quickFixScripts() []fake.Script {
 	return []fake.Script{
-		{Terminal: fake.Terminal("context gathered", nil, usage(10))},
-		{Terminal: fake.Terminal("the change is made", nil, usage(20))},
-		{Terminal: fake.Terminal("committed", nil, usage(5))},
-		{Terminal: fake.Terminal("opened the pull request", nil, usage(5))},
+		{Terminal: fake.Terminal("context gathered", nil, usage(10)), Do: f.commits},
+		{Terminal: fake.Terminal("the change is made", nil, usage(20)), Do: f.commits},
+		{Terminal: fake.Terminal("committed", nil, usage(5)), Do: f.commits},
+		{Terminal: fake.Terminal("opened the pull request", nil, usage(5)), Do: f.commits},
 	}
 }
 
@@ -377,9 +456,20 @@ func newOrigin(root string) string {
 // git runs one git command for the fixture, through the process chokepoint.
 func git(dir string, args ...string) {
 	GinkgoHelper()
+	gitAs(dir, nil, args...)
+}
+
+// gitAs runs one git command with extra environment: the identity a commit
+// is made under, when a spec needs one that is not the mill's.
+func gitAs(dir string, env map[string]string, args ...string) {
+	GinkgoHelper()
+	environment := map[string]string{"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"}
+	for name, value := range env {
+		environment[name] = value
+	}
 	process, err := workspace.Spawner{}.Exec(context.Background(), workspace.Command{
 		Path: "git", Args: args, Dir: dir,
-		Env: map[string]string{"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"},
+		Env: environment,
 	})
 	Expect(err).NotTo(HaveOccurred())
 	stdout, stderr := readAll(process.Stdout), readAll(process.Stderr)
@@ -801,6 +891,10 @@ type reviewer struct {
 	// Model is the model the review step declares, which is how a turn in
 	// that step is told from the rest.
 	model string
+	// commits is what every other turn does to the checkout. A review reads
+	// and never writes; every other session in these specs is one that could
+	// have committed, and the `commit` step closes on nothing else.
+	commits func(harness.Session)
 
 	mu       sync.Mutex
 	rounds   int
@@ -841,6 +935,9 @@ func (r *reviewer) play(verb string, session harness.Session) *harness.Turn {
 				Usage:        usage(1),
 			}, nil)
 			return
+		}
+		if r.commits != nil {
+			r.commits(session)
 		}
 		turn.Finish(fake.Terminal("done", nil, usage(1)), nil)
 	}()

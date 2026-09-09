@@ -391,6 +391,19 @@ func (w *Workspace) List(_ context.Context, path string) ([]workspace.Entry, err
 // and signing key.
 func (w *Workspace) Git() workspace.Git { return gitVerbs{w: w} }
 
+// Committer is the identity every commit this workspace makes carries. It is
+// read from the signing key when one is arranged, because that key's name and
+// address are the ones git is handed, and from the options until then.
+func (w *Workspace) Committer() workspace.Committer {
+	w.mu.RLock()
+	signer := w.signer
+	w.mu.RUnlock()
+	if signer != nil {
+		return workspace.Committer{Name: signer.Name, Email: signer.Identity}
+	}
+	return workspace.Committer{Name: w.options.Name, Email: w.options.Identity}
+}
+
 // Redact registers values the workspace must scrub from every line it logs
 // from here on.
 func (w *Workspace) Redact(values ...string) { w.redactor.Add(values...) }

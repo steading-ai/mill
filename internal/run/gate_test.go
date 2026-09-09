@@ -24,7 +24,7 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 		DeferCleanup(cancel)
 		f = start(ctx)
 		f.node(ctx, "one line change", "Change the README's first line.")
-		f.script(quickFixScripts()...)
+		f.script(f.quickFixScripts()...)
 	})
 
 	// asks is quick-fix with a merge gate no policy closes, which is every

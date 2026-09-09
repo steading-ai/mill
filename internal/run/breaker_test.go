@@ -32,7 +32,7 @@ var _ = Describe("The circuit breaker", Label(testsupport.DBLabel), func() {
 		It("Escalation has a price", func() {
 			// Given review fails with revise implement on every attempt.
 			workflow := f.reviewedFix(ctx, reviewModel)
-			adapter := &reviewer{model: reviewModel}
+			adapter := &reviewer{model: reviewModel, commits: f.commits}
 			client, watcher := f.watching()
 
 			// When the fourth failure occurs. `retries: 3` is three retries
@@ -67,7 +67,7 @@ var _ = Describe("The circuit breaker", Label(testsupport.DBLabel), func() {
 
 		It("resumes at the parked step with its attempts reset once the gate is answered", func() {
 			workflow := f.reviewedFix(ctx, reviewModel)
-			adapter := &reviewer{model: reviewModel}
+			adapter := &reviewer{model: reviewModel, commits: f.commits}
 			runner := f.runner(withHarness(adapter), func(o *run.Options) { o.Workflow = workflow })
 			Expect(runner.Execute(ctx, f.nodeRef)).To(Succeed())
 			Expect(stepRuns(f.inspect(ctx), "review")).To(HaveLen(4))
@@ -90,7 +90,7 @@ var _ = Describe("The circuit breaker", Label(testsupport.DBLabel), func() {
 			workflow := f.variant(ctx, "dirty-fix", func(definition *millv1.Workflow) {
 				stepOf(definition, "clean-tree").GetCheck().Command = []string{"false"}
 			})
-			f.script(quickFixScripts()...)
+			f.script(f.quickFixScripts()...)
 
 			Expect(f.runner(func(o *run.Options) { o.Workflow = workflow }).
 				Execute(ctx, f.nodeRef)).To(Succeed())

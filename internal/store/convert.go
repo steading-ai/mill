@@ -176,6 +176,8 @@ func stepRunProto(row StepRun) (*millv1.StepRun, error) {
 
 		EnvPassthrough: row.EnvPassthrough,
 		EnvStripped:    row.EnvStripped,
+
+		BaseCommit: row.BaseCommit,
 	}, nil
 }
 

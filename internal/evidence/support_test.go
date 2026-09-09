@@ -27,6 +27,18 @@ type repository struct {
 	mu    sync.Mutex
 }
 
+// millIdentity is the identity the fixture commits under unless a spec asks
+// for another. It is pinned in the environment rather than left to the
+// repository's config, because git exports GIT_AUTHOR_* and GIT_COMMITTER_*
+// to the hooks it runs, and a spec run from a commit hook would otherwise
+// make its commits under whoever is committing.
+var millIdentity = map[string]string{
+	"GIT_AUTHOR_NAME":     "mill",
+	"GIT_AUTHOR_EMAIL":    "mill@example.test",
+	"GIT_COMMITTER_NAME":  "mill",
+	"GIT_COMMITTER_EMAIL": "mill@example.test",
+}
+
 func newRepository(branch string) *repository {
 	repo := &repository{dir: GinkgoT().TempDir()}
 	repo.must("init", "--initial-branch", branch)
@@ -44,6 +56,9 @@ func (r *repository) Run(ctx context.Context, env map[string]string, args ...str
 	cmd := exec.CommandContext(ctx, "git", args...) //nolint:gosec // a spec's own arguments
 	cmd.Dir = r.dir
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+	for name, value := range millIdentity {
+		cmd.Env = append(cmd.Env, name+"="+value)
+	}
 	for name, value := range env {
 		cmd.Env = append(cmd.Env, name+"="+value)
 	}
@@ -77,6 +92,22 @@ func (r *repository) commit(name, content string) string {
 	Expect(os.WriteFile(filepath.Join(r.dir, name), []byte(content), 0o600)).To(Succeed())
 	r.must("add", name)
 	r.must("commit", "--message", "add "+name)
+	return strings.TrimSpace(r.must("rev-parse", "HEAD"))
+}
+
+// commitAs writes a file and commits it under an identity of the spec's
+// choosing, which is how a commit that arrived on the branch by some other
+// hand than the mill's is staged.
+func (r *repository) commitAs(name, email, file, content string) string {
+	Expect(os.WriteFile(filepath.Join(r.dir, file), []byte(content), 0o600)).To(Succeed())
+	r.must("add", file)
+	out, err := r.Run(context.Background(), map[string]string{
+		"GIT_AUTHOR_NAME":     name,
+		"GIT_AUTHOR_EMAIL":    email,
+		"GIT_COMMITTER_NAME":  name,
+		"GIT_COMMITTER_EMAIL": email,
+	}, "commit", "--message", "add "+file)
+	Expect(err).NotTo(HaveOccurred(), out)
 	return strings.TrimSpace(r.must("rev-parse", "HEAD"))
 }
 

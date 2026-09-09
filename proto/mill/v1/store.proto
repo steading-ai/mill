@@ -220,6 +220,10 @@ message StartStepRunRequest {
   string worker_ref = 6;
   // The step run whose failure this attempt is the revise for, or empty.
   string feedback_from = 7;
+  // The head of the run's branch when the attempt started, so what the
+  // attempt made is what the branch gained. Empty when the run has no
+  // checkout to read a head from.
+  string base_commit = 8;
 }
 
 // StartStepRunResponse carries the opened attempt.

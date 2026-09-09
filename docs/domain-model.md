@@ -180,7 +180,7 @@ What each kind proves:
 
 | Kind | Closes | Verified how |
 |---|---|---|
-| `commit` | commit steps | `git cat-file -e <sha>` in the workspace succeeds; the SHA is on the run's branch |
+| `commit` | commit steps | A commit made in this step: `git cat-file -e <sha>` in the workspace succeeds, the SHA is on the run's branch, it descends from the attempt's `base_commit` without being it, and the mill is its author and its committer |
 | `exit` | check steps, build, test, lint | The process the workspace ran exited with the code the definition names |
 | `verdict` | review steps | The session's final output parsed as a verdict and its `decision` is `approve` |
 | `structured` | assessment, plan | The session's final output validated against the step's schema |

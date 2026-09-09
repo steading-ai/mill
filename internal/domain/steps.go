@@ -18,6 +18,7 @@ type StartStepRunParams struct {
 	SessionID    string
 	WorkerRef    string
 	FeedbackFrom string
+	BaseCommit   string
 }
 
 // CloseStepRunParams records the evidence that closes an attempt.
@@ -39,6 +40,7 @@ func (s *Service) StartStepRun(ctx context.Context, leaseID string, p StartStepR
 		SessionID:    p.SessionID,
 		WorkerRef:    p.WorkerRef,
 		FeedbackFrom: p.FeedbackFrom,
+		BaseCommit:   p.BaseCommit,
 	})
 }
 

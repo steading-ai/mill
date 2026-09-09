@@ -86,7 +86,10 @@ One row per attempt at a step. Append-only.
 | `auto_approved` | Gate steps: true when the `auto` predicate closed it without a human |
 | `env_passthrough` | Skill steps: the variables the step asked to have carried from the mill's environment into its session's process, as the adapter applied them |
 | `env_stripped` | Skill steps: the deny-listed variables that were present in the mill's environment and removed. The deny list is not configurable, so this is a record and not a setting |
+| `base_commit` | The head of the run's branch when this attempt started, or empty when the run had no checkout to read one from |
 | `started_at`, `ended_at` | |
+
+`base_commit` is what makes `commit` evidence a fact about the step rather than about the branch: a commit step closes only on a commit that descends from its attempt's base and is not it, made by the mill (docs/domain-model.md §Evidence). Every kind records it, because what a superseded or interrupted span produced is the range from its base to the branch head, which is what a rerun reads. An attempt that continues an *aborted* one inherits that attempt's base rather than taking the current head: a worker killed between the session's commit and the write that closes the step left its work on the branch, and the next attempt closes on it without a second session. A failed or superseded attempt is not continued, so it carries nothing forward.
 
 `closed` means evidence exists for this row. `failed` means the attempt ended and `on_failure` applies. `aborted` means the worker stopped or was fenced out before the attempt ended; the next worker starts a new attempt. `superseded` means a later `revise` reopened this step; the row and its evidence stay as the record of pass one.
 

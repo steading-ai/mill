@@ -49,6 +49,14 @@ func (r *Runner) execute(ctx context.Context, s *state, step *millv1.Step, sr *m
 	}
 	switch step.GetKind() {
 	case millv1.StepKind_STEP_KIND_SKILL:
+		made, err := r.commitAlreadyMade(stepCtx, s, step, sr)
+		if err != nil {
+			return result{}, err
+		}
+		if made != "" {
+			r.printf("  the commit the interrupted attempt made is on the branch\n")
+			return result{claim: made}, nil
+		}
 		return r.runSkill(stepCtx, s, step, sr, token, feedback)
 	case millv1.StepKind_STEP_KIND_CHECK:
 		return r.runCheck(stepCtx, s, step)
@@ -174,16 +182,21 @@ func (r *Runner) recordEnvironment(ctx context.Context, s *state, sr *millv1.Ste
 func (r *Runner) observe(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, terminal *harness.Terminal) (string, error) {
 	switch step.GetEvidence() {
 	case millv1.EvidenceKind_EVIDENCE_KIND_COMMIT:
-		// The head of the run's branch, read through the workspace. The
-		// verifier still proves the object exists and is on the branch.
-		commits, err := s.workspace.Git().Log(ctx, workspace.LogRequest{Limit: 1})
+		// The head of the run's branch after the session, read through the
+		// workspace. A head that is still the one the attempt started at is
+		// not offered at all: there is no commit to claim, and offering the
+		// base would close the step on work the session did not do. The
+		// verifier proves the rest — that the object exists, is on the
+		// branch, descends from the base, and is the mill's.
+		head, err := r.head(ctx, s)
 		if err != nil {
 			return "", err
 		}
-		if len(commits) == 0 {
-			return "", nil
+		if head != "" && head == sr.GetBaseCommit() {
+			return "", fmt.Errorf("step %s: the branch head is still %s: the session made no commit",
+				step.GetName(), head)
 		}
-		return commits[0].SHA, nil
+		return head, nil
 
 	case millv1.EvidenceKind_EVIDENCE_KIND_URL:
 		pr, err := r.pullRequest(ctx, s)
@@ -198,6 +211,79 @@ func (r *Runner) observe(ctx context.Context, s *state, step *millv1.Step, sr *m
 	default:
 		return "", nil
 	}
+}
+
+// head is the run branch's current head, read through the workspace. It is
+// empty for a checkout with no history at all.
+func (r *Runner) head(ctx context.Context, s *state) (string, error) {
+	if s.workspace == nil {
+		return "", nil
+	}
+	commits, err := s.workspace.Git().Log(ctx, workspace.LogRequest{Limit: 1})
+	if err != nil {
+		return "", err
+	}
+	if len(commits) == 0 {
+		return "", nil
+	}
+	return commits[0].SHA, nil
+}
+
+// baseCommit is the head the attempt's work starts from, recorded on the
+// attempt before anything runs. It is what makes `commit` evidence a commit
+// the step made, and what a rerun of a superseded span reads to know what
+// that span produced.
+//
+// It is the branch head, except for an attempt that continues an interrupted
+// one: a worker killed between the session's commit and the write that
+// closes the step left its work on the branch, and an attempt that took the
+// new head as its base would call that commit "already there" and ask for
+// another. Inheriting the base of the aborted attempt keeps the span the
+// same one, so the commit that was made still closes the step.
+func (r *Runner) baseCommit(ctx context.Context, s *state, step *millv1.Step, detail *millv1.InspectResponse) (string, error) {
+	if carried := abortedBase(detail, step.GetName()); carried != "" {
+		return carried, nil
+	}
+	return r.head(ctx, s)
+}
+
+// abortedBase is the base of the latest attempt at a step, when that attempt
+// was aborted. A failed or superseded attempt is not continued — its work
+// was judged and sent back — so only an abort carries its base forward.
+func abortedBase(detail *millv1.InspectResponse, step string) string {
+	var latest *millv1.StepRun
+	for _, d := range detail.GetSteps() {
+		if sr := d.GetStepRun(); sr.GetStepName() == step {
+			latest = sr
+		}
+	}
+	if latest.GetStatus() != millv1.StepRunStatus_STEP_RUN_STATUS_ABORTED {
+		return ""
+	}
+	return latest.GetBaseCommit()
+}
+
+// commitAlreadyMade is the commit an interrupted attempt at this step left on
+// the branch, or empty when there is none.
+//
+// A `commit` step whose base is behind the branch head has its evidence
+// already: the commit is on the branch, and the mill observed it. Running the
+// session again would ask a model to redo work that is done, and the ledger's
+// base plus the branch are enough to see that it is (docs/ledger.md §Resume).
+// The claim still goes to the verifier like any other, so a head that moved
+// under somebody else's identity closes nothing.
+func (r *Runner) commitAlreadyMade(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun) (string, error) {
+	if step.GetEvidence() != millv1.EvidenceKind_EVIDENCE_KIND_COMMIT || sr.GetBaseCommit() == "" {
+		return "", nil
+	}
+	head, err := r.head(ctx, s)
+	if err != nil {
+		return "", err
+	}
+	if head == sr.GetBaseCommit() {
+		return "", nil
+	}
+	return head, nil
 }
 
 // runCheck runs a check step through the workspace's chokepoint.

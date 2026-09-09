@@ -91,7 +91,7 @@ var _ = Describe("Cancelling a run", Label(testsupport.DBLabel), func() {
 
 		// No expiry is forced here, unlike the crash spec: a cancellation
 		// hands the lease back, so the node is claimable at once.
-		f.script(quickFixScripts()...)
+		f.script(f.quickFixScripts()...)
 		Expect(f.runner().Execute(ctx, f.nodeRef)).To(Succeed())
 
 		attempts := map[int64]millv1.StepRunStatus{}

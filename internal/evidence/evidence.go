@@ -83,6 +83,21 @@ type Forge interface {
 	Checks(ctx context.Context, sha string) (forge.Status, error)
 }
 
+// Committer is the identity the mill's own commits carry: the name and
+// address git is given in the run's checkout. It is
+// [github.com/ivy/mill/internal/workspace.Committer] as this package needs
+// it, restated rather than imported so that verification depends on nothing
+// but the fact it is checking.
+type Committer struct {
+	// Name is the name on the commit, the mill's `--name`.
+	Name string
+	// Email is the address it commits under, the mill's `--identity`.
+	Email string
+}
+
+// String renders an identity the way git does: `Name <email>`.
+func (c Committer) String() string { return c.Name + " <" + c.Email + ">" }
+
 // Artifacts is dagger, asked whether it holds an artifact. `artifact`
 // evidence is a digest dagger accepted, so the acceptance is dagger's to
 // confirm and not the session's to claim.
@@ -166,6 +181,14 @@ type Step struct {
 	// settled, across attempts. The `status` verifier compares it against
 	// the workflow's cap.
 	Elapsed time.Duration
+	// Base is the head of the run's branch when this attempt started, as the
+	// ledger recorded it. `commit` evidence has to descend from it and not
+	// be it: a step closes on a commit it made, not on whatever the branch
+	// already pointed at.
+	Base string
+	// Committer is the identity the mill commits under. `commit` evidence
+	// has to carry it as both author and committer.
+	Committer Committer
 	// Git runs git in the run's checkout, for `commit`.
 	Git Git
 	// Forge is the project's forge, for `url` and `status`.
@@ -275,14 +298,24 @@ var verifiers = map[millv1.EvidenceKind]func(context.Context, Step) (Evidence, e
 	millv1.EvidenceKind_EVIDENCE_KIND_GATE:       verifyGate,
 }
 
-// verifyCommit proves a commit: the object resolves in the run's checkout,
-// and it is on the run's branch.
+// verifyCommit proves a commit the step made: the object resolves in the
+// run's checkout, it is on the run's branch, it descends from the head the
+// attempt started at without being that head, and the mill is its author and
+// its committer.
 //
-// Both halves are load-bearing. An object that exists proves only that
+// Every clause is load-bearing. An object that exists proves only that
 // something was written — a commit made on a detached head, a commit fetched
 // from elsewhere, an object a session created by hand — and the run's claim
-// on the repository is its branch. So a SHA that resolves but is not an
-// ancestor of the branch head is refused.
+// on the repository is its branch, so a SHA that is not on it is refused. The
+// base is what makes the fact the step's own rather than the branch's: the
+// head a commit step was handed was already there, and closing on it would
+// close the step on work nobody did (docs/domain-model.md §Evidence). The
+// identity is what stops a commit that arrived on the branch some other way
+// — a fetch, a merge, a person pushing — from counting as the step's.
+//
+// Each clause refuses in its own words, because "this commit is not the
+// step's" is several different repairs, and which one it is is what a
+// failed step's message has to say.
 func verifyCommit(ctx context.Context, step Step) (Evidence, error) {
 	kind := millv1.EvidenceKind_EVIDENCE_KIND_COMMIT
 	refuse := func(reason string, err error) (Evidence, error) {
@@ -303,13 +336,63 @@ func verifyCommit(ctx context.Context, step Step) (Evidence, error) {
 	if !commitSHA.MatchString(sha) {
 		return refuse(fmt.Sprintf("%q is not a git object name", sha), nil)
 	}
+	base := strings.TrimSpace(step.Base)
+	if base == "" {
+		return refuse("no base commit was recorded for this attempt, so nothing says this commit is the step's", nil)
+	}
+	if !commitSHA.MatchString(base) {
+		return refuse(fmt.Sprintf("the recorded base commit %q is not a git object name", base), nil)
+	}
 	if _, err := step.Git.Run(ctx, nil, "cat-file", "-e", sha+"^{commit}"); err != nil {
 		return refuse(fmt.Sprintf("%s does not resolve to a commit in the checkout", sha), err)
 	}
 	if _, err := step.Git.Run(ctx, nil, "merge-base", "--is-ancestor", sha, step.Branch); err != nil {
 		return refuse(fmt.Sprintf("%s is not on %s", sha, step.Branch), err)
 	}
+	if sha == base {
+		return refuse(fmt.Sprintf("%s is the head the step started at: the session made no commit", sha), nil)
+	}
+	if _, err := step.Git.Run(ctx, nil, "merge-base", "--is-ancestor", base, sha); err != nil {
+		return refuse(fmt.Sprintf("%s does not descend from %s, the head the step started at", sha, base), err)
+	}
+	if err := verifyCommitter(ctx, step, sha); err != nil {
+		return Evidence{}, err
+	}
 	return Evidence{Value: &millv1.Evidence{Value: &millv1.Evidence_Commit{Commit: sha}}}, nil
+}
+
+// verifyCommitter proves the mill made the commit. Both identities are read,
+// because a commit authored by somebody else and committed by the mill is as
+// much "not the work this step did" as the other way round, and the message
+// names the identity git returned so that the repair is visible without
+// opening the checkout.
+func verifyCommitter(ctx context.Context, step Step, sha string) error {
+	kind := millv1.EvidenceKind_EVIDENCE_KIND_COMMIT
+	refuse := func(reason string, err error) error {
+		return &NotVerifiedError{Kind: kind, Reason: reason, Err: err}
+	}
+	mill := step.Committer
+	if mill.Name == "" || mill.Email == "" {
+		return refuse("the mill has no identity to compare the commit against", nil)
+	}
+	// The unit separator is what splits the two identities, because no field
+	// of a git identity can contain it.
+	out, err := step.Git.Run(ctx, nil, "show", "--no-patch", "--format=%an <%ae>\x1f%cn <%ce>", sha)
+	if err != nil {
+		return refuse(fmt.Sprintf("%s: the checkout would not say who made it", sha), err)
+	}
+	author, committer, found := strings.Cut(strings.TrimSpace(out), "\x1f")
+	if !found {
+		return refuse(fmt.Sprintf("%s: the checkout would not say who made it", sha), nil)
+	}
+	want := mill.String()
+	if committer != want {
+		return refuse(fmt.Sprintf("%s was committed by %s, not by %s", sha, committer, want), nil)
+	}
+	if author != want {
+		return refuse(fmt.Sprintf("%s was authored by %s, not by %s", sha, author, want), nil)
+	}
+	return nil
 }
 
 // verifyExit proves a check's exit: the process the workspace ran exited

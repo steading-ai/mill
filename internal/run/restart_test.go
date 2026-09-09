@@ -61,7 +61,7 @@ var _ = Describe("Restart", Label(testsupport.DBLabel), func() {
 		Expect(f.forge.closingComments()[0]).To(ContainSubstring("restarted"))
 
 		// Then generation 2's implement session id is not generation 1's.
-		adapter := fake.New(quickFixScripts()...)
+		adapter := fake.New(f.quickFixScripts()...)
 		f.harness = adapter
 		Expect(f.runner().Execute(ctx, f.nodeRef)).To(Succeed())
 

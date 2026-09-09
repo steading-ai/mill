@@ -55,7 +55,7 @@ var _ = Describe("A session's environment", Label(testsupport.DBLabel), func() {
 		DeferCleanup(cancel)
 		f = start(ctx)
 		f.node(ctx, "one line change", "Change the README's first line.")
-		f.script(quickFixScripts()...)
+		f.script(f.quickFixScripts()...)
 	})
 
 	// environments is what every skill attempt of the run recorded.
