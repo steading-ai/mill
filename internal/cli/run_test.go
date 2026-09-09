@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"bytes"
 	"context"
 	"strings"
 
@@ -74,6 +75,58 @@ var _ = Describe("mill run", func() {
 			out := m.run(ctx, "run", "millspec#1", "--dry-run",
 				"--project", "millspec", "--dagger-socket", "/nonexistent/dg.sock")
 			Expect(out).To(ContainSubstring("quick-fix"))
+		})
+	})
+
+	// Scenario: The seam is closed in production
+	//   Given MILL_ACCEPTANCE is unset
+	//   When mill run is invoked with a skill override
+	//   Then it refuses before claiming
+	Describe("--skill-override", Label("unit"), func() {
+		var stdout, stderr bytes.Buffer
+
+		BeforeEach(func() {
+			stdout.Reset()
+			stderr.Reset()
+		})
+
+		// The socket and the dagger socket are paths nothing listens on, so
+		// a command that got as far as reading a workflow, claiming a node
+		// or taking a lease would fail on one of them and say so. The
+		// refusal has to arrive before any of that.
+		invoke := func(args ...string) int {
+			return cli.Run(append([]string{
+				"run", "millspec#1",
+				"--project", "millspec",
+				"--socket", "/nonexistent/mill.sock",
+				"--dagger-socket", "/nonexistent/dg.sock",
+			}, args...), strings.NewReader(""), &stdout, &stderr)
+		}
+
+		It("The seam is closed in production", func() {
+			By("given MILL_ACCEPTANCE is unset")
+			GinkgoT().Setenv("MILL_ACCEPTANCE", "")
+
+			By("when mill run is invoked with a skill override")
+			exit := invoke("--skill-override", "implement="+GinkgoT().TempDir())
+
+			By("then it refuses before claiming")
+			Expect(exit).NotTo(BeZero())
+			Expect(stderr.String()).To(ContainSubstring("test seam"))
+			Expect(stderr.String()).To(ContainSubstring("MILL_ACCEPTANCE"))
+			Expect(stderr.String()).To(ContainSubstring("Nothing was claimed"))
+			Expect(stderr.String()).NotTo(ContainSubstring("nonexistent"),
+				"the refusal came before anything was read, claimed or leased")
+		})
+
+		It("is allowed under the acceptance suite, and then the directory has to be a skill", func() {
+			GinkgoT().Setenv("MILL_ACCEPTANCE", "1")
+
+			// Past the refusal, the seam loads a skill directory exactly as
+			// `mill workflow push` would: an empty directory is not one.
+			Expect(invoke("--skill-override", "implement="+GinkgoT().TempDir())).NotTo(BeZero())
+			Expect(stderr.String()).NotTo(ContainSubstring("test seam"))
+			Expect(stderr.String()).To(ContainSubstring("--skill-override implement="))
 		})
 	})
 

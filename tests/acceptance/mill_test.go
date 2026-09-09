@@ -196,28 +196,43 @@ type runOptions struct {
 	// is what every scenario but the feature one wants.
 	Workflow string
 	Tier     string
+	// WorkflowDir is where the selected workflow was loaded from, which a
+	// check step's relative command resolves against. Empty is this tree's
+	// own `workflows/<name>`.
+	WorkflowDir string
+	// SkillOverrides run a step on a skill read from a directory instead of
+	// the one its workflow pins, step name to directory. It is the seam the
+	// seeded bad implementation is written through, and `mill run` refuses
+	// it unless MILL_ACCEPTANCE is set (docs/runbook.md).
+	SkillOverrides map[string]string
 }
 
 // start invokes `mill run` for a node, against the suite's service, the
 // host's dagger, and the scenario's scratch project. It returns as soon as
 // the process is running.
-func start(ctx context.Context, graph *scratchGraph, project *scratchProject, nodeRef, workspaceDir string, opts runOptions) *worker {
+func start(ctx context.Context, s *staged, opts runOptions) *worker {
 	GinkgoHelper()
 	selected, tier := opts.Workflow, opts.Tier
 	if selected == "" {
 		selected, tier = "quick-fix", "quick-fix"
 	}
+	dir := opts.WorkflowDir
+	if dir == "" {
+		dir = workflowDir(selected)
+	}
 	args := []string{
-		"run", nodeRef,
+		"run", s.NodeRef,
 		"--socket", suite.service.Socket,
 		"--dagger-socket", env.DaggerSocket,
-		"--project", graph.Slug,
+		"--project", s.Graph.Slug,
 		"--workflow", selected,
 		"--tier", tier,
-		"--workflow-dir", workflowDir(selected),
-		"--vcs-url", project.CloneURL,
-		"--ref", project.DefaultBranch,
-		"--workspace-dir", workspaceDir,
+		"--workflow-dir", dir,
+		"--vcs-url", s.VCSURL,
+		"--origin", s.Origin,
+		"--ref", s.Ref,
+		"--workspace-dir", s.WorkspaceDir,
+		"--log-dir", s.LogDir,
 		"--sidecar", env.Sidecar,
 		"--no-ask",
 	}
@@ -226,6 +241,9 @@ func start(ctx context.Context, graph *scratchGraph, project *scratchProject, no
 	}
 	if opts.Heartbeat > 0 {
 		args = append(args, "--heartbeat", opts.Heartbeat.String())
+	}
+	for step, from := range opts.SkillOverrides {
+		args = append(args, "--skill-override", step+"="+from)
 	}
 
 	command := exec.CommandContext(ctx, env.Mill, args...) //nolint:gosec // the suite's own binary
@@ -241,7 +259,7 @@ func start(ctx context.Context, graph *scratchGraph, project *scratchProject, no
 	output := &lockedBuffer{}
 	command.Stdout = teeTo(output)
 	command.Stderr = teeTo(output)
-	Expect(command.Start()).To(Succeed(), "mill run %s", nodeRef)
+	Expect(command.Start()).To(Succeed(), "mill run %s", s.NodeRef)
 
 	w := &worker{command: command, output: output, done: make(chan struct{})}
 	go func() {

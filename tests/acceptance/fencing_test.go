@@ -26,6 +26,8 @@ var _ = Describe("Acceptance", Label("acceptance"), func() {
 	//   Then the running mill exits with the fenced exit code
 	//   And a fresh run completes the node without a duplicate merge request
 	It("Fenced out, and finished by the next worker", func(ctx SpecContext) {
+		needsForge()
+
 		s := typo.stage(ctx)
 
 		By("given a run in flight holding the node's lease")

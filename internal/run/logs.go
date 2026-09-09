@@ -52,6 +52,23 @@ func openStepLog(dir, runID, step string, attempt int64) (io.WriteCloser, error)
 	return file, nil
 }
 
+// logPrompt writes the prompt an attempt was given at the head of its log,
+// through the same redactor its events go through. It is written whole and
+// not summarised: a prompt is what the mill decided to say, not what a model
+// produced, and the questions asked of it afterwards — did the reviewer's
+// findings reach the implementer, did the diff go in — are questions about
+// its exact text.
+func logPrompt(w io.Writer, redactor *redact.Redactor, now func() time.Time, prompt string) {
+	if w == nil || prompt == "" {
+		return
+	}
+	out := redactor.Writer(w)
+	stamp := now().UTC().Format(time.RFC3339)
+	_, _ = fmt.Fprintf(out, "%s prompt begin bytes=%d\n", stamp, len(prompt))
+	_, _ = fmt.Fprintln(out, strings.TrimRight(prompt, "\n"))
+	_, _ = fmt.Fprintf(out, "%s prompt end\n", stamp)
+}
+
 // logSink renders a turn's events into the step log, through the redactor.
 // The redactor is the workspace's own, so a value a session registered with
 // the `redact` verb mid-step is scrubbed from every line written after it.

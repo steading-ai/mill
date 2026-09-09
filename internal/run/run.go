@@ -139,6 +139,12 @@ type Options struct {
 	// Only single-run mode sets it: a worker files a gate and goes back to
 	// ClaimNext, because there is nobody at its terminal. Nil never asks.
 	Answers Answerer
+	// SkillOverrides replaces a step's skill with one read from disk,
+	// keyed by step name. It is empty in every production run: `mill run
+	// --skill-override` is a test seam the acceptance suite uses to script
+	// an implementer, refused unless MILL_ACCEPTANCE is set
+	// (docs/runbook.md §"The scripted implementer").
+	SkillOverrides map[string]*millv1.Skill
 	// Tier is what this run is worth, which gate `auto` predicates compare
 	// against. It is the project default's tier until an assessment step
 	// exists to name one (docs/domain-model.md §"Workflow selection").

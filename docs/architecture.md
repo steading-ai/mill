@@ -230,7 +230,7 @@ Workspaces live under the account. When runs move to containers, the account is 
 
 ## Observability
 
-- Every session's event stream is written to a log the operator can tail, one file per step run, through the redactor. Full tool output is never logged; a summary line per tool result is.
+- Every session's event stream is written to a log the operator can tail, one file per step run, through the redactor. Full tool output is never logged; a summary line per tool result is. The prompt the attempt was given heads the file, whole and unsummarised: it is what the mill decided to say, so a question like *did the reviewer's findings reach the implementer* is answered from the record rather than from the harness.
 - The ledger is the record. `mill status` reads it: runs by state, current step, elapsed, cost so far, gates waiting on humans.
 - Usage per step run is in the ledger; per lease it is posted to dagger. Cost is a rate table applied at query time, as in dagger.
 - A run's artifacts — plan, verdicts, PR, merge commit, usage — are dagger artifacts on the result, with `run_id` in their metadata. A Slack rendering of any of this is thicket's job.

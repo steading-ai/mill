@@ -3,10 +3,13 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -22,6 +25,7 @@ import (
 	"github.com/ivy/mill/internal/harness"
 	"github.com/ivy/mill/internal/harness/claude"
 	"github.com/ivy/mill/internal/run"
+	"github.com/ivy/mill/internal/workflow"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/local"
 	"github.com/ivy/mill/internal/workspace/redact"
@@ -65,29 +69,80 @@ const sidecarEnv = "MILL_SIDECAR"
 const envModeUsage = "environment a session's sidecar is spawned with: " +
 	"inherit (the mill's own, minus the deny list) or strict (a floor plus what a step names)"
 
+// The scripted-implementer seam. `--skill-override <step>=<dir>` runs a step
+// on a skill read from a directory instead of the one the workflow pinned in
+// the store, which is how the acceptance suite seeds an implementation that
+// compiles, lints and violates a stated criterion (docs/prd.md R-25,
+// docs/runbook.md §"The scripted implementer").
+//
+// It exists for that test and for nothing else, so it is refused unless the
+// acceptance suite's own variable is set. A run driven with an unpinned
+// prompt would produce evidence nothing can be traced back to a pushed
+// workflow, and the refusal happens in the command rather than in the loop
+// so that nothing is claimed and no lease is taken first.
+const (
+	acceptanceEnv = "MILL_ACCEPTANCE"
+
+	skillOverrideUsage = "run a step on a skill read from a directory instead of the workflow's: " +
+		"<step>=<dir>. A test seam for the acceptance suite; refused unless $" + acceptanceEnv + " is set"
+)
+
+// checkSkillOverrides refuses the seam outside the acceptance suite.
+func checkSkillOverrides(overrides map[string]string) error {
+	if len(overrides) == 0 || os.Getenv(acceptanceEnv) != "" {
+		return nil
+	}
+	return fmt.Errorf("mill run: --skill-override is a test seam for the acceptance suite, "+
+		"not a way to run a prompt the store does not hold; it is refused unless %s is set. "+
+		"Nothing was claimed", acceptanceEnv)
+}
+
+// skillOverrides reads each override's directory into the skill the step
+// will run. The directory is a skill directory as `mill workflow push`
+// accepts one, so a seam and a real skill are the same kind of thing and the
+// seam cannot run something the loader would reject.
+func skillOverrides(overrides map[string]string, out io.Writer) (map[string]*millv1.Skill, error) {
+	if len(overrides) == 0 {
+		return nil, nil
+	}
+	loaded := make(map[string]*millv1.Skill, len(overrides))
+	for _, step := range slices.Sorted(maps.Keys(overrides)) {
+		dir := overrides[step]
+		skill, err := workflow.LoadSkill(dir)
+		if err != nil {
+			return nil, fmt.Errorf("mill run: --skill-override %s=%s: %w", step, dir, err)
+		}
+		loaded[step] = skill
+		_, _ = fmt.Fprintf(out, "warning: step %s runs the skill in %s, not the one its workflow pins: "+
+			"--skill-override is a test seam\n", step, dir)
+	}
+	return loaded, nil
+}
+
 // defaultForgeUser is the basic-auth username GitLab wants beside a token.
 const defaultForgeUser = "mill"
 
 type runOptions struct {
-	socket       string
-	daggerSocket string
-	project      string
-	workflow     string
-	tier         string
-	workflowDir  string
-	sidecar      string
-	vcsURL       string
-	origin       string
-	ref          string
-	identity     string
-	name         string
-	workspaceDir string
-	logDir       string
-	envMode      string
-	ttl          time.Duration
-	interval     time.Duration
-	dryRun       bool
-	noAsk        bool
+	socket        string
+	daggerSocket  string
+	project       string
+	workflow      string
+	tier          string
+	workflowDir   string
+	sidecar       string
+	vcsURL        string
+	origin        string
+	ref           string
+	identity      string
+	name          string
+	workspaceDir  string
+	logDir        string
+	envMode       string
+	skillOverride map[string]string
+	ttl           time.Duration
+	interval      time.Duration
+	dryRun        bool
+	noAsk         bool
 }
 
 // newRunCommand is "work" with the claim replaced by an argument: one node,
@@ -109,6 +164,9 @@ stops rather than waiting for it.
 would be selected, its steps in order, and the evidence each one closes on.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkSkillOverrides(opts.skillOverride); err != nil {
+				return err
+			}
 			if opts.dryRun {
 				return dryRun(cmd, opts, args[0])
 			}
@@ -134,6 +192,7 @@ would be selected, its steps in order, and the evidence each one closes on.`,
 	f.BoolVar(&opts.dryRun, "dry-run", false, "print the workflow and its steps; claim nothing and execute nothing")
 	f.StringVar(&opts.identity, "identity", "", "address the mill commits under, and the principal of its allowed_signers line (default: mill@<host>)")
 	f.StringVar(&opts.name, "name", defaultForgeUser, "name on the mill's commits")
+	f.StringToStringVar(&opts.skillOverride, "skill-override", nil, skillOverrideUsage)
 	f.BoolVar(&opts.noAsk, "no-ask", false, "leave a filed gate for a human elsewhere instead of asking on this terminal")
 	return cmd
 }
@@ -233,6 +292,11 @@ func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, 
 		return nil, err
 	}
 
+	overrides, err := skillOverrides(opts.skillOverride, cmd.ErrOrStderr())
+	if err != nil {
+		return nil, err
+	}
+
 	// The forge is resolved once and shared: the loop reads the pull request
 	// through it and the workspace pushes through it, and both must be
 	// talking to the same repository. A project with no VCS URL yields a
@@ -260,24 +324,25 @@ func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, 
 	redactor := redact.New()
 
 	return run.New(run.Options{
-		Store:       storeClient(opts.socket),
-		Dagger:      client,
-		Workspaces:  localWorkspaces(opts, f, redactor),
-		Forges:      func(context.Context) (forge.Forge, error) { return f, nil },
-		Harnesses:   harnesses,
-		WorkerRef:   worker,
-		Workflow:    opts.workflow,
-		Tier:        tier,
-		WorkflowDir: opts.workflowDir,
-		Origin:      opts.origin,
-		Ref:         opts.ref,
-		TTL:         opts.ttl,
-		Interval:    opts.interval,
-		Answers:     answers,
-		Out:         cmd.OutOrStdout(),
-		LogDir:      opts.logDir,
-		Redactor:    redactor,
-		Log:         slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: slog.LevelInfo})),
+		Store:          storeClient(opts.socket),
+		Dagger:         client,
+		Workspaces:     localWorkspaces(opts, f, redactor),
+		Forges:         func(context.Context) (forge.Forge, error) { return f, nil },
+		Harnesses:      harnesses,
+		WorkerRef:      worker,
+		Workflow:       opts.workflow,
+		Tier:           tier,
+		WorkflowDir:    opts.workflowDir,
+		Origin:         opts.origin,
+		Ref:            opts.ref,
+		TTL:            opts.ttl,
+		Interval:       opts.interval,
+		Answers:        answers,
+		Out:            cmd.OutOrStdout(),
+		LogDir:         opts.logDir,
+		Redactor:       redactor,
+		SkillOverrides: overrides,
+		Log:            slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: slog.LevelInfo})),
 	}), nil
 }
 

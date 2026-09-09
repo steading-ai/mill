@@ -60,16 +60,21 @@ func newScratchGraph(ctx context.Context, name string) *scratchGraph {
 }
 
 // file creates the fixture's node and returns its reference.
+//
+// `dg create` is a patch, and a patch answers with the nodes it touched:
+// dagger's one way to mutate the graph is `patch`, and every verb that
+// writes reports through it (dagger's docs/domain-model.md §Patch).
 func (g *scratchGraph) file(ctx context.Context, title, body string) string {
 	GinkgoHelper()
 	var created struct {
-		Node struct {
+		Nodes []struct {
 			Reference string `json:"reference"`
-		} `json:"node"`
+		} `json:"nodes"`
 	}
 	g.cli.json(ctx, &created, "create", title, "--body", body, "--kind", "task", "--priority", "p1")
-	Expect(created.Node.Reference).NotTo(BeEmpty())
-	return created.Node.Reference
+	Expect(created.Nodes).To(HaveLen(1), "dg create filed one node")
+	Expect(created.Nodes[0].Reference).NotTo(BeEmpty())
+	return created.Nodes[0].Reference
 }
 
 // nodeView is `dg node show` as the suite reads it.
@@ -92,7 +97,11 @@ type nodeView struct {
 			} `json:"parts"`
 		} `json:"artifacts"`
 	} `json:"result"`
-	Lease *struct {
+	// Artifacts are what the node carries, in attachment order. They are
+	// not the result's: a run attaches a verdict or a plan while it is
+	// still going, and a run that parked never wrote a result at all.
+	Artifacts []nodeArtifact `json:"artifacts"`
+	Lease     *struct {
 		ID     string `json:"id"`
 		Holder string `json:"holder"`
 	} `json:"lease"`
@@ -114,6 +123,63 @@ func (g *scratchGraph) show(ctx context.Context, ref string) nodeView {
 	var view nodeView
 	g.cli.json(ctx, &view, "node", "show", ref)
 	return view
+}
+
+// nodeArtifact is one artifact as `dg node show` renders it.
+type nodeArtifact struct {
+	Name  string `json:"name"`
+	Parts []struct {
+		Text *struct {
+			Text string `json:"text"`
+		} `json:"text"`
+	} `json:"parts"`
+}
+
+// text is an artifact's text content.
+func (a nodeArtifact) text() string {
+	for _, part := range a.Parts {
+		if part.Text != nil {
+			return part.Text.Text
+		}
+	}
+	return ""
+}
+
+// attachment is the named artifact on the node itself — a verdict the run
+// put there while it was still running — or a failure naming what the node
+// does carry instead.
+func (v nodeView) attachment(name string) string {
+	GinkgoHelper()
+	names := make([]string, 0, len(v.Artifacts))
+	for _, a := range v.Artifacts {
+		if a.Name == name {
+			return a.text()
+		}
+		names = append(names, a.Name)
+	}
+	Fail("the node carries no " + name + " artifact; it carries: " + strings.Join(names, ", "))
+	return ""
+}
+
+// gates are the gate nodes mill filed for a run, newest last, with their
+// bodies. They are found by the labels mill puts on every gate it files
+// (internal/dagger.GateLabels), which is how mill itself finds them again.
+func (g *scratchGraph) gates(ctx context.Context, runID string) []string {
+	GinkgoHelper()
+	var listed struct {
+		Nodes []struct {
+			Reference string `json:"reference"`
+			Title     string `json:"title"`
+			Body      string `json:"body"`
+		} `json:"nodes"`
+	}
+	g.cli.json(ctx, &listed, "node", "list", "--view", "full",
+		"--label", "mill-gate", "--label", "mill-run-"+runID)
+	bodies := make([]string, 0, len(listed.Nodes))
+	for _, node := range listed.Nodes {
+		bodies = append(bodies, node.Title+"\n\n"+node.Body)
+	}
+	return bodies
 }
 
 // artifact is the named artifact on a node's result, or a failure saying it

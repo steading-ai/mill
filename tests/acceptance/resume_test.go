@@ -15,6 +15,8 @@ const implementReached = 6 * time.Minute
 
 var _ = Describe("Acceptance", Label("acceptance"), func() {
 	It("The same node twice is the same run", func(ctx SpecContext) {
+		needsForge()
+
 		s := typo.stage(ctx)
 
 		By("given a run killed during implement")

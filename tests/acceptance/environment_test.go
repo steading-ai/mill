@@ -18,7 +18,10 @@ const (
 	// EnabledVar turns the suite on. Unset, every spec skips.
 	EnabledVar = "MILL_ACCEPTANCE"
 
-	// ForgeURLVar is the GitLab the scratch project is made on.
+	// ForgeURLVar is the GitLab the scratch project is made on. Unset, the
+	// suite runs in local-origin mode: the scenarios that deliver to a
+	// forge skip, and the ones that end before a run reaches one — the
+	// seeded bad implementation — run against a bare repository on disk.
 	ForgeURLVar = "MILL_ACCEPTANCE_FORGE_URL"
 	// ForgeTokenVar is a token with `api` scope in the scratch namespace.
 	ForgeTokenVar = "MILL_ACCEPTANCE_FORGE_TOKEN" //nolint:gosec // the name of a variable, not a credential
@@ -104,14 +107,18 @@ func preflight() Environment {
 	}
 
 	var missing []string
-	for _, required := range []struct{ name, value string }{
-		{ForgeURLVar, resolved.ForgeURL},
-		{ForgeTokenVar, resolved.ForgeToken},
-		{ForgeNamespaceVar, resolved.ForgeNamespace},
-		{DatabaseURLVar, resolved.DatabaseURL},
-	} {
-		if required.value == "" {
-			missing = append(missing, required.name+" is unset")
+	required := []struct{ name, value string }{{DatabaseURLVar, resolved.DatabaseURL}}
+	// A forge is optional, and half a forge is not: a URL with no token or
+	// no namespace is a configuration mistake, and skipping the scenarios
+	// that need one would hide it.
+	if resolved.ForgeURL != "" {
+		required = append(required,
+			struct{ name, value string }{ForgeTokenVar, resolved.ForgeToken},
+			struct{ name, value string }{ForgeNamespaceVar, resolved.ForgeNamespace})
+	}
+	for _, want := range required {
+		if want.value == "" {
+			missing = append(missing, want.name+" is unset")
 		}
 	}
 	if home, err := os.UserHomeDir(); err != nil {
@@ -154,6 +161,20 @@ func preflight() Environment {
 			EnabledVar, strings.Join(missing, "\n  - ")))
 	}
 	return resolved
+}
+
+// forgeConfigured reports whether the suite was given a forge to deliver to.
+// Without one every scenario that ends in a merge request skips, and the
+// scenarios that end before a run reaches a forge run against a bare
+// repository on disk (docs/runbook.md §"Without a forge").
+func forgeConfigured() bool { return env.ForgeURL != "" }
+
+// needsForge skips the calling spec when the suite has no forge.
+func needsForge() {
+	GinkgoHelper()
+	if !forgeConfigured() {
+		Skip("set " + ForgeURLVar + " to run the scenarios that deliver to a forge; see docs/runbook.md")
+	}
 }
 
 // valueOr is a value or a fallback.

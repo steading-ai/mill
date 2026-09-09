@@ -116,6 +116,13 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 		Events:    logSink(logFile, r.options.Redactor, r.options.Now),
 	}
 
+	// The prompt heads the attempt's log. What a session was asked is the
+	// first thing that happened to it, and reading it back off the ledger
+	// is how a revise is shown to have carried a reviewer's findings to the
+	// implementer without anyone reading the session
+	// (docs/architecture.md §Observability).
+	logPrompt(logFile, r.options.Redactor, r.options.Now, prompt.Text)
+
 	begin := adapter.Start
 	if sr.GetAttempt() > 1 || s.resumed[sr.GetSessionId()] {
 		begin = adapter.Resume
@@ -392,10 +399,7 @@ func digest(content string) string {
 // and its inputs as attributed data, then a check's feedback when this
 // attempt is the revise for one.
 func (r *Runner) prompt(ctx context.Context, s *state, step *millv1.Step, detail *millv1.InspectResponse, feedback string) (harness.Prompt, error) {
-	skill, err := call(ctx, r.options.Store.GetSkill, &millv1.GetSkillRequest{
-		Name:   step.GetSkill().GetName(),
-		Digest: step.GetSkill().GetDigest(),
-	})
+	skill, err := r.skillFor(ctx, step)
 	if err != nil {
 		return harness.Prompt{}, err
 	}
@@ -417,7 +421,7 @@ func (r *Runner) prompt(ctx context.Context, s *state, step *millv1.Step, detail
 			Author: input.GetNode().GetAssignee(),
 		})
 	}
-	text := workflow.Prompt(skill.GetSkill(), node)
+	text := workflow.Prompt(skill, node)
 	brief, err := r.artifactBrief(s, step)
 	if err != nil {
 		return harness.Prompt{}, err
@@ -441,6 +445,25 @@ func (r *Runner) prompt(ctx context.Context, s *state, step *millv1.Step, detail
 		text += "\n\n" + feedbackHeading + "\n\n" + feedback
 	}
 	return harness.Prompt{Text: text, OutputSchema: outputSchema(step)}, nil
+}
+
+// skillFor is the prompt a step runs: the skill the step pins, read from the
+// store, unless a test seam replaced it. An override is loaded from a
+// directory rather than the store, so what it runs is never a skill anything
+// pushed; it is refused outside the acceptance suite before a node is
+// claimed (internal/cli/run.go, docs/runbook.md).
+func (r *Runner) skillFor(ctx context.Context, step *millv1.Step) (*millv1.Skill, error) {
+	if skill, ok := r.options.SkillOverrides[step.GetName()]; ok {
+		return skill, nil
+	}
+	res, err := call(ctx, r.options.Store.GetSkill, &millv1.GetSkillRequest{
+		Name:   step.GetSkill().GetName(),
+		Digest: step.GetSkill().GetDigest(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return res.GetSkill(), nil
 }
 
 // outputSchema is the shape the session's structured output must take. A

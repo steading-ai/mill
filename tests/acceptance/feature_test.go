@@ -47,6 +47,8 @@ var featureFixture = fixture{
 
 var _ = Describe("Acceptance", Label("acceptance"), func() {
 	It("One node, planned and delivered", func(ctx SpecContext) {
+		needsForge()
+
 		s := featureFixture.stage(ctx)
 
 		By("given a feature node on a scratch project with one file to change")

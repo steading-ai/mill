@@ -31,6 +31,8 @@ var quickFixSteps = []struct {
 
 var _ = Describe("Acceptance", Label("acceptance"), func() {
 	It("One node, delivered", func(ctx SpecContext) {
+		needsForge()
+
 		s := typo.stage(ctx)
 
 		By("given a scratch project with a README containing \"recieve\"") //nolint:misspell // the misspelling is the fixture

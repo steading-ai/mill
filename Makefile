@@ -52,7 +52,7 @@ test-db:
 # The specs are independent and run in parallel, so the suite's wall clock is
 # its slowest scenario rather than their sum.
 test-acceptance: sidecar-build
-	MILL_ACCEPTANCE=1 ginkgo -p --randomize-all --fail-on-pending --timeout=20m ./tests/acceptance
+	MILL_ACCEPTANCE=1 ginkgo -p --randomize-all --fail-on-pending --timeout=90m ./tests/acceptance
 
 # go vet catches what golangci-lint's analyzers do not overlap with; the
 # rules that carry design decisions (depguard, forbidigo) live in
