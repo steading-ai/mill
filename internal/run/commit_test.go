@@ -2,6 +2,7 @@ package run_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -184,7 +185,11 @@ var _ = Describe("Commit evidence", Label(testsupport.DBLabel), func() {
 func (f *fixture) commitsAsSomeoneElse(harness.Session) {
 	defer GinkgoRecover()
 	root := f.workspace.Handle().Root
-	Expect(os.WriteFile(filepath.Join(root, "theirs.txt"), []byte("not the mill's work\n"), 0o600)).To(Succeed())
-	gitAs(root, someoneElse, "add", "theirs.txt")
+	// A file per call: the step is retried, and a second identical write
+	// would leave git with nothing to commit and the spec asserting
+	// something it did not set up.
+	name := fmt.Sprintf("theirs-%d.txt", f.theirs.Add(1))
+	Expect(os.WriteFile(filepath.Join(root, name), []byte("not the mill's work\n"), 0o600)).To(Succeed())
+	gitAs(root, someoneElse, "add", name)
 	gitAs(root, someoneElse, "commit", "--message", "a commit the mill did not make")
 }

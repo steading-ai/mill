@@ -254,6 +254,10 @@ type state struct {
 	// this is where that is recorded (docs/architecture.md §"The circuit
 	// breaker").
 	retried map[string]int64
+	// span is every attempt this worker made since the last one a human
+	// paid for, oldest first and across every step, which is what the park
+	// gate's body is written from (internal/run/breaker.go).
+	span []attempt
 }
 
 // processContext is the context of the process the run is in.

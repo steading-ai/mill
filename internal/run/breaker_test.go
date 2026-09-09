@@ -35,16 +35,31 @@ var _ = Describe("The circuit breaker", Label(testsupport.DBLabel), func() {
 			adapter := &reviewer{model: reviewModel, commits: f.commits}
 			client, watcher := f.watching()
 
-			// When the fourth failure occurs. `retries: 3` is three retries
-			// after the first try, so attempts one to three send the work
-			// back and the fourth is the one that cannot.
+			// When the review has spent everything it has. `retries: 3` is
+			// three retries after the first try, so attempts one to three
+			// are the step's own; the fourth failure is the one with
+			// nowhere left to go and sends the work back to implement, and
+			// the fifth — its retries already spent — is the breaker's.
 			Expect(f.runner(withHarness(adapter), func(o *run.Options) {
 				o.Workflow = workflow
 				o.Dagger = client
 			}).Execute(ctx, f.nodeRef)).To(Succeed())
 
 			detail := f.inspect(ctx)
-			Expect(stepRuns(detail, "review")).To(HaveLen(4))
+			Expect(stepRuns(detail, "review")).To(HaveLen(5))
+
+			// The revise happened once, after the fourth failure and not
+			// before: implement ran a second time, answering that attempt,
+			// and the three before it were the step asking itself again.
+			reviews := stepRuns(detail, "review")
+			implements := stepRuns(detail, "implement")
+			Expect(implements).To(HaveLen(2))
+			Expect(implements[1].GetFeedbackFrom()).To(Equal(reviews[3].GetId()),
+				"the revise answers the fourth failure")
+			for i := 1; i < 4; i++ {
+				Expect(reviews[i].GetFeedbackFrom()).To(Equal(reviews[i-1].GetId()),
+					"attempt %d answers the one before it", i+1)
+			}
 
 			// Then the run is parked.
 			parked := f.runOf(ctx)
@@ -60,6 +75,8 @@ var _ = Describe("The circuit breaker", Label(testsupport.DBLabel), func() {
 				"round 1: the change still does the wrong thing",
 				"round 2: the change still does the wrong thing",
 				"round 3: the change still does the wrong thing",
+				"round 4: the change still does the wrong thing",
+				"round 5: the change still does the wrong thing",
 			} {
 				Expect(comments[0]).To(ContainSubstring(round))
 			}
@@ -70,15 +87,16 @@ var _ = Describe("The circuit breaker", Label(testsupport.DBLabel), func() {
 			adapter := &reviewer{model: reviewModel, commits: f.commits}
 			runner := f.runner(withHarness(adapter), func(o *run.Options) { o.Workflow = workflow })
 			Expect(runner.Execute(ctx, f.nodeRef)).To(Succeed())
-			Expect(stepRuns(f.inspect(ctx), "review")).To(HaveLen(4))
+			Expect(stepRuns(f.inspect(ctx), "review")).To(HaveLen(5))
 
 			// The human's answer is what pays for the next set of attempts.
 			f.approveGate(ctx, f.gatesOn(ctx)[0].GetReference())
 			Expect(runner.Execute(ctx, f.nodeRef)).To(Succeed())
 
-			// Four more, not one: the attempt count the breaker compares
-			// against retries starts again from the answer.
-			Expect(stepRuns(f.inspect(ctx), "review")).To(HaveLen(8))
+			// Five more, not one: the attempt count the breaker compares
+			// against retries starts again from the answer, for the parked
+			// step and no other.
+			Expect(stepRuns(f.inspect(ctx), "review")).To(HaveLen(10))
 			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_PARKED))
 		})
 	})
@@ -100,13 +118,20 @@ var _ = Describe("The circuit breaker", Label(testsupport.DBLabel), func() {
 				To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_SUPERSEDED))
 			Expect(stepRuns(detail, "commit")[0].GetStatus()).
 				To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_SUPERSEDED))
-			Expect(stepRuns(detail, "clean-tree")[0].GetStatus()).
-				To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_SUPERSEDED))
+			// The check's own attempts failed; the one that spent the last
+			// of them is the one the revise superseded.
+			checks := stepRuns(detail, "clean-tree")
+			Expect(checks[0].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_FAILED))
+			Expect(checks[3].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_SUPERSEDED))
 
 			// The current step went backwards to the revise target, which
-			// the ledger says by what ran next.
-			Expect(after(detail, "clean-tree")).To(Equal("implement"))
-			Expect(stepRuns(detail, "implement")).To(HaveLen(4))
+			// the ledger says by what answered what: implement's second
+			// attempt is the check's fourth failure's, and the three before
+			// it were the check's own.
+			Expect(stepRuns(detail, "clean-tree")).To(HaveLen(5))
+			Expect(stepRuns(detail, "implement")).To(HaveLen(2))
+			Expect(stepRuns(detail, "implement")[1].GetFeedbackFrom()).
+				To(Equal(stepRuns(detail, "clean-tree")[3].GetId()))
 			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_PARKED))
 		})
 	})

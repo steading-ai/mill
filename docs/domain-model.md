@@ -137,8 +137,8 @@ One unit of a workflow. Three kinds.
 | `artifact` | Skill steps closing on `artifact`: the file in the checkout whose content is the artifact, as a template over the run — `docs/plans/{{.Date}}-{{.NodeSlug}}.md`. Absent, the artifact is the session's last message |
 | `capabilities` | The capability set the step's workspace handle grants. See [Capability set](#capability-set) |
 | `harness` | Per-harness **options documents**, keyed by harness name. The adapter reads its own entry and mill reads none of them |
-| `on_failure` | `revise <step>` returns to a named earlier step in its session with the failure as the next prompt; `park` trips the breaker. Default `park`. See [Revise](#revise) |
-| `retries` | How many times *this* step may fail with `revise` before `park`. Counted on this step's attempts. Default 3 |
+| `on_failure` | What happens once `retries` are spent: `revise <step>` returns to a named earlier step in its session with the failure as the next prompt; `park` trips the breaker. Default `park`. See [Revise](#revise) |
+| `retries` | How many times *this* step may fail and be tried again before `on_failure` is consulted. Counted on this step's own attempts. Default 3 |
 | `timeout` | Wall clock for the step, enforced by the worker. Independent of the dagger lease, which the worker heartbeats for the step's whole duration; a step may run longer than a lease TTL |
 
 Harness settings live on the **step**, not on the skill record. A skill is shared across workflows, so it cannot hold a setting that differs between them: the same reviewer is worth a cheaper model in a `docs` workflow than in `feature`. `mill.v1.HarnessSettings` and `harness.v1.Settings` carry the decision in the proto.
@@ -166,11 +166,15 @@ A **gate step** files a dagger gate and releases the lease. It produces no evide
 
 Steps run in order. There is no branching except `on_failure`. A workflow that needs a decision makes it in a skill step and records it as structured output the next step reads.
 
+**Retries first, then `on_failure`.** A failed step is tried again in place while it has attempts left: a new attempt at the same step, in the same session, with what the last attempt failed on — the session's final message, or the check's stderr — as the next prompt. Nothing else moves; no other step is superseded. `retries: 3` is three retries after the first try, so the fourth failure is the first one with nowhere left to go, and only then is `on_failure` read: `revise <target>` supersedes the span back to the target, `park` or no `on_failure` at all trips the [circuit breaker](architecture.md#failure-and-stop). A step's `retries` and its `on_failure` are independent — `retries: 2` with no `on_failure` is three attempts and then a park, which is what a step that only ever fails on its own account wants. The `revise` is consulted once per set of retries: a step that fails again with its retries already spent parks rather than sending the work back a second time, so a target that cannot satisfy it does not loop forever.
+
+One failure is not the step's own and is not retried in place: a reviewer's `revise` [verdict](#verdict). The step did its job — it judged — and the findings are addressed to the implementer, so asking the same reviewer again would be asking it to change its mind. A verdict goes to `on_failure` at once, and the step's `retries` bound how many review rounds a run gets.
+
 ### Revise
 
 `on_failure: revise <target>` on step *F* reopens every step from *target* through *F* inclusive. Their latest step runs are marked `superseded`; their evidence rows remain, immutable, but no longer close anything. The run's `current_step` is therefore *target* again, and every step between *target* and *F* runs again on the revised work — a re-implemented change is re-simplified, re-committed, re-pushed, and re-reviewed. The alternative, in which `commit` and `pr` keep pass-one evidence while `implement` produced pass two, would make the ledger's record of what shipped false.
 
-The `revise` counter is the failing step's: `review` fails with `revise implement` and `review.retries` is what parks the run after three rounds. A `revise` whose target is not earlier in the workflow is a definition error caught at load.
+The counter is the failing step's: `review` fails with `revise implement`, and `review.retries` is what bounds it — the review rounds when the failure is a verdict, and `review`'s own attempts before the work goes back to `implement` at all when it is not. A `revise` whose target is not earlier in the workflow is a definition error caught at load.
 
 ### Gates and pushes
 

@@ -7,17 +7,31 @@ import (
 	"github.com/ivy/mill/internal/evidence"
 )
 
-// What happens to a failed attempt: `on_failure: revise <target>` while the
-// step has attempts left, the circuit breaker when it does not
-// (docs/domain-model.md §Step, docs/ledger.md §Resume).
+// What happens to a failed attempt, in the order docs/domain-model.md §Step
+// states it: the step's own retries first, then `on_failure` once they are
+// spent — `revise <target>` sends the work back, `park` or nothing trips the
+// circuit breaker (docs/ledger.md §Resume).
 //
-// Retries are counted on the failing step's own attempts, and `retries: 3`
-// means three retries after the first try: attempts one through three send
-// the work back, and the fourth failure parks. What counts is measured from
-// the last attempt a human paid for, so a run resumed out of a park gets a
-// fresh set (see [state.attemptsAt]).
+// `retries: 3` means three retries after the first try, and they are the
+// step's own: attempts one through three ask the same step again, in the
+// same session, with what the last attempt failed on as the next prompt.
+// The fourth failure is the one that has nowhere left to go, and only then
+// is `on_failure` consulted. What counts is measured from the last attempt a
+// human paid for, so a run resumed out of a park gets a fresh set (see
+// [state.attemptsAt]).
+//
+// A revise is consulted once per set of retries: the attempt that spends the
+// last one supersedes the span, and a step that fails again with its retries
+// already spent parks. Otherwise a step whose target cannot satisfy it would
+// send the work back forever, and the breaker would never trip.
+//
+// One failure is not the step's own and skips the retries entirely: a
+// reviewer's `revise` verdict. There the step judged, and its findings are
+// addressed to the implementer; the retries bound the rounds of that
+// (docs/domain-model.md §Verdict).
 
-// failStep records a failed attempt and applies the step's on_failure.
+// failStep records a failed attempt and applies the step's retries, then its
+// on_failure.
 func (r *Runner) failStep(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, detail *millv1.InspectResponse, res result, cause error) (outcome, error) {
 	exit := res.exit
 	if exit == nil {
@@ -38,29 +52,67 @@ func (r *Runner) failStep(ctx context.Context, s *state, step *millv1.Step, sr *
 	// breaker finally trips is the sequence, because three rounds of the
 	// same finding say something one round does not.
 	s.record(step.GetName(), findings)
+	s.recordAttempt(step, sr, exit, lastWords(res, findings), true)
 	r.printf("  failed: %v\n", cause)
 
-	// A session whose structured output did not parse judged nothing: there
-	// is no verdict, so there is nothing to send anybody and no other
-	// step's work is implicated. The step is asked again — the same
-	// reviewer, told what its output was missing — instead of spending the
-	// implementer's attempt on a failure that was the reviewer's own
-	// (docs/domain-model.md §Verdict). Nothing is superseded, because
-	// nothing after this step ever closed.
-	if evidence.Malformed(cause) {
-		if s.attemptsAt(step.GetName(), sr.GetAttempt()) <= int64(step.GetRetries()) {
-			r.printf("  malformed output; asking %s again\n", step.GetName())
-			return outcome{feedback: findings, feedbackFrom: sr.GetId()}, nil
+	attempts := s.attemptsAt(step.GetName(), sr.GetAttempt())
+	retries := int64(step.GetRetries())
+	target := step.GetOnFailure().GetReviseTarget()
+	revising := step.GetOnFailure().GetKind() == millv1.OnFailureKind_ON_FAILURE_KIND_REVISE && target != ""
+
+	// A reviewer's `revise` verdict is not the step's own failure. The step
+	// judged, and the judgment is about another step's work: asking the
+	// same reviewer again would be asking it to change its mind, and its
+	// findings are addressed to the implementer. It goes to `on_failure` at
+	// once, and the step's retries bound how many rounds of that the run
+	// gets (docs/domain-model.md §Verdict, §Revise).
+	if res.judgment {
+		if revising && attempts <= retries {
+			return r.revise(ctx, s, step, sr, target, findings)
 		}
 		return outcome{}, r.park(ctx, s, step, sr, detail, cause)
 	}
 
-	target := step.GetOnFailure().GetReviseTarget()
-	revising := step.GetOnFailure().GetKind() == millv1.OnFailureKind_ON_FAILURE_KIND_REVISE && target != ""
-	if revising && s.attemptsAt(step.GetName(), sr.GetAttempt()) <= int64(step.GetRetries()) {
+	if attempts <= retries {
+		// The step's own attempt, again. Nothing is superseded and no other
+		// step is implicated: this failure is the step's to answer, and the
+		// session it ran in is asked once more with the failure as its next
+		// prompt.
+		//
+		// A session whose structured output did not parse judged nothing,
+		// which is the same answer arrived at differently: there is no
+		// verdict, so there is nothing to send anybody, and the same
+		// reviewer is told what its output was missing rather than an
+		// implementer's attempt being spent on a failure that was the
+		// reviewer's own (docs/domain-model.md §Verdict).
+		if evidence.Malformed(cause) {
+			r.printf("  malformed output; asking %s again\n", step.GetName())
+		} else {
+			r.printf("  retrying %s\n", step.GetName())
+		}
+		return outcome{feedback: findings, feedbackFrom: sr.GetId()}, nil
+	}
+
+	// Malformed output never revises, whatever the step says: nothing was
+	// judged, so no other step's work is implicated (docs/domain-model.md
+	// §Verdict). The run parks when the step's retries are spent.
+	if revising && !evidence.Malformed(cause) && attempts == retries+1 {
 		return r.revise(ctx, s, step, sr, target, findings)
 	}
 	return outcome{}, r.park(ctx, s, step, sr, detail, cause)
+}
+
+// lastWords is what this attempt said for itself: the session's final
+// message, the check's stderr, or — when it produced neither — the mill's
+// own account of why the attempt failed.
+func lastWords(res result, findings string) string {
+	if res.session.FinalMessage != "" {
+		return res.session.FinalMessage
+	}
+	if res.stderr != "" {
+		return res.stderr
+	}
+	return findings
 }
 
 // revise sends the work back to the step that produced it. Every step from

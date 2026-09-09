@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	harnessv1 "github.com/ivy/mill/gen/harness/v1"
@@ -33,8 +34,17 @@ type result struct {
 	exit *harnessv1.ProcessExit
 	// usage is what the step billed, by model.
 	usage harness.Usage
-	// feedback is what a failure hands the revise target as its prompt.
+	// feedback is what a failure hands the next attempt as its prompt.
 	feedback string
+	// stderr is what a check step's command wrote to its diagnostics
+	// stream, kept whether or not the definition hands it back as
+	// feedback: the breaker's gate carries it either way.
+	stderr string
+	// judgment says the failure is a reviewer's `revise` verdict rather
+	// than the step's own failure: the step did its job, and what it
+	// produced implicates another step's work (docs/domain-model.md
+	// §Verdict).
+	judgment bool
 	// autoApproved records a gate the `auto` predicate closed.
 	autoApproved bool
 }
@@ -302,7 +312,7 @@ func (r *Runner) runCheck(ctx context.Context, s *state, step *millv1.Step) (res
 	if err != nil {
 		return result{}, err
 	}
-	out := result{exit: res.Exit}
+	out := result{exit: res.Exit, stderr: strings.TrimRight(res.Stderr, "\n")}
 	if !res.Passed {
 		out.feedback = check.Feedback(step.GetCheck(), res)
 		return out, fmt.Errorf("step %s: %s", step.GetName(), res.Reason)

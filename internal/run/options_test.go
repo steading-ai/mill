@@ -90,11 +90,16 @@ var _ = Describe("A step's harness options", Label(testsupport.DBLabel), func() 
 		Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_PARKED))
 
 		By("then mill records a failed attempt with that message")
+		// One attempt for the step's first try and one for each of its two
+		// retries: the refusal is the step's own failure, so the step is
+		// the one that spends the attempts (docs/domain-model.md §Step).
 		attempts := stepRuns(f.inspect(ctx), "gather-context")
-		Expect(attempts).To(HaveLen(1))
-		Expect(attempts[0].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_FAILED))
-		Expect(attempts[0].GetExit().GetStatus()).To(BeNumerically("==", -1))
-		Expect(attempts[0].GetExit().GetReason()).To(Equal(harnessv1.ExitReason_EXIT_REASON_POLICY))
+		Expect(attempts).To(HaveLen(3))
+		for _, attempt := range attempts {
+			Expect(attempt.GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_FAILED))
+			Expect(attempt.GetExit().GetStatus()).To(BeNumerically("==", -1))
+			Expect(attempt.GetExit().GetReason()).To(Equal(harnessv1.ExitReason_EXIT_REASON_POLICY))
+		}
 		Expect(f.comments(ctx)).To(ContainElement(ContainSubstring("thinking_budget")))
 	})
 

@@ -93,7 +93,7 @@ One row per attempt at a step. Append-only.
 
 `closed` means evidence exists for this row. `failed` means the attempt ended and `on_failure` applies. `aborted` means the worker stopped or was fenced out before the attempt ended; the next worker starts a new attempt. `superseded` means a later `revise` reopened this step; the row and its evidence stay as the record of pass one.
 
-The circuit breaker counts `attempt` on the **failing** step — `review` fails with `revise implement`, and `review.retries` is what it compares against. This is a different counter from the run's derived `leases`, which counts dagger claims and moves on worker crashes, not on review rounds.
+The circuit breaker counts `attempt` on the **failing** step — `review` fails, and `review.retries` is what it compares against, spent on `review`'s own attempts before `revise implement` is consulted at all. This is a different counter from the run's derived `leases`, which counts dagger claims and moves on worker crashes, not on review rounds.
 
 ### `evidence`
 
@@ -232,12 +232,18 @@ for step in run.workflow.steps starting at run.current_step():
           return                                   # the attempt stays open: the answer closes it
       failed:
           store.Fail(sr, exit)
-          if step.on_failure == revise <target> and store.Attempt(run, step) <= step.retries:
+          attempts = store.Attempt(run, step)                 # since the last attempt a human paid for
+          if result.verdict == revise:                        # a judgment, not the step's own failure
+              if step.on_failure == revise <target> and attempts <= step.retries: supersede; continue
+              else: park
+          if attempts <= step.retries:                        # the step's own retries come first
+              feedback = result.feedback; continue            # same step, same session, next prompt
+          if step.on_failure == revise <target> and attempts == step.retries + 1:
               store.Supersede(run, from=target, through=step)   # their latest rows -> superseded
               feedback = result.feedback; continue            # loop recomputes current_step() == target
           else:
               dagger.Comment(node, last findings)
-              gate := dagger.ApplyPatch(create park gate, request_id)
+              gate := dagger.ApplyPatch(create park gate, request_id)   # body: every attempt in the span
               store.Park(run, gate.id, reason)
               dagger.Release(node.lease_id, BUDGET)
               return

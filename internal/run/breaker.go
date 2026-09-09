@@ -6,8 +6,10 @@ import (
 	"strings"
 
 	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
+	harnessv1 "github.com/ivy/mill/gen/harness/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/dagger"
+	"github.com/ivy/mill/internal/harness"
 )
 
 // The circuit breaker: docs/architecture.md §"Failure and stop".
@@ -73,12 +75,100 @@ func roundsOf(step string, rounds []string) string {
 }
 
 // parkBody is what the park gate asks.
+//
+// The failing step's rounds, then every attempt of every step in the span —
+// including the attempts of steps that went on to close. The cause of a park
+// is regularly not the step that parked: a `commit` session that said it
+// could not proceed leaves a clean-tree check to fail four rounds later, and
+// a human reading only the check's stderr cannot see why. The whole span is
+// here so that reading the gate is enough.
 func parkBody(s *state, step *millv1.Step, findings string) string {
 	return fmt.Sprintf(
-		"Run %s of %s stopped at step %s.\n\n%s\n\n"+
+		"Run %s of %s stopped at step %s.\n\n%s\n%s\n"+
 			"Complete this node to resume the run at that step with its attempts reset. "+
 			"Drop it, or run `mill restart %s`, to start over.",
-		s.run.GetId(), s.node.GetReference(), step.GetName(), findings, s.node.GetReference())
+		s.run.GetId(), s.node.GetReference(), step.GetName(), findings, spanStory(s.span), s.node.GetReference())
+}
+
+// attempt is one attempt in the span the park gate reports: what the ledger
+// holds, plus the last thing the attempt said for itself.
+type attempt struct {
+	// step is the step the attempt was at.
+	step string
+	// number is the attempt number the ledger gave it.
+	number int64
+	// exit is how the attempt's process ended, rendered.
+	exit string
+	// words is the session's final message, or the check's stderr.
+	words string
+	// failed says whether the attempt failed. A closed attempt is in the
+	// span too: a step that closed on evidence and still left the run
+	// unable to continue is exactly the case a human is being asked about.
+	failed bool
+}
+
+// recordAttempt appends one attempt to the span.
+func (s *state) recordAttempt(step *millv1.Step, sr *millv1.StepRun, exit *harnessv1.ProcessExit, words string, failed bool) {
+	s.span = append(s.span, attempt{
+		step:   step.GetName(),
+		number: sr.GetAttempt(),
+		exit:   exitOf(exit),
+		words:  words,
+		failed: failed,
+	})
+}
+
+// spanTail is how much of an attempt's last words the gate carries. Enough
+// to see what a session or a script was saying when it stopped, and not the
+// whole transcript: the log has that, and a gate nobody reads helps nobody.
+const spanTail = 20
+
+// spanStory is every attempt in the span, oldest first.
+func spanStory(span []attempt) string {
+	if len(span) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n## Every attempt since a human was last asked\n")
+	for _, a := range span {
+		outcome := "closed"
+		if a.failed {
+			outcome = "failed"
+		}
+		fmt.Fprintf(&b, "\n### %s attempt %d — %s, %s\n\n", a.step, a.number, outcome, a.exit)
+		words := tail(a.words, spanTail)
+		if words == "" {
+			fmt.Fprintf(&b, "It said nothing.\n")
+			continue
+		}
+		fmt.Fprintf(&b, "```\n%s\n```\n", words)
+	}
+	return b.String()
+}
+
+// tail is the last n lines of a message, trimmed.
+func tail(message string, n int) string {
+	message = strings.Trim(message, "\n")
+	if message == "" {
+		return ""
+	}
+	lines := strings.Split(message, "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// exitOf renders how a process ended for a human reading the gate.
+func exitOf(exit *harnessv1.ProcessExit) string {
+	if exit == nil {
+		return "no process ran"
+	}
+	return exitText(harness.ProcessExit{
+		Status: exit.GetStatus(),
+		Signal: exit.GetSignal(),
+		Reason: harness.ReasonFrom(exit.GetReason()),
+	})
 }
 
 // resumePark is the other half of the breaker: a claim that took over a
@@ -111,10 +201,14 @@ func (r *Runner) resumePark(ctx context.Context, s *state) error {
 	if err != nil {
 		return err
 	}
+	// The parked step's attempts, and no other step's: the human paid for
+	// this step to try again, not for the run to forget what the steps
+	// before it spent. The span the next park would report starts here.
 	step := detail.GetSummary().GetCurrentStep()
 	if sr := latestStepRun(detail, step); sr != nil {
 		s.retried[step] = sr.GetAttempt()
 	}
+	s.span = nil
 	if _, err := call(ctx, r.options.Store.Resume, &millv1.ResumeRequest{
 		LeaseId: s.lease,
 		RunId:   s.run.GetId(),

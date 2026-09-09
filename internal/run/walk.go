@@ -286,6 +286,7 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 	}
 	if findings != "" {
 		result.feedback = findings
+		result.judgment = true
 	}
 
 	switch {
@@ -339,6 +340,11 @@ func (r *Runner) closeStep(ctx context.Context, s *state, sr *millv1.StepRun, st
 	if message := res.session.FinalMessage; message != "" {
 		s.summary = message
 	}
+	// The attempt goes in the span whether it closed or failed: what a park
+	// gate has to show a human is every attempt in the span, and a step
+	// that closed on evidence can still be the reason a later one could not
+	// (internal/run/breaker.go).
+	s.recordAttempt(step, sr, res.exit, lastWords(res, ""), false)
 	for _, warning := range verified.Warnings {
 		r.options.Log.Warn("evidence", "step", step.GetName(), "warning", warning)
 	}

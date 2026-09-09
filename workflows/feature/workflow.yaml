@@ -93,7 +93,9 @@ steps:
     timeout: 30m
 
   # The last cheap moment: a plan is cheap to fix and expensive to follow.
-  # A revise returns to plan with the findings, in the implementing session.
+  # The step spends its own retries first, and the third failure returns to
+  # plan with the findings, in the implementing session
+  # (docs/domain-model.md §Step, "retries first, then on_failure").
   # The output schema is the mill's own — a verdict is parsed, never read
   # (docs/domain-model.md §Verdict) — so the step does not restate it.
   - name: review-plan
@@ -214,9 +216,10 @@ steps:
     retries: 2
     timeout: 15m
 
-  # The tree has to be clean before the run leaves the workspace behind, and
-  # a dirty tree sends the session back to implement with the paths as its
-  # next prompt (docs/domain-model.md §Check). The script is quick-fix's, in
+  # The tree has to be clean before the run leaves the workspace behind. The
+  # check runs again on its own three times, and a fourth dirty tree sends
+  # the session back to implement with the paths as its next prompt
+  # (docs/domain-model.md §Step, §Check). The script is quick-fix's, in
   # place rather than copied: one check, one behaviour, one file to fix.
   - name: clean-tree
     kind: check
@@ -251,9 +254,9 @@ steps:
   # The reviewer, in its own session and read-only on both halves: no write
   # capability, so the workspace refuses fs.write and git.commit under this
   # step's token, and a tool policy that keeps the write tools out of the
-  # session at all (docs/domain-model.md §Step, R-24, R-38). A revise
-  # returns to implement with the findings, which are the implementer's next
-  # prompt.
+  # session at all (docs/domain-model.md §Step, R-24, R-38). The reviewer is
+  # asked again on its own two retries, and the third failure returns to
+  # implement with the findings, which are the implementer's next prompt.
   #
   # The schema is written down beside the skill rather than left implicit:
   # it is the mill's own verdict schema, and the loader refuses any other,

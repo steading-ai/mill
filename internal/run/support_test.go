@@ -87,6 +87,10 @@ type fixture struct {
 	// finishes, for a spec that reads the branch the run left behind.
 	keepWorkspace bool
 
+	// theirs counts the commits a spec made under somebody else's
+	// identity, so each one is a commit and not an empty write.
+	theirs atomic.Int64
+
 	// mu guards made.
 	mu sync.Mutex
 	// made is every commit a scripted session left on the run's branch, in
@@ -903,40 +907,49 @@ type reviewer struct {
 	// and never writes; every other session in these specs is one that could
 	// have committed, and the `commit` step closes on nothing else.
 	commits func(harness.Session)
+	// until is how many review turns fail before one succeeds. Zero is a
+	// reviewer that never finds the work good, which is what the circuit
+	// breaker's specs need.
+	until int
 
 	mu       sync.Mutex
 	rounds   int
 	sessions []string
 	verbs    []string
+	// prompts is what each review turn was given, in order, so a spec can
+	// read what the step was told between its own attempts.
+	prompts []string
 }
 
 // Start begins a turn.
-func (r *reviewer) Start(_ context.Context, session harness.Session, _ harness.Prompt, _ []harness.Attachment) (*harness.Turn, error) {
-	return r.play("start", session), nil
+func (r *reviewer) Start(_ context.Context, session harness.Session, prompt harness.Prompt, _ []harness.Attachment) (*harness.Turn, error) {
+	return r.play("start", session, prompt), nil
 }
 
 // Resume continues one.
-func (r *reviewer) Resume(_ context.Context, session harness.Session, _ harness.Prompt, _ []harness.Attachment) (*harness.Turn, error) {
-	return r.play("resume", session), nil
+func (r *reviewer) Resume(_ context.Context, session harness.Session, prompt harness.Prompt, _ []harness.Attachment) (*harness.Turn, error) {
+	return r.play("resume", session, prompt), nil
 }
 
 // Cancel ends a turn that is not running, which is not an error.
 func (r *reviewer) Cancel(context.Context, harness.Session) error { return nil }
 
-func (r *reviewer) play(verb string, session harness.Session) *harness.Turn {
+func (r *reviewer) play(verb string, session harness.Session, prompt harness.Prompt) *harness.Turn {
 	r.mu.Lock()
 	r.sessions = append(r.sessions, session.ID)
 	r.verbs = append(r.verbs, verb)
 	reviewing := session.Options["model"] == r.model
 	if reviewing {
 		r.rounds++
+		r.prompts = append(r.prompts, prompt.Text)
 	}
 	round := r.rounds
+	failing := reviewing && (r.until == 0 || round <= r.until)
 	r.mu.Unlock()
 
 	turn := harness.NewTurn()
 	go func() {
-		if reviewing {
+		if failing {
 			turn.Finish(&harness.Terminal{
 				FinalMessage: fmt.Sprintf("round %d: the change still does the wrong thing", round),
 				Exit:         harness.ProcessExit{Status: 1},
@@ -944,12 +957,19 @@ func (r *reviewer) play(verb string, session harness.Session) *harness.Turn {
 			}, nil)
 			return
 		}
-		if r.commits != nil {
+		if !reviewing && r.commits != nil {
 			r.commits(session)
 		}
 		turn.Finish(fake.Terminal("done", nil, usage(1)), nil)
 	}()
 	return turn
+}
+
+// reviewPrompts is the prompt each review turn was given, in order.
+func (r *reviewer) reviewPrompts() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string{}, r.prompts...)
 }
 
 var _ harness.Harness = (*reviewer)(nil)
