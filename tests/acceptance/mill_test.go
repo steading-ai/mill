@@ -139,17 +139,21 @@ func connectService(socket string) *service {
 	return &service{Socket: socket, Store: millv1connect.NewStoreServiceClient(client, "http://mill")}
 }
 
-// pushWorkflow loads this tree's quick-fix definition into the store, which
-// is what a deployment does at install time.
+// pushWorkflow loads this tree's workflow definitions into the store, which
+// is what a deployment does at install time. Both of them: a worker holds
+// every workflow its projects may select, and `feature` reaches for skills
+// `quick-fix` carries.
 func pushWorkflow(ctx context.Context) {
 	GinkgoHelper()
-	push := exec.CommandContext(ctx, env.Mill, "workflow", "push", workflowDir(), "--socket", suite.service.Socket) //nolint:gosec // the suite's own binary
-	push.Stdout, push.Stderr = GinkgoWriter, GinkgoWriter
-	Expect(push.Run()).To(Succeed(), "mill workflow push")
+	for _, name := range []string{"quick-fix", "feature"} {
+		push := exec.CommandContext(ctx, env.Mill, "workflow", "push", workflowDir(name), "--socket", suite.service.Socket) //nolint:gosec // the suite's own binary
+		push.Stdout, push.Stderr = GinkgoWriter, GinkgoWriter
+		Expect(push.Run()).To(Succeed(), "mill workflow push %s", name)
+	}
 }
 
-// workflowDir is the quick-fix definition in this tree.
-func workflowDir() string { return filepath.Join(env.RepoRoot, "workflows", "quick-fix") }
+// workflowDir is one workflow definition in this tree.
+func workflowDir(name string) string { return filepath.Join(env.RepoRoot, "workflows", name) }
 
 // inspect reads a node's run out of the ledger: the run, the workflow it
 // follows, and every attempt with its evidence, session and cost.
@@ -188,6 +192,10 @@ type runOptions struct {
 	// production five minutes.
 	TTL       time.Duration
 	Heartbeat time.Duration
+	// Workflow and Tier are the run's selection. Empty is quick-fix, which
+	// is what every scenario but the feature one wants.
+	Workflow string
+	Tier     string
 }
 
 // start invokes `mill run` for a node, against the suite's service, the
@@ -195,14 +203,18 @@ type runOptions struct {
 // the process is running.
 func start(ctx context.Context, graph *scratchGraph, project *scratchProject, nodeRef, workspaceDir string, opts runOptions) *worker {
 	GinkgoHelper()
+	selected, tier := opts.Workflow, opts.Tier
+	if selected == "" {
+		selected, tier = "quick-fix", "quick-fix"
+	}
 	args := []string{
 		"run", nodeRef,
 		"--socket", suite.service.Socket,
 		"--dagger-socket", env.DaggerSocket,
 		"--project", graph.Slug,
-		"--workflow", "quick-fix",
-		"--tier", "quick-fix",
-		"--workflow-dir", workflowDir(),
+		"--workflow", selected,
+		"--tier", tier,
+		"--workflow-dir", workflowDir(selected),
 		"--vcs-url", project.CloneURL,
 		"--ref", project.DefaultBranch,
 		"--workspace-dir", workspaceDir,

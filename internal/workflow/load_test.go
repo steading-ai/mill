@@ -272,6 +272,64 @@ steps:
 		Expect(err).To(MatchError(ContainSubstring("not earlier")))
 	})
 
+	It("lets a gate follow a step whose write is the file its artifact was read from", func() {
+		// The plan gate: what the step wrote is on the node as its
+		// evidence, so a worker that recreates the workspace elsewhere is
+		// not missing it (docs/domain-model.md §"Gates and pushes").
+		_, _, err := workflow.Load(dir(`
+name: tiny
+steps:
+  - name: plan
+    kind: skill
+    session: implement
+    skill: plan
+    evidence: artifact
+    artifact:
+      path: docs/plans/{{.Date}}-{{.NodeSlug}}.md
+    capabilities: [read, write]
+  - name: plan-approval
+    kind: gate
+    gate:
+      ask:
+        title: Approve the plan
+    evidence: gate
+`, map[string]string{"plan": "Write the plan."}))
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("refuses an artifact source on a step that closes on something else", func() {
+		_, _, err := workflow.Load(dir(`
+name: tiny
+steps:
+  - name: plan
+    kind: skill
+    session: implement
+    skill: plan
+    evidence: commit
+    artifact:
+      path: docs/plans/plan.md
+    capabilities: [read, write]
+`, map[string]string{"plan": "Write the plan."}))
+		Expect(err).To(MatchError(ContainSubstring("step plan")))
+		Expect(err).To(MatchError(ContainSubstring("closes on commit")))
+	})
+
+	It("refuses an artifact path that climbs out of the checkout", func() {
+		_, _, err := workflow.Load(dir(`
+name: tiny
+steps:
+  - name: plan
+    kind: skill
+    session: implement
+    skill: plan
+    evidence: artifact
+    artifact:
+      path: ../../etc/plan.md
+    capabilities: [read, write]
+`, map[string]string{"plan": "Write the plan."}))
+		Expect(err).To(MatchError(ContainSubstring("climbs out of the checkout")))
+	})
+
 	It("refuses a gate after a write step with no url evidence between them, naming the gate", func() {
 		_, _, err := workflow.Load(dir(`
 name: tiny

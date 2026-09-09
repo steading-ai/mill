@@ -361,14 +361,7 @@ type ask struct {
 // docs/domain-model.md §Gate names: which node, which step, and the
 // artifacts the decision is about.
 func (r *Runner) renderAsk(s *state, step *millv1.Step) (ask, error) {
-	data := map[string]any{
-		"NodeRef":     s.node.GetReference(),
-		"NodeTitle":   s.node.GetTitle(),
-		"Step":        step.GetName(),
-		"Branch":      s.run.GetBranch(),
-		"PullRequest": s.pullRequestURL,
-		"RunID":       s.run.GetId(),
-	}
+	data := r.templateData(s, step)
 	title, err := render(step.GetGate().GetAsk().GetTitle(), data)
 	if err != nil {
 		return ask{}, err

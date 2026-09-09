@@ -171,6 +171,12 @@ type Step struct {
 	// it did not make reports it into a transcript nothing here reads, and
 	// the step stays open.
 	Claim string
+	// AutoApproved is the `auto` predicate that closed a gate step without
+	// asking a human, and is empty for every other step and for a gate a
+	// person answered. A gate closed by policy has no gate node to read —
+	// nothing reaches dagger at all — so the policy that fired is the fact
+	// (docs/domain-model.md §Gate).
+	AutoApproved string
 	// Exit is how the check's process ended, as the check runner recorded
 	// it. Only `exit` reads it.
 	Exit *harnessv1.ProcessExit
@@ -446,7 +452,7 @@ func verifyVerdict(_ context.Context, step Step) (Evidence, error) {
 	if step.Session.Output == nil {
 		return refuse("the session produced no structured output", nil)
 	}
-	if err := ValidateJSON(verdictSchema, step.Session.Output); err != nil {
+	if err := ValidateJSON(VerdictSchema, step.Session.Output); err != nil {
 		return refuse(fmt.Sprintf("the verdict does not parse: %s", err), err)
 	}
 	verdict := &millv1.Verdict{}
@@ -499,10 +505,12 @@ func verifyVerdict(_ context.Context, step Step) (Evidence, error) {
 	}, nil
 }
 
-// verdictSchema is docs/domain-model.md §Verdict as a schema. The verdict is
+// VerdictSchema is docs/domain-model.md §Verdict as a schema. The verdict is
 // parsed, never read: this is the whole of what a reviewer's output is
-// allowed to be.
-const verdictSchema = `{
+// allowed to be. It is exported because the run loop hands it to a
+// reviewer's session as that session's output schema, so a reviewer is asked
+// for exactly what this package will accept.
+const VerdictSchema = `{
   "type": "object",
   "required": ["decision"],
   "properties": {
@@ -659,7 +667,8 @@ func verifyArtifact(ctx context.Context, step Step) (Evidence, error) {
 }
 
 // verifyGate proves a gate: the gate node dagger holds is `done` and its
-// result is attached.
+// result is attached — or, for a gate the workflow's own `auto` policy
+// closed, the policy that fired.
 //
 // An `open` gate is a human who has not answered yet, which is pending
 // rather than failed — though a run parked at a gate is waiting on a lease
@@ -669,6 +678,12 @@ func verifyGate(ctx context.Context, step Step) (Evidence, error) {
 	kind := millv1.EvidenceKind_EVIDENCE_KIND_GATE
 	refuse := func(reason string, err error) (Evidence, error) {
 		return Evidence{}, &NotVerifiedError{Kind: kind, Reason: reason, Err: err}
+	}
+	if policy := strings.TrimSpace(step.AutoApproved); policy != "" {
+		// The decision was the workflow's own, taken before anything was
+		// filed. There is no node to read and there never was one; what
+		// closes the step is the policy, recorded so the ledger says which.
+		return Evidence{Value: &millv1.Evidence{Value: &millv1.Evidence_Gate{Gate: "auto:" + policy}}}, nil
 	}
 	if step.Gates == nil {
 		return refuse("there is no dagger to read the gate from", nil)

@@ -3,7 +3,9 @@ package workflow
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
+	"strings"
 
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 )
@@ -27,7 +29,10 @@ import (
 //     the lease and may wait for as long as a human takes; the worker that
 //     resumes may be on another host and can only recreate the workspace
 //     from a branch the forge has (docs/domain-model.md §"Gates and
-//     pushes").
+//     pushes"). A step whose artifact evidence is read from a file it wrote
+//     is not such a write: that file is on the node.
+//   - An artifact source names a file in the checkout, on a step that
+//     closes on `artifact`.
 func Validate(w *millv1.Workflow) error {
 	var errs []error
 	index := map[string]int{}
@@ -59,6 +64,7 @@ func validateStep(step *millv1.Step) []error {
 	if step.GetEvidence() == millv1.EvidenceKind_EVIDENCE_KIND_UNSPECIFIED {
 		errs = append(errs, fmt.Errorf("step %s: evidence is required; nothing else closes a step", name))
 	}
+	errs = append(errs, validateArtifact(step)...)
 	switch step.GetKind() {
 	case millv1.StepKind_STEP_KIND_SKILL:
 		if step.GetSkill().GetName() == "" {
@@ -77,6 +83,32 @@ func validateStep(step *millv1.Step) []error {
 		}
 	default:
 		errs = append(errs, fmt.Errorf("step %s: kind is required: skill, check, or gate", name))
+	}
+	return errs
+}
+
+// validateArtifact checks a step's artifact source: it says where `artifact`
+// evidence is read from, so it means nothing on a step that closes on
+// anything else, and the file it names is one in the checkout.
+func validateArtifact(step *millv1.Step) []error {
+	source := step.GetArtifact()
+	if source == nil {
+		return nil
+	}
+	name := step.GetName()
+	var errs []error
+	if step.GetEvidence() != millv1.EvidenceKind_EVIDENCE_KIND_ARTIFACT {
+		errs = append(errs, fmt.Errorf("step %s: artifact names where artifact evidence is read from, and this step closes on %s",
+			name, strings.ToLower(strings.TrimPrefix(step.GetEvidence().String(), "EVIDENCE_KIND_"))))
+	}
+	path := source.GetPath()
+	switch {
+	case path == "":
+		errs = append(errs, fmt.Errorf("step %s: artifact names no path", name))
+	case filepath.IsAbs(path):
+		errs = append(errs, fmt.Errorf("step %s: artifact path %q is absolute; it is a file in the checkout", name, path))
+	case slices.Contains(strings.Split(filepath.ToSlash(path), "/"), ".."):
+		errs = append(errs, fmt.Errorf("step %s: artifact path %q climbs out of the checkout", name, path))
 	}
 	return errs
 }
@@ -114,6 +146,16 @@ func validateGates(w *millv1.Workflow) []error {
 					"step %s: a gate after a write step must follow a step whose evidence is url, so the branch is on the forge before the run waits",
 					step.GetName()))
 			}
+			continue
+		}
+		// A step whose evidence is a file it writes is not a write the
+		// forge has to hold: the file's content is attached to the node as
+		// the step's artifact, so a worker that recreates the workspace
+		// elsewhere can put it back from the run's own evidence. This is
+		// what lets `feature` gate a plan that lives in the checkout
+		// (docs/domain-model.md §"Gates and pushes").
+		if step.GetArtifact().GetPath() != "" &&
+			step.GetEvidence() == millv1.EvidenceKind_EVIDENCE_KIND_ARTIFACT {
 			continue
 		}
 		// A step that writes invalidates an earlier push: what is on the

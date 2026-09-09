@@ -20,6 +20,10 @@ import (
 // round-trip below pushes.
 var quickFix = filepath.Join("..", "..", "workflows", "quick-fix")
 
+// feature is the workflow that plans first, and the one that reaches for
+// skills quick-fix's directory carries.
+var feature = filepath.Join("..", "..", "workflows", "feature")
+
 // mill runs the binary's command tree against a socket a service is
 // listening on, and returns everything it printed.
 type mill struct {
@@ -129,6 +133,34 @@ var _ = Describe("mill workflow", Label(testsupport.DBLabel), func() {
 		repushed := m.run(ctx, "workflow", "push", pulled)
 		Expect(storedVersion(repushed)).To(Equal(pushed))
 		Expect(repushed).NotTo(ContainSubstring("stored"))
+	})
+
+	It("push stores feature with its twelve steps and every skill it references", func(ctx SpecContext) {
+		m := serving(ctx)
+
+		out := m.run(ctx, "workflow", "push", feature)
+		// Nine skills and the workflow: five of feature's own and the four
+		// it reaches for in quick-fix's directory.
+		Expect(strings.Count(out, "stored")).To(Equal(10))
+		for _, skill := range []string{"think", "plan", "review-plan", "simplify", "review",
+			"gather-context", "implement", "commit", "pr"} {
+			Expect(out).To(ContainSubstring("skill " + skill))
+		}
+
+		shown := m.run(ctx, "workflow", "show", "feature")
+		for _, step := range []string{"gather-context", "think", "plan", "review-plan", "plan-approval",
+			"implement", "simplify", "commit", "clean-tree", "pr", "review", "merge"} {
+			Expect(shown).To(ContainSubstring(step))
+		}
+		Expect(lineFor(shown, "review")).To(ContainSubstring("verdict"))
+
+		By("and the skills quick-fix already stored are the same records")
+		quick := m.run(ctx, "workflow", "push", quickFix)
+		Expect(strings.Count(quick, "unchanged")).To(Equal(4), "feature stored all four already")
+
+		listed := m.run(ctx, "workflow", "list")
+		Expect(listed).To(ContainSubstring("feature"))
+		Expect(listed).To(ContainSubstring("quick-fix"))
 	})
 
 	It("a project push shadows an org one without replacing it", func(ctx SpecContext) {

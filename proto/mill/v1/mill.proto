@@ -643,6 +643,22 @@ message Step {
   // JSON Schema the session's structured output must validate against, for a
   // skill step whose evidence is structured.
   string output_schema = 13;
+  // Where an `artifact` step's evidence is read from, when it is not the
+  // session's final message.
+  ArtifactSource artifact = 14;
+}
+
+// ArtifactSource says where a step's artifact evidence comes from. A step
+// that declares none closes on the session's final message, which is the
+// default and what most skill steps want.
+message ArtifactSource {
+  // Path, relative to the checkout, of the file whose content the mill
+  // attaches as the step's artifact. Rendered as a Go template over the run
+  // — `docs/plans/{{.Date}}-{{.NodeSlug}}.md` — because a file named for the
+  // run cannot be written down in a definition. The mill tells the session
+  // the rendered path and reads the file back through the workspace when the
+  // session ends.
+  string path = 1;
 }
 
 // Workflow is a named, immutable, versioned definition of how a class of node

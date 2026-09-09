@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 )
@@ -40,19 +41,26 @@ func Load(dir string) (*millv1.Workflow, []*millv1.Skill, error) {
 	loaded := map[string]*millv1.Skill{}
 	var skills []*millv1.Skill
 	for _, step := range w.GetSteps() {
-		name := step.GetSkill().GetName()
-		if name == "" {
+		reference := step.GetSkill().GetName()
+		if reference == "" {
 			continue
 		}
-		skill, ok := loaded[name]
+		skill, ok := loaded[reference]
 		if !ok {
-			if skill, err = LoadSkill(filepath.Join(dir, SkillsDir, name)); err != nil {
+			path, err := skillDir(dir, reference)
+			if err != nil {
 				return nil, nil, fmt.Errorf("step %s: %w", step.GetName(), err)
 			}
-			loaded[name] = skill
+			if skill, err = LoadSkill(path); err != nil {
+				return nil, nil, fmt.Errorf("step %s: %w", step.GetName(), err)
+			}
+			loaded[reference] = skill
 			skills = append(skills, skill)
 		}
-		step.Skill.Digest = skill.GetDigest()
+		// The step pins the skill's own name, never the reference that
+		// found it: a borrowed skill is the same record as the one its
+		// own workflow pins, and the store keys it by (name, digest).
+		step.Skill = &millv1.SkillRef{Name: skill.GetName(), Digest: skill.GetDigest()}
 	}
 
 	if err := Validate(w); err != nil {
@@ -62,6 +70,32 @@ func Load(dir string) (*millv1.Workflow, []*millv1.Skill, error) {
 		return nil, nil, err
 	}
 	return w, skills, nil
+}
+
+// skillDir resolves a step's `skill` reference to the directory holding its
+// SKILL.md.
+//
+// A bare name is this workflow's own skill, `<dir>/skills/<name>`.
+// `<workflow>/<name>` is a sibling workflow's, `<dir>/../<workflow>/skills/<name>`
+// — how `feature` reuses the skills `quick-fix` already carries rather than
+// keeping a second copy of them to drift. The reference is two plain path
+// segments and nothing else: a definition that reached out of the workflows
+// directory would pin a skill nobody pushing this repository has.
+func skillDir(dir, reference string) (string, error) {
+	segments := strings.Split(reference, "/")
+	for _, segment := range segments {
+		if segment == "" || segment == "." || segment == ".." || strings.ContainsRune(segment, filepath.Separator) {
+			return "", fmt.Errorf("skill %q: a reference is a name, or a sibling workflow's name and a name", reference)
+		}
+	}
+	switch len(segments) {
+	case 1:
+		return filepath.Join(dir, SkillsDir, segments[0]), nil
+	case 2:
+		return filepath.Join(dir, "..", segments[0], SkillsDir, segments[1]), nil
+	default:
+		return "", fmt.Errorf("skill %q: a reference is a name, or a sibling workflow's name and a name", reference)
+	}
 }
 
 // Write is Load backwards: the definition and its skills as a directory

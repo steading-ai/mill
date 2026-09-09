@@ -36,6 +36,35 @@ var _ = Describe("mill run", func() {
 			Expect(lineFor(out, "implement")).To(ContainSubstring("read,write,exec"))
 		})
 
+		It("prints the feature workflow's twelve steps with their evidence and capabilities", func(ctx SpecContext) {
+			m := serving(ctx)
+			m.run(ctx, "workflow", "push", feature)
+
+			out := m.run(ctx, "run", "millspec#1", "--dry-run", "--project", "millspec", "--workflow", "feature")
+
+			Expect(out).To(ContainSubstring("millspec#1 would run workflow feature@"))
+			for step, evidence := range map[string]string{
+				"gather-context": "artifact",
+				"think":          "artifact",
+				"plan":           "artifact",
+				"review-plan":    "verdict",
+				"plan-approval":  "gate",
+				"implement":      "artifact",
+				"simplify":       "artifact",
+				"commit":         "commit",
+				"clean-tree":     "exit",
+				"pr":             "url",
+				"review":         "verdict",
+				"merge":          "status",
+			} {
+				Expect(lineFor(out, step)).To(ContainSubstring(evidence),
+					"step %s closes on %s evidence", step, evidence)
+			}
+			Expect(lineFor(out, "plan")).To(ContainSubstring("read,write"))
+			Expect(lineFor(out, "review")).To(ContainSubstring("read"))
+			Expect(lineFor(out, "review")).NotTo(ContainSubstring("write"))
+		})
+
 		It("claims nothing: it never reaches dagger", func(ctx SpecContext) {
 			m := serving(ctx)
 			m.run(ctx, "workflow", "push", quickFix)

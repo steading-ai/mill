@@ -179,7 +179,15 @@ func start(ctx context.Context) *fixture {
 // pushWorkflow stores the quick-fix definition and its skills.
 func (f *fixture) pushWorkflow(ctx context.Context) {
 	GinkgoHelper()
-	definition, skills, err := workflow.Load(workflowDir)
+	f.workflow = f.pushWorkflowFrom(ctx, workflowDir)
+}
+
+// pushWorkflowFrom stores one workflow directory: every skill it pins, then
+// the definition. A spec that runs a workflow other than quick-fix pushes it
+// on top; the store holds both, as a worker's does.
+func (f *fixture) pushWorkflowFrom(ctx context.Context, dir string) *millv1.Workflow {
+	GinkgoHelper()
+	definition, skills, err := workflow.Load(dir)
 	Expect(err).NotTo(HaveOccurred())
 	for _, skill := range skills {
 		_, err := f.store.PutSkill(ctx, connect.NewRequest(&millv1.PutSkillRequest{Skill: skill}))
@@ -187,7 +195,7 @@ func (f *fixture) pushWorkflow(ctx context.Context) {
 	}
 	stored, err := f.store.PutWorkflow(ctx, connect.NewRequest(&millv1.PutWorkflowRequest{Workflow: definition}))
 	Expect(err).NotTo(HaveOccurred())
-	f.workflow = stored.Msg.GetWorkflow()
+	return stored.Msg.GetWorkflow()
 }
 
 // node files the work the run is for and remembers its reference.

@@ -206,7 +206,13 @@ func (r *Runner) observe(ctx context.Context, s *state, step *millv1.Step, sr *m
 		return pr.URL, nil
 
 	case millv1.EvidenceKind_EVIDENCE_KIND_ARTIFACT:
-		return r.attachArtifact(ctx, s, step, sr, terminal.FinalMessage)
+		// The session's last word, or the file the step names instead
+		// (internal/run/artifact.go).
+		body, err := r.artifactBody(ctx, s, step, terminal.FinalMessage)
+		if err != nil {
+			return "", err
+		}
+		return r.attachArtifact(ctx, s, step, sr, body)
 
 	default:
 		return "", nil
@@ -402,13 +408,33 @@ func (r *Runner) prompt(ctx context.Context, s *state, step *millv1.Step, feedba
 		})
 	}
 	text := workflow.Prompt(skill.GetSkill(), node)
+	brief, err := r.artifactBrief(s, step)
+	if err != nil {
+		return harness.Prompt{}, err
+	}
+	if brief != "" {
+		text += "\n\n" + brief
+	}
 	if feedback != "" {
 		// A revise's feedback is the mill's own words about a check or a
 		// verdict, so it belongs with the instructions rather than in a
 		// data block.
 		text += "\n\n" + feedbackHeading + "\n\n" + feedback
 	}
-	return harness.Prompt{Text: text, OutputSchema: step.GetOutputSchema()}, nil
+	return harness.Prompt{Text: text, OutputSchema: outputSchema(step)}, nil
+}
+
+// outputSchema is the shape the session's structured output must take. A
+// step says it for itself, except a `verdict` step: a verdict is mill's own
+// record and not the workflow's — parsed, never read (docs/domain-model.md
+// §Verdict) — so the schema the verifier will hold the output to is the
+// schema the session is given, and a workflow cannot ask a reviewer for a
+// shape the mill would then refuse.
+func outputSchema(step *millv1.Step) string {
+	if step.GetEvidence() == millv1.EvidenceKind_EVIDENCE_KIND_VERDICT && step.GetOutputSchema() == "" {
+		return evidence.VerdictSchema
+	}
+	return step.GetOutputSchema()
 }
 
 // feedbackHeading introduces what the previous attempt failed on.

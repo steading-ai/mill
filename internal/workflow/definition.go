@@ -45,6 +45,7 @@ type stepYAML struct {
 	Skill        string                    `yaml:"skill,omitempty"`
 	Check        *checkYAML                `yaml:"check,omitempty"`
 	Gate         *gateYAML                 `yaml:"gate,omitempty"`
+	Artifact     *artifactYAML             `yaml:"artifact,omitempty"`
 	Evidence     string                    `yaml:"evidence"`
 	Capabilities []string                  `yaml:"capabilities,omitempty"`
 	Harness      map[string]map[string]any `yaml:"harness,omitempty"`
@@ -52,6 +53,12 @@ type stepYAML struct {
 	Retries      int32                     `yaml:"retries,omitempty"`
 	Timeout      string                    `yaml:"timeout,omitempty"`
 	OutputSchema string                    `yaml:"output_schema,omitempty"`
+}
+
+// artifactYAML says where an `artifact` step's evidence is read from. A step
+// that leaves it out closes on the session's final message.
+type artifactYAML struct {
+	Path string `yaml:"path"`
 }
 
 type checkYAML struct {
@@ -277,6 +284,9 @@ func (s stepYAML) toProto() (*millv1.Step, error) {
 		}
 		step.Check = check
 	}
+	if s.Artifact != nil {
+		step.Artifact = &millv1.ArtifactSource{Path: s.Artifact.Path}
+	}
 	if s.Gate != nil {
 		step.Gate = &millv1.Gate{
 			Ask:        &millv1.Ask{Title: s.Gate.Ask.Title, Body: s.Gate.Ask.Body},
@@ -360,6 +370,9 @@ func toDocument(w *millv1.Workflow) document {
 				StdoutSchema: check.GetStdoutSchema(),
 				Feedback:     enumText(check.GetFeedback()),
 			}
+		}
+		if artifact := step.GetArtifact(); artifact != nil {
+			s.Artifact = &artifactYAML{Path: artifact.GetPath()}
 		}
 		if gate := step.GetGate(); gate != nil {
 			s.Gate = &gateYAML{

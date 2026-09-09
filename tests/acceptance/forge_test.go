@@ -98,6 +98,26 @@ func (p *scratchProject) branchesContaining(ctx context.Context, sha string) []s
 	return names
 }
 
+// tree is the paths under a directory on a ref, which is how the suite asks
+// whether a run committed a file whose name it does not know in advance.
+func (p *scratchProject) tree(ctx context.Context, path, ref string) []string {
+	GinkgoHelper()
+	var entries []struct {
+		Path string `json:"path"`
+		Type string `json:"type"`
+	}
+	forgeAPI{env: env}.do(ctx, http.MethodGet,
+		fmt.Sprintf("/projects/%d/repository/tree?path=%s&ref=%s", p.ID, url.QueryEscape(path), url.QueryEscape(ref)),
+		nil, &entries)
+	paths := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Type == "blob" {
+			paths = append(paths, entry.Path)
+		}
+	}
+	return paths
+}
+
 // diffOf is the files a commit changed, as GitLab reports them.
 func (p *scratchProject) diffOf(ctx context.Context, sha string) []forgeDiff {
 	GinkgoHelper()

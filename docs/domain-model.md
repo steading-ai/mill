@@ -77,6 +77,31 @@ A named, immutable, versioned definition of how a class of node gets worked. Dat
 
 A workflow is never edited. A change is a new version; runs in flight keep the version they started with. This is what lets a ledger entry say exactly which definition produced it.
 
+### feature
+
+The tier that plans before it writes: the `/work-on` skill's feature tier, with each of its judgement calls made a step that closes on evidence and each of its pauses a gate. `workflows/feature/` is the definition; this is what it says.
+
+| Step | Kind | Evidence | Session | Capabilities | On failure |
+|---|---|---|---|---|---|
+| `gather-context` | skill | artifact | implement | read | park |
+| `think` | skill | artifact | implement | read | park |
+| `plan` | skill | artifact (`docs/plans/<date>-<node-slug>.md`) | implement | read, write | park |
+| `review-plan` | skill | verdict | review | read | revise `plan` |
+| `plan-approval` | gate | gate | — | — | park |
+| `implement` | skill | artifact | implement | read, write, exec | park |
+| `simplify` | skill | artifact | implement | read, write, exec | park |
+| `commit` | skill | commit | implement | write | park |
+| `clean-tree` | check | exit | — | exec | revise `implement` |
+| `pr` | skill | url | implement | forge | park |
+| `review` | skill | verdict | review | read | revise `implement` |
+| `merge` | gate | status | — | — | park |
+
+Two sessions, as [Session](#session) describes: the implementer's carries everything from `gather-context` to `pr`, and the reviewer's carries both reviews. A reviewer sharing the planner's context would be reviewing its own work, and the reviewer holds no credential that can write — no `write` capability, and a tool policy that keeps the write tools out of the session at all.
+
+`plan-approval` is auto-approved today and is a gate anyway, so that the shape of the run is the shape it keeps: giving the plan to a person is dropping the policy and nothing else. `merge` auto-approves on an approving verdict at this tier or below.
+
+Four of the nine skills are `quick-fix`'s, referenced as `quick-fix/<name>`. A skill is the portable part and carries nothing workflow-specific, so two workflows share one record rather than two copies of it to drift; what differs between them — the model, the effort, the tool policy — is on the step.
+
 ### Selection
 
 How a run gets its workflow, in order:
@@ -105,10 +130,11 @@ One unit of a workflow. Three kinds.
 | `name` | Unique within the workflow. The ledger's key for the step |
 | `kind` | `skill`, `check`, or `gate` |
 | `session` | Skill steps only. Names the session this step runs in; steps sharing a name resume the same session. See [Session](#session) |
-| `skill` | Skill steps: the skill's name and content hash, resolved from the store at workflow load |
+| `skill` | Skill steps: the skill's name and content hash, resolved from the store at workflow load. A definition names it as `<name>`, or as `<workflow>/<name>` for a skill a sibling workflow's directory carries — one record, whichever workflow reached for it |
 | `check` | Check steps: command path relative to the skill or workflow, exit-code semantics, expected stdout shape. See [Check](#check) |
 | `gate` | Gate steps: the ask, and the auto-approve policy. See [Gate](#gate) |
 | `evidence` | What closes this step. See [Evidence](#evidence) |
+| `artifact` | Skill steps closing on `artifact`: the file in the checkout whose content is the artifact, as a template over the run — `docs/plans/{{.Date}}-{{.NodeSlug}}.md`. Absent, the artifact is the session's last message |
 | `capabilities` | The capability set the step's workspace handle grants. See [Capability set](#capability-set) |
 | `harness` | Per-harness **options documents**, keyed by harness name. The adapter reads its own entry and mill reads none of them |
 | `on_failure` | `revise <step>` returns to a named earlier step in its session with the failure as the next prompt; `park` trips the breaker. Default `park`. See [Revise](#revise) |
@@ -132,6 +158,8 @@ harness:
 
 A **skill step** runs a skill as a headless session: the skill body is the prompt, the node's body and inputs are context, prior steps' artifacts are attached. It produces artifacts and, where the definition says so, structured output.
 
+An artifact step's evidence is the session's own report, which is the right default: nothing else produced it. A step that names an `artifact` path instead closes on a *file* — the mill renders the path from the run, tells the session where to write, reads the file back through the workspace when the session ends, and attaches its content. `feature`'s plan step is what the field exists for: the plan is written into `docs/plans/`, so it is committed with the change and stays in the repository, and the same bytes are on the node so a person answering the plan gate reads the plan there. A file that is missing or empty does not close the step, and what the session said about it is not consulted.
+
 A **check step** runs a command through the workspace and reads its exit code and stdout. It produces evidence directly.
 
 A **gate step** files a dagger gate and releases the lease. It produces no evidence of its own; it closes when the gate node completes, and the gate's result is the evidence.
@@ -146,7 +174,7 @@ The `revise` counter is the failing step's: `review` fails with `revise implemen
 
 ### Gates and pushes
 
-A gate step may leave a run `waiting` for as long as a human takes, and the worker that resumes it may be on another host. A workspace can only be recreated elsewhere from a branch the forge has. The loader therefore enforces: **any gate step that follows a step with the `write` capability must be preceded by a step whose evidence is `url` or a push** — the branch exists on the forge before the run can wait. A gate before the first write (plan approval) needs nothing; the workspace it leaves behind is a clone of the default branch and the plan is a dagger artifact.
+A gate step may leave a run `waiting` for as long as a human takes, and the worker that resumes it may be on another host. A workspace can only be recreated elsewhere from a branch the forge has. The loader therefore enforces: **any gate step that follows a step with the `write` capability must be preceded by a step whose evidence is `url` or a push** — the branch exists on the forge before the run can wait. One write does not arm the rule: a step whose `artifact` evidence is read from a file it wrote. That file's content is attached to the node, so a worker recreating the workspace elsewhere has it from the run's own evidence and nothing is stranded. This is what lets `feature` put its plan in the checkout and still gate on it before anything is pushed.
 
 ## Session
 
@@ -236,6 +264,8 @@ A human decision, expressed the only way dagger allows: a node with `assignee_ki
 | `deny_result` | What the run records on the node if the human denies |
 
 Filing a gate is two dagger calls — `ApplyPatch` creates the gate node and the edge that blocks this one; `Release` ends the lease with reason `gate` — with the store's record of the gate id written *between* them, so a crash at any point leaves either a lease that expires harmlessly or a gate the store already knows about, never a gate the store will file twice. The mill never claims the gate, never completes it, and never disposes of it — dagger's policy forbids all three for the filer, and the mill does not want the exception. It waits for the node to become ready again.
+
+A gate the `auto` policy closes files nothing and reaches dagger not at all, so there is no gate node to read: the fact that closes the step is the policy that fired, recorded as `gate` evidence reading `auto:<predicate>` and as `auto_approved` on the attempt. A gate declaring `status` evidence closes on the forge instead, because approving it is what performs the merge.
 
 On resume, a run whose current step is a gate step and whose `gate_node_id` is set reads the gate node: `done` closes the step with `gate` evidence carrying the gate's result; a denial fails the run with `deny_result`. A gate is filed once.
 

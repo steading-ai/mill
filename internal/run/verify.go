@@ -16,23 +16,33 @@ import (
 // nowhere else, which is what keeps internal/evidence free of the run loop.
 func (r *Runner) verify(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, detail *millv1.InspectResponse, res result) (evidence.Evidence, error) {
 	asked := evidence.Step{
-		Name:       step.GetName(),
-		Definition: step,
-		Workflow:   s.workflow,
-		Branch:     s.run.GetBranch(),
-		Claim:      res.claim,
-		Base:       sr.GetBaseCommit(),
-		Committer:  committer(s.workspace),
-		Exit:       res.exit,
-		Session:    res.session,
-		Elapsed:    elapsed(detail, step.GetName(), r.options.Now()),
-		Git:        s.workspace.GitRunner(),
-		Forge:      forgeReader{ctx: ctx, runner: r},
-		Artifacts:  artifacts{client: r.options.Dagger, ref: s.node.GetReference()},
-		Gates:      gates{runner: r, state: s},
-		Now:        r.options.Now,
+		Name:         step.GetName(),
+		Definition:   step,
+		Workflow:     s.workflow,
+		Branch:       s.run.GetBranch(),
+		Claim:        res.claim,
+		AutoApproved: autoApprovedBy(step, res),
+		Base:         sr.GetBaseCommit(),
+		Committer:    committer(s.workspace),
+		Exit:         res.exit,
+		Session:      res.session,
+		Elapsed:      elapsed(detail, step.GetName(), r.options.Now()),
+		Git:          s.workspace.GitRunner(),
+		Forge:        forgeReader{ctx: ctx, runner: r},
+		Artifacts:    artifacts{client: r.options.Dagger, ref: s.node.GetReference()},
+		Gates:        gates{runner: r, state: s},
+		Now:          r.options.Now,
 	}
 	return evidence.Verify(ctx, step.GetEvidence(), asked)
+}
+
+// autoApprovedBy is the predicate that closed a gate step without a human,
+// for the verifier that has no node to read because none was ever filed.
+func autoApprovedBy(step *millv1.Step, res result) string {
+	if !res.autoApproved {
+		return ""
+	}
+	return step.GetGate().GetAuto()
 }
 
 // committer is the identity the run's workspace commits under, as the

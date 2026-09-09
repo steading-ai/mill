@@ -206,6 +206,47 @@ pr              skill  url       forge            2        park              imp
 merge           gate   status    -                1        park              -
 ```
 
+The same for the tier that plans first. A step's harness options follow the
+steps, printed as the JSON they are stored as: mill interprets no key of one
+and has nothing else to say about it, and what an operator wants here is what
+the step will hand the harness.
+
+```
+$ mill workflow show feature
+feature org c6bd94330f49e6edba3c50c3cfa6d9b6b162a0caae1d9a1c278b0da574b69a8c
+
+STEP            KIND   EVIDENCE  CAPABILITIES     RETRIES  ON FAILURE        SESSION
+gather-context  skill  artifact  read             2        park              implement
+think           skill  artifact  read             2        park              implement
+plan            skill  artifact  read,write       2        park              implement
+review-plan     skill  verdict   read             2        revise:plan       review
+plan-approval   gate   gate      -                1        park              -
+implement       skill  artifact  read,write,exec  2        park              implement
+simplify        skill  artifact  read,write,exec  2        park              implement
+commit          skill  commit    write            2        park              implement
+clean-tree      check  exit      exec             3        revise:implement  -
+pr              skill  url       forge            2        park              implement
+review          skill  verdict   read             2        revise:implement  review
+merge           gate   status    -                1        park              -
+
+STEP            HARNESS  OPTIONS
+gather-context  claude   {"effort":"medium","model":"sonnet","tools":{"allow":["Glob","Grep","Read"]}}
+think           claude   {"effort":"high","model":"opus","tools":{"allow":["Glob","Grep","Read"]}}
+plan            claude   {"effort":"high","model":"opus","tools":{"allow":["Glob","Grep","Read","Write"]}}
+review-plan     claude   {"effort":"high","model":"opus","tools":{"deny":["Write","Edit","Bash","NotebookEdit"]}}
+implement       claude   {"effort":"high","model":"opus","tools":{"allow":["Bash","Edit","Glob","Grep","Read","Write"]}}
+simplify        claude   {"effort":"medium","model":"opus","tools":{"allow":["Bash","Edit","Glob","Grep","Read","Write"]}}
+commit          claude   {"effort":"medium","model":"sonnet"}
+pr              claude   {"effort":"medium","model":"sonnet"}
+review          claude   {"effort":"high","model":"opus","tools":{"deny":["Write","Edit","Bash","NotebookEdit"]}}
+```
+
+The two workflows share four skills: `feature`'s `gather-context`,
+`implement`, `commit` and `pr` steps name `quick-fix/<skill>`, and the record
+they pin is the one `quick-fix` pins — same name, same digest. Pushing the
+second of them says so, one line per skill: `skill implement 6d0a3794a0cd
+unchanged`.
+
 ## doctor
 
 Six probes, one line of reason each. Every probe is reported; the command
