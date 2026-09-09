@@ -108,7 +108,10 @@ func (f forgeVerbs) Push(ctx context.Context, request workspace.PushRequest) (wo
 	return workspace.PushResult{Branch: handle.Branch, SHA: sha, Remote: f.remote()}, nil
 }
 
-// PR is the run branch's pull request, opened if the forge has none.
+// PR is the run branch's pull request, opened if the forge has none. The
+// checkout's head travels with it: a session that has just pushed asks for
+// the pull request in the next breath, and the forge is not always finished
+// with the push (mill#46).
 func (f forgeVerbs) PR(ctx context.Context, request workspace.PRRequest) (forge.PullRequest, error) {
 	handle := f.w.snapshot()
 	if handle == nil {
@@ -121,8 +124,13 @@ func (f forgeVerbs) PR(ctx context.Context, request workspace.PRRequest) (forge.
 	if err != nil {
 		return forge.PullRequest{}, err
 	}
+	head, err := f.w.git(ctx, handle.Root, "rev-parse", "HEAD")
+	if err != nil {
+		return forge.PullRequest{}, err
+	}
 	return client.OpenPR(ctx, forge.OpenPRRequest{
 		Branch:      handle.Branch,
+		Head:        strings.TrimSpace(head),
 		Target:      request.Target,
 		Title:       request.Title,
 		Description: request.Description,

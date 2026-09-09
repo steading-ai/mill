@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -137,6 +139,44 @@ func (s *stub) onMerge(path, head, fixture string) {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(merged)
 		}
+	}
+}
+
+// onPushedBranch stands the stub in for a GitLab catching up with a push.
+// The branch reads 404 for the first hidden reads and then exists at head; a
+// negative hidden is a push that never landed, and the branch never appears.
+//
+// The merge requests endpoint refuses a merge request opened before the
+// branch is visible the way GitLab does — `400 source_branch does not exist`
+// — so a merge request created too early fails the spec where it is created
+// rather than only at an assertion.
+func (s *stub) onPushedBranch(name, head string, hidden int, fixture string) {
+	GinkgoHelper()
+	created, err := os.ReadFile(filepath.Join("testdata", fixture))
+	Expect(err).NotTo(HaveOccurred())
+	var reads atomic.Int64
+	var visible atomic.Bool
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.handlers[http.MethodGet+" "+escaped+"/repository/branches/"+url.PathEscape(name)] =
+		func(w http.ResponseWriter, _ []byte) {
+			if hidden >= 0 && reads.Add(1) > int64(hidden) {
+				visible.Store(true)
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"name":"` + name + `","commit":{"id":"` + head + `"}}`))
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"404 Branch Not Found"}`))
+		}
+	s.handlers[http.MethodPost+" "+escaped+"/merge_requests"] = func(w http.ResponseWriter, _ []byte) {
+		if !visible.Load() {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"message":{"source_branch":["does not exist"]}}`))
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write(created)
 	}
 }
 

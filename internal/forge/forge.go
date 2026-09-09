@@ -134,6 +134,13 @@ type PushRequest struct {
 type OpenPRRequest struct {
 	// Branch is the source branch, already pushed.
 	Branch string
+	// Head is the commit the caller pushed the branch to. A forge is not
+	// asked for a pull request until it shows the branch at this commit,
+	// because a push the forge has not caught up with yet is a pull
+	// request it refuses for a source branch that "does not exist"
+	// (mill#46). Empty means the caller has no head to wait for and the
+	// pull request is asked for straight away.
+	Head string
 	// Target is the branch to merge into. Empty means the repository's
 	// default branch.
 	Target string
@@ -244,9 +251,11 @@ type MinterFunc func(ctx context.Context, step Step) (Credential, error)
 // Mint calls f.
 func (f MinterFunc) Mint(ctx context.Context, step Step) (Credential, error) { return f(ctx, step) }
 
-// Forge is what delivery needs from a forge, and nothing else. Every method
-// is one round trip; none of them holds state between calls, so a worker that
-// died mid-run can ask again and get the same answers.
+// Forge is what delivery needs from a forge, and nothing else. None of the
+// methods holds state between calls, so a worker that died mid-run can ask
+// again and get the same answers. Every one of them is a single round trip
+// but [Forge.OpenPR], which waits for the forge to show the branch it is
+// asked to open a pull request for.
 type Forge interface {
 	// Authenticate mints a credential for one git command against the
 	// repository and returns the arguments and environment that hand it to
@@ -259,6 +268,9 @@ type Forge interface {
 	Push(ctx context.Context, request PushRequest) (string, error)
 	// OpenPR opens a pull request for the branch, or returns the one that
 	// is already open for it. Opening twice is the same as opening once.
+	// A request naming a head waits for the forge to show the branch at
+	// it before opening anything, and gives up with a
+	// *[BranchMissingError] when it never appears.
 	OpenPR(ctx context.Context, request OpenPRRequest) (PullRequest, error)
 	// PR is the pull request for a branch, [ErrNoPullRequest] when there is
 	// none. A merged one is still found, because the merge commit is read
@@ -335,6 +347,41 @@ type MergeRefusedError struct {
 	// Detail is the forge's machine-readable reason when it gave one:
 	// GitLab's `detailed_merge_status`, such as `not_approved`.
 	Detail string
+}
+
+// BranchMissingError is the forge not showing the run's branch at the head
+// the mill pushed, after waiting for it to catch up. A push through the
+// workspace and the merge request that follows it are two requests to two
+// different parts of a forge, and GitLab answers the second one
+// `source_branch does not exist` while it is still indexing the first
+// (mill#46). Waiting is what tells the two apart: a forge that catches up
+// opens the pull request, and a branch that never appears is a push that
+// never landed.
+//
+// The error names the branch and the head it expected, because that pair is
+// what an operator reads off `mill logs <node> --step pr` and checks against
+// the forge by hand.
+type BranchMissingError struct {
+	// Branch is the branch the pull request would have come from.
+	Branch string
+	// Head is the commit the mill pushed it to.
+	Head string
+	// Found is the commit the forge does show the branch at, empty when it
+	// has no such branch at all.
+	Found string
+	// Waited is how long the mill gave the forge to catch up.
+	Waited time.Duration
+	// Reads is how many times it asked in that time.
+	Reads int
+}
+
+func (e *BranchMissingError) Error() string {
+	found := "the forge has no branch by that name"
+	if e.Found != "" {
+		found = "the forge shows it at " + e.Found
+	}
+	return fmt.Sprintf("forge: branch %s is not on the forge at %s after %s and %d reads: %s: the push never landed",
+		e.Branch, e.Head, e.Waited, e.Reads, found)
 }
 
 // HeadMovedError is the forge declining a merge because the head the mill

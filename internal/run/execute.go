@@ -594,13 +594,23 @@ const feedbackHeading = "## What the last attempt failed on\n\nThis is the mill'
 // none. It is the mill's own read of the forge, not the session's: a `url`
 // step closes on what the forge returned when asked for the pull request by
 // branch, never on a URL a session typed.
+//
+// The head the checkout is at travels with the request, so nothing is opened
+// until the forge shows the branch there: the session's push and this call
+// are two requests to a forge that indexes the first one in its own time
+// (mill#46).
 func (r *Runner) pullRequest(ctx context.Context, s *state) (forge.PullRequest, error) {
 	client, err := r.options.Forges(ctx)
 	if err != nil {
 		return forge.PullRequest{}, err
 	}
+	head, err := r.head(ctx, s)
+	if err != nil {
+		return forge.PullRequest{}, err
+	}
 	return client.OpenPR(ctx, forge.OpenPRRequest{
 		Branch:      s.run.GetBranch(),
+		Head:        head,
 		Title:       s.node.GetTitle(),
 		Description: s.node.GetBody(),
 	})

@@ -55,6 +55,11 @@ type Client struct {
 	// branch, its squash setting — which does not change during a run.
 	mu      *sync.Mutex
 	project *projectInfo
+
+	// branchWait and branchPoll are how long a merge request waits for its
+	// source branch to appear on the forge, and how often it looks.
+	branchWait time.Duration
+	branchPoll time.Duration
 }
 
 // Option configures a client.
@@ -70,14 +75,38 @@ func WithHTTPClient(client *http.Client) Option {
 	}
 }
 
+// WithBranchWait sets how long a merge request waits for GitLab to show its
+// source branch, and how often it asks. Zero or less leaves the default.
+func WithBranchWait(wait, poll time.Duration) Option {
+	return func(c *Client) {
+		if wait > 0 {
+			c.branchWait = wait
+		}
+		if poll > 0 {
+			c.branchPoll = poll
+		}
+	}
+}
+
+// How long a push is given to become visible, and how often GitLab is asked.
+// A push that has landed is usually indexed within one read; a branch still
+// missing after this many seconds is a push that never landed, not a forge
+// being slow.
+const (
+	defaultBranchWait = 15 * time.Second
+	defaultBranchPoll = time.Second
+)
+
 // New returns a client for the repository, minting credentials through
 // minter.
 func New(repo forge.Repo, minter forge.Minter, options ...Option) *Client {
 	c := &Client{
-		repo:   repo,
-		minter: minter,
-		http:   &http.Client{Timeout: 30 * time.Second},
-		mu:     &sync.Mutex{},
+		repo:       repo,
+		minter:     minter,
+		http:       &http.Client{Timeout: 30 * time.Second},
+		mu:         &sync.Mutex{},
+		branchWait: defaultBranchWait,
+		branchPoll: defaultBranchPoll,
 	}
 	for _, option := range options {
 		option(c)
@@ -254,6 +283,16 @@ func (c *Client) OpenPR(ctx context.Context, request forge.OpenPRRequest) (forge
 		return existing, nil
 	case !errors.Is(err, forge.ErrNoPullRequest):
 		return forge.PullRequest{}, err
+	}
+
+	// Nothing is created until GitLab shows the branch the merge request
+	// would come from: the push and this call reach different parts of the
+	// forge, and a merge request opened before the push is indexed is
+	// refused for a source branch that does not exist.
+	if request.Head != "" {
+		if err := c.awaitBranch(ctx, request.Branch, request.Head); err != nil {
+			return forge.PullRequest{}, err
+		}
 	}
 
 	project, err := c.projectInfo(ctx)
@@ -476,6 +515,67 @@ func (c *Client) ClosePR(ctx context.Context, pr forge.PullRequest, comment stri
 	}
 	return c.call(ctx, http.MethodPut, c.path("merge_requests", strconv.Itoa(pr.Number)), nil,
 		map[string]any{"state_event": "close"}, nil)
+}
+
+// branch is GitLab's branch, as much of it as the mill reads.
+type branch struct {
+	Name   string `json:"name"`
+	Commit struct {
+		ID string `json:"id"`
+	} `json:"commit"`
+}
+
+// BranchHead is the commit GitLab shows a branch at, empty when it has no
+// such branch. A branch that is not there is not an error: "not yet" and
+// "never" are the same answer one read at a time, and only the waiting tells
+// them apart.
+func (c *Client) BranchHead(ctx context.Context, name string) (string, error) {
+	if name == "" {
+		return "", errors.New("gitlab: a branch is read by name")
+	}
+	var found branch
+	err := c.call(ctx, http.MethodGet,
+		c.path("repository", "branches", url.PathEscape(name)), nil, nil, &found)
+	var failure *apiError
+	if errors.As(err, &failure) && failure.Status == http.StatusNotFound {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return found.Commit.ID, nil
+}
+
+// awaitBranch blocks until GitLab shows branch at head, giving up after the
+// client's wait with a *[forge.BranchMissingError] naming both. The first
+// read happens before any sleep, so a forge that is already caught up — the
+// ordinary case — costs one round trip and no delay.
+func (c *Client) awaitBranch(ctx context.Context, name, head string) error {
+	deadline := time.Now().Add(c.branchWait)
+	var reads int
+	var found string
+	for {
+		sha, err := c.BranchHead(ctx, name)
+		if err != nil {
+			return err
+		}
+		reads++
+		if sha == head {
+			return nil
+		}
+		found = sha
+		if !time.Now().Before(deadline) {
+			return &forge.BranchMissingError{
+				Branch: name, Head: head, Found: found,
+				Waited: c.branchWait, Reads: reads,
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(c.branchPoll):
+		}
+	}
 }
 
 // DeleteBranch removes a branch from the repository. A branch GitLab does

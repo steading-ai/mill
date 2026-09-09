@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -84,6 +85,79 @@ var _ = Describe("The GitLab forge adapter", Label("unit"), func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(opened).To(Equal(first), "opening twice is opening once")
 			Expect(api.count(http.MethodPost, escaped+"/merge_requests")).To(BeZero())
+		})
+
+		It("The forge catches up before the merge request is opened", func(ctx context.Context) {
+			// Given a push the forge takes a moment to show: the branch
+			// reads 404 twice before GitLab has it at the pushed head, and
+			// a merge request opened before then is refused for a source
+			// branch that does not exist.
+			const head = "9a1f0c3f2b6d4e5a7c8b9d0e1f2a3b4c5d6e7f80"
+			api.on(http.MethodGet, escaped+"/merge_requests", http.StatusOK, "merge_requests_empty.json")
+			api.on(http.MethodGet, escaped, http.StatusOK, "project.json")
+			api.onPushedBranch(branch, head, 2, "merge_request_opened.json")
+
+			// When the pr step runs, naming the head it pushed.
+			waiting := gitlab.New(api.repo(), api.minter(),
+				gitlab.WithHTTPClient(api.server.Client()),
+				gitlab.WithBranchWait(2*time.Second, time.Millisecond)).
+				ForStep(forge.Step{TokenID: "01J0STEP", TokenHash: "e3b0c442"})
+			pr, err := waiting.OpenPR(ctx, forge.OpenPRRequest{
+				Branch: branch, Head: head, Title: "mill#46: the pr step waits for the push",
+			})
+
+			// Then it opens the merge request after the branch is visible,
+			// on the first attempt: one create, and it is the only one the
+			// step needed.
+			Expect(err).NotTo(HaveOccurred(), "%v", err)
+			Expect(pr.URL).To(Equal("https://gitlab.example.test/group/thing/-/merge_requests/7"))
+			Expect(api.count(http.MethodPost, escaped+"/merge_requests")).To(Equal(1),
+				"the merge request is created once, after the branch appeared")
+			Expect(api.count(http.MethodGet, escaped+"/repository/branches")).To(Equal(3),
+				"the branch is read until the forge shows it")
+
+			// And nothing was asked of the merge requests endpoint before
+			// the branch was there.
+			var order []string
+			for _, seen := range api.calls() {
+				switch {
+				case seen.Method == http.MethodPost && strings.HasSuffix(seen.Path, "/merge_requests"):
+					order = append(order, "create")
+				case strings.HasPrefix(seen.Path, escaped+"/repository/branches"):
+					order = append(order, "branch")
+				}
+			}
+			Expect(order).To(Equal([]string{"branch", "branch", "branch", "create"}))
+		})
+
+		It("A push that never landed is a named failure", func(ctx context.Context) {
+			// Given a branch that never appears on the forge.
+			const head = "9a1f0c3f2b6d4e5a7c8b9d0e1f2a3b4c5d6e7f80"
+			api.on(http.MethodGet, escaped+"/merge_requests", http.StatusOK, "merge_requests_empty.json")
+			api.on(http.MethodGet, escaped, http.StatusOK, "project.json")
+			api.onPushedBranch(branch, head, -1, "merge_request_opened.json")
+
+			// When the pr step runs.
+			waiting := gitlab.New(api.repo(), api.minter(),
+				gitlab.WithHTTPClient(api.server.Client()),
+				gitlab.WithBranchWait(20*time.Millisecond, time.Millisecond)).
+				ForStep(forge.Step{TokenID: "01J0STEP", TokenHash: "e3b0c442"})
+			_, err := waiting.OpenPR(ctx, forge.OpenPRRequest{
+				Branch: branch, Head: head, Title: "mill#46: the pr step waits for the push",
+			})
+
+			// Then it fails naming the branch and the head it expected, and
+			// no merge request was asked for.
+			var missing *forge.BranchMissingError
+			Expect(errors.As(err, &missing)).To(BeTrue(), "%v", err)
+			Expect(missing.Branch).To(Equal(branch))
+			Expect(missing.Head).To(Equal(head))
+			Expect(err.Error()).To(ContainSubstring(branch))
+			Expect(err.Error()).To(ContainSubstring(head))
+			Expect(api.count(http.MethodPost, escaped+"/merge_requests")).To(BeZero(),
+				"nothing is created for a branch the forge does not have")
+			Expect(api.count(http.MethodGet, escaped+"/repository/branches")).To(BeNumerically(">", 1),
+				"the forge is given more than one look")
 		})
 
 		It("says so when the branch has no merge request", func(ctx context.Context) {

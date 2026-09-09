@@ -69,6 +69,17 @@ var _ = Describe("The local workspace's forge verbs", Label("unit"), func() {
 			case strings.HasSuffix(r.URL.EscapedPath(), "/merge_requests/7"):
 				_, _ = w.Write([]byte(`{"iid":7,"state":"merged","web_url":"https://gitlab.example.test/group/thing/-/merge_requests/7",` +
 					`"source_branch":"` + branch + `","target_branch":"main","squash":true,"squash_commit_sha":"` + squash + `"}`))
+			// The branch endpoint answers from the bare repository the
+			// push actually goes to, so a merge request is opened only
+			// after the ref is really there.
+			case strings.Contains(r.URL.EscapedPath(), "/repository/branches/"):
+				head, err := exec.Command("git", "--git-dir="+bare, "rev-parse", "refs/heads/"+branch).Output()
+				if err != nil {
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = w.Write([]byte(`{"message":"404 Branch Not Found"}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"name":"` + branch + `","commit":{"id":"` + strings.TrimSpace(string(head)) + `"}}`))
 			case strings.HasSuffix(r.URL.EscapedPath(), "/pipelines"):
 				_, _ = w.Write([]byte(`[]`))
 			default:
