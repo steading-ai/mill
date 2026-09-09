@@ -102,14 +102,14 @@ var _ = Describe("The sidecar", Label("unit"), func() {
 		By("given a policy that allows reading and excludes Write and Edit")
 		options := filepath.Join(GinkgoT().TempDir(), "options.json")
 		line := startRequest("policy-1", func(start *harnessv1.Start) {
-			start.Settings = &harnessv1.Settings{
-				Model:  "opus",
-				Effort: "high",
-				ToolPolicy: &harnessv1.ToolPolicy{
-					Allow: []string{"Read", "Grep"},
-					Deny:  []string{"Write", "Edit"},
+			start.Settings = settings(map[string]any{
+				"model":  "opus",
+				"effort": "high",
+				"tools": map[string]any{
+					"allow": []any{"Read", "Grep"},
+					"deny":  []any{"Write", "Edit"},
 				},
-			}
+			})
 		})
 
 		By("when the sidecar starts the session")
@@ -134,7 +134,7 @@ var _ = Describe("The sidecar", Label("unit"), func() {
 	It("refuses settings it cannot apply without starting a session", func() {
 		By("given a step asking for an effort level the harness has no name for")
 		line := startRequest("policy-2", func(start *harnessv1.Start) {
-			start.Settings = &harnessv1.Settings{Effort: "titanic"}
+			start.Settings = settings(map[string]any{"effort": "titanic"})
 		})
 
 		By("when the sidecar runs")
@@ -145,6 +145,37 @@ var _ = Describe("The sidecar", Label("unit"), func() {
 		Expect(s.terminal().GetExit().GetReason()).To(Equal(harnessv1.ExitReason_EXIT_REASON_POLICY))
 		Expect(s.terminal().GetFinalMessage()).To(ContainSubstring("titanic"))
 		Expect(s.events()).To(BeEmpty())
+	})
+
+	It("A knob the sidecar does not know is refused by the sidecar", func() {
+		By("given a step whose claude options carry the key thinking_budget")
+		line := startRequest("policy-3", func(start *harnessv1.Start) {
+			start.Settings = settings(map[string]any{"model": "opus", "thinking_budget": 4096})
+		})
+
+		By("when the step starts")
+		s := run(fakeEntrypoint, map[string]string{"MILL_FAKE_SCENARIO": "trivial"}, line)
+
+		By("then the sidecar refuses with exit reason policy naming thinking_budget")
+		Expect(s.terminal().GetExit().GetStatus()).To(BeNumerically("==", -1))
+		Expect(s.terminal().GetExit().GetReason()).To(Equal(harnessv1.ExitReason_EXIT_REASON_POLICY))
+		Expect(s.terminal().GetFinalMessage()).To(ContainSubstring("thinking_budget"))
+		Expect(s.events()).To(BeEmpty())
+	})
+
+	It("refuses an option whose type is not the one the harness has", func() {
+		By("given a step whose tool lists are a string rather than a list")
+		line := startRequest("policy-4", func(start *harnessv1.Start) {
+			start.Settings = settings(map[string]any{"tools": map[string]any{"deny": "Write"}})
+		})
+
+		By("when the sidecar runs")
+		s := run(fakeEntrypoint, map[string]string{"MILL_FAKE_SCENARIO": "trivial"}, line)
+
+		By("then the session never ran, and the reason names the key")
+		Expect(s.terminal().GetExit().GetStatus()).To(BeNumerically("==", -1))
+		Expect(s.terminal().GetExit().GetReason()).To(Equal(harnessv1.ExitReason_EXIT_REASON_POLICY))
+		Expect(s.terminal().GetFinalMessage()).To(ContainSubstring("tools.deny"))
 	})
 
 	It("applies the structured-output schema and carries output that validates against it", func() {

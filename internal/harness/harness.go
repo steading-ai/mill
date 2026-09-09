@@ -55,22 +55,27 @@ func (s Sink) Send(event *harnessv1.Event) {
 }
 
 // Session is the session a call runs in, and everything about it that is not
-// the prompt, its attachments, or the tool policy.
+// the prompt or its attachments.
 //
-// Settings — model and effort — travel here because they are per-turn: a step
-// may resume a session under different settings than started it, so they are
-// re-sent with every call rather than fixed when the session was created.
+// Options travel here because they are per-turn: a step may resume a session
+// under different options than started it, so they are re-sent with every
+// call rather than fixed when the session was created.
 type Session struct {
 	// ID is the deterministic session id: UUIDv5 of the run's context id,
 	// generation, and the step's session name. Resume finds the transcript
 	// by it, and a restart's new generation yields ids the harness has never
 	// seen.
 	ID string
-	// Model is the harness's own model identifier. Mill never interprets it.
-	Model string
-	// Effort is how hard the model should think, where the harness has such
-	// a knob. Harness-specific free string.
-	Effort string
+	// Options is the step's options document for the harness this session
+	// runs in: its entry in the step's `harness` table, as the workflow
+	// wrote it.
+	//
+	// Mill reads nothing inside it and the adapter passes it through. What a
+	// key means, and whether the harness has one by that name at all, is the
+	// harness's to say — it validates the document and refuses what it does
+	// not know rather than starting a session under settings it guessed at
+	// (docs/domain-model.md §Step).
+	Options map[string]any
 	// Workspace is the socket and token the session is handed.
 	Workspace Workspace
 	// Cwd is the working directory inside the workspace's checkout.
@@ -101,27 +106,16 @@ type Attachment struct {
 	Content   string
 }
 
-// Policy is the tool allowlist a session runs under. In MVP it is the only
-// enforcement of the reviewer's read-only guarantee and the implementer's
-// write boundary: the harness enforces it and the model does not get a vote.
-type Policy struct {
-	// Allow lists the tools the session may call. Empty means the harness's
-	// default set.
-	Allow []string
-	// Deny lists the tools it may not, applied after Allow.
-	Deny []string
-}
-
 // Harness runs a skill step as a session. docs/architecture.md defines this
 // interface; the adapter, not the workflow, translates a skill into whatever
 // the harness wants.
 type Harness interface {
 	// Start begins a session that has never run.
-	Start(ctx context.Context, session Session, prompt Prompt, attachments []Attachment, policy Policy) (*Turn, error)
+	Start(ctx context.Context, session Session, prompt Prompt, attachments []Attachment) (*Turn, error)
 	// Resume continues an existing session with a new prompt, so a revise
 	// returns to the implementing session and the model picks up its own
 	// prior context.
-	Resume(ctx context.Context, session Session, prompt Prompt, attachments []Attachment, policy Policy) (*Turn, error)
+	Resume(ctx context.Context, session Session, prompt Prompt, attachments []Attachment) (*Turn, error)
 	// Cancel stops a running session: interrupt, a grace window, kill.
 	// Cancelling a session that is not running is not an error.
 	Cancel(ctx context.Context, session Session) error
@@ -137,8 +131,8 @@ const (
 	ReasonNone ExitReason = ""
 	// ReasonRefused means the harness declined to start the session at all.
 	ReasonRefused ExitReason = "refused"
-	// ReasonPolicy means the tool policy the step asked for could not be
-	// applied, so the session was never started under it.
+	// ReasonPolicy means the options the step asked for could not be
+	// applied, so the session was never started under them.
 	ReasonPolicy ExitReason = "policy"
 	// ReasonTimeout means the step's wall clock elapsed and the worker
 	// stopped the session.

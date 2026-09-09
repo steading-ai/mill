@@ -116,5 +116,15 @@ var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 			Expect(rowFor(out, "implement")).To(ContainSubstring("read,write,exec"))
 			Expect(rowFor(out, "clean-tree")).To(ContainSubstring("revise:implement"))
 		})
+
+		It("prints each step's harness options as the document they are stored as", func() {
+			r := openRun(ctx, "millcli#7", nodeID(7))
+
+			out := r.cli(ctx, "workflow", "show", "quick-fix")
+
+			Expect(out).To(ContainSubstring("OPTIONS"))
+			Expect(out).To(ContainSubstring(
+				`{"effort":"medium","model":"sonnet","tools":{"allow":["Glob","Grep","Read"]}}`))
+		})
 	})
 })

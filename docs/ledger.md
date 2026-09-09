@@ -23,7 +23,7 @@ Immutable definitions. One row per version.
 | `id` | ULID |
 | `name`, `scope`, `project` | Unique together with `version` |
 | `version` | Content hash of the canonical definition |
-| `definition` | The definition as stored, JSONB. Steps, evidence specs, gates, capability sets, harness tables |
+| `definition` | The definition as stored, JSONB. Steps, evidence specs, gates, capability sets, harness tables. A step's `harness` is a map from harness name to that harness's **options document** — the workflow's yaml block as JSON, stored as given and interpreted by nobody but the harness |
 | `source` | JSONB: `{kind: repo|cli, repo, commit, path, pushed_by}` |
 | `created_at` | |
 

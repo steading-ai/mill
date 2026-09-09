@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -88,6 +89,34 @@ func (r *Runner) selectWorkflow(ctx context.Context, s *state) error {
 	}
 	s.workflow = workflow
 	r.printf("workflow %s@%s selected\n", workflow.GetName(), short(workflow.GetVersion()))
+	return nil
+}
+
+// requireHarnesses refuses a workflow that names a harness this worker has no
+// adapter for, before the first step runs.
+//
+// The check is at run start rather than at the step because the answer is
+// known there and a run that cannot finish should not spend a session
+// finding out: a workflow whose fifth step names an unknown harness would
+// otherwise commit and open a pull request first. The message names the
+// harness and the step, which is what a definition's author has to fix.
+func (r *Runner) requireHarnesses(s *state) error {
+	for _, step := range s.workflow.GetSteps() {
+		if step.GetKind() != millv1.StepKind_STEP_KIND_SKILL {
+			continue
+		}
+		names := make([]string, 0, len(step.GetHarness()))
+		for name := range step.GetHarness() {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			if _, err := r.options.Harnesses.Lookup(name); err != nil {
+				return fmt.Errorf("run %s: workflow %s step %s: %w",
+					s.run.GetId(), s.workflow.GetName(), step.GetName(), err)
+			}
+		}
+	}
 	return nil
 }
 

@@ -110,12 +110,25 @@ One unit of a workflow. Three kinds.
 | `gate` | Gate steps: the ask, and the auto-approve policy. See [Gate](#gate) |
 | `evidence` | What closes this step. See [Evidence](#evidence) |
 | `capabilities` | The capability set the step's workspace handle grants. See [Capability set](#capability-set) |
-| `harness` | Per-harness settings: model, effort, tool policy. Keyed by harness name; the adapter reads its own entry |
+| `harness` | Per-harness **options documents**, keyed by harness name. The adapter reads its own entry and mill reads none of them |
 | `on_failure` | `revise <step>` returns to a named earlier step in its session with the failure as the next prompt; `park` trips the breaker. Default `park`. See [Revise](#revise) |
 | `retries` | How many times *this* step may fail with `revise` before `park`. Counted on this step's attempts. Default 3 |
 | `timeout` | Wall clock for the step, enforced by the worker. Independent of the dagger lease, which the worker heartbeats for the step's whole duration; a step may run longer than a lease TTL |
 
 Harness settings live on the **step**, not on the skill record. A skill is shared across workflows, so it cannot hold a setting that differs between them: the same reviewer is worth a cheaper model in a `docs` workflow than in `feature`. `mill.v1.HarnessSettings` and `harness.v1.Settings` carry the decision in the proto.
+
+**Harness settings are the harness's.** A step's entry for a harness is an opaque document — the yaml block as written, stored as JSON, carried to the adapter unaltered — and mill interprets no key of it. Model, effort and tool policy are keys the `claude` harness happens to have, not fields of the step. The harness owns the schema and validates the document: an unknown key, or a value of the wrong type, is refused before the session starts, with `policy` as the exit reason and the key in the message, which the ledger records as a failed attempt. Adding a knob is a change to a harness and to the workflows that want it; mill is not rebuilt for one, and a knob mill has never heard of still reaches the harness that has. What mill does check is the *name*: a workflow naming a harness the worker has no adapter for is refused at run start, before any step runs.
+
+```yaml
+harness:
+  claude:
+    model: opus
+    effort: high
+    tools:
+      deny: [Write, Edit, Bash, NotebookEdit]
+```
+
+`tools.deny` is the harness's half of a read-only step, and the [capability set](#capability-set) is mill's: the workspace refuses `fs.write` and `git.commit` under a step token whose capabilities lack `write`, whatever the session was offered. A reviewer step declares both — no `write` capability, and a `tools.deny` that keeps the write tools out of the session — so the model is not handed a tool it may not use and the boundary holds on the side that enforces it. Until the workspace socket is the session's own tool server, the SDK's file tools do not pass through it, which is why MVP needs both halves and why a `clean-tree` check follows a read-only step.
 
 A **skill step** runs a skill as a headless session: the skill body is the prompt, the node's body and inputs are context, prior steps' artifacts are attached. It produces artifacts and, where the definition says so, structured output.
 

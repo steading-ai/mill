@@ -75,8 +75,8 @@ A skill step becomes a session in a harness. The mill does not implement an agen
 
 ```go
 type Harness interface {
-    Start(ctx, Session, Prompt, Attachments, Policy) (Turn, error)
-    Resume(ctx, Session, Prompt, Attachments, Policy) (Turn, error)
+    Start(ctx, Session, Prompt, Attachments) (Turn, error)
+    Resume(ctx, Session, Prompt, Attachments) (Turn, error)
     Cancel(ctx, Session) error
 }
 ```
@@ -87,9 +87,11 @@ A `Turn` streams events (text, tool calls, tool results, usage) and ends with a 
 
 The first adapter is a **TypeScript sidecar over the Claude Agent SDK**, spawned per step as a child process and spoken to over **newline-delimited JSON on stdio**. Message types are defined once in proto and generated to Go and TypeScript with buf, so both sides are typed without a transport heavier than a pipe. A child process on stdio has the right lifecycle for free: it dies with its parent, it needs no port or socket, and it is how MCP and LSP servers already work. Connect over a unix socket is the upgrade if a sidecar ever has to outlive its worker; nothing in MVP needs that.
 
-The sidecar receives: the session id (deterministic, so `Resume` finds the transcript), the prompt (the skill body plus the node body and inputs plus prior artifacts, rendered with predecessors' content as attributed data), the harness settings for its entry in the step's `harness` table (model, effort, tool policy), the workspace socket path and step token as the *only* environment, and the structured-output schema if the step has one.
+The sidecar receives: the session id (deterministic, so `Resume` finds the transcript), the prompt (the skill body plus the node body and inputs plus prior artifacts, rendered with predecessors' content as attributed data), the step's **options document** for its entry in the step's `harness` table, the workspace socket path and step token as the *only* environment, and the structured-output schema if the step has one.
 
-`Policy` is the tool allowlist. In MVP it is the reviewer's read-only guarantee and the implementer's write boundary — the SDK enforces it, the model doesn't get a vote. The workspace's capability set is the stronger enforcement that arrives with containers.
+**The options are the harness's, not mill's.** `Session.Options` is the yaml block as the workflow wrote it, and nothing on this side of the wire reads a key of it: the loader checks only that it is a mapping, the adapter hands it over whole, and the sidecar validates it against its own schema (`sidecar/src/options.ts`) before the SDK is loaded. A key the sidecar does not have, or a value of the wrong type, ends the request as a terminal record with `Status = -1` and `Reason = policy` naming the key, which the worker records as a failed attempt. That is what keeps mill harness-agnostic in fact and not only in shape: a knob the Claude SDK grows next quarter costs a change to the sidecar and to a workflow, and no change to the proto, the loader, or the worker. The one thing mill checks is the harness *name*, at run start, against the adapters it has.
+
+`tools.allow` and `tools.deny` are the Claude sidecar's keys for the tool policy, and in MVP they are the harness's half of a read-only step: the SDK enforces them and the model does not get a vote. Mill's half is the capability set — the workspace refuses `fs.write` and `git.commit` under a step token that lacks `write` — and it becomes the whole of it when the socket is the session's tool server and containers arrive.
 
 Codex, Pi, and a native Go Claude adapter are further implementations of the same interface. The adapter, not the workflow, translates a skill into whatever the harness wants; a skill is used as a *prompt*, never installed as a harness-native skill, so no harness's discovery rules leak into the workflow.
 

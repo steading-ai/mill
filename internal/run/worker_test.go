@@ -298,7 +298,7 @@ func newStubborn() *stubbornHarness {
 	return &stubbornHarness{started: make(chan struct{}), killed: make(chan struct{})}
 }
 
-func (h *stubbornHarness) Start(_ context.Context, _ harness.Session, _ harness.Prompt, _ []harness.Attachment, _ harness.Policy) (*harness.Turn, error) {
+func (h *stubbornHarness) Start(_ context.Context, _ harness.Session, _ harness.Prompt, _ []harness.Attachment) (*harness.Turn, error) {
 	turn := harness.NewTurn()
 	go func() {
 		h.begun.Do(func() { close(h.started) })
@@ -308,8 +308,8 @@ func (h *stubbornHarness) Start(_ context.Context, _ harness.Session, _ harness.
 	return turn, nil
 }
 
-func (h *stubbornHarness) Resume(ctx context.Context, session harness.Session, prompt harness.Prompt, attachments []harness.Attachment, policy harness.Policy) (*harness.Turn, error) {
-	return h.Start(ctx, session, prompt, attachments, policy)
+func (h *stubbornHarness) Resume(ctx context.Context, session harness.Session, prompt harness.Prompt, attachments []harness.Attachment) (*harness.Turn, error) {
+	return h.Start(ctx, session, prompt, attachments)
 }
 
 // Cancel waits for the session to go, and it never does on its own.

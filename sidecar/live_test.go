@@ -40,7 +40,7 @@ var _ = Describe("A live session", Label("live"), Serial, func() {
 				SessionId: sessionID,
 				Prompt:    "Reply with exactly the word READY and nothing else.",
 				Cwd:       workdir,
-				Settings:  &harnessv1.Settings{ToolPolicy: &harnessv1.ToolPolicy{Deny: []string{"Bash", "Write", "Edit"}}},
+				Settings:  settings(map[string]any{"tools": map[string]any{"deny": []any{"Bash", "Write", "Edit"}}}),
 			}},
 		})
 
@@ -71,7 +71,7 @@ var _ = Describe("A live session", Label("live"), Serial, func() {
 				SessionId: sessionID,
 				Prompt:    "Remember this codeword: TANGERINE-4417. Reply with OK and nothing else.",
 				Cwd:       workdir,
-				Settings:  &harnessv1.Settings{ToolPolicy: &harnessv1.ToolPolicy{Deny: []string{"Bash", "Write", "Edit"}}},
+				Settings:  settings(map[string]any{"tools": map[string]any{"deny": []any{"Bash", "Write", "Edit"}}}),
 			}},
 		})
 		started := runFor(entrypoint, nil, first, liveTimeout)
@@ -84,7 +84,7 @@ var _ = Describe("A live session", Label("live"), Serial, func() {
 				SessionId: sessionID,
 				Prompt:    "What codeword did I give you earlier? Reply with the codeword and nothing else.",
 				Cwd:       workdir,
-				Settings:  &harnessv1.Settings{ToolPolicy: &harnessv1.ToolPolicy{Deny: []string{"Bash", "Write", "Edit"}}},
+				Settings:  settings(map[string]any{"tools": map[string]any{"deny": []any{"Bash", "Write", "Edit"}}}),
 			}},
 		})
 		resumed := runFor(entrypoint, nil, second, liveTimeout)
@@ -103,10 +103,10 @@ var _ = Describe("A live session", Label("live"), Serial, func() {
 				SessionId: sessionID,
 				Prompt:    "Create the file " + target + " with the exact contents ESCAPED. If you cannot, say why.",
 				Cwd:       workdir,
-				Settings: &harnessv1.Settings{ToolPolicy: &harnessv1.ToolPolicy{
-					Allow: []string{"Read", "Glob", "Grep"},
-					Deny:  []string{"Write", "Edit", "NotebookEdit", "Bash", "Task"},
-				}},
+				Settings: settings(map[string]any{"tools": map[string]any{
+					"allow": []any{"Read", "Glob", "Grep"},
+					"deny":  []any{"Write", "Edit", "NotebookEdit", "Bash", "Task"},
+				}}),
 			}},
 		})
 
@@ -136,7 +136,7 @@ var _ = Describe("A live session", Label("live"), Serial, func() {
 				Prompt:       "Judge whether the criterion 'the CLI exits non-zero on an unknown flag' holds. You have no code to read; decide from the statement alone and answer in the required format.",
 				Cwd:          workdir,
 				OutputSchema: reviewSchema,
-				Settings:     &harnessv1.Settings{ToolPolicy: &harnessv1.ToolPolicy{Deny: []string{"Bash", "Write", "Edit"}}},
+				Settings:     settings(map[string]any{"tools": map[string]any{"deny": []any{"Bash", "Write", "Edit"}}}),
 			}},
 		})
 

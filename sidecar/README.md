@@ -22,6 +22,13 @@ grace window it reports the cancellation itself and exits, carrying whatever
 usage the turn had streamed. `MILL_SIDECAR_GRACE_MS` sets that window (5000ms
 by default) — it is on the environment because a signal carries nothing.
 
+A step's options — its `harness.claude` block — reach the sidecar as an
+opaque document: mill carries the yaml as written and interprets no key of
+it, so this side owns the schema. `src/options.ts` is that schema, and it is
+closed: an unknown key or a wrong type ends the request with exit reason
+`policy`, naming the key, before the SDK is loaded. Adding a knob is a change
+here and in a workflow, and mill is not rebuilt for it.
+
 Credentials for the SDK come from the account the sidecar runs under, through
 `$HOME`; never from the request. What the *session* gets is the workspace's
 socket and step token, as `WORKSPACE_SOCKET` and `STEP_TOKEN`, over a floor of
@@ -32,6 +39,7 @@ with is passed on.
 main.ts        the entrypoint the worker spawns; dist/main.js
 src/main.ts    framing: one request in, events and one terminal record out
 src/session.ts SDK wiring: session id, resume, cwd, environment, policy, schema
+src/options.ts the schema for a step's options: model, effort, tools. Owned here
 src/usage.ts   per-model token counts, per turn and in total
 src/exit.ts    SDK outcomes to ProcessExit
 gen/           harness.v1 in TypeScript; buf writes it, `make generate` runs buf

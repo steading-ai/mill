@@ -8,9 +8,9 @@ import (
 
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/structpb"
 	"gopkg.in/yaml.v3"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/evidence"
 )
@@ -39,19 +39,19 @@ type statusYAML struct {
 // stepYAML is one step. `kind` decides which of skill, check, and gate is
 // meaningful; the others must be absent.
 type stepYAML struct {
-	Name         string                 `yaml:"name"`
-	Kind         string                 `yaml:"kind"`
-	Session      string                 `yaml:"session,omitempty"`
-	Skill        string                 `yaml:"skill,omitempty"`
-	Check        *checkYAML             `yaml:"check,omitempty"`
-	Gate         *gateYAML              `yaml:"gate,omitempty"`
-	Evidence     string                 `yaml:"evidence"`
-	Capabilities []string               `yaml:"capabilities,omitempty"`
-	Harness      map[string]harnessYAML `yaml:"harness,omitempty"`
-	OnFailure    string                 `yaml:"on_failure,omitempty"`
-	Retries      int32                  `yaml:"retries,omitempty"`
-	Timeout      string                 `yaml:"timeout,omitempty"`
-	OutputSchema string                 `yaml:"output_schema,omitempty"`
+	Name         string                    `yaml:"name"`
+	Kind         string                    `yaml:"kind"`
+	Session      string                    `yaml:"session,omitempty"`
+	Skill        string                    `yaml:"skill,omitempty"`
+	Check        *checkYAML                `yaml:"check,omitempty"`
+	Gate         *gateYAML                 `yaml:"gate,omitempty"`
+	Evidence     string                    `yaml:"evidence"`
+	Capabilities []string                  `yaml:"capabilities,omitempty"`
+	Harness      map[string]map[string]any `yaml:"harness,omitempty"`
+	OnFailure    string                    `yaml:"on_failure,omitempty"`
+	Retries      int32                     `yaml:"retries,omitempty"`
+	Timeout      string                    `yaml:"timeout,omitempty"`
+	OutputSchema string                    `yaml:"output_schema,omitempty"`
 }
 
 type checkYAML struct {
@@ -87,16 +87,17 @@ const (
 	retiredHarnessName = "claude-code"
 )
 
-type harnessYAML struct {
-	Model  string     `yaml:"model,omitempty"`
-	Effort string     `yaml:"effort,omitempty"`
-	Tools  *toolsYAML `yaml:"tools,omitempty"`
-}
-
-type toolsYAML struct {
-	Allow []string `yaml:"allow,omitempty"`
-	Deny  []string `yaml:"deny,omitempty"`
-}
+// A step's `harness` table maps a harness name to that harness's options
+// document, and the loader reads nothing inside one. What a knob means is
+// the harness's to say: the block is carried to the adapter verbatim and the
+// harness validates it, so a knob a harness grows costs a workflow change
+// and nothing else (docs/domain-model.md §Step).
+//
+// The one thing the loader insists on is that the block is a mapping, which
+// is what a document has to be to survive the wire as a
+// google.protobuf.Struct. That is `map[string]any` and not a named type on
+// purpose: yaml.v3 decodes a nested mapping into the map type that contains
+// it, and a named one would reach structpb as something it refuses.
 
 // predicate is a gate's auto-approve policy: an expression over prior
 // evidence and the run's tier. `auto: true` is the policy that always
@@ -285,16 +286,16 @@ func (s stepYAML) toProto() (*millv1.Step, error) {
 	}
 	if len(s.Harness) > 0 {
 		step.Harness = map[string]*millv1.HarnessSettings{}
-		for name, settings := range s.Harness {
+		for name, options := range s.Harness {
 			if name == retiredHarnessName {
 				return fail(fmt.Errorf("harness.%s: the adapter is named %s; rename the key to harness.%s",
 					retiredHarnessName, harnessName, harnessName))
 			}
-			entry := &millv1.HarnessSettings{Model: settings.Model, Effort: settings.Effort}
-			if settings.Tools != nil {
-				entry.ToolPolicy = &harnessv1.ToolPolicy{Allow: settings.Tools.Allow, Deny: settings.Tools.Deny}
+			document, err := structpb.NewStruct(options)
+			if err != nil {
+				return fail(fmt.Errorf("harness.%s: the options are not a JSON document: %w", name, err))
 			}
-			step.Harness[name] = entry
+			step.Harness[name] = &millv1.HarnessSettings{Options: document}
 		}
 	}
 	if step.OnFailure, err = parseOnFailure(s.OnFailure); err != nil {
@@ -368,13 +369,9 @@ func toDocument(w *millv1.Workflow) document {
 			}
 		}
 		if len(step.GetHarness()) > 0 {
-			s.Harness = map[string]harnessYAML{}
+			s.Harness = map[string]map[string]any{}
 			for name, settings := range step.GetHarness() {
-				entry := harnessYAML{Model: settings.GetModel(), Effort: settings.GetEffort()}
-				if policy := settings.GetToolPolicy(); policy != nil {
-					entry.Tools = &toolsYAML{Allow: policy.GetAllow(), Deny: policy.GetDeny()}
-				}
-				s.Harness[name] = entry
+				s.Harness[name] = settings.GetOptions().AsMap()
 			}
 		}
 		if step.GetTimeout() != nil {

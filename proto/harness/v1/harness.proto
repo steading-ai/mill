@@ -32,8 +32,9 @@ enum ExitReason {
   // EXIT_REASON_REFUSED means the harness declined to start the session at
   // all, for its own reasons.
   EXIT_REASON_REFUSED = 1;
-  // EXIT_REASON_POLICY means the tool policy the step asked for could not be
-  // applied, so the session was never started under it.
+  // EXIT_REASON_POLICY means the options the step asked for could not be
+  // applied — an unknown key, a wrong type, a value the harness has no name
+  // for — so the session was never started under them.
   EXIT_REASON_POLICY = 2;
   // EXIT_REASON_TIMEOUT means the step's wall clock elapsed and the worker
   // stopped the session.
@@ -84,20 +85,16 @@ message Usage {
   map<string, TokenCounts> by_model = 1;
 }
 
-// ToolPolicy is the tool allowlist a session runs under. In MVP it is the
-// only enforcement of the reviewer's read-only guarantee and the
-// implementer's write boundary: the SDK enforces it and the model does not
-// get a vote.
-message ToolPolicy {
-  // Tool names the session may call. Empty means the harness's default set.
-  repeated string allow = 1;
-  // Tool names the session may not call, applied after `allow`.
-  repeated string deny = 2;
-}
-
-// Settings are the per-harness knobs a step carries for the adapter that
-// owns it. Resolved from the step's `harness` table entry for this adapter's
-// name before the sidecar is spawned.
+// Settings are the per-harness options a step carries for the adapter that
+// owns it: the step's `harness` table entry for this adapter's name, passed
+// through exactly as the workflow wrote it.
+//
+// Mill interprets nothing inside the document. The harness owns its own
+// schema, so a knob the harness grows is a harness change and a workflow
+// change, and neither this file nor the mill is rebuilt for it. A key the
+// harness does not know is refused with EXIT_REASON_POLICY before the
+// session starts, which is what keeps "carried verbatim" from meaning
+// "silently dropped".
 //
 // Resolves docs/domain-model.md's open question "whether harness settings
 // belong on the step or on the skill record": they are on the step. The same
@@ -105,14 +102,10 @@ message ToolPolicy {
 // workflow, and the skill record is shared across workflows, so it cannot
 // hold a setting that differs between them.
 message Settings {
-  // The model to run the session on. A harness-specific free string; the
-  // mill never interprets it.
-  string model = 1;
-  // How hard the model should think, where the harness has such a knob.
-  // Harness-specific free string.
-  string effort = 2;
-  // The tool allowlist for this session.
-  ToolPolicy tool_policy = 3;
+  // The options document for this harness, as the workflow's yaml block
+  // gave it. A Struct because the wire is JSON and the document is whatever
+  // the harness's own schema says it is.
+  google.protobuf.Struct options = 1;
 }
 
 // Workspace is the entire environment a session is given: a unix socket and
@@ -154,7 +147,7 @@ message Start {
   string prompt = 2;
   // Context the session is given beside the prompt.
   repeated Attachment attachments = 3;
-  // Model, effort, and tool policy for this session.
+  // The options document this harness runs the session under.
   Settings settings = 4;
   // The socket and token that are the session's only environment.
   Workspace workspace = 5;
@@ -178,8 +171,8 @@ message Resume {
   string prompt = 2;
   // Context the session is given beside the prompt.
   repeated Attachment attachments = 3;
-  // Model, effort, and tool policy for this turn. Re-sent because a step may
-  // resume a session under different settings than started it.
+  // The options document for this turn. Re-sent because a step may resume a
+  // session under different settings than started it.
   Settings settings = 4;
   // The socket and token for this step run. Rotated per step, so a resumed
   // session is handed a token the previous step's does not outlive.

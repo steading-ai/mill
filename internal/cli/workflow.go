@@ -2,10 +2,13 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -300,7 +303,49 @@ func renderWorkflow(cmd *cobra.Command, definition *millv1.Workflow, v view) err
 			dash(strings.Join(capabilityNames(step.GetCapabilities()), ",")),
 			step.GetRetries(), onFailureText(step.GetOnFailure()), dash(step.GetSession()))
 	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	return renderHarness(out, definition)
+}
+
+// renderHarness prints each step's harness options, one line per (step,
+// harness). The document is printed as the JSON it is stored as, because
+// mill interprets no key of it and has nothing else to say about it: what an
+// operator needs from this command is what the step will hand the harness.
+func renderHarness(out io.Writer, definition *millv1.Workflow) error {
+	rows := [][3]string{}
+	for _, step := range definition.GetSteps() {
+		for _, name := range sortedHarnesses(step) {
+			document, err := json.Marshal(step.GetHarness()[name].GetOptions().AsMap())
+			if err != nil {
+				return fmt.Errorf("step %s: harness %s: %w", step.GetName(), name, err)
+			}
+			rows = append(rows, [3]string{step.GetName(), name, string(document)})
+		}
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	_, _ = fmt.Fprintln(out)
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "STEP\tHARNESS\tOPTIONS")
+	for _, row := range rows {
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", row[0], row[1], row[2])
+	}
 	return w.Flush()
+}
+
+// sortedHarnesses are the harness names a step carries options for, in a
+// stable order: a map's iteration order would make one push print
+// differently from the next.
+func sortedHarnesses(step *millv1.Step) []string {
+	names := make([]string, 0, len(step.GetHarness()))
+	for name := range step.GetHarness() {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // onFailureText is what a step's failure does to the run: park, or revise a

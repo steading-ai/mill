@@ -24,17 +24,13 @@ import {
   type Workspace,
 } from "../gen/harness/v1/harness_pb.js";
 import { describe, fromError, fromResult, ran } from "./exit.js";
+import { PolicyError, parseOptions } from "./options.js";
 import type { Options, QueryFn, SDKMessage } from "./sdk.js";
 import { fromModelUsage, fromTurn, type UsageAccumulator } from "./usage.js";
 
 // TOOL_RESULT_LIMIT is how much of a tool's output an event carries. Full
 // tool output is never logged; a summary is.
 export const TOOL_RESULT_LIMIT = 4096;
-
-// EFFORT_LEVELS are the values the SDK accepts for `effort`. The wire's
-// Settings.effort is a harness-specific free string, so a value outside this
-// set is a setting the sidecar cannot apply rather than one it may guess at.
-const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
 
 // ENVIRONMENT_PASSTHROUGH is what a session's tools inherit from the host
 // besides the workspace's two values: enough for a process to start and find
@@ -65,13 +61,6 @@ export const STEP_TOKEN_VAR = "STEP_TOKEN";
 // RefusedError is a request the sidecar will not start a session for.
 export class RefusedError extends Error {
   readonly reason = ExitReason.REFUSED;
-}
-
-// PolicyError is a request whose settings the sidecar cannot apply: the
-// session is never started under them rather than started under something
-// else.
-export class PolicyError extends Error {
-  readonly reason = ExitReason.POLICY;
 }
 
 // Turn is a Start or a Resume, reduced to what the SDK needs. The two
@@ -181,19 +170,11 @@ function outputFormat(schema: string): Options["outputFormat"] {
   return { type: "json_schema", schema: parsed as Record<string, unknown> };
 }
 
-function effortOf(settings: Settings | undefined): Options["effort"] {
-  const effort = settings?.effort ?? "";
-  if (effort === "") {
-    return undefined;
-  }
-  const level = EFFORT_LEVELS.find((known) => known === effort);
-  if (level === undefined) {
-    throw new PolicyError(`effort ${JSON.stringify(effort)} is not one of ${EFFORT_LEVELS.join(", ")}`);
-  }
-  return level;
-}
-
 // buildOptions compiles a turn into the SDK's options.
+//
+// The step's options document is validated first, by the schema in
+// options.ts, and an option this harness does not have stops the turn here:
+// nothing below runs and the SDK is never loaded.
 //
 // The tool policy compiles to both of the SDK's knobs, because they are not
 // the same mechanism: `allowedTools` permits, leaving an excluded tool
@@ -217,7 +198,7 @@ export function buildOptions(
   hostEnv: Record<string, string | undefined>,
   abortController: AbortController,
 ): Options {
-  const policy = turn.settings?.toolPolicy;
+  const declared = parseOptions(turn.settings?.options);
   const options: Options = {
     abortController,
     env: sessionEnv(turn.workspace, hostEnv),
@@ -226,18 +207,17 @@ export function buildOptions(
   if (turn.cwd !== "") {
     options.cwd = turn.cwd;
   }
-  if (turn.settings?.model !== undefined && turn.settings.model !== "") {
-    options.model = turn.settings.model;
+  if (declared.model !== undefined && declared.model !== "") {
+    options.model = declared.model;
   }
-  const effort = effortOf(turn.settings);
-  if (effort !== undefined) {
-    options.effort = effort;
+  if (declared.effort !== undefined) {
+    options.effort = declared.effort;
   }
-  if (policy !== undefined && policy.allow.length > 0) {
-    options.allowedTools = [...policy.allow];
+  if (declared.tools?.allow !== undefined && declared.tools.allow.length > 0) {
+    options.allowedTools = [...declared.tools.allow];
   }
-  if (policy !== undefined && policy.deny.length > 0) {
-    options.disallowedTools = [...policy.deny];
+  if (declared.tools?.deny !== undefined && declared.tools.deny.length > 0) {
+    options.disallowedTools = [...declared.tools.deny];
   }
   const format = outputFormat(turn.outputSchema);
   if (format !== undefined) {

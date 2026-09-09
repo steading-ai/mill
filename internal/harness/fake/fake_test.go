@@ -48,7 +48,32 @@ var _ = Describe("The fake harness", Label("unit"), func() {
 
 	BeforeEach(func() {
 		log = &recorder{}
-		session = harness.Session{ID: "01JB-implement", Model: "claude-opus-5", Events: log.sink()}
+		session = harness.Session{
+			ID:      "01JB-implement",
+			Options: map[string]any{"model": "claude-opus-5"},
+			Events:  log.sink(),
+		}
+	})
+
+	It("records the options document it was handed, whole", func(ctx context.Context) {
+		By("given a step whose options carry a key the adapter does not know")
+		document := map[string]any{
+			"model":           "claude-opus-5",
+			"tools":           map[string]any{"deny": []any{"Write"}},
+			"thinking_budget": float64(4096),
+		}
+		session.Options = document
+		replay := fake.New()
+
+		By("when the worker starts the session")
+		turn, err := replay.Start(ctx, session, harness.Prompt{Text: "implement"}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = turn.Wait(ctx)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("then the harness was handed the document unchanged")
+		Expect(replay.Calls()).To(HaveLen(1))
+		Expect(replay.Calls()[0].Session.Options).To(Equal(document))
 	})
 
 	It("replays a terminal record with structured output", func(ctx context.Context) {
@@ -57,7 +82,7 @@ var _ = Describe("The fake harness", Label("unit"), func() {
 			Terminal: fake.Terminal("reviewed", map[string]any{"decision": "approve", "findings": []any{}}, nil),
 		})
 
-		turn, err := replay.Start(ctx, session, harness.Prompt{Text: "review"}, nil, harness.Policy{Deny: []string{"Write"}})
+		turn, err := replay.Start(ctx, session, harness.Prompt{Text: "review"}, nil)
 		Expect(err).NotTo(HaveOccurred())
 		terminal, err := turn.Wait(ctx)
 
@@ -66,7 +91,7 @@ var _ = Describe("The fake harness", Label("unit"), func() {
 		Expect(log.collected()).To(HaveLen(1))
 		Expect(replay.Calls()).To(HaveLen(1))
 		Expect(replay.Calls()[0].Verb).To(Equal("start"))
-		Expect(replay.Calls()[0].Policy.Deny).To(Equal([]string{"Write"}))
+		Expect(replay.Calls()[0].Session.Options).To(HaveKeyWithValue("model", "claude-opus-5"))
 	})
 
 	It("replays a terminal record billing two models", func(ctx context.Context) {
@@ -75,7 +100,7 @@ var _ = Describe("The fake harness", Label("unit"), func() {
 			Terminal: fake.Terminal("implemented", nil, billed),
 		})
 
-		turn, err := replay.Start(ctx, session, harness.Prompt{Text: "implement"}, nil, harness.Policy{})
+		turn, err := replay.Start(ctx, session, harness.Prompt{Text: "implement"}, nil)
 		Expect(err).NotTo(HaveOccurred())
 		terminal, err := turn.Wait(ctx)
 
@@ -92,7 +117,7 @@ var _ = Describe("The fake harness", Label("unit"), func() {
 
 		said := []string{}
 		for range 3 {
-			turn, err := replay.Start(ctx, session, harness.Prompt{}, nil, harness.Policy{})
+			turn, err := replay.Start(ctx, session, harness.Prompt{}, nil)
 			Expect(err).NotTo(HaveOccurred())
 			terminal, err := turn.Wait(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -105,7 +130,7 @@ var _ = Describe("The fake harness", Label("unit"), func() {
 	It("holds a turn until the session is cancelled", func(ctx context.Context) {
 		replay := fake.New(fake.Script{Hold: true})
 
-		turn, err := replay.Resume(ctx, session, harness.Prompt{}, nil, harness.Policy{})
+		turn, err := replay.Resume(ctx, session, harness.Prompt{}, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Consistently(turn.Done()).ShouldNot(BeClosed())
 
@@ -125,7 +150,7 @@ var _ = Describe("The fake harness", Label("unit"), func() {
 		refused := errors.New("no such harness")
 		replay := fake.New(fake.Script{Err: refused})
 
-		_, err := replay.Start(ctx, session, harness.Prompt{}, nil, harness.Policy{})
+		_, err := replay.Start(ctx, session, harness.Prompt{}, nil)
 
 		Expect(err).To(MatchError(refused))
 	})

@@ -27,7 +27,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file harness/v1/harness.proto.
  */
 export const file_harness_v1_harness: GenFile = /*@__PURE__*/
-  fileDesc("ChhoYXJuZXNzL3YxL2hhcm5lc3MucHJvdG8SCmhhcm5lc3MudjEiVQoLUHJvY2Vzc0V4aXQSDgoGc3RhdHVzGAEgASgFEg4KBnNpZ25hbBgCIAEoBRImCgZyZWFzb24YAyABKA4yFi5oYXJuZXNzLnYxLkV4aXRSZWFzb24iVQoLVG9rZW5Db3VudHMSDQoFaW5wdXQYASABKAMSDgoGb3V0cHV0GAIgASgDEhIKCmNhY2hlX3JlYWQYAyABKAMSEwoLY2FjaGVfd3JpdGUYBCABKAMiggEKBVVzYWdlEjAKCGJ5X21vZGVsGAEgAygLMh4uaGFybmVzcy52MS5Vc2FnZS5CeU1vZGVsRW50cnkaRwoMQnlNb2RlbEVudHJ5EgsKA2tleRgBIAEoCRImCgV2YWx1ZRgCIAEoCzIXLmhhcm5lc3MudjEuVG9rZW5Db3VudHM6AjgBIikKClRvb2xQb2xpY3kSDQoFYWxsb3cYASADKAkSDAoEZGVueRgCIAMoCSJWCghTZXR0aW5ncxINCgVtb2RlbBgBIAEoCRIOCgZlZmZvcnQYAiABKAkSKwoLdG9vbF9wb2xpY3kYAyABKAsyFi5oYXJuZXNzLnYxLlRvb2xQb2xpY3kiKgoJV29ya3NwYWNlEg4KBnNvY2tldBgBIAEoCRINCgV0b2tlbhgCIAEoCSJPCgpBdHRhY2htZW50EgwKBG5hbWUYASABKAkSDgoGc291cmNlGAIgASgJEhIKCm1lZGlhX3R5cGUYAyABKAkSDwoHY29udGVudBgEIAEoCSLOAQoFU3RhcnQSEgoKc2Vzc2lvbl9pZBgBIAEoCRIOCgZwcm9tcHQYAiABKAkSKwoLYXR0YWNobWVudHMYAyADKAsyFi5oYXJuZXNzLnYxLkF0dGFjaG1lbnQSJgoIc2V0dGluZ3MYBCABKAsyFC5oYXJuZXNzLnYxLlNldHRpbmdzEigKCXdvcmtzcGFjZRgFIAEoCzIVLmhhcm5lc3MudjEuV29ya3NwYWNlEhUKDW91dHB1dF9zY2hlbWEYBiABKAkSCwoDY3dkGAcgASgJIs8BCgZSZXN1bWUSEgoKc2Vzc2lvbl9pZBgBIAEoCRIOCgZwcm9tcHQYAiABKAkSKwoLYXR0YWNobWVudHMYAyADKAsyFi5oYXJuZXNzLnYxLkF0dGFjaG1lbnQSJgoIc2V0dGluZ3MYBCABKAsyFC5oYXJuZXNzLnYxLlNldHRpbmdzEigKCXdvcmtzcGFjZRgFIAEoCzIVLmhhcm5lc3MudjEuV29ya3NwYWNlEhUKDW91dHB1dF9zY2hlbWEYBiABKAkSCwoDY3dkGAcgASgJIi4KBkNhbmNlbBISCgpzZXNzaW9uX2lkGAEgASgJEhAKCGdyYWNlX21zGAIgASgFIo0BCgdSZXF1ZXN0EgoKAmlkGAEgASgJEiIKBXN0YXJ0GAIgASgLMhEuaGFybmVzcy52MS5TdGFydEgAEiQKBnJlc3VtZRgDIAEoCzISLmhhcm5lc3MudjEuUmVzdW1lSAASJAoGY2FuY2VsGAQgASgLMhIuaGFybmVzcy52MS5DYW5jZWxIAEIGCgRib2R5IhQKBFRleHQSDAoEdGV4dBgBIAEoCSJVCghUb29sQ2FsbBIPCgdjYWxsX2lkGAEgASgJEgwKBG5hbWUYAiABKAkSKgoJYXJndW1lbnRzGAMgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdCJACgpUb29sUmVzdWx0Eg8KB2NhbGxfaWQYASABKAkSDwoHY29udGVudBgCIAEoCRIQCghpc19lcnJvchgDIAEoCCLDAQoFRXZlbnQSEgoKcmVxdWVzdF9pZBgBIAEoCRIgCgR0ZXh0GAIgASgLMhAuaGFybmVzcy52MS5UZXh0SAASKQoJdG9vbF9jYWxsGAMgASgLMhQuaGFybmVzcy52MS5Ub29sQ2FsbEgAEi0KC3Rvb2xfcmVzdWx0GAQgASgLMhYuaGFybmVzcy52MS5Ub29sUmVzdWx0SAASIgoFdXNhZ2UYBSABKAsyES5oYXJuZXNzLnYxLlVzYWdlSABCBgoEYm9keSKyAQoIVGVybWluYWwSEgoKcmVxdWVzdF9pZBgBIAEoCRIVCg1maW5hbF9tZXNzYWdlGAIgASgJEjIKEXN0cnVjdHVyZWRfb3V0cHV0GAMgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdBIgCgV1c2FnZRgEIAEoCzIRLmhhcm5lc3MudjEuVXNhZ2USJQoEZXhpdBgFIAEoCzIXLmhhcm5lc3MudjEuUHJvY2Vzc0V4aXQiLgoHRmFpbHVyZRISCgpyZXF1ZXN0X2lkGAEgASgJEg8KB21lc3NhZ2UYAiABKAkiiAEKCFJlc3BvbnNlEiIKBWV2ZW50GAEgASgLMhEuaGFybmVzcy52MS5FdmVudEgAEigKCHRlcm1pbmFsGAIgASgLMhQuaGFybmVzcy52MS5UZXJtaW5hbEgAEiYKB2ZhaWx1cmUYAyABKAsyEy5oYXJuZXNzLnYxLkZhaWx1cmVIAEIGCgRib2R5Ko4BCgpFeGl0UmVhc29uEhsKF0VYSVRfUkVBU09OX1VOU1BFQ0lGSUVEEAASFwoTRVhJVF9SRUFTT05fUkVGVVNFRBABEhYKEkVYSVRfUkVBU09OX1BPTElDWRACEhcKE0VYSVRfUkVBU09OX1RJTUVPVVQQAxIZChVFWElUX1JFQVNPTl9DQU5DRUxMRUQQBEIuWixnaXRodWIuY29tL2l2eS9taWxsL2dlbi9oYXJuZXNzL3YxO2hhcm5lc3N2MWIGcHJvdG8z", [file_google_protobuf_struct]);
+  fileDesc("ChhoYXJuZXNzL3YxL2hhcm5lc3MucHJvdG8SCmhhcm5lc3MudjEiVQoLUHJvY2Vzc0V4aXQSDgoGc3RhdHVzGAEgASgFEg4KBnNpZ25hbBgCIAEoBRImCgZyZWFzb24YAyABKA4yFi5oYXJuZXNzLnYxLkV4aXRSZWFzb24iVQoLVG9rZW5Db3VudHMSDQoFaW5wdXQYASABKAMSDgoGb3V0cHV0GAIgASgDEhIKCmNhY2hlX3JlYWQYAyABKAMSEwoLY2FjaGVfd3JpdGUYBCABKAMiggEKBVVzYWdlEjAKCGJ5X21vZGVsGAEgAygLMh4uaGFybmVzcy52MS5Vc2FnZS5CeU1vZGVsRW50cnkaRwoMQnlNb2RlbEVudHJ5EgsKA2tleRgBIAEoCRImCgV2YWx1ZRgCIAEoCzIXLmhhcm5lc3MudjEuVG9rZW5Db3VudHM6AjgBIjQKCFNldHRpbmdzEigKB29wdGlvbnMYASABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0IioKCVdvcmtzcGFjZRIOCgZzb2NrZXQYASABKAkSDQoFdG9rZW4YAiABKAkiTwoKQXR0YWNobWVudBIMCgRuYW1lGAEgASgJEg4KBnNvdXJjZRgCIAEoCRISCgptZWRpYV90eXBlGAMgASgJEg8KB2NvbnRlbnQYBCABKAkizgEKBVN0YXJ0EhIKCnNlc3Npb25faWQYASABKAkSDgoGcHJvbXB0GAIgASgJEisKC2F0dGFjaG1lbnRzGAMgAygLMhYuaGFybmVzcy52MS5BdHRhY2htZW50EiYKCHNldHRpbmdzGAQgASgLMhQuaGFybmVzcy52MS5TZXR0aW5ncxIoCgl3b3Jrc3BhY2UYBSABKAsyFS5oYXJuZXNzLnYxLldvcmtzcGFjZRIVCg1vdXRwdXRfc2NoZW1hGAYgASgJEgsKA2N3ZBgHIAEoCSLPAQoGUmVzdW1lEhIKCnNlc3Npb25faWQYASABKAkSDgoGcHJvbXB0GAIgASgJEisKC2F0dGFjaG1lbnRzGAMgAygLMhYuaGFybmVzcy52MS5BdHRhY2htZW50EiYKCHNldHRpbmdzGAQgASgLMhQuaGFybmVzcy52MS5TZXR0aW5ncxIoCgl3b3Jrc3BhY2UYBSABKAsyFS5oYXJuZXNzLnYxLldvcmtzcGFjZRIVCg1vdXRwdXRfc2NoZW1hGAYgASgJEgsKA2N3ZBgHIAEoCSIuCgZDYW5jZWwSEgoKc2Vzc2lvbl9pZBgBIAEoCRIQCghncmFjZV9tcxgCIAEoBSKNAQoHUmVxdWVzdBIKCgJpZBgBIAEoCRIiCgVzdGFydBgCIAEoCzIRLmhhcm5lc3MudjEuU3RhcnRIABIkCgZyZXN1bWUYAyABKAsyEi5oYXJuZXNzLnYxLlJlc3VtZUgAEiQKBmNhbmNlbBgEIAEoCzISLmhhcm5lc3MudjEuQ2FuY2VsSABCBgoEYm9keSIUCgRUZXh0EgwKBHRleHQYASABKAkiVQoIVG9vbENhbGwSDwoHY2FsbF9pZBgBIAEoCRIMCgRuYW1lGAIgASgJEioKCWFyZ3VtZW50cxgDIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QiQAoKVG9vbFJlc3VsdBIPCgdjYWxsX2lkGAEgASgJEg8KB2NvbnRlbnQYAiABKAkSEAoIaXNfZXJyb3IYAyABKAgiwwEKBUV2ZW50EhIKCnJlcXVlc3RfaWQYASABKAkSIAoEdGV4dBgCIAEoCzIQLmhhcm5lc3MudjEuVGV4dEgAEikKCXRvb2xfY2FsbBgDIAEoCzIULmhhcm5lc3MudjEuVG9vbENhbGxIABItCgt0b29sX3Jlc3VsdBgEIAEoCzIWLmhhcm5lc3MudjEuVG9vbFJlc3VsdEgAEiIKBXVzYWdlGAUgASgLMhEuaGFybmVzcy52MS5Vc2FnZUgAQgYKBGJvZHkisgEKCFRlcm1pbmFsEhIKCnJlcXVlc3RfaWQYASABKAkSFQoNZmluYWxfbWVzc2FnZRgCIAEoCRIyChFzdHJ1Y3R1cmVkX291dHB1dBgDIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSIAoFdXNhZ2UYBCABKAsyES5oYXJuZXNzLnYxLlVzYWdlEiUKBGV4aXQYBSABKAsyFy5oYXJuZXNzLnYxLlByb2Nlc3NFeGl0Ii4KB0ZhaWx1cmUSEgoKcmVxdWVzdF9pZBgBIAEoCRIPCgdtZXNzYWdlGAIgASgJIogBCghSZXNwb25zZRIiCgVldmVudBgBIAEoCzIRLmhhcm5lc3MudjEuRXZlbnRIABIoCgh0ZXJtaW5hbBgCIAEoCzIULmhhcm5lc3MudjEuVGVybWluYWxIABImCgdmYWlsdXJlGAMgASgLMhMuaGFybmVzcy52MS5GYWlsdXJlSABCBgoEYm9keSqOAQoKRXhpdFJlYXNvbhIbChdFWElUX1JFQVNPTl9VTlNQRUNJRklFRBAAEhcKE0VYSVRfUkVBU09OX1JFRlVTRUQQARIWChJFWElUX1JFQVNPTl9QT0xJQ1kQAhIXChNFWElUX1JFQVNPTl9USU1FT1VUEAMSGQoVRVhJVF9SRUFTT05fQ0FOQ0VMTEVEEARCLlosZ2l0aHViLmNvbS9pdnkvbWlsbC9nZW4vaGFybmVzcy92MTtoYXJuZXNzdjFiBnByb3RvMw", [file_google_protobuf_struct]);
 
 /**
  * ProcessExit is how a spawned thing ended. Borrowed wholesale from
@@ -141,40 +141,16 @@ export const UsageSchema: GenMessage<Usage> = /*@__PURE__*/
   messageDesc(file_harness_v1_harness, 2);
 
 /**
- * ToolPolicy is the tool allowlist a session runs under. In MVP it is the
- * only enforcement of the reviewer's read-only guarantee and the
- * implementer's write boundary: the SDK enforces it and the model does not
- * get a vote.
+ * Settings are the per-harness options a step carries for the adapter that
+ * owns it: the step's `harness` table entry for this adapter's name, passed
+ * through exactly as the workflow wrote it.
  *
- * @generated from message harness.v1.ToolPolicy
- */
-export type ToolPolicy = Message<"harness.v1.ToolPolicy"> & {
-  /**
-   * Tool names the session may call. Empty means the harness's default set.
-   *
-   * @generated from field: repeated string allow = 1;
-   */
-  allow: string[];
-
-  /**
-   * Tool names the session may not call, applied after `allow`.
-   *
-   * @generated from field: repeated string deny = 2;
-   */
-  deny: string[];
-};
-
-/**
- * Describes the message harness.v1.ToolPolicy.
- * Use `create(ToolPolicySchema)` to create a new message.
- */
-export const ToolPolicySchema: GenMessage<ToolPolicy> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 3);
-
-/**
- * Settings are the per-harness knobs a step carries for the adapter that
- * owns it. Resolved from the step's `harness` table entry for this adapter's
- * name before the sidecar is spawned.
+ * Mill interprets nothing inside the document. The harness owns its own
+ * schema, so a knob the harness grows is a harness change and a workflow
+ * change, and neither this file nor the mill is rebuilt for it. A key the
+ * harness does not know is refused with EXIT_REASON_POLICY before the
+ * session starts, which is what keeps "carried verbatim" from meaning
+ * "silently dropped".
  *
  * Resolves docs/domain-model.md's open question "whether harness settings
  * belong on the step or on the skill record": they are on the step. The same
@@ -186,27 +162,13 @@ export const ToolPolicySchema: GenMessage<ToolPolicy> = /*@__PURE__*/
  */
 export type Settings = Message<"harness.v1.Settings"> & {
   /**
-   * The model to run the session on. A harness-specific free string; the
-   * mill never interprets it.
+   * The options document for this harness, as the workflow's yaml block
+   * gave it. A Struct because the wire is JSON and the document is whatever
+   * the harness's own schema says it is.
    *
-   * @generated from field: string model = 1;
+   * @generated from field: google.protobuf.Struct options = 1;
    */
-  model: string;
-
-  /**
-   * How hard the model should think, where the harness has such a knob.
-   * Harness-specific free string.
-   *
-   * @generated from field: string effort = 2;
-   */
-  effort: string;
-
-  /**
-   * The tool allowlist for this session.
-   *
-   * @generated from field: harness.v1.ToolPolicy tool_policy = 3;
-   */
-  toolPolicy?: ToolPolicy | undefined;
+  options?: JsonObject | undefined;
 };
 
 /**
@@ -214,7 +176,7 @@ export type Settings = Message<"harness.v1.Settings"> & {
  * Use `create(SettingsSchema)` to create a new message.
  */
 export const SettingsSchema: GenMessage<Settings> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 4);
+  messageDesc(file_harness_v1_harness, 3);
 
 /**
  * Workspace is the entire environment a session is given: a unix socket and
@@ -247,7 +209,7 @@ export type Workspace = Message<"harness.v1.Workspace"> & {
  * Use `create(WorkspaceSchema)` to create a new message.
  */
 export const WorkspaceSchema: GenMessage<Workspace> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 5);
+  messageDesc(file_harness_v1_harness, 4);
 
 /**
  * Attachment is one piece of context handed to the session alongside the
@@ -293,7 +255,7 @@ export type Attachment = Message<"harness.v1.Attachment"> & {
  * Use `create(AttachmentSchema)` to create a new message.
  */
 export const AttachmentSchema: GenMessage<Attachment> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 6);
+  messageDesc(file_harness_v1_harness, 5);
 
 /**
  * Start begins a session that has never run. The session id is deterministic
@@ -325,7 +287,7 @@ export type Start = Message<"harness.v1.Start"> & {
   attachments: Attachment[];
 
   /**
-   * Model, effort, and tool policy for this session.
+   * The options document this harness runs the session under.
    *
    * @generated from field: harness.v1.Settings settings = 4;
    */
@@ -359,7 +321,7 @@ export type Start = Message<"harness.v1.Start"> & {
  * Use `create(StartSchema)` to create a new message.
  */
 export const StartSchema: GenMessage<Start> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 7);
+  messageDesc(file_harness_v1_harness, 6);
 
 /**
  * Resume continues an existing session with a new prompt, so a `revise`
@@ -394,8 +356,8 @@ export type Resume = Message<"harness.v1.Resume"> & {
   attachments: Attachment[];
 
   /**
-   * Model, effort, and tool policy for this turn. Re-sent because a step may
-   * resume a session under different settings than started it.
+   * The options document for this turn. Re-sent because a step may resume a
+   * session under different settings than started it.
    *
    * @generated from field: harness.v1.Settings settings = 4;
    */
@@ -430,7 +392,7 @@ export type Resume = Message<"harness.v1.Resume"> & {
  * Use `create(ResumeSchema)` to create a new message.
  */
 export const ResumeSchema: GenMessage<Resume> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 8);
+  messageDesc(file_harness_v1_harness, 7);
 
 /**
  * Cancel stops a running session: SIGTERM, a grace window, SIGKILL. The
@@ -460,7 +422,7 @@ export type Cancel = Message<"harness.v1.Cancel"> & {
  * Use `create(CancelSchema)` to create a new message.
  */
 export const CancelSchema: GenMessage<Cancel> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 9);
+  messageDesc(file_harness_v1_harness, 8);
 
 /**
  * Request is one line from the worker to the sidecar.
@@ -513,7 +475,7 @@ export type Request = Message<"harness.v1.Request"> & {
  * Use `create(RequestSchema)` to create a new message.
  */
 export const RequestSchema: GenMessage<Request> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 10);
+  messageDesc(file_harness_v1_harness, 9);
 
 /**
  * Text is something the assistant said, streamed as it is produced.
@@ -534,7 +496,7 @@ export type Text = Message<"harness.v1.Text"> & {
  * Use `create(TextSchema)` to create a new message.
  */
 export const TextSchema: GenMessage<Text> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 11);
+  messageDesc(file_harness_v1_harness, 10);
 
 /**
  * ToolCall is the session asking to use a tool.
@@ -569,7 +531,7 @@ export type ToolCall = Message<"harness.v1.ToolCall"> & {
  * Use `create(ToolCallSchema)` to create a new message.
  */
 export const ToolCallSchema: GenMessage<ToolCall> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 12);
+  messageDesc(file_harness_v1_harness, 11);
 
 /**
  * ToolResult is what a tool returned. Full tool output is never logged; a
@@ -605,7 +567,7 @@ export type ToolResult = Message<"harness.v1.ToolResult"> & {
  * Use `create(ToolResultSchema)` to create a new message.
  */
 export const ToolResultSchema: GenMessage<ToolResult> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 13);
+  messageDesc(file_harness_v1_harness, 12);
 
 /**
  * Event is one thing that happened during a turn, streamed to the worker as
@@ -667,7 +629,7 @@ export type Event = Message<"harness.v1.Event"> & {
  * Use `create(EventSchema)` to create a new message.
  */
 export const EventSchema: GenMessage<Event> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 14);
+  messageDesc(file_harness_v1_harness, 13);
 
 /**
  * Terminal is the last line of a request: how the session ended and what it
@@ -724,7 +686,7 @@ export type Terminal = Message<"harness.v1.Terminal"> & {
  * Use `create(TerminalSchema)` to create a new message.
  */
 export const TerminalSchema: GenMessage<Terminal> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 15);
+  messageDesc(file_harness_v1_harness, 14);
 
 /**
  * Failure is the sidecar reporting that it could not handle a request at
@@ -755,7 +717,7 @@ export type Failure = Message<"harness.v1.Failure"> & {
  * Use `create(FailureSchema)` to create a new message.
  */
 export const FailureSchema: GenMessage<Failure> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 16);
+  messageDesc(file_harness_v1_harness, 15);
 
 /**
  * Response is one line from the sidecar to the worker.
@@ -800,7 +762,7 @@ export type Response = Message<"harness.v1.Response"> & {
  * Use `create(ResponseSchema)` to create a new message.
  */
 export const ResponseSchema: GenMessage<Response> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 17);
+  messageDesc(file_harness_v1_harness, 16);
 
 /**
  * ExitReason says why a session ended when the exit status alone does not.
@@ -827,8 +789,9 @@ export enum ExitReason {
   REFUSED = 1,
 
   /**
-   * EXIT_REASON_POLICY means the tool policy the step asked for could not be
-   * applied, so the session was never started under it.
+   * EXIT_REASON_POLICY means the options the step asked for could not be
+   * applied — an unknown key, a wrong type, a value the harness has no name
+   * for — so the session was never started under them.
    *
    * @generated from enum value: EXIT_REASON_POLICY = 2;
    */

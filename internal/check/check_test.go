@@ -122,7 +122,7 @@ var _ = Describe("The clean-tree check", Label("unit"), func() {
 		_, err := implement.Resume(ctx,
 			harness.Session{ID: "implement"},
 			harness.Prompt{Text: check.Feedback(step.GetCheck(), result)},
-			nil, harness.Policy{})
+			nil)
 		Expect(err).NotTo(HaveOccurred())
 
 		// Then the implement session's next prompt contains that stderr

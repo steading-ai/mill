@@ -12,13 +12,19 @@ import (
 
 var _ = Describe("The sidecar wire's codec", Label("unit"), func() {
 	It("renders a request as one line and reads it back unchanged", func() {
+		settings, err := structpb.NewStruct(map[string]any{
+			"model":  "claude-opus-5",
+			"effort": "high",
+			"tools":  map[string]any{"allow": []any{"Read"}, "deny": []any{"Write"}},
+		})
+		Expect(err).NotTo(HaveOccurred())
 		request := &harnessv1.Request{
 			Id: "mill-0102030405060708",
 			Body: &harnessv1.Request_Start{Start: &harnessv1.Start{
 				SessionId:    "b6f1e0a2-0000-4000-8000-000000000001",
 				Prompt:       "implement the node\nwith a newline in it",
 				Attachments:  []*harnessv1.Attachment{{Name: "dagger#3", Source: "predecessor", MediaType: "text/markdown", Content: "done"}},
-				Settings:     &harnessv1.Settings{Model: "claude-opus-5", Effort: "high", ToolPolicy: &harnessv1.ToolPolicy{Allow: []string{"Read"}, Deny: []string{"Write"}}},
+				Settings:     &harnessv1.Settings{Options: settings},
 				Workspace:    &harnessv1.Workspace{Socket: "/run/mill/ws.sock", Token: "step-token-1"},
 				OutputSchema: `{"type":"object"}`,
 				Cwd:          "/w/checkout",

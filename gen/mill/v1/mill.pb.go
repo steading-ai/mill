@@ -2439,19 +2439,23 @@ func (x *OnFailure) GetReviseTarget() string {
 	return ""
 }
 
-// HarnessSettings is one adapter's entry in a step's harness table. Resolves
-// docs/domain-model.md's open question "whether harness settings belong on
-// the step or on the skill record": on the step, because a skill shared
-// between a docs workflow and a feature workflow is worth a different model
-// in each and the skill record cannot hold both.
+// HarnessSettings is one adapter's entry in a step's harness table: the
+// options document that adapter's harness runs the step under, carried
+// verbatim.
+//
+// Mill interprets nothing inside it. What a knob means is the harness's to
+// say, so the harness validates the document and refuses what it does not
+// know; a harness that grows a knob is a harness change and a workflow
+// change, and neither this contract nor the mill is rebuilt for it.
+//
+// Resolves docs/domain-model.md's open question "whether harness settings
+// belong on the step or on the skill record": on the step, because a skill
+// shared between a docs workflow and a feature workflow is worth a different
+// model in each and the skill record cannot hold both.
 type HarnessSettings struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The model to run the session on. Harness-specific free string.
-	Model string `protobuf:"bytes,1,opt,name=model,proto3" json:"model,omitempty"`
-	// How hard the model should think. Harness-specific free string.
-	Effort string `protobuf:"bytes,2,opt,name=effort,proto3" json:"effort,omitempty"`
-	// The tool allowlist the session runs under.
-	ToolPolicy    *v1.ToolPolicy `protobuf:"bytes,3,opt,name=tool_policy,json=toolPolicy,proto3" json:"tool_policy,omitempty"`
+	// The options document, as the workflow's yaml block gave it.
+	Options       *structpb.Struct `protobuf:"bytes,1,opt,name=options,proto3" json:"options,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2486,23 +2490,9 @@ func (*HarnessSettings) Descriptor() ([]byte, []int) {
 	return file_mill_v1_mill_proto_rawDescGZIP(), []int{13}
 }
 
-func (x *HarnessSettings) GetModel() string {
+func (x *HarnessSettings) GetOptions() *structpb.Struct {
 	if x != nil {
-		return x.Model
-	}
-	return ""
-}
-
-func (x *HarnessSettings) GetEffort() string {
-	if x != nil {
-		return x.Effort
-	}
-	return ""
-}
-
-func (x *HarnessSettings) GetToolPolicy() *v1.ToolPolicy {
-	if x != nil {
-		return x.ToolPolicy
+		return x.Options
 	}
 	return nil
 }
@@ -2530,8 +2520,8 @@ type Step struct {
 	Evidence EvidenceKind `protobuf:"varint,7,opt,name=evidence,proto3,enum=mill.v1.EvidenceKind" json:"evidence,omitempty"`
 	// The capability set the step's workspace handle grants.
 	Capabilities []Capability `protobuf:"varint,8,rep,packed,name=capabilities,proto3,enum=mill.v1.Capability" json:"capabilities,omitempty"`
-	// Per-harness settings: model, effort, tool policy. Keyed by harness name;
-	// the adapter reads its own entry.
+	// Per-harness options documents, keyed by harness name; the adapter reads
+	// its own entry and mill reads none of them.
 	Harness map[string]*HarnessSettings `protobuf:"bytes,9,rep,name=harness,proto3" json:"harness,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// What a failure does: revise a named earlier step, or park. Default park.
 	OnFailure *OnFailure `protobuf:"bytes,10,opt,name=on_failure,json=onFailure,proto3" json:"on_failure,omitempty"`
@@ -3828,12 +3818,9 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"denyResult\"\\\n" +
 	"\tOnFailure\x12*\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\x16.mill.v1.OnFailureKindR\x04kind\x12#\n" +
-	"\rrevise_target\x18\x02 \x01(\tR\freviseTarget\"x\n" +
-	"\x0fHarnessSettings\x12\x14\n" +
-	"\x05model\x18\x01 \x01(\tR\x05model\x12\x16\n" +
-	"\x06effort\x18\x02 \x01(\tR\x06effort\x127\n" +
-	"\vtool_policy\x18\x03 \x01(\v2\x16.harness.v1.ToolPolicyR\n" +
-	"toolPolicy\"\xec\x04\n" +
+	"\rrevise_target\x18\x02 \x01(\tR\freviseTarget\"D\n" +
+	"\x0fHarnessSettings\x121\n" +
+	"\aoptions\x18\x01 \x01(\v2\x17.google.protobuf.StructR\aoptions\"\xec\x04\n" +
 	"\x04Step\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12%\n" +
 	"\x04kind\x18\x02 \x01(\x0e2\x11.mill.v1.StepKindR\x04kind\x12\x18\n" +
@@ -4099,8 +4086,7 @@ var file_mill_v1_mill_proto_goTypes = []any{
 	(*timestamppb.Timestamp)(nil), // 45: google.protobuf.Timestamp
 	(*v1.ProcessExit)(nil),        // 46: harness.v1.ProcessExit
 	(*structpb.Struct)(nil),       // 47: google.protobuf.Struct
-	(*v1.ToolPolicy)(nil),         // 48: harness.v1.ToolPolicy
-	(*durationpb.Duration)(nil),   // 49: google.protobuf.Duration
+	(*durationpb.Duration)(nil),   // 48: google.protobuf.Duration
 }
 var file_mill_v1_mill_proto_depIdxs = []int32{
 	0,  // 0: mill.v1.Run.status:type_name -> mill.v1.RunStatus
@@ -4134,7 +4120,7 @@ var file_mill_v1_mill_proto_depIdxs = []int32{
 	10, // 28: mill.v1.Check.feedback:type_name -> mill.v1.Feedback
 	26, // 29: mill.v1.Gate.ask:type_name -> mill.v1.Ask
 	11, // 30: mill.v1.OnFailure.kind:type_name -> mill.v1.OnFailureKind
-	48, // 31: mill.v1.HarnessSettings.tool_policy:type_name -> harness.v1.ToolPolicy
+	47, // 31: mill.v1.HarnessSettings.options:type_name -> google.protobuf.Struct
 	2,  // 32: mill.v1.Step.kind:type_name -> mill.v1.StepKind
 	23, // 33: mill.v1.Step.skill:type_name -> mill.v1.SkillRef
 	25, // 34: mill.v1.Step.check:type_name -> mill.v1.Check
@@ -4143,14 +4129,14 @@ var file_mill_v1_mill_proto_depIdxs = []int32{
 	5,  // 37: mill.v1.Step.capabilities:type_name -> mill.v1.Capability
 	44, // 38: mill.v1.Step.harness:type_name -> mill.v1.Step.HarnessEntry
 	28, // 39: mill.v1.Step.on_failure:type_name -> mill.v1.OnFailure
-	49, // 40: mill.v1.Step.timeout:type_name -> google.protobuf.Duration
+	48, // 40: mill.v1.Step.timeout:type_name -> google.protobuf.Duration
 	7,  // 41: mill.v1.Workflow.scope:type_name -> mill.v1.Scope
 	30, // 42: mill.v1.Workflow.steps:type_name -> mill.v1.Step
 	22, // 43: mill.v1.Workflow.source:type_name -> mill.v1.Source
 	45, // 44: mill.v1.Workflow.created_at:type_name -> google.protobuf.Timestamp
 	32, // 45: mill.v1.Workflow.status:type_name -> mill.v1.StatusPolicy
-	49, // 46: mill.v1.StatusPolicy.interval:type_name -> google.protobuf.Duration
-	49, // 47: mill.v1.StatusPolicy.timeout:type_name -> google.protobuf.Duration
+	48, // 46: mill.v1.StatusPolicy.interval:type_name -> google.protobuf.Duration
+	48, // 47: mill.v1.StatusPolicy.timeout:type_name -> google.protobuf.Duration
 	6,  // 48: mill.v1.ProjectDefault.tier:type_name -> mill.v1.Tier
 	5,  // 49: mill.v1.StepToken.capabilities:type_name -> mill.v1.Capability
 	45, // 50: mill.v1.StepToken.issued_at:type_name -> google.protobuf.Timestamp

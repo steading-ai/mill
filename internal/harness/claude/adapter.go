@@ -26,6 +26,8 @@ import (
 	"syscall"
 	"time"
 
+	"google.golang.org/protobuf/types/known/structpb"
+
 	harnessv1 "github.com/ivy/mill/gen/harness/v1"
 	"github.com/ivy/mill/internal/harness"
 	"github.com/ivy/mill/internal/workspace"
@@ -114,12 +116,16 @@ func New(options ...Option) *Adapter {
 }
 
 // Start begins a session that has never run.
-func (a *Adapter) Start(ctx context.Context, session harness.Session, prompt harness.Prompt, attachments []harness.Attachment, policy harness.Policy) (*harness.Turn, error) {
+func (a *Adapter) Start(ctx context.Context, session harness.Session, prompt harness.Prompt, attachments []harness.Attachment) (*harness.Turn, error) {
+	settings, err := wireSettings(session)
+	if err != nil {
+		return nil, err
+	}
 	return a.begin(ctx, session, &harnessv1.Request{Id: requestID(), Body: &harnessv1.Request_Start{Start: &harnessv1.Start{
 		SessionId:    session.ID,
 		Prompt:       prompt.Text,
 		Attachments:  wireAttachments(attachments),
-		Settings:     wireSettings(session, policy),
+		Settings:     settings,
 		Workspace:    wireWorkspace(session),
 		OutputSchema: prompt.OutputSchema,
 		Cwd:          session.Cwd,
@@ -127,12 +133,16 @@ func (a *Adapter) Start(ctx context.Context, session harness.Session, prompt har
 }
 
 // Resume continues an existing session with a new prompt.
-func (a *Adapter) Resume(ctx context.Context, session harness.Session, prompt harness.Prompt, attachments []harness.Attachment, policy harness.Policy) (*harness.Turn, error) {
+func (a *Adapter) Resume(ctx context.Context, session harness.Session, prompt harness.Prompt, attachments []harness.Attachment) (*harness.Turn, error) {
+	settings, err := wireSettings(session)
+	if err != nil {
+		return nil, err
+	}
 	return a.begin(ctx, session, &harnessv1.Request{Id: requestID(), Body: &harnessv1.Request_Resume{Resume: &harnessv1.Resume{
 		SessionId:    session.ID,
 		Prompt:       prompt.Text,
 		Attachments:  wireAttachments(attachments),
-		Settings:     wireSettings(session, policy),
+		Settings:     settings,
 		Workspace:    wireWorkspace(session),
 		OutputSchema: prompt.OutputSchema,
 		Cwd:          session.Cwd,
@@ -443,12 +453,23 @@ func wireWorkspace(session harness.Session) *harnessv1.Workspace {
 	return &harnessv1.Workspace{Socket: session.Workspace.Socket, Token: session.Workspace.Token}
 }
 
-func wireSettings(session harness.Session, policy harness.Policy) *harnessv1.Settings {
-	return &harnessv1.Settings{
-		Model:      session.Model,
-		Effort:     session.Effort,
-		ToolPolicy: &harnessv1.ToolPolicy{Allow: policy.Allow, Deny: policy.Deny},
+// wireSettings carries the step's options document to the sidecar as it
+// stands. The adapter reads no key of it: which keys the sidecar has, and
+// what each one does, is the sidecar's own schema, and a key this side does
+// not recognise is one the sidecar refuses rather than one the adapter drops
+// on the way (docs/architecture.md §"Skill steps: the harness adapter").
+//
+// The one failure here is a document that has no JSON form at all, which the
+// loader has already refused: a Struct is what the wire can carry.
+func wireSettings(session harness.Session) (*harnessv1.Settings, error) {
+	if len(session.Options) == 0 {
+		return nil, nil
 	}
+	options, err := structpb.NewStruct(session.Options)
+	if err != nil {
+		return nil, fmt.Errorf("claude: the step's options are not a JSON document: %w", err)
+	}
+	return &harnessv1.Settings{Options: options}, nil
 }
 
 func wireAttachments(attachments []harness.Attachment) []*harnessv1.Attachment {

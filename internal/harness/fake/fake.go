@@ -45,14 +45,17 @@ type Script struct {
 	Do func(session harness.Session)
 }
 
-// Call is one thing a spec asked the harness to do.
+// Call is one thing a spec asked the harness to do. The whole session is
+// kept, options document and all, because what the worker handed the harness
+// is what a spec about the seam is asserting on: mill interprets no key of
+// that document, so the only way to see it arrived intact is to record it as
+// it came.
 type Call struct {
 	// Verb is "start", "resume", or "cancel".
 	Verb        string
 	Session     harness.Session
 	Prompt      harness.Prompt
 	Attachments []harness.Attachment
-	Policy      harness.Policy
 }
 
 // Harness replays scripts in order. The last script is reused once they run
@@ -78,13 +81,13 @@ func New(scripts ...Script) *Harness {
 }
 
 // Start begins a session by replaying the next script.
-func (h *Harness) Start(ctx context.Context, session harness.Session, prompt harness.Prompt, attachments []harness.Attachment, policy harness.Policy) (*harness.Turn, error) {
-	return h.play(ctx, "start", session, prompt, attachments, policy)
+func (h *Harness) Start(ctx context.Context, session harness.Session, prompt harness.Prompt, attachments []harness.Attachment) (*harness.Turn, error) {
+	return h.play(ctx, "start", session, prompt, attachments)
 }
 
 // Resume continues a session by replaying the next script.
-func (h *Harness) Resume(ctx context.Context, session harness.Session, prompt harness.Prompt, attachments []harness.Attachment, policy harness.Policy) (*harness.Turn, error) {
-	return h.play(ctx, "resume", session, prompt, attachments, policy)
+func (h *Harness) Resume(ctx context.Context, session harness.Session, prompt harness.Prompt, attachments []harness.Attachment) (*harness.Turn, error) {
+	return h.play(ctx, "resume", session, prompt, attachments)
 }
 
 // Cancel ends a held turn. Cancelling a session that is not running is not
@@ -102,9 +105,9 @@ func (h *Harness) Cancel(_ context.Context, session harness.Session) error {
 	return nil
 }
 
-func (h *Harness) play(ctx context.Context, verb string, session harness.Session, prompt harness.Prompt, attachments []harness.Attachment, policy harness.Policy) (*harness.Turn, error) {
+func (h *Harness) play(ctx context.Context, verb string, session harness.Session, prompt harness.Prompt, attachments []harness.Attachment) (*harness.Turn, error) {
 	h.mu.Lock()
-	h.calls = append(h.calls, Call{Verb: verb, Session: session, Prompt: prompt, Attachments: attachments, Policy: policy})
+	h.calls = append(h.calls, Call{Verb: verb, Session: session, Prompt: prompt, Attachments: attachments})
 	script := h.scripts[min(h.next, len(h.scripts)-1)]
 	h.next++
 	stop := make(chan struct{})

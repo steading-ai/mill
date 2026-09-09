@@ -83,7 +83,7 @@ steps:
 		Expect(err).To(MatchError(ContainSubstring("models")))
 	})
 
-	It("reads the harness settings a step names for the claude adapter", func() {
+	It("carries a step's harness options to the store as the yaml wrote them", func() {
 		loaded, _, err := workflow.Load(dir(`
 name: tiny
 steps:
@@ -101,9 +101,45 @@ steps:
 `, map[string]string{"implement": "Make the change."}))
 		Expect(err).NotTo(HaveOccurred())
 		settings := step(loaded, "implement").GetHarness()["claude"]
-		Expect(settings.GetModel()).To(Equal("sonnet"))
-		Expect(settings.GetEffort()).To(Equal("medium"))
-		Expect(settings.GetToolPolicy().GetAllow()).To(Equal([]string{"Glob"}))
+		Expect(settings.GetOptions().AsMap()).To(Equal(map[string]any{
+			"model":  "sonnet",
+			"effort": "medium",
+			"tools":  map[string]any{"allow": []any{"Glob"}},
+		}))
+	})
+
+	It("accepts an option it has never heard of, because the harness owns the schema", func() {
+		loaded, _, err := workflow.Load(dir(`
+name: tiny
+steps:
+  - name: implement
+    kind: skill
+    session: implement
+    skill: implement
+    evidence: artifact
+    harness:
+      claude:
+        model: sonnet
+        thinking_budget: 4096
+`, map[string]string{"implement": "Make the change."}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(step(loaded, "implement").GetHarness()["claude"].GetOptions().AsMap()).
+			To(HaveKeyWithValue("thinking_budget", float64(4096)))
+	})
+
+	It("refuses a harness block that is not a mapping", func() {
+		_, _, err := workflow.Load(dir(`
+name: tiny
+steps:
+  - name: implement
+    kind: skill
+    session: implement
+    skill: implement
+    evidence: artifact
+    harness:
+      claude: sonnet
+`, map[string]string{"implement": "Make the change."}))
+		Expect(err).To(HaveOccurred())
 	})
 
 	It("The old key is not silently accepted", func() {

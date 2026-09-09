@@ -87,23 +87,22 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 	}
 
 	session := harness.Session{
-		ID:        sr.GetSessionId(),
-		Model:     settings.GetModel(),
-		Effort:    settings.GetEffort(),
+		ID: sr.GetSessionId(),
+		// The step's options document, as the workflow wrote it. Nothing
+		// here reads a key of it: the harness owns its own schema and
+		// refuses what it does not know, so a knob mill has never heard of
+		// still reaches the harness that has (docs/domain-model.md §Step).
+		Options:   settings.GetOptions().AsMap(),
 		Workspace: harness.Workspace{Socket: handle.Socket, Token: token.GetToken()},
 		Cwd:       handle.Root,
 		Events:    logSink(logFile, r.options.Redactor, r.options.Now),
-	}
-	policy := harness.Policy{
-		Allow: settings.GetToolPolicy().GetAllow(),
-		Deny:  settings.GetToolPolicy().GetDeny(),
 	}
 
 	begin := adapter.Start
 	if sr.GetAttempt() > 1 || s.resumed[sr.GetSessionId()] {
 		begin = adapter.Resume
 	}
-	turn, err := begin(ctx, session, prompt, nil, policy)
+	turn, err := begin(ctx, session, prompt, nil)
 	if err != nil {
 		return result{}, err
 	}

@@ -158,7 +158,7 @@ func (t *transcript) evidence() evidence.Transcript {
 func session(final string, output map[string]any) evidence.Session {
 	GinkgoHelper()
 	agent := fake.New(fake.Script{Terminal: fake.Terminal(final, output, nil)})
-	turn, err := agent.Start(context.Background(), harness.Session{ID: "s"}, harness.Prompt{}, nil, harness.Policy{})
+	turn, err := agent.Start(context.Background(), harness.Session{ID: "s"}, harness.Prompt{}, nil)
 	Expect(err).NotTo(HaveOccurred())
 	terminal, err := turn.Wait(context.Background())
 	Expect(err).NotTo(HaveOccurred())

@@ -16,6 +16,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	harnessv1 "github.com/ivy/mill/gen/harness/v1"
 )
@@ -34,6 +35,16 @@ const (
 	// not care which.
 	sessionSeed = "0f2f4d3a-6d6f-4d2b-9e2c-0d5b7a1c4e11"
 )
+
+// settings is an options document as a step carries it, for the specs that
+// give the sidecar one. The document's schema is the sidecar's own, in
+// src/options.ts; nothing on this side of the wire interprets it.
+func settings(document map[string]any) *harnessv1.Settings {
+	GinkgoHelper()
+	options, err := structpb.NewStruct(document)
+	Expect(err).NotTo(HaveOccurred())
+	return &harnessv1.Settings{Options: options}
+}
 
 // build compiles the sidecar. The specs run what the worker runs — compiled
 // JavaScript under dist/ — rather than a type-stripped shortcut, because the

@@ -35,8 +35,7 @@ var _ = Describe("The claude adapter", Label("unit"), func() {
 		spawner = &watching{Execer: workspace.Spawner{}}
 		session = harness.Session{
 			ID:        "b6f1e0a2-0000-4000-8000-000000000001",
-			Model:     "claude-opus-5",
-			Effort:    "high",
+			Options:   map[string]any{"model": "claude-opus-5", "effort": "high"},
 			Cwd:       GinkgoT().TempDir(),
 			Workspace: harness.Workspace{Socket: "/run/mill/ws.sock", Token: "step-token-1"},
 			Events:    log.sink(),
@@ -62,7 +61,7 @@ printf '%s\n' 'TERMINAL'
 `, "TERMINAL", twoModels)
 
 		By("when the adapter returns the Turn")
-		turn, err := adapter(script).Start(lifetime, session, harness.Prompt{Text: "implement"}, nil, harness.Policy{})
+		turn, err := adapter(script).Start(lifetime, session, harness.Prompt{Text: "implement"}, nil)
 		Expect(err).NotTo(HaveOccurred())
 		log.watch(turn)
 		terminal, err := turn.Wait(lifetime)
@@ -96,7 +95,7 @@ while :; do sleep 0.1; done
 `, "PIDFILE", pidFile)
 
 		running := adapter(script, WithGrace(2*time.Second))
-		turn, err := running.Start(lifetime, session, harness.Prompt{Text: "implement"}, nil, harness.Policy{})
+		turn, err := running.Start(lifetime, session, harness.Prompt{Text: "implement"}, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Eventually(log.collected).Should(HaveLen(1), "the stub never reported itself ready")
 		group := spawner.pid()
@@ -130,7 +129,7 @@ while :; do sleep 0.1; done
 
 		started := time.Now()
 		turn, err := adapter(script, WithTimeout(300*time.Millisecond), WithGrace(grace)).Start(
-			lifetime, session, harness.Prompt{Text: "implement"}, nil, harness.Policy{})
+			lifetime, session, harness.Prompt{Text: "implement"}, nil)
 		Expect(err).NotTo(HaveOccurred())
 		group := spawner.pid()
 		terminal, err := turn.Wait(lifetime)
@@ -151,7 +150,7 @@ while :; do sleep 0.1; done
 `)
 
 		turn, err := adapter(script, WithTimeout(300*time.Millisecond), WithGrace(300*time.Millisecond)).Start(
-			lifetime, session, harness.Prompt{Text: "implement"}, nil, harness.Policy{})
+			lifetime, session, harness.Prompt{Text: "implement"}, nil)
 		Expect(err).NotTo(HaveOccurred())
 		terminal, err := turn.Wait(lifetime)
 
@@ -166,7 +165,7 @@ echo "sidecar: cannot reach the workspace socket" >&2
 exit 1
 `)
 
-		turn, err := adapter(script).Start(lifetime, session, harness.Prompt{Text: "implement"}, nil, harness.Policy{})
+		turn, err := adapter(script).Start(lifetime, session, harness.Prompt{Text: "implement"}, nil)
 		Expect(err).NotTo(HaveOccurred())
 		terminal, err := turn.Wait(lifetime)
 
@@ -180,7 +179,7 @@ exit 1
 		DeferCleanup(func() { Expect(os.Unsetenv("MILL_SPEC_LEAK")).To(Succeed()) })
 		script := stub(`printf '%s\n' '{"terminal":{"exit":{"status":0}}}'`)
 
-		turn, err := adapter(script).Start(lifetime, session, harness.Prompt{Text: "implement"}, nil, harness.Policy{})
+		turn, err := adapter(script).Start(lifetime, session, harness.Prompt{Text: "implement"}, nil)
 		Expect(err).NotTo(HaveOccurred())
 		_, err = turn.Wait(lifetime)
 		Expect(err).NotTo(HaveOccurred())
@@ -202,8 +201,7 @@ printf '%s\n' '{"terminal":{"exit":{"status":0}}}'
 
 		turn, err := adapter(script).Start(lifetime, session,
 			harness.Prompt{Text: "implement the node", OutputSchema: `{"type":"object"}`},
-			[]harness.Attachment{{Name: "dagger#3", Source: "predecessor", MediaType: "text/markdown", Content: "done"}},
-			harness.Policy{Allow: []string{"Read"}, Deny: []string{"Write"}})
+			[]harness.Attachment{{Name: "dagger#3", Source: "predecessor", MediaType: "text/markdown", Content: "done"}})
 		Expect(err).NotTo(HaveOccurred())
 		_, err = turn.Wait(lifetime)
 		Expect(err).NotTo(HaveOccurred())
@@ -220,14 +218,44 @@ printf '%s\n' '{"terminal":{"exit":{"status":0}}}'
 		Expect(start.GetPrompt()).To(Equal("implement the node"))
 		Expect(start.GetOutputSchema()).To(Equal(`{"type":"object"}`))
 		Expect(start.GetCwd()).To(Equal(session.Cwd))
-		Expect(start.GetSettings().GetModel()).To(Equal("claude-opus-5"))
-		Expect(start.GetSettings().GetEffort()).To(Equal("high"))
-		Expect(start.GetSettings().GetToolPolicy().GetAllow()).To(Equal([]string{"Read"}))
-		Expect(start.GetSettings().GetToolPolicy().GetDeny()).To(Equal([]string{"Write"}))
+		Expect(start.GetSettings().GetOptions().AsMap()).To(Equal(session.Options))
 		Expect(start.GetWorkspace().GetSocket()).To(Equal("/run/mill/ws.sock"))
 		Expect(start.GetWorkspace().GetToken()).To(Equal("step-token-1"))
 		Expect(start.GetAttachments()).To(HaveLen(1))
 		Expect(start.GetAttachments()[0].GetSource()).To(Equal("predecessor"))
+	})
+
+	It("Mill does not interpret the options", func() {
+		By("given a step whose claude options carry model, effort and tools")
+		document := map[string]any{
+			"model":  "claude-opus-5",
+			"effort": "high",
+			"tools":  map[string]any{"allow": []any{"Read"}, "deny": []any{"Write"}},
+			// A key this adapter has never heard of. The sidecar owns the
+			// schema; the adapter's job is to hand the document over whole.
+			"thinking_budget": float64(4096),
+		}
+		session.Options = document
+
+		requestFile := scratch("request.json")
+		script := stub(`
+read -r line
+printf '%s' "$line" > REQUEST
+printf '%s\n' '{"terminal":{"exit":{"status":0}}}'
+`, "REQUEST", requestFile)
+
+		By("when the adapter builds the Start request")
+		turn, err := adapter(script).Start(lifetime, session, harness.Prompt{Text: "implement"}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = turn.Wait(lifetime)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("then the request's options equal the step's options document")
+		raw, err := os.ReadFile(requestFile) //nolint:gosec // a spec's own scratch file
+		Expect(err).NotTo(HaveOccurred())
+		request := &harnessv1.Request{}
+		Expect(protojson.Unmarshal(raw, request)).To(Succeed())
+		Expect(request.GetStart().GetSettings().GetOptions().AsMap()).To(Equal(document))
 	})
 
 	It("sends Resume for a session that has run before", func() {
@@ -238,7 +266,7 @@ printf '%s' "$line" > REQUEST
 printf '%s\n' '{"terminal":{"exit":{"status":0}}}'
 `, "REQUEST", requestFile)
 
-		turn, err := adapter(script).Resume(lifetime, session, harness.Prompt{Text: "the review found this"}, nil, harness.Policy{})
+		turn, err := adapter(script).Resume(lifetime, session, harness.Prompt{Text: "the review found this"}, nil)
 		Expect(err).NotTo(HaveOccurred())
 		_, err = turn.Wait(lifetime)
 		Expect(err).NotTo(HaveOccurred())
@@ -262,12 +290,12 @@ printf '%s\n' '{"event":{"text":{"text":"ready"}}}'
 while :; do sleep 0.1; done
 `)
 		running := adapter(script, WithGrace(200*time.Millisecond))
-		_, err := running.Start(lifetime, session, harness.Prompt{}, nil, harness.Policy{})
+		_, err := running.Start(lifetime, session, harness.Prompt{}, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Eventually(log.collected).Should(HaveLen(1))
 		DeferCleanup(func() { Expect(running.Cancel(lifetime, session)).To(Succeed()) })
 
-		_, err = running.Start(lifetime, session, harness.Prompt{}, nil, harness.Policy{})
+		_, err = running.Start(lifetime, session, harness.Prompt{}, nil)
 
 		Expect(err).To(MatchError(ContainSubstring("already running")))
 	})

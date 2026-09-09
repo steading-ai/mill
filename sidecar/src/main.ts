@@ -8,7 +8,7 @@
 // stdin.
 //
 // Exactly one Terminal leaves this process, on every path. A malformed
-// frame, settings that cannot be applied, a session the harness refuses to
+// frame, options that cannot be applied, a session the harness refuses to
 // start, a cancellation that the harness never acknowledges: each is a
 // Terminal whose exit says which, so the worker never has to infer a step's
 // outcome from a stream that stopped. The exit code is 0 whenever the
@@ -29,7 +29,8 @@ import {
 } from "../gen/harness/v1/harness_pb.js";
 import { describe, neverRan } from "./exit.js";
 import { loadQuery, type QueryFn } from "./sdk.js";
-import { PolicyError, buildOptions, runSession, turnOf, type Turn } from "./session.js";
+import { PolicyError } from "./options.js";
+import { buildOptions, runSession, turnOf, type Turn } from "./session.js";
 import { UsageAccumulator } from "./usage.js";
 
 // GRACE_MS_VAR names the environment variable the worker sets to say how

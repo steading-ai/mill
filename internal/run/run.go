@@ -350,6 +350,9 @@ func (r *Runner) drive(ctx context.Context, claimed *dagger.Claimed, stopping <-
 	if err := r.selectWorkflow(s.beat.ctx, s); err != nil {
 		return r.stop(ctx, s, err)
 	}
+	if err := r.requireHarnesses(s); err != nil {
+		return r.stop(ctx, s, err)
+	}
 	if err := r.resumePark(s.beat.ctx, s); err != nil {
 		return r.stop(ctx, s, err)
 	}

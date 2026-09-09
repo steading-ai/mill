@@ -47,7 +47,7 @@ var _ = Describe("The claude adapter against the real sidecar", Label("live"), f
 			ID:     newSessionID(),
 			Cwd:    GinkgoT().TempDir(),
 			Events: log.sink(),
-		}, harness.Prompt{Text: "Reply with the single word: ready. Use no tools."}, nil, harness.Policy{})
+		}, harness.Prompt{Text: "Reply with the single word: ready. Use no tools."}, nil)
 		Expect(err).NotTo(HaveOccurred())
 		log.watch(turn)
 

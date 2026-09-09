@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
 	"github.com/ivy/mill/gen/dagger/v1/daggerv1connect"
@@ -808,12 +809,12 @@ type reviewer struct {
 }
 
 // Start begins a turn.
-func (r *reviewer) Start(_ context.Context, session harness.Session, _ harness.Prompt, _ []harness.Attachment, _ harness.Policy) (*harness.Turn, error) {
+func (r *reviewer) Start(_ context.Context, session harness.Session, _ harness.Prompt, _ []harness.Attachment) (*harness.Turn, error) {
 	return r.play("start", session), nil
 }
 
 // Resume continues one.
-func (r *reviewer) Resume(_ context.Context, session harness.Session, _ harness.Prompt, _ []harness.Attachment, _ harness.Policy) (*harness.Turn, error) {
+func (r *reviewer) Resume(_ context.Context, session harness.Session, _ harness.Prompt, _ []harness.Attachment) (*harness.Turn, error) {
 	return r.play("resume", session), nil
 }
 
@@ -824,7 +825,7 @@ func (r *reviewer) play(verb string, session harness.Session) *harness.Turn {
 	r.mu.Lock()
 	r.sessions = append(r.sessions, session.ID)
 	r.verbs = append(r.verbs, verb)
-	reviewing := session.Model == r.model
+	reviewing := session.Options["model"] == r.model
 	if reviewing {
 		r.rounds++
 	}
@@ -858,6 +859,14 @@ func withHarness(adapter harness.Harness) func(*run.Options) {
 	}
 }
 
+// options is an options document as a step carries it.
+func options(document map[string]any) *structpb.Struct {
+	GinkgoHelper()
+	out, err := structpb.NewStruct(document)
+	Expect(err).NotTo(HaveOccurred())
+	return out
+}
+
 // reviewedFix is quick-fix with a review step after the check, which is what
 // the revise and circuit-breaker specs need: a step that fails, sends the
 // work back to implement, and eventually runs out of attempts.
@@ -865,7 +874,9 @@ func (f *fixture) reviewedFix(ctx context.Context, model string) string {
 	GinkgoHelper()
 	return f.variant(ctx, "reviewed-fix", func(definition *millv1.Workflow) {
 		review := reviewStep(stepOf(definition, "implement").GetSkill())
-		review.Harness = map[string]*millv1.HarnessSettings{run.DefaultHarness: {Model: model}}
+		review.Harness = map[string]*millv1.HarnessSettings{
+			run.DefaultHarness: {Options: options(map[string]any{"model": model})},
+		}
 		insertAfter(definition, "clean-tree", review)
 	})
 }

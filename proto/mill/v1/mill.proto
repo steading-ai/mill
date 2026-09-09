@@ -573,18 +573,22 @@ message OnFailure {
   string revise_target = 2;
 }
 
-// HarnessSettings is one adapter's entry in a step's harness table. Resolves
-// docs/domain-model.md's open question "whether harness settings belong on
-// the step or on the skill record": on the step, because a skill shared
-// between a docs workflow and a feature workflow is worth a different model
-// in each and the skill record cannot hold both.
+// HarnessSettings is one adapter's entry in a step's harness table: the
+// options document that adapter's harness runs the step under, carried
+// verbatim.
+//
+// Mill interprets nothing inside it. What a knob means is the harness's to
+// say, so the harness validates the document and refuses what it does not
+// know; a harness that grows a knob is a harness change and a workflow
+// change, and neither this contract nor the mill is rebuilt for it.
+//
+// Resolves docs/domain-model.md's open question "whether harness settings
+// belong on the step or on the skill record": on the step, because a skill
+// shared between a docs workflow and a feature workflow is worth a different
+// model in each and the skill record cannot hold both.
 message HarnessSettings {
-  // The model to run the session on. Harness-specific free string.
-  string model = 1;
-  // How hard the model should think. Harness-specific free string.
-  string effort = 2;
-  // The tool allowlist the session runs under.
-  harness.v1.ToolPolicy tool_policy = 3;
+  // The options document, as the workflow's yaml block gave it.
+  google.protobuf.Struct options = 1;
 }
 
 // Step is one unit of a workflow. Steps run in order; there is no branching
@@ -609,8 +613,8 @@ message Step {
   EvidenceKind evidence = 7;
   // The capability set the step's workspace handle grants.
   repeated Capability capabilities = 8;
-  // Per-harness settings: model, effort, tool policy. Keyed by harness name;
-  // the adapter reads its own entry.
+  // Per-harness options documents, keyed by harness name; the adapter reads
+  // its own entry and mill reads none of them.
   map<string, HarnessSettings> harness = 9;
   // What a failure does: revise a named earlier step, or park. Default park.
   OnFailure on_failure = 10;
