@@ -12,6 +12,7 @@ import { randomUUID } from "node:crypto";
 import {
   EventSchema,
   ExitReason,
+  HeartbeatSchema,
   TerminalSchema,
   TextSchema,
   ToolCallSchema,
@@ -23,9 +24,19 @@ import {
   type Terminal,
   type Workspace,
 } from "../gen/harness/v1/harness_pb.js";
-import { describe, fromError, fromResult, ran } from "./exit.js";
-import { DEFAULT_PERMISSION_MODE, PolicyError, parseOptions, type Env } from "./options.js";
-import type { Options, QueryFn, SDKMessage } from "./sdk.js";
+import { describe, fromError, fromResult, ran, stalled } from "./exit.js";
+import { denyPollLoops } from "./hooks.js";
+import { DEFAULT_PERMISSION_MODE, PolicyError, TASK_TOOLS, parseOptions, type Env } from "./options.js";
+import type { Conversation, Options, QueryFn, SDKMessage, SDKUserMessage } from "./sdk.js";
+import {
+  BASH_TIMEOUT_MS,
+  BASH_TIMEOUT_VAR,
+  HEARTBEAT_STRIKES,
+  Tasks,
+  heartbeatMs,
+  heartbeatPrompt,
+  killChildren,
+} from "./tasks.js";
 import { fromModelUsage, fromTurn, type UsageAccumulator } from "./usage.js";
 
 // TOOL_RESULT_LIMIT is how much of a tool's output an event carries. Full
@@ -173,6 +184,10 @@ export function sessionEnv(
   for (const [name, value] of Object.entries(carveOut?.set ?? {})) {
     env[name] = value;
   }
+  // The foreground cap. Above it the harness backgrounds the command and
+  // wakes the session when it ends, which is the wait the heartbeat watches
+  // (tasks.ts); below it an ordinary run stays in the turn that started it.
+  env[BASH_TIMEOUT_VAR] ??= BASH_TIMEOUT_MS;
   env[WORKSPACE_SOCKET_VAR] = workspace?.socket ?? "";
   env[STEP_TOKEN_VAR] = workspace?.token ?? "";
   return env;
@@ -207,6 +222,11 @@ function outputFormat(schema: string): Options["outputFormat"] {
 // reaches subagents (docs/spikes/sdk-sessions.md §Q3). A step's deny list is
 // a boundary, so it goes through the one that takes the tool away.
 //
+// The task tools are added to whatever the step allows, unless the step
+// denied them. They are how a session waits on and stops its own background
+// work, and a session that cannot reach them has only the shell loop the
+// PreToolUse hook refuses (hooks.ts, tasks.ts).
+//
 // The permission mode is the step's, and `auto` — the model classifier — when
 // the step names none. A session runs unattended: under the SDK's `default`
 // mode a tool call that needs permission is a prompt nobody answers, which is
@@ -230,6 +250,7 @@ export function buildOptions(
   abortController: AbortController,
 ): Options {
   const declared = parseOptions(turn.settings?.options);
+  const denied = [...(declared.tools?.deny ?? [])];
   const options: Options = {
     abortController,
     env: sessionEnv(turn.workspace, hostEnv, declared.env),
@@ -245,12 +266,14 @@ export function buildOptions(
   if (declared.effort !== undefined) {
     options.effort = declared.effort;
   }
-  if (declared.tools?.allow !== undefined && declared.tools.allow.length > 0) {
-    options.allowedTools = [...declared.tools.allow];
+  const allowed = [...(declared.tools?.allow ?? []), ...TASK_TOOLS.filter((tool) => !denied.includes(tool))];
+  if (allowed.length > 0) {
+    options.allowedTools = [...new Set(allowed)];
   }
-  if (declared.tools?.deny !== undefined && declared.tools.deny.length > 0) {
-    options.disallowedTools = [...declared.tools.deny];
+  if (denied.length > 0) {
+    options.disallowedTools = denied;
   }
+  options.hooks = { PreToolUse: [{ matcher: "Bash", hooks: [async (input) => denyPollLoops(input)] }] };
   const format = outputFormat(turn.outputSchema);
   if (format !== undefined) {
     options.outputFormat = format;
@@ -301,6 +324,61 @@ function jsonObjectOf(value: unknown): JsonObject | undefined {
     : undefined;
 }
 
+// Prompts is the stream of user messages the session is driven by: the
+// step's prompt first, and then whatever the sidecar has to say to a session
+// that has gone quiet. It stays open for the life of the session, because
+// closing it is what tells the harness there is nothing more coming.
+class Prompts implements AsyncIterable<SDKUserMessage> {
+  private readonly queued: SDKUserMessage[] = [];
+  private waiting?: (message: IteratorResult<SDKUserMessage>) => void;
+  private closed = false;
+
+  push(text: string): void {
+    const message = {
+      type: "user",
+      message: { role: "user", content: text },
+      parent_tool_use_id: null,
+      session_id: "",
+    } as unknown as SDKUserMessage;
+    const waiting = this.waiting;
+    if (waiting !== undefined) {
+      this.waiting = undefined;
+      waiting({ done: false, value: message });
+      return;
+    }
+    this.queued.push(message);
+  }
+
+  close(): void {
+    this.closed = true;
+    const waiting = this.waiting;
+    if (waiting !== undefined) {
+      this.waiting = undefined;
+      waiting({ done: true, value: undefined });
+    }
+  }
+
+  async *[Symbol.asyncIterator](): AsyncIterator<SDKUserMessage> {
+    while (true) {
+      const queued = this.queued.shift();
+      if (queued !== undefined) {
+        yield queued;
+        continue;
+      }
+      if (this.closed) {
+        return;
+      }
+      const next = await new Promise<IteratorResult<SDKUserMessage>>((resolve) => {
+        this.waiting = resolve;
+      });
+      if (next.done === true) {
+        return;
+      }
+      yield next.value;
+    }
+  }
+}
+
 // Session is one request's worth of SDK conversation: it streams events to
 // the emitter it is given and returns the terminal record for the turn.
 export interface SessionDeps {
@@ -313,13 +391,52 @@ export interface SessionDeps {
   // report the tokens it streamed.
   accumulated: UsageAccumulator;
   cancelled: () => boolean;
+  // env is the sidecar's own environment, read for the heartbeat interval a
+  // spec shortens.
+  env: Record<string, string | undefined>;
+  // uid is the invoking user, half of where the harness writes a background
+  // task's output.
+  uid: number;
+  // pid is the process whose children the breaker kills. The sidecar's own:
+  // the harness runs as its child and the task's shell under that.
+  pid: number;
 }
 
-// runSession drives one turn to its terminal record. It never throws: every
-// way a turn can end — a result, a rejection, a cancellation — is a Terminal,
-// because the worker's contract is exactly one terminal record per request.
+// timer is a promise that resolves after ms, with the handle to cancel it so
+// a loop that goes round again leaves no timer behind.
+function timer(ms: number): { elapsed: Promise<"elapsed">; cancel: () => void } {
+  let handle: ReturnType<typeof setTimeout>;
+  const elapsed = new Promise<"elapsed">((resolve) => {
+    handle = setTimeout(() => {
+      resolve("elapsed");
+    }, ms);
+  });
+  return {
+    elapsed,
+    cancel: () => {
+      clearTimeout(handle);
+    },
+  };
+}
+
+// abandon takes ownership of a read the loop will never wait on again, so a
+// harness that rejects it afterwards does not end the process with an
+// unhandled rejection.
+function abandon(pending: Promise<unknown> | undefined): void {
+  void pending?.catch(() => undefined);
+}
+
+// runSession drives one request to its terminal record. It never throws:
+// every way a session can end — a result, a rejection, a cancellation, the
+// breaker — is a Terminal, because the worker's contract is exactly one
+// terminal record per request.
+//
+// A session is not over at its first result message. It may background a
+// command and end its turn to be woken when the command finishes, so the
+// loop keeps reading until a turn ends with no task still running. That wait
+// is what the heartbeat and the breaker bound; tasks.ts is why.
 export async function runSession(deps: SessionDeps): Promise<Terminal> {
-  const { query, turn, options, emit, accumulated, cancelled } = deps;
+  const { query, turn, options, emit, accumulated, cancelled, env, uid, pid } = deps;
   const terminal = create(TerminalSchema, { requestId: turn.requestId });
   let sawMessage = false;
 
@@ -327,23 +444,131 @@ export async function runSession(deps: SessionDeps): Promise<Terminal> {
     emit(create(EventSchema, { requestId: turn.requestId, body }));
   };
 
+  const prompts = new Prompts();
+  prompts.push(renderPrompt(turn.prompt, turn.attachments));
+  const tasks = new Tasks(uid, options.cwd ?? turn.cwd);
+  const interval = heartbeatMs(env);
+
+  // waitingSince is when the session first ended a turn with tasks still
+  // running, and strikes how many consecutive looks have found every one of
+  // them silent. Neither is reset by a heartbeat's answer: the wait is one
+  // wait however many times the session is asked about it, and the breaker
+  // counts looks at the task rather than turns of the conversation.
+  let waitingSince: number | undefined;
+  let strikes = 0;
+  // answering says the turn in flight is a heartbeat's answer rather than
+  // the work — a heartbeat's answer is never the step's summary — and inTurn
+  // that the harness is mid-turn, so the wait is not being waited on and the
+  // clock does not run.
+  let answering = false;
+  let inTurn = false;
+  let conversation: Conversation | undefined;
+  let messages: AsyncIterator<SDKMessage> | undefined;
+
   try {
-    const stream = query({ prompt: renderPrompt(turn.prompt, turn.attachments), options });
-    for await (const message of stream) {
+    conversation = query({ prompt: prompts, options });
+    messages = conversation[Symbol.asyncIterator]();
+    let pending: Promise<IteratorResult<SDKMessage>> | undefined;
+
+    reading: while (true) {
+      pending ??= messages.next();
+      let next: IteratorResult<SDKMessage>;
+      if (waitingSince === undefined || inTurn) {
+        next = await pending;
+      } else {
+        const wait = timer(interval);
+        const outcome = await Promise.race([pending, wait.elapsed]);
+        wait.cancel();
+        if (outcome === "elapsed") {
+          // The look, the ask, and the breaker. The pending read is left
+          // where it is: the session may answer at any point, and a second
+          // read would take the message the first is owed.
+          if (!tasks.waiting()) {
+            // Every task ended without the harness taking another turn, so
+            // there is no wake coming and nothing left to wait for.
+            abandon(pending);
+            break reading;
+          }
+          const look = tasks.look();
+          if (look.case === "working") {
+            continue;
+          }
+          strikes += 1;
+          const minutes = Math.floor((Date.now() - waitingSince) / 60_000);
+          if (strikes < HEARTBEAT_STRIKES) {
+            emitEvent({
+              case: "heartbeat",
+              value: create(HeartbeatSchema, {
+                strike: strikes,
+                strikes: HEARTBEAT_STRIKES,
+                waitingSeconds: BigInt(Math.floor((Date.now() - waitingSince) / 1000)),
+                tasks: look.tasks,
+              }),
+            });
+            answering = true;
+            prompts.push(heartbeatPrompt(minutes, look.tasks, strikes, HEARTBEAT_STRIKES));
+            continue;
+          }
+          // The read that will never be answered is abandoned before the
+          // harness is killed: a rejection nothing is waiting on would end
+          // the process before it could write the record of what happened.
+          abandon(pending);
+          await stopTasks(conversation, tasks);
+          killChildren(pid);
+          tasks.clear();
+          terminal.exit = stalled();
+          if (terminal.finalMessage === "") {
+            terminal.finalMessage =
+              "the session ended its turn with a task that went silent and never said what it had done";
+          }
+          break reading;
+        }
+        next = outcome;
+      }
+      pending = undefined;
+      if (next.done === true) {
+        break;
+      }
       sawMessage = true;
-      const result = handleMessage(message, accumulated, emitEvent);
-      if (result !== undefined) {
+      if (tasks.observe(next.value as unknown as { type?: string; subtype?: string })) {
+        // A task's own bookkeeping is not the harness taking a turn: a task
+        // that ends during the wait arrives here, and the wait goes on.
+        continue;
+      }
+      const result = handleMessage(next.value, accumulated, emitEvent);
+      if (result === undefined) {
+        // The harness is talking, so a turn is in flight.
+        inTurn = true;
+        continue;
+      }
+      inTurn = false;
+      // Totals are cumulative across a session's turns, so the latest
+      // result carries the whole session however many turns it took.
+      terminal.usage = fromModelUsage(result.modelUsage);
+      if (!answering) {
         terminal.finalMessage = result.finalMessage;
-        terminal.usage = fromModelUsage(result.modelUsage);
         terminal.exit = result.exit;
         terminal.structuredOutput = jsonObjectOf(result.structuredOutput);
       }
+      answering = false;
+      if (tasks.waiting()) {
+        waitingSince ??= Date.now();
+        continue;
+      }
+      break;
     }
   } catch (err) {
     terminal.exit = fromError(err, sawMessage, cancelled());
     terminal.finalMessage = describe(err);
     terminal.usage = accumulated.total();
     return terminal;
+  } finally {
+    // The input stream is what tells the harness there is nothing more
+    // coming, and returning the iterator is what tells it to stop. Neither
+    // is waited on: the terminal record is already decided, and the worker
+    // is holding the pipe for it.
+    prompts.close();
+    void Promise.resolve(messages?.return?.()).catch(() => undefined);
   }
 
   if (terminal.exit === undefined) {
@@ -363,6 +588,23 @@ export async function runSession(deps: SessionDeps): Promise<Terminal> {
   }
 
   return terminal;
+}
+
+// stopTasks asks the harness to stop what it is running, which is the polite
+// half of the breaker. A harness that offers no such control, or refuses,
+// changes nothing: the processes are killed either way.
+async function stopTasks(conversation: Conversation, tasks: Tasks): Promise<void> {
+  const stop = conversation.stopTask?.bind(conversation);
+  if (stop === undefined) {
+    return;
+  }
+  for (const id of tasks.ids()) {
+    try {
+      await stop(id);
+    } catch {
+      continue;
+    }
+  }
 }
 
 interface ResultOfTurn {

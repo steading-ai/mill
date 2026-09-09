@@ -9,6 +9,38 @@ import (
 	"context"
 )
 
+const countHeartbeats = `-- name: CountHeartbeats :many
+SELECT step_run_id, count(*) AS heartbeats
+FROM events
+WHERE run_id = $1 AND op = 'session_heartbeat' AND step_run_id IS NOT NULL
+GROUP BY step_run_id
+`
+
+type CountHeartbeatsRow struct {
+	StepRunID  *string
+	Heartbeats int64
+}
+
+func (q *Queries) CountHeartbeats(ctx context.Context, runID string) ([]CountHeartbeatsRow, error) {
+	rows, err := q.db.Query(ctx, countHeartbeats, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CountHeartbeatsRow{}
+	for rows.Next() {
+		var i CountHeartbeatsRow
+		if err := rows.Scan(&i.StepRunID, &i.Heartbeats); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertEvent = `-- name: InsertEvent :one
 
 INSERT INTO events (id, run_id, step_run_id, op, before, after, worker_ref)

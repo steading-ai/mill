@@ -139,6 +139,12 @@ const (
 	ReasonTimeout ExitReason = "timeout"
 	// ReasonCancelled means a human or the worker cancelled the run.
 	ReasonCancelled ExitReason = "cancelled"
+	// ReasonStalled means the session ended a turn with a background task
+	// that then went silent through every heartbeat, and the harness's
+	// breaker killed it. The session ran, so the attempt failed rather than
+	// never started, and the last working turn's words are its final
+	// message (docs/domain-model.md §Session).
+	ReasonStalled ExitReason = "stalled"
 )
 
 // reasons is the mapping both ways between the wire's enum and the string the
@@ -149,6 +155,7 @@ var reasons = map[harnessv1.ExitReason]ExitReason{
 	harnessv1.ExitReason_EXIT_REASON_POLICY:      ReasonPolicy,
 	harnessv1.ExitReason_EXIT_REASON_TIMEOUT:     ReasonTimeout,
 	harnessv1.ExitReason_EXIT_REASON_CANCELLED:   ReasonCancelled,
+	harnessv1.ExitReason_EXIT_REASON_STALLED:     ReasonStalled,
 }
 
 // ReasonFrom translates the wire's enum into the reason the ledger stores.

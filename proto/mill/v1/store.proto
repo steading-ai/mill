@@ -86,6 +86,11 @@ service StoreService {
   // never runs does not fail the run — so it is a row of the audit trail
   // and nothing else.
   rpc RecordNotice(RecordNoticeRequest) returns (RecordNoticeResponse);
+  // RecordHeartbeat appends one heartbeat the harness sent a session that
+  // ended its turn with a background task that had gone silent. It changes
+  // no run state: the row of the audit trail is the whole record, and
+  // `mill inspect` counts the rows to say what an attempt's wait cost.
+  rpc RecordHeartbeat(RecordHeartbeatRequest) returns (RecordHeartbeatResponse);
   // SetCompleteRequestId mints and stores the idempotency key of the patch
   // that completes the node, before that patch is sent. Minting is once per
   // run: a second call returns the key already stored, so a worker resuming
@@ -437,6 +442,30 @@ message RecordNoticeRequest {
 
 // RecordNoticeResponse carries nothing: the event is the record.
 message RecordNoticeResponse {
+  // Reserved: the event the call wrote is the whole of the answer.
+}
+
+// RecordHeartbeatRequest records one heartbeat sent to a silent session.
+message RecordHeartbeatRequest {
+  // The lease the caller holds, compared against the run's current lease
+  // inside the writing transaction.
+  string lease_id = 1;
+  // The run whose session was asked.
+  string run_id = 2;
+  // The attempt whose session was asked.
+  string step_run_id = 3;
+  // Which heartbeat this is, counting from one.
+  int32 strike = 4;
+  // How many silent heartbeats trip the harness's breaker.
+  int32 strikes = 5;
+  // How long the turn had been over when the heartbeat was sent, in seconds.
+  int64 waiting_seconds = 6;
+  // The tasks that had gone silent, as the harness described them.
+  repeated string tasks = 7;
+}
+
+// RecordHeartbeatResponse carries nothing: the event is the record.
+message RecordHeartbeatResponse {
   // Reserved: the event the call wrote is the whole of the answer.
 }
 

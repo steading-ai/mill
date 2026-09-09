@@ -80,6 +80,9 @@ const (
 	// StoreServiceRecordNoticeProcedure is the fully-qualified name of the StoreService's RecordNotice
 	// RPC.
 	StoreServiceRecordNoticeProcedure = "/mill.v1.StoreService/RecordNotice"
+	// StoreServiceRecordHeartbeatProcedure is the fully-qualified name of the StoreService's
+	// RecordHeartbeat RPC.
+	StoreServiceRecordHeartbeatProcedure = "/mill.v1.StoreService/RecordHeartbeat"
 	// StoreServiceSetCompleteRequestIdProcedure is the fully-qualified name of the StoreService's
 	// SetCompleteRequestId RPC.
 	StoreServiceSetCompleteRequestIdProcedure = "/mill.v1.StoreService/SetCompleteRequestId"
@@ -179,6 +182,11 @@ type StoreServiceClient interface {
 	// never runs does not fail the run — so it is a row of the audit trail
 	// and nothing else.
 	RecordNotice(context.Context, *connect.Request[v1.RecordNoticeRequest]) (*connect.Response[v1.RecordNoticeResponse], error)
+	// RecordHeartbeat appends one heartbeat the harness sent a session that
+	// ended its turn with a background task that had gone silent. It changes
+	// no run state: the row of the audit trail is the whole record, and
+	// `mill inspect` counts the rows to say what an attempt's wait cost.
+	RecordHeartbeat(context.Context, *connect.Request[v1.RecordHeartbeatRequest]) (*connect.Response[v1.RecordHeartbeatResponse], error)
 	// SetCompleteRequestId mints and stores the idempotency key of the patch
 	// that completes the node, before that patch is sent. Minting is once per
 	// run: a second call returns the key already stored, so a worker resuming
@@ -339,6 +347,12 @@ func NewStoreServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(storeServiceMethods.ByName("RecordNotice")),
 			connect.WithClientOptions(opts...),
 		),
+		recordHeartbeat: connect.NewClient[v1.RecordHeartbeatRequest, v1.RecordHeartbeatResponse](
+			httpClient,
+			baseURL+StoreServiceRecordHeartbeatProcedure,
+			connect.WithSchema(storeServiceMethods.ByName("RecordHeartbeat")),
+			connect.WithClientOptions(opts...),
+		),
 		setCompleteRequestId: connect.NewClient[v1.SetCompleteRequestIdRequest, v1.SetCompleteRequestIdResponse](
 			httpClient,
 			baseURL+StoreServiceSetCompleteRequestIdProcedure,
@@ -477,6 +491,7 @@ type storeServiceClient struct {
 	markWaiting           *connect.Client[v1.MarkWaitingRequest, v1.MarkWaitingResponse]
 	park                  *connect.Client[v1.ParkRequest, v1.ParkResponse]
 	recordNotice          *connect.Client[v1.RecordNoticeRequest, v1.RecordNoticeResponse]
+	recordHeartbeat       *connect.Client[v1.RecordHeartbeatRequest, v1.RecordHeartbeatResponse]
 	setCompleteRequestId  *connect.Client[v1.SetCompleteRequestIdRequest, v1.SetCompleteRequestIdResponse]
 	done                  *connect.Client[v1.DoneRequest, v1.DoneResponse]
 	fail                  *connect.Client[v1.FailRequest, v1.FailResponse]
@@ -562,6 +577,11 @@ func (c *storeServiceClient) Park(ctx context.Context, req *connect.Request[v1.P
 // RecordNotice calls mill.v1.StoreService.RecordNotice.
 func (c *storeServiceClient) RecordNotice(ctx context.Context, req *connect.Request[v1.RecordNoticeRequest]) (*connect.Response[v1.RecordNoticeResponse], error) {
 	return c.recordNotice.CallUnary(ctx, req)
+}
+
+// RecordHeartbeat calls mill.v1.StoreService.RecordHeartbeat.
+func (c *storeServiceClient) RecordHeartbeat(ctx context.Context, req *connect.Request[v1.RecordHeartbeatRequest]) (*connect.Response[v1.RecordHeartbeatResponse], error) {
+	return c.recordHeartbeat.CallUnary(ctx, req)
 }
 
 // SetCompleteRequestId calls mill.v1.StoreService.SetCompleteRequestId.
@@ -713,6 +733,11 @@ type StoreServiceHandler interface {
 	// never runs does not fail the run — so it is a row of the audit trail
 	// and nothing else.
 	RecordNotice(context.Context, *connect.Request[v1.RecordNoticeRequest]) (*connect.Response[v1.RecordNoticeResponse], error)
+	// RecordHeartbeat appends one heartbeat the harness sent a session that
+	// ended its turn with a background task that had gone silent. It changes
+	// no run state: the row of the audit trail is the whole record, and
+	// `mill inspect` counts the rows to say what an attempt's wait cost.
+	RecordHeartbeat(context.Context, *connect.Request[v1.RecordHeartbeatRequest]) (*connect.Response[v1.RecordHeartbeatResponse], error)
 	// SetCompleteRequestId mints and stores the idempotency key of the patch
 	// that completes the node, before that patch is sent. Minting is once per
 	// run: a second call returns the key already stored, so a worker resuming
@@ -869,6 +894,12 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(storeServiceMethods.ByName("RecordNotice")),
 		connect.WithHandlerOptions(opts...),
 	)
+	storeServiceRecordHeartbeatHandler := connect.NewUnaryHandler(
+		StoreServiceRecordHeartbeatProcedure,
+		svc.RecordHeartbeat,
+		connect.WithSchema(storeServiceMethods.ByName("RecordHeartbeat")),
+		connect.WithHandlerOptions(opts...),
+	)
 	storeServiceSetCompleteRequestIdHandler := connect.NewUnaryHandler(
 		StoreServiceSetCompleteRequestIdProcedure,
 		svc.SetCompleteRequestId,
@@ -1017,6 +1048,8 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 			storeServiceParkHandler.ServeHTTP(w, r)
 		case StoreServiceRecordNoticeProcedure:
 			storeServiceRecordNoticeHandler.ServeHTTP(w, r)
+		case StoreServiceRecordHeartbeatProcedure:
+			storeServiceRecordHeartbeatHandler.ServeHTTP(w, r)
 		case StoreServiceSetCompleteRequestIdProcedure:
 			storeServiceSetCompleteRequestIdHandler.ServeHTTP(w, r)
 		case StoreServiceDoneProcedure:
@@ -1116,6 +1149,10 @@ func (UnimplementedStoreServiceHandler) Park(context.Context, *connect.Request[v
 
 func (UnimplementedStoreServiceHandler) RecordNotice(context.Context, *connect.Request[v1.RecordNoticeRequest]) (*connect.Response[v1.RecordNoticeResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.RecordNotice is not implemented"))
+}
+
+func (UnimplementedStoreServiceHandler) RecordHeartbeat(context.Context, *connect.Request[v1.RecordHeartbeatRequest]) (*connect.Response[v1.RecordHeartbeatResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.RecordHeartbeat is not implemented"))
 }
 
 func (UnimplementedStoreServiceHandler) SetCompleteRequestId(context.Context, *connect.Request[v1.SetCompleteRequestIdRequest]) (*connect.Response[v1.SetCompleteRequestIdResponse], error) {

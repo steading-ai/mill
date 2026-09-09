@@ -35,7 +35,7 @@ var wantedRPCs = []string{
 	"GetRunByNode", "CreateRun", "SetLease",
 	"StartStepRun", "RecordStepEnvironment", "MarkSessionStarted", "CloseStepRun", "FailStepRun",
 	"AbortOpenStepRuns", "SupersedeSteps",
-	"MarkWaiting", "Park", "RecordNotice", "SetCompleteRequestId", "Done", "Fail", "Resume", "Abandon", "Cancel",
+	"MarkWaiting", "Park", "RecordNotice", "RecordHeartbeat", "SetCompleteRequestId", "Done", "Fail", "Resume", "Abandon", "Cancel",
 	"IssueStepToken", "RevokeStepToken",
 	"RecordUsage", "MarkUsagePosted",
 	"GetWorkflow", "ListWorkflows", "PutWorkflow", "PutSkill", "GetSkill",

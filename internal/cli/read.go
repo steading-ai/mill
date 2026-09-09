@@ -303,7 +303,40 @@ func renderInspect(cmd *cobra.Command, detail *millv1.InspectResponse, v view) e
 	if err := w.Flush(); err != nil {
 		return err
 	}
+	if err := renderHeartbeats(cmd, detail); err != nil {
+		return err
+	}
 	return renderEnvironments(cmd, detail)
+}
+
+// renderHeartbeats prints what an attempt's wait cost: how many times the
+// harness asked a session that had ended its turn on a task that then went
+// quiet whether the task was still needed (docs/domain-model.md §Session).
+// It is a table of its own, under the steps, and only for the attempts that
+// were asked at all — an attempt whose exit reads `stalled` is one whose
+// heartbeats ran out, and this is where the count that led there is.
+func renderHeartbeats(cmd *cobra.Command, detail *millv1.InspectResponse) error {
+	rows := [][]string{}
+	for _, step := range detail.GetSteps() {
+		if step.GetHeartbeats() == 0 {
+			continue
+		}
+		rows = append(rows, []string{
+			step.GetStepRun().GetStepName(),
+			fmt.Sprint(step.GetStepRun().GetAttempt()),
+			fmt.Sprint(step.GetHeartbeats()),
+		})
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
+	w := table(cmd)
+	_, _ = fmt.Fprintln(w, "STEP\tATTEMPT\tHEARTBEATS")
+	for _, row := range rows {
+		_, _ = fmt.Fprintln(w, strings.Join(row, "\t"))
+	}
+	return w.Flush()
 }
 
 // renderEnvironments prints what the environment mode gave each session,
@@ -845,6 +878,12 @@ func exitText(exit *harnessv1.ProcessExit) string {
 	}
 	if exit.GetSignal() != 0 {
 		return fmt.Sprintf("%d signal %d", exit.GetStatus(), exit.GetSignal())
+	}
+	// A session that ran can still carry a reason: the breaker stops a
+	// stalled one at a status of its own choosing, and the status alone
+	// would say only that the attempt failed.
+	if exit.GetReason() != harnessv1.ExitReason_EXIT_REASON_UNSPECIFIED {
+		return fmt.Sprintf("%d:%s", exit.GetStatus(), enumWord(exit.GetReason().String(), "EXIT_REASON_"))
 	}
 	return fmt.Sprint(exit.GetStatus())
 }

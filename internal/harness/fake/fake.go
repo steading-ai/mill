@@ -188,6 +188,26 @@ func ToolCall(requestID, callID, name string, arguments map[string]any) *harness
 	}}
 }
 
+// Heartbeat is the harness asking a session that ended its turn on a task
+// that then went quiet whether the task is still needed.
+func Heartbeat(requestID string, strike, strikes int32, waitingSeconds int64, tasks ...string) *harnessv1.Event {
+	return &harnessv1.Event{RequestId: requestID, Body: &harnessv1.Event_Heartbeat{
+		Heartbeat: &harnessv1.Heartbeat{
+			Strike: strike, Strikes: strikes, WaitingSeconds: waitingSeconds, Tasks: tasks,
+		},
+	}}
+}
+
+// Stalled builds the record of a session the harness's breaker stopped: the
+// last working turn's words, and a failure whose reason says the words were
+// taken rather than offered.
+func Stalled(final string) *harness.Terminal {
+	return &harness.Terminal{
+		FinalMessage: final,
+		Exit:         harness.ProcessExit{Status: 1, Reason: harness.ReasonStalled},
+	}
+}
+
 // UsageEvent is what one assistant turn billed, which the worker writes to
 // the ledger per turn.
 func UsageEvent(requestID string, usage harness.Usage) *harnessv1.Event {

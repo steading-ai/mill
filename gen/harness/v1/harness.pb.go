@@ -60,6 +60,13 @@ const (
 	// EXIT_REASON_CANCELLED means a human or the worker cancelled the run and
 	// the session was stopped cleanly.
 	ExitReason_EXIT_REASON_CANCELLED ExitReason = 4
+	// EXIT_REASON_STALLED means the session ended a turn with a background
+	// task that then produced nothing, stayed silent through every heartbeat,
+	// and had its processes killed by the sidecar's breaker. The session ran
+	// and its last working turn is the final message, so the status is the
+	// turn's and this reason is what says the words were taken rather than
+	// offered.
+	ExitReason_EXIT_REASON_STALLED ExitReason = 5
 )
 
 // Enum value maps for ExitReason.
@@ -70,6 +77,7 @@ var (
 		2: "EXIT_REASON_POLICY",
 		3: "EXIT_REASON_TIMEOUT",
 		4: "EXIT_REASON_CANCELLED",
+		5: "EXIT_REASON_STALLED",
 	}
 	ExitReason_value = map[string]int32{
 		"EXIT_REASON_UNSPECIFIED": 0,
@@ -77,6 +85,7 @@ var (
 		"EXIT_REASON_POLICY":      2,
 		"EXIT_REASON_TIMEOUT":     3,
 		"EXIT_REASON_CANCELLED":   4,
+		"EXIT_REASON_STALLED":     5,
 	}
 )
 
@@ -1060,6 +1069,83 @@ func (x *ToolResult) GetIsError() bool {
 	return false
 }
 
+// Heartbeat is the sidecar asking a session that ended its turn with a
+// background task still running whether it is done. It is sent when the
+// task has produced no output since the last look, so the ledger can show
+// what the wait cost and how close the breaker came to tripping.
+type Heartbeat struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Which heartbeat this is, counting from one.
+	Strike int32 `protobuf:"varint,1,opt,name=strike,proto3" json:"strike,omitempty"`
+	// How many silent heartbeats trip the breaker.
+	Strikes int32 `protobuf:"varint,2,opt,name=strikes,proto3" json:"strikes,omitempty"`
+	// How long the turn has been over when this heartbeat was sent, in
+	// seconds.
+	WaitingSeconds int64 `protobuf:"varint,3,opt,name=waiting_seconds,json=waitingSeconds,proto3" json:"waiting_seconds,omitempty"`
+	// The tasks that have gone silent, as the harness described them.
+	Tasks         []string `protobuf:"bytes,4,rep,name=tasks,proto3" json:"tasks,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Heartbeat) Reset() {
+	*x = Heartbeat{}
+	mi := &file_harness_v1_harness_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Heartbeat) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Heartbeat) ProtoMessage() {}
+
+func (x *Heartbeat) ProtoReflect() protoreflect.Message {
+	mi := &file_harness_v1_harness_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
+func (*Heartbeat) Descriptor() ([]byte, []int) {
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *Heartbeat) GetStrike() int32 {
+	if x != nil {
+		return x.Strike
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetStrikes() int32 {
+	if x != nil {
+		return x.Strikes
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetWaitingSeconds() int64 {
+	if x != nil {
+		return x.WaitingSeconds
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetTasks() []string {
+	if x != nil {
+		return x.Tasks
+	}
+	return nil
+}
+
 // Event is one thing that happened during a turn, streamed to the worker as
 // it happens. Events are for the operator's log and the ledger's usage rows;
 // nothing an event says is evidence.
@@ -1075,6 +1161,7 @@ type Event struct {
 	//	*Event_ToolCall
 	//	*Event_ToolResult
 	//	*Event_Usage
+	//	*Event_Heartbeat
 	Body          isEvent_Body `protobuf_oneof:"body"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1082,7 +1169,7 @@ type Event struct {
 
 func (x *Event) Reset() {
 	*x = Event{}
-	mi := &file_harness_v1_harness_proto_msgTypes[13]
+	mi := &file_harness_v1_harness_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1094,7 +1181,7 @@ func (x *Event) String() string {
 func (*Event) ProtoMessage() {}
 
 func (x *Event) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[13]
+	mi := &file_harness_v1_harness_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1107,7 +1194,7 @@ func (x *Event) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Event.ProtoReflect.Descriptor instead.
 func (*Event) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{13}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *Event) GetRequestId() string {
@@ -1160,6 +1247,15 @@ func (x *Event) GetUsage() *Usage {
 	return nil
 }
 
+func (x *Event) GetHeartbeat() *Heartbeat {
+	if x != nil {
+		if x, ok := x.Body.(*Event_Heartbeat); ok {
+			return x.Heartbeat
+		}
+	}
+	return nil
+}
+
 type isEvent_Body interface {
 	isEvent_Body()
 }
@@ -1184,6 +1280,11 @@ type Event_Usage struct {
 	Usage *Usage `protobuf:"bytes,5,opt,name=usage,proto3,oneof"`
 }
 
+type Event_Heartbeat struct {
+	// The sidecar asked a silent session whether its task is still needed.
+	Heartbeat *Heartbeat `protobuf:"bytes,6,opt,name=heartbeat,proto3,oneof"`
+}
+
 func (*Event_Text) isEvent_Body() {}
 
 func (*Event_ToolCall) isEvent_Body() {}
@@ -1191,6 +1292,8 @@ func (*Event_ToolCall) isEvent_Body() {}
 func (*Event_ToolResult) isEvent_Body() {}
 
 func (*Event_Usage) isEvent_Body() {}
+
+func (*Event_Heartbeat) isEvent_Body() {}
 
 // Terminal is the last line of a request: how the session ended and what it
 // produced. Exactly one Terminal follows each Start or Resume, and it is the
@@ -1219,7 +1322,7 @@ type Terminal struct {
 
 func (x *Terminal) Reset() {
 	*x = Terminal{}
-	mi := &file_harness_v1_harness_proto_msgTypes[14]
+	mi := &file_harness_v1_harness_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1231,7 +1334,7 @@ func (x *Terminal) String() string {
 func (*Terminal) ProtoMessage() {}
 
 func (x *Terminal) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[14]
+	mi := &file_harness_v1_harness_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1244,7 +1347,7 @@ func (x *Terminal) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Terminal.ProtoReflect.Descriptor instead.
 func (*Terminal) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{14}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *Terminal) GetRequestId() string {
@@ -1298,7 +1401,7 @@ type Failure struct {
 
 func (x *Failure) Reset() {
 	*x = Failure{}
-	mi := &file_harness_v1_harness_proto_msgTypes[15]
+	mi := &file_harness_v1_harness_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1310,7 +1413,7 @@ func (x *Failure) String() string {
 func (*Failure) ProtoMessage() {}
 
 func (x *Failure) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[15]
+	mi := &file_harness_v1_harness_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1323,7 +1426,7 @@ func (x *Failure) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Failure.ProtoReflect.Descriptor instead.
 func (*Failure) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{15}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *Failure) GetRequestId() string {
@@ -1357,7 +1460,7 @@ type Response struct {
 
 func (x *Response) Reset() {
 	*x = Response{}
-	mi := &file_harness_v1_harness_proto_msgTypes[16]
+	mi := &file_harness_v1_harness_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1369,7 +1472,7 @@ func (x *Response) String() string {
 func (*Response) ProtoMessage() {}
 
 func (x *Response) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[16]
+	mi := &file_harness_v1_harness_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1382,7 +1485,7 @@ func (x *Response) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Response.ProtoReflect.Descriptor instead.
 func (*Response) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{16}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *Response) GetBody() isResponse_Body {
@@ -1516,7 +1619,12 @@ const file_harness_v1_harness_proto_rawDesc = "" +
 	"ToolResult\x12\x17\n" +
 	"\acall_id\x18\x01 \x01(\tR\x06callId\x12\x18\n" +
 	"\acontent\x18\x02 \x01(\tR\acontent\x12\x19\n" +
-	"\bis_error\x18\x03 \x01(\bR\aisError\"\xf1\x01\n" +
+	"\bis_error\x18\x03 \x01(\bR\aisError\"|\n" +
+	"\tHeartbeat\x12\x16\n" +
+	"\x06strike\x18\x01 \x01(\x05R\x06strike\x12\x18\n" +
+	"\astrikes\x18\x02 \x01(\x05R\astrikes\x12'\n" +
+	"\x0fwaiting_seconds\x18\x03 \x01(\x03R\x0ewaitingSeconds\x12\x14\n" +
+	"\x05tasks\x18\x04 \x03(\tR\x05tasks\"\xa8\x02\n" +
 	"\x05Event\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12&\n" +
@@ -1524,7 +1632,8 @@ const file_harness_v1_harness_proto_rawDesc = "" +
 	"\ttool_call\x18\x03 \x01(\v2\x14.harness.v1.ToolCallH\x00R\btoolCall\x129\n" +
 	"\vtool_result\x18\x04 \x01(\v2\x16.harness.v1.ToolResultH\x00R\n" +
 	"toolResult\x12)\n" +
-	"\x05usage\x18\x05 \x01(\v2\x11.harness.v1.UsageH\x00R\x05usageB\x06\n" +
+	"\x05usage\x18\x05 \x01(\v2\x11.harness.v1.UsageH\x00R\x05usage\x125\n" +
+	"\theartbeat\x18\x06 \x01(\v2\x15.harness.v1.HeartbeatH\x00R\theartbeatB\x06\n" +
 	"\x04body\"\xea\x01\n" +
 	"\bTerminal\x12\x1d\n" +
 	"\n" +
@@ -1541,14 +1650,15 @@ const file_harness_v1_harness_proto_rawDesc = "" +
 	"\x05event\x18\x01 \x01(\v2\x11.harness.v1.EventH\x00R\x05event\x122\n" +
 	"\bterminal\x18\x02 \x01(\v2\x14.harness.v1.TerminalH\x00R\bterminal\x12/\n" +
 	"\afailure\x18\x03 \x01(\v2\x13.harness.v1.FailureH\x00R\afailureB\x06\n" +
-	"\x04body*\x8e\x01\n" +
+	"\x04body*\xa7\x01\n" +
 	"\n" +
 	"ExitReason\x12\x1b\n" +
 	"\x17EXIT_REASON_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13EXIT_REASON_REFUSED\x10\x01\x12\x16\n" +
 	"\x12EXIT_REASON_POLICY\x10\x02\x12\x17\n" +
 	"\x13EXIT_REASON_TIMEOUT\x10\x03\x12\x19\n" +
-	"\x15EXIT_REASON_CANCELLED\x10\x04B.Z,github.com/ivy/mill/gen/harness/v1;harnessv1b\x06proto3"
+	"\x15EXIT_REASON_CANCELLED\x10\x04\x12\x17\n" +
+	"\x13EXIT_REASON_STALLED\x10\x05B.Z,github.com/ivy/mill/gen/harness/v1;harnessv1b\x06proto3"
 
 var (
 	file_harness_v1_harness_proto_rawDescOnce sync.Once
@@ -1563,7 +1673,7 @@ func file_harness_v1_harness_proto_rawDescGZIP() []byte {
 }
 
 var file_harness_v1_harness_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_harness_v1_harness_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
+var file_harness_v1_harness_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_harness_v1_harness_proto_goTypes = []any{
 	(ExitReason)(0),         // 0: harness.v1.ExitReason
 	(*ProcessExit)(nil),     // 1: harness.v1.ProcessExit
@@ -1579,17 +1689,18 @@ var file_harness_v1_harness_proto_goTypes = []any{
 	(*Text)(nil),            // 11: harness.v1.Text
 	(*ToolCall)(nil),        // 12: harness.v1.ToolCall
 	(*ToolResult)(nil),      // 13: harness.v1.ToolResult
-	(*Event)(nil),           // 14: harness.v1.Event
-	(*Terminal)(nil),        // 15: harness.v1.Terminal
-	(*Failure)(nil),         // 16: harness.v1.Failure
-	(*Response)(nil),        // 17: harness.v1.Response
-	nil,                     // 18: harness.v1.Usage.ByModelEntry
-	(*structpb.Struct)(nil), // 19: google.protobuf.Struct
+	(*Heartbeat)(nil),       // 14: harness.v1.Heartbeat
+	(*Event)(nil),           // 15: harness.v1.Event
+	(*Terminal)(nil),        // 16: harness.v1.Terminal
+	(*Failure)(nil),         // 17: harness.v1.Failure
+	(*Response)(nil),        // 18: harness.v1.Response
+	nil,                     // 19: harness.v1.Usage.ByModelEntry
+	(*structpb.Struct)(nil), // 20: google.protobuf.Struct
 }
 var file_harness_v1_harness_proto_depIdxs = []int32{
 	0,  // 0: harness.v1.ProcessExit.reason:type_name -> harness.v1.ExitReason
-	18, // 1: harness.v1.Usage.by_model:type_name -> harness.v1.Usage.ByModelEntry
-	19, // 2: harness.v1.Settings.options:type_name -> google.protobuf.Struct
+	19, // 1: harness.v1.Usage.by_model:type_name -> harness.v1.Usage.ByModelEntry
+	20, // 2: harness.v1.Settings.options:type_name -> google.protobuf.Struct
 	6,  // 3: harness.v1.Start.attachments:type_name -> harness.v1.Attachment
 	4,  // 4: harness.v1.Start.settings:type_name -> harness.v1.Settings
 	5,  // 5: harness.v1.Start.workspace:type_name -> harness.v1.Workspace
@@ -1599,23 +1710,24 @@ var file_harness_v1_harness_proto_depIdxs = []int32{
 	7,  // 9: harness.v1.Request.start:type_name -> harness.v1.Start
 	8,  // 10: harness.v1.Request.resume:type_name -> harness.v1.Resume
 	9,  // 11: harness.v1.Request.cancel:type_name -> harness.v1.Cancel
-	19, // 12: harness.v1.ToolCall.arguments:type_name -> google.protobuf.Struct
+	20, // 12: harness.v1.ToolCall.arguments:type_name -> google.protobuf.Struct
 	11, // 13: harness.v1.Event.text:type_name -> harness.v1.Text
 	12, // 14: harness.v1.Event.tool_call:type_name -> harness.v1.ToolCall
 	13, // 15: harness.v1.Event.tool_result:type_name -> harness.v1.ToolResult
 	3,  // 16: harness.v1.Event.usage:type_name -> harness.v1.Usage
-	19, // 17: harness.v1.Terminal.structured_output:type_name -> google.protobuf.Struct
-	3,  // 18: harness.v1.Terminal.usage:type_name -> harness.v1.Usage
-	1,  // 19: harness.v1.Terminal.exit:type_name -> harness.v1.ProcessExit
-	14, // 20: harness.v1.Response.event:type_name -> harness.v1.Event
-	15, // 21: harness.v1.Response.terminal:type_name -> harness.v1.Terminal
-	16, // 22: harness.v1.Response.failure:type_name -> harness.v1.Failure
-	2,  // 23: harness.v1.Usage.ByModelEntry.value:type_name -> harness.v1.TokenCounts
-	24, // [24:24] is the sub-list for method output_type
-	24, // [24:24] is the sub-list for method input_type
-	24, // [24:24] is the sub-list for extension type_name
-	24, // [24:24] is the sub-list for extension extendee
-	0,  // [0:24] is the sub-list for field type_name
+	14, // 17: harness.v1.Event.heartbeat:type_name -> harness.v1.Heartbeat
+	20, // 18: harness.v1.Terminal.structured_output:type_name -> google.protobuf.Struct
+	3,  // 19: harness.v1.Terminal.usage:type_name -> harness.v1.Usage
+	1,  // 20: harness.v1.Terminal.exit:type_name -> harness.v1.ProcessExit
+	15, // 21: harness.v1.Response.event:type_name -> harness.v1.Event
+	16, // 22: harness.v1.Response.terminal:type_name -> harness.v1.Terminal
+	17, // 23: harness.v1.Response.failure:type_name -> harness.v1.Failure
+	2,  // 24: harness.v1.Usage.ByModelEntry.value:type_name -> harness.v1.TokenCounts
+	25, // [25:25] is the sub-list for method output_type
+	25, // [25:25] is the sub-list for method input_type
+	25, // [25:25] is the sub-list for extension type_name
+	25, // [25:25] is the sub-list for extension extendee
+	0,  // [0:25] is the sub-list for field type_name
 }
 
 func init() { file_harness_v1_harness_proto_init() }
@@ -1628,13 +1740,14 @@ func file_harness_v1_harness_proto_init() {
 		(*Request_Resume)(nil),
 		(*Request_Cancel)(nil),
 	}
-	file_harness_v1_harness_proto_msgTypes[13].OneofWrappers = []any{
+	file_harness_v1_harness_proto_msgTypes[14].OneofWrappers = []any{
 		(*Event_Text)(nil),
 		(*Event_ToolCall)(nil),
 		(*Event_ToolResult)(nil),
 		(*Event_Usage)(nil),
+		(*Event_Heartbeat)(nil),
 	}
-	file_harness_v1_harness_proto_msgTypes[16].OneofWrappers = []any{
+	file_harness_v1_harness_proto_msgTypes[17].OneofWrappers = []any{
 		(*Response_Event)(nil),
 		(*Response_Terminal)(nil),
 		(*Response_Failure)(nil),
@@ -1645,7 +1758,7 @@ func file_harness_v1_harness_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_harness_v1_harness_proto_rawDesc), len(file_harness_v1_harness_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   18,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -3563,7 +3563,12 @@ type StepRunDetail struct {
 	// The session it ran in, for a skill step.
 	Session *Session `protobuf:"bytes,3,opt,name=session,proto3" json:"session,omitempty"`
 	// What it cost, by model.
-	Totals        []*ModelTotals `protobuf:"bytes,4,rep,name=totals,proto3" json:"totals,omitempty"`
+	Totals []*ModelTotals `protobuf:"bytes,4,rep,name=totals,proto3" json:"totals,omitempty"`
+	// How many times the harness asked this attempt's session about a
+	// background task that had gone silent. A stalled attempt is one whose
+	// heartbeats ran out, so the count is what says how the exit was reached
+	// (docs/domain-model.md §Session).
+	Heartbeats    int64 `protobuf:"varint,5,opt,name=heartbeats,proto3" json:"heartbeats,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3624,6 +3629,13 @@ func (x *StepRunDetail) GetTotals() []*ModelTotals {
 		return x.Totals
 	}
 	return nil
+}
+
+func (x *StepRunDetail) GetHeartbeats() int64 {
+	if x != nil {
+		return x.Heartbeats
+	}
+	return 0
 }
 
 // Event is one row of the ledger's audit trail: what changed about a run,
@@ -4026,12 +4038,15 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"\fcurrent_step\x18\x02 \x01(\tR\vcurrentStep\x12'\n" +
 	"\x0fcurrent_attempt\x18\x03 \x01(\x03R\x0ecurrentAttempt\x12,\n" +
 	"\x06totals\x18\x04 \x03(\v2\x14.mill.v1.ModelTotalsR\x06totals\x12\x16\n" +
-	"\x06leases\x18\x05 \x01(\x03R\x06leases\"\xc5\x01\n" +
+	"\x06leases\x18\x05 \x01(\x03R\x06leases\"\xe5\x01\n" +
 	"\rStepRunDetail\x12+\n" +
 	"\bstep_run\x18\x01 \x01(\v2\x10.mill.v1.StepRunR\astepRun\x12-\n" +
 	"\bevidence\x18\x02 \x01(\v2\x11.mill.v1.EvidenceR\bevidence\x12*\n" +
 	"\asession\x18\x03 \x01(\v2\x10.mill.v1.SessionR\asession\x12,\n" +
-	"\x06totals\x18\x04 \x03(\v2\x14.mill.v1.ModelTotalsR\x06totals\"\x9a\x02\n" +
+	"\x06totals\x18\x04 \x03(\v2\x14.mill.v1.ModelTotalsR\x06totals\x12\x1e\n" +
+	"\n" +
+	"heartbeats\x18\x05 \x01(\x03R\n" +
+	"heartbeats\"\x9a\x02\n" +
 	"\x05Event\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x1e\n" +

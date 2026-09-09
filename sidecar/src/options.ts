@@ -66,6 +66,18 @@ export interface Env {
   set?: Record<string, string>;
 }
 
+// TASK_TOOLS are the tools every skill step gets whether it asked for them
+// or not, unless it denied them. They are how a session waits on background
+// work it started — TaskOutput reads what a task has written, TaskStop ends
+// one that is no longer needed — and a session that cannot reach them writes
+// the shell loop the PreToolUse hook refuses (src/hooks.ts, src/tasks.ts).
+//
+// They are added to `allowedTools` rather than left to the permission
+// classifier because the classifier is an answerer whose answer nobody is
+// there to wait for: the wait these tools exist for is exactly the moment a
+// session has no operator.
+export const TASK_TOOLS = ["TaskOutput", "TaskStop"] as const;
+
 // Tools is the step's tool policy. The two lists are not one mechanism with
 // a sign: `allow` permits, leaving an excluded tool offered and refused at
 // the permission layer, while `deny` removes the tool from the session

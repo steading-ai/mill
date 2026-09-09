@@ -87,6 +87,13 @@ func (s *Service) RecordNotice(ctx context.Context, leaseID, runID, stepRunID, k
 	return s.store.RecordNotice(ctx, leaseID, runID, stepRunID, kind, gateRef, exitCode, detail)
 }
 
+// RecordHeartbeat appends one heartbeat the harness sent a quiet session.
+// There is no transition to check: it records what the wait cost, not a
+// change to the run.
+func (s *Service) RecordHeartbeat(ctx context.Context, leaseID, runID, stepRunID string, strike, strikes int32, waitingSeconds int64, tasks []string) error {
+	return s.store.RecordHeartbeat(ctx, leaseID, runID, stepRunID, strike, strikes, waitingSeconds, tasks)
+}
+
 // SetCompleteRequestID mints the completing patch's idempotency key, or
 // returns the one the run already carries. There is no transition to check:
 // it records a key against a run that is still running, before the patch

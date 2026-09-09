@@ -27,7 +27,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file harness/v1/harness.proto.
  */
 export const file_harness_v1_harness: GenFile = /*@__PURE__*/
-  fileDesc("ChhoYXJuZXNzL3YxL2hhcm5lc3MucHJvdG8SCmhhcm5lc3MudjEiVQoLUHJvY2Vzc0V4aXQSDgoGc3RhdHVzGAEgASgFEg4KBnNpZ25hbBgCIAEoBRImCgZyZWFzb24YAyABKA4yFi5oYXJuZXNzLnYxLkV4aXRSZWFzb24iVQoLVG9rZW5Db3VudHMSDQoFaW5wdXQYASABKAMSDgoGb3V0cHV0GAIgASgDEhIKCmNhY2hlX3JlYWQYAyABKAMSEwoLY2FjaGVfd3JpdGUYBCABKAMiggEKBVVzYWdlEjAKCGJ5X21vZGVsGAEgAygLMh4uaGFybmVzcy52MS5Vc2FnZS5CeU1vZGVsRW50cnkaRwoMQnlNb2RlbEVudHJ5EgsKA2tleRgBIAEoCRImCgV2YWx1ZRgCIAEoCzIXLmhhcm5lc3MudjEuVG9rZW5Db3VudHM6AjgBIjQKCFNldHRpbmdzEigKB29wdGlvbnMYASABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0IioKCVdvcmtzcGFjZRIOCgZzb2NrZXQYASABKAkSDQoFdG9rZW4YAiABKAkiTwoKQXR0YWNobWVudBIMCgRuYW1lGAEgASgJEg4KBnNvdXJjZRgCIAEoCRISCgptZWRpYV90eXBlGAMgASgJEg8KB2NvbnRlbnQYBCABKAkizgEKBVN0YXJ0EhIKCnNlc3Npb25faWQYASABKAkSDgoGcHJvbXB0GAIgASgJEisKC2F0dGFjaG1lbnRzGAMgAygLMhYuaGFybmVzcy52MS5BdHRhY2htZW50EiYKCHNldHRpbmdzGAQgASgLMhQuaGFybmVzcy52MS5TZXR0aW5ncxIoCgl3b3Jrc3BhY2UYBSABKAsyFS5oYXJuZXNzLnYxLldvcmtzcGFjZRIVCg1vdXRwdXRfc2NoZW1hGAYgASgJEgsKA2N3ZBgHIAEoCSLPAQoGUmVzdW1lEhIKCnNlc3Npb25faWQYASABKAkSDgoGcHJvbXB0GAIgASgJEisKC2F0dGFjaG1lbnRzGAMgAygLMhYuaGFybmVzcy52MS5BdHRhY2htZW50EiYKCHNldHRpbmdzGAQgASgLMhQuaGFybmVzcy52MS5TZXR0aW5ncxIoCgl3b3Jrc3BhY2UYBSABKAsyFS5oYXJuZXNzLnYxLldvcmtzcGFjZRIVCg1vdXRwdXRfc2NoZW1hGAYgASgJEgsKA2N3ZBgHIAEoCSIuCgZDYW5jZWwSEgoKc2Vzc2lvbl9pZBgBIAEoCRIQCghncmFjZV9tcxgCIAEoBSKNAQoHUmVxdWVzdBIKCgJpZBgBIAEoCRIiCgVzdGFydBgCIAEoCzIRLmhhcm5lc3MudjEuU3RhcnRIABIkCgZyZXN1bWUYAyABKAsyEi5oYXJuZXNzLnYxLlJlc3VtZUgAEiQKBmNhbmNlbBgEIAEoCzISLmhhcm5lc3MudjEuQ2FuY2VsSABCBgoEYm9keSIUCgRUZXh0EgwKBHRleHQYASABKAkiVQoIVG9vbENhbGwSDwoHY2FsbF9pZBgBIAEoCRIMCgRuYW1lGAIgASgJEioKCWFyZ3VtZW50cxgDIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QiQAoKVG9vbFJlc3VsdBIPCgdjYWxsX2lkGAEgASgJEg8KB2NvbnRlbnQYAiABKAkSEAoIaXNfZXJyb3IYAyABKAgiwwEKBUV2ZW50EhIKCnJlcXVlc3RfaWQYASABKAkSIAoEdGV4dBgCIAEoCzIQLmhhcm5lc3MudjEuVGV4dEgAEikKCXRvb2xfY2FsbBgDIAEoCzIULmhhcm5lc3MudjEuVG9vbENhbGxIABItCgt0b29sX3Jlc3VsdBgEIAEoCzIWLmhhcm5lc3MudjEuVG9vbFJlc3VsdEgAEiIKBXVzYWdlGAUgASgLMhEuaGFybmVzcy52MS5Vc2FnZUgAQgYKBGJvZHkisgEKCFRlcm1pbmFsEhIKCnJlcXVlc3RfaWQYASABKAkSFQoNZmluYWxfbWVzc2FnZRgCIAEoCRIyChFzdHJ1Y3R1cmVkX291dHB1dBgDIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSIAoFdXNhZ2UYBCABKAsyES5oYXJuZXNzLnYxLlVzYWdlEiUKBGV4aXQYBSABKAsyFy5oYXJuZXNzLnYxLlByb2Nlc3NFeGl0Ii4KB0ZhaWx1cmUSEgoKcmVxdWVzdF9pZBgBIAEoCRIPCgdtZXNzYWdlGAIgASgJIogBCghSZXNwb25zZRIiCgVldmVudBgBIAEoCzIRLmhhcm5lc3MudjEuRXZlbnRIABIoCgh0ZXJtaW5hbBgCIAEoCzIULmhhcm5lc3MudjEuVGVybWluYWxIABImCgdmYWlsdXJlGAMgASgLMhMuaGFybmVzcy52MS5GYWlsdXJlSABCBgoEYm9keSqOAQoKRXhpdFJlYXNvbhIbChdFWElUX1JFQVNPTl9VTlNQRUNJRklFRBAAEhcKE0VYSVRfUkVBU09OX1JFRlVTRUQQARIWChJFWElUX1JFQVNPTl9QT0xJQ1kQAhIXChNFWElUX1JFQVNPTl9USU1FT1VUEAMSGQoVRVhJVF9SRUFTT05fQ0FOQ0VMTEVEEARCLlosZ2l0aHViLmNvbS9pdnkvbWlsbC9nZW4vaGFybmVzcy92MTtoYXJuZXNzdjFiBnByb3RvMw", [file_google_protobuf_struct]);
+  fileDesc("ChhoYXJuZXNzL3YxL2hhcm5lc3MucHJvdG8SCmhhcm5lc3MudjEiVQoLUHJvY2Vzc0V4aXQSDgoGc3RhdHVzGAEgASgFEg4KBnNpZ25hbBgCIAEoBRImCgZyZWFzb24YAyABKA4yFi5oYXJuZXNzLnYxLkV4aXRSZWFzb24iVQoLVG9rZW5Db3VudHMSDQoFaW5wdXQYASABKAMSDgoGb3V0cHV0GAIgASgDEhIKCmNhY2hlX3JlYWQYAyABKAMSEwoLY2FjaGVfd3JpdGUYBCABKAMiggEKBVVzYWdlEjAKCGJ5X21vZGVsGAEgAygLMh4uaGFybmVzcy52MS5Vc2FnZS5CeU1vZGVsRW50cnkaRwoMQnlNb2RlbEVudHJ5EgsKA2tleRgBIAEoCRImCgV2YWx1ZRgCIAEoCzIXLmhhcm5lc3MudjEuVG9rZW5Db3VudHM6AjgBIjQKCFNldHRpbmdzEigKB29wdGlvbnMYASABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0IioKCVdvcmtzcGFjZRIOCgZzb2NrZXQYASABKAkSDQoFdG9rZW4YAiABKAkiTwoKQXR0YWNobWVudBIMCgRuYW1lGAEgASgJEg4KBnNvdXJjZRgCIAEoCRISCgptZWRpYV90eXBlGAMgASgJEg8KB2NvbnRlbnQYBCABKAkizgEKBVN0YXJ0EhIKCnNlc3Npb25faWQYASABKAkSDgoGcHJvbXB0GAIgASgJEisKC2F0dGFjaG1lbnRzGAMgAygLMhYuaGFybmVzcy52MS5BdHRhY2htZW50EiYKCHNldHRpbmdzGAQgASgLMhQuaGFybmVzcy52MS5TZXR0aW5ncxIoCgl3b3Jrc3BhY2UYBSABKAsyFS5oYXJuZXNzLnYxLldvcmtzcGFjZRIVCg1vdXRwdXRfc2NoZW1hGAYgASgJEgsKA2N3ZBgHIAEoCSLPAQoGUmVzdW1lEhIKCnNlc3Npb25faWQYASABKAkSDgoGcHJvbXB0GAIgASgJEisKC2F0dGFjaG1lbnRzGAMgAygLMhYuaGFybmVzcy52MS5BdHRhY2htZW50EiYKCHNldHRpbmdzGAQgASgLMhQuaGFybmVzcy52MS5TZXR0aW5ncxIoCgl3b3Jrc3BhY2UYBSABKAsyFS5oYXJuZXNzLnYxLldvcmtzcGFjZRIVCg1vdXRwdXRfc2NoZW1hGAYgASgJEgsKA2N3ZBgHIAEoCSIuCgZDYW5jZWwSEgoKc2Vzc2lvbl9pZBgBIAEoCRIQCghncmFjZV9tcxgCIAEoBSKNAQoHUmVxdWVzdBIKCgJpZBgBIAEoCRIiCgVzdGFydBgCIAEoCzIRLmhhcm5lc3MudjEuU3RhcnRIABIkCgZyZXN1bWUYAyABKAsyEi5oYXJuZXNzLnYxLlJlc3VtZUgAEiQKBmNhbmNlbBgEIAEoCzISLmhhcm5lc3MudjEuQ2FuY2VsSABCBgoEYm9keSIUCgRUZXh0EgwKBHRleHQYASABKAkiVQoIVG9vbENhbGwSDwoHY2FsbF9pZBgBIAEoCRIMCgRuYW1lGAIgASgJEioKCWFyZ3VtZW50cxgDIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QiQAoKVG9vbFJlc3VsdBIPCgdjYWxsX2lkGAEgASgJEg8KB2NvbnRlbnQYAiABKAkSEAoIaXNfZXJyb3IYAyABKAgiVAoJSGVhcnRiZWF0Eg4KBnN0cmlrZRgBIAEoBRIPCgdzdHJpa2VzGAIgASgFEhcKD3dhaXRpbmdfc2Vjb25kcxgDIAEoAxINCgV0YXNrcxgEIAMoCSLvAQoFRXZlbnQSEgoKcmVxdWVzdF9pZBgBIAEoCRIgCgR0ZXh0GAIgASgLMhAuaGFybmVzcy52MS5UZXh0SAASKQoJdG9vbF9jYWxsGAMgASgLMhQuaGFybmVzcy52MS5Ub29sQ2FsbEgAEi0KC3Rvb2xfcmVzdWx0GAQgASgLMhYuaGFybmVzcy52MS5Ub29sUmVzdWx0SAASIgoFdXNhZ2UYBSABKAsyES5oYXJuZXNzLnYxLlVzYWdlSAASKgoJaGVhcnRiZWF0GAYgASgLMhUuaGFybmVzcy52MS5IZWFydGJlYXRIAEIGCgRib2R5IrIBCghUZXJtaW5hbBISCgpyZXF1ZXN0X2lkGAEgASgJEhUKDWZpbmFsX21lc3NhZ2UYAiABKAkSMgoRc3RydWN0dXJlZF9vdXRwdXQYAyABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0EiAKBXVzYWdlGAQgASgLMhEuaGFybmVzcy52MS5Vc2FnZRIlCgRleGl0GAUgASgLMhcuaGFybmVzcy52MS5Qcm9jZXNzRXhpdCIuCgdGYWlsdXJlEhIKCnJlcXVlc3RfaWQYASABKAkSDwoHbWVzc2FnZRgCIAEoCSKIAQoIUmVzcG9uc2USIgoFZXZlbnQYASABKAsyES5oYXJuZXNzLnYxLkV2ZW50SAASKAoIdGVybWluYWwYAiABKAsyFC5oYXJuZXNzLnYxLlRlcm1pbmFsSAASJgoHZmFpbHVyZRgDIAEoCzITLmhhcm5lc3MudjEuRmFpbHVyZUgAQgYKBGJvZHkqpwEKCkV4aXRSZWFzb24SGwoXRVhJVF9SRUFTT05fVU5TUEVDSUZJRUQQABIXChNFWElUX1JFQVNPTl9SRUZVU0VEEAESFgoSRVhJVF9SRUFTT05fUE9MSUNZEAISFwoTRVhJVF9SRUFTT05fVElNRU9VVBADEhkKFUVYSVRfUkVBU09OX0NBTkNFTExFRBAEEhcKE0VYSVRfUkVBU09OX1NUQUxMRUQQBUIuWixnaXRodWIuY29tL2l2eS9taWxsL2dlbi9oYXJuZXNzL3YxO2hhcm5lc3N2MWIGcHJvdG8z", [file_google_protobuf_struct]);
 
 /**
  * ProcessExit is how a spawned thing ended. Borrowed wholesale from
@@ -570,6 +570,52 @@ export const ToolResultSchema: GenMessage<ToolResult> = /*@__PURE__*/
   messageDesc(file_harness_v1_harness, 12);
 
 /**
+ * Heartbeat is the sidecar asking a session that ended its turn with a
+ * background task still running whether it is done. It is sent when the
+ * task has produced no output since the last look, so the ledger can show
+ * what the wait cost and how close the breaker came to tripping.
+ *
+ * @generated from message harness.v1.Heartbeat
+ */
+export type Heartbeat = Message<"harness.v1.Heartbeat"> & {
+  /**
+   * Which heartbeat this is, counting from one.
+   *
+   * @generated from field: int32 strike = 1;
+   */
+  strike: number;
+
+  /**
+   * How many silent heartbeats trip the breaker.
+   *
+   * @generated from field: int32 strikes = 2;
+   */
+  strikes: number;
+
+  /**
+   * How long the turn has been over when this heartbeat was sent, in
+   * seconds.
+   *
+   * @generated from field: int64 waiting_seconds = 3;
+   */
+  waitingSeconds: bigint;
+
+  /**
+   * The tasks that have gone silent, as the harness described them.
+   *
+   * @generated from field: repeated string tasks = 4;
+   */
+  tasks: string[];
+};
+
+/**
+ * Describes the message harness.v1.Heartbeat.
+ * Use `create(HeartbeatSchema)` to create a new message.
+ */
+export const HeartbeatSchema: GenMessage<Heartbeat> = /*@__PURE__*/
+  messageDesc(file_harness_v1_harness, 13);
+
+/**
  * Event is one thing that happened during a turn, streamed to the worker as
  * it happens. Events are for the operator's log and the ledger's usage rows;
  * nothing an event says is evidence.
@@ -621,6 +667,14 @@ export type Event = Message<"harness.v1.Event"> & {
      */
     value: Usage;
     case: "usage";
+  } | {
+    /**
+     * The sidecar asked a silent session whether its task is still needed.
+     *
+     * @generated from field: harness.v1.Heartbeat heartbeat = 6;
+     */
+    value: Heartbeat;
+    case: "heartbeat";
   } | { case: undefined; value?: undefined };
 };
 
@@ -629,7 +683,7 @@ export type Event = Message<"harness.v1.Event"> & {
  * Use `create(EventSchema)` to create a new message.
  */
 export const EventSchema: GenMessage<Event> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 13);
+  messageDesc(file_harness_v1_harness, 14);
 
 /**
  * Terminal is the last line of a request: how the session ended and what it
@@ -686,7 +740,7 @@ export type Terminal = Message<"harness.v1.Terminal"> & {
  * Use `create(TerminalSchema)` to create a new message.
  */
 export const TerminalSchema: GenMessage<Terminal> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 14);
+  messageDesc(file_harness_v1_harness, 15);
 
 /**
  * Failure is the sidecar reporting that it could not handle a request at
@@ -717,7 +771,7 @@ export type Failure = Message<"harness.v1.Failure"> & {
  * Use `create(FailureSchema)` to create a new message.
  */
 export const FailureSchema: GenMessage<Failure> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 15);
+  messageDesc(file_harness_v1_harness, 16);
 
 /**
  * Response is one line from the sidecar to the worker.
@@ -762,7 +816,7 @@ export type Response = Message<"harness.v1.Response"> & {
  * Use `create(ResponseSchema)` to create a new message.
  */
 export const ResponseSchema: GenMessage<Response> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 16);
+  messageDesc(file_harness_v1_harness, 17);
 
 /**
  * ExitReason says why a session ended when the exit status alone does not.
@@ -812,6 +866,18 @@ export enum ExitReason {
    * @generated from enum value: EXIT_REASON_CANCELLED = 4;
    */
   CANCELLED = 4,
+
+  /**
+   * EXIT_REASON_STALLED means the session ended a turn with a background
+   * task that then produced nothing, stayed silent through every heartbeat,
+   * and had its processes killed by the sidecar's breaker. The session ran
+   * and its last working turn is the final message, so the status is the
+   * turn's and this reason is what says the words were taken rather than
+   * offered.
+   *
+   * @generated from enum value: EXIT_REASON_STALLED = 5;
+   */
+  STALLED = 5,
 }
 
 /**

@@ -10,16 +10,23 @@
 // docs/spikes/sdk-sessions.md, including the SDK's own wording where the
 // sidecar keys off it.
 
-import { spawnSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
-import type { Options, QueryFn, SDKMessage } from "../src/sdk.js";
+import type { Options, QueryFn, SDKMessage, SDKUserMessage } from "../src/sdk.js";
+import { taskOutputPath } from "../src/tasks.js";
 
 // SCENARIO_VAR names the scenario the fake plays.
 export const SCENARIO_VAR = "MILL_FAKE_SCENARIO";
 // OPTIONS_VAR names a file the fake writes the options it was handed to, so
 // a spec can assert what policy the session would have run under.
 export const OPTIONS_VAR = "MILL_FAKE_OPTIONS";
+// PID_VAR names a file the fake writes the process id of the child it
+// spawned for a background task to, so a spec can watch the breaker kill it.
+export const PID_VAR = "MILL_FAKE_PID";
+// WORK_MS_VAR is how long a working task keeps writing before it ends.
+export const WORK_MS_VAR = "MILL_FAKE_WORK_MS";
 // ABORT_VAR says how the fake answers an abort: "throw" like the SDK does,
 // or "ignore" to stand for a harness that does not stop.
 export const ABORT_VAR = "MILL_FAKE_ABORT";
@@ -108,7 +115,87 @@ function probeEnvironment(options: Options): string {
   return probe.stdout ?? "";
 }
 
-async function* play(scenario: string, options: Options): AsyncIterable<SDKMessage> {
+// The session id the task scenarios report. The sidecar reconstructs the
+// path of a task's output file from it, exactly as it does for the real
+// harness, so the fake writes where the harness would.
+const TASK_SESSION = "5d2b7a1c-4e11-4d3a-9e2c-0f2f4d3a6d6f";
+const TASK_ID = "task-01JB";
+const TASK_DESCRIPTION = "Bash: make test";
+
+function taskStarted(): SDKMessage {
+  return {
+    type: "system",
+    subtype: "task_started",
+    task_id: TASK_ID,
+    description: TASK_DESCRIPTION,
+    is_backgrounded: true,
+    session_id: TASK_SESSION,
+  } as unknown as SDKMessage;
+}
+
+function taskNotification(status: string): SDKMessage {
+  return {
+    type: "system",
+    subtype: "task_notification",
+    task_id: TASK_ID,
+    status,
+    output_file: "",
+    summary: `the task ${status}`,
+    session_id: TASK_SESSION,
+  } as unknown as SDKMessage;
+}
+
+// spawnTask starts a real process to stand for the background task's shell,
+// as a child of the sidecar — which is where the harness's own child, and
+// the task's shell under it, would be. Its process id is written where the
+// spec can watch for it.
+function spawnTask(env: Record<string, string | undefined>): void {
+  const child = spawn("sleep", ["30"], { stdio: "ignore" });
+  child.unref();
+  const target = env[PID_VAR];
+  if (target !== undefined) {
+    writeFileSync(target, String(child.pid));
+  }
+}
+
+// grow appends to the task's output file, which is the only thing that
+// tells the sidecar the task is working.
+function grow(options: Options): void {
+  const path = taskOutputPath(process.getuid?.() ?? 0, options.cwd ?? "", TASK_SESSION, TASK_ID);
+  mkdirSync(dirname(path), { recursive: true });
+  appendFileSync(path, `${new Date().toISOString()} still going\n`);
+}
+
+// checked runs the sidecar's own PreToolUse hooks over a Bash command, which
+// is what the harness does with them before it runs one.
+async function checked(options: Options, command: string): Promise<string> {
+  for (const matcher of options.hooks?.PreToolUse ?? []) {
+    if (matcher.matcher !== undefined && matcher.matcher !== "Bash") {
+      continue;
+    }
+    for (const hook of matcher.hooks) {
+      const decision = await hook(
+        { hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command } } as never,
+        "toolu_hook",
+        { signal: new AbortController().signal },
+      );
+      const specific = "hookSpecificOutput" in decision ? decision.hookSpecificOutput : undefined;
+      if (specific !== undefined && "permissionDecision" in specific && specific.permissionDecision === "deny") {
+        return `denied: ${specific.permissionDecisionReason ?? ""}`;
+      }
+    }
+  }
+  return "allowed";
+}
+
+async function* play(
+  scenario: string,
+  options: Options,
+  prompts: AsyncIterator<SDKUserMessage>,
+): AsyncIterable<SDKMessage> {
+  // Every scenario begins with the step's own prompt, exactly as the harness
+  // takes it off the stream before it answers.
+  await prompts.next();
   switch (scenario) {
     case "trivial":
       yield assistantText("Read the node body and summarised it.");
@@ -152,6 +239,71 @@ async function* play(scenario: string, options: Options): AsyncIterable<SDKMessa
       });
       return;
     }
+    case "silent-task": {
+      // A turn that ends with a background task the session means to be
+      // woken for, whose output never grows.
+      spawnTask(process.env);
+      yield assistantText("Started the suite and I am waiting on it.");
+      yield toolCall("toolu_bg", "Bash", { command: "make test", run_in_background: true });
+      yield toolResult("toolu_bg", "running in the background");
+      yield taskStarted();
+      yield success("Started the suite and I am waiting on it.");
+      // Each heartbeat is answered, and the answer says nothing new: the
+      // task stays silent, so the strikes go on accumulating.
+      while (true) {
+        const heartbeat = await prompts.next();
+        if (heartbeat.done === true) {
+          return;
+        }
+        yield assistantText("Still waiting on the suite.");
+        yield success("Still waiting on the suite.");
+      }
+    }
+    case "working-task": {
+      // The same wait, over a task that keeps writing. The output grows for
+      // as long as the scenario's window, and then the task ends and the
+      // harness wakes the session with a last turn.
+      yield assistantText("Started the suite and I am waiting on it.");
+      yield taskStarted();
+      yield success("Started the suite and I am waiting on it.");
+      const until = Date.now() + Number.parseInt(process.env[WORK_MS_VAR] ?? "2000", 10);
+      while (Date.now() < until) {
+        grow(options);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      yield taskNotification("completed");
+      yield assistantText("The suite passed.");
+      yield success("The suite passed.");
+      return;
+    }
+    case "answered-heartbeat": {
+      // A silent task whose session, asked once, stops it and says so.
+      spawnTask(process.env);
+      yield assistantText("Started the suite and I am waiting on it.");
+      yield taskStarted();
+      yield success("Started the suite and I am waiting on it.");
+      const heartbeat = await prompts.next();
+      if (heartbeat.done === true) {
+        return;
+      }
+      yield taskNotification("stopped");
+      yield assistantText("Done; I stopped the task.");
+      yield success("Done; I stopped the task.");
+      return;
+    }
+    case "poll-loop": {
+      // The harness checking two Bash commands against the sidecar's own
+      // PreToolUse hooks: the self-matching wait, and a `pgrep` that is not
+      // a loop at all.
+      const loop = 'until ! pg' + 'rep -f "x"; do sleep 1; done';
+      const plain = 'pg' + 'rep -f "^/usr/bin/x"';
+      yield toolCall("toolu_loop", "Bash", { command: loop });
+      yield toolResult("toolu_loop", await checked(options, loop), true);
+      yield toolCall("toolu_plain", "Bash", { command: plain });
+      yield toolResult("toolu_plain", await checked(options, plain));
+      yield success("Checked both commands.");
+      return;
+    }
     default:
       throw new Error(`fake harness has no scenario ${JSON.stringify(scenario)}`);
   }
@@ -159,11 +311,11 @@ async function* play(scenario: string, options: Options): AsyncIterable<SDKMessa
 
 // fakeQuery is a QueryFn that plays the scenario named in the environment.
 export function fakeQuery(env: Record<string, string | undefined>): QueryFn {
-  return ({ options }) => {
+  return ({ options, prompt }) => {
     const target = env[OPTIONS_VAR];
     if (target !== undefined) {
       writeFileSync(target, JSON.stringify({ ...options, abortController: undefined }, null, 2));
     }
-    return play(env[SCENARIO_VAR] ?? "trivial", options);
+    return play(env[SCENARIO_VAR] ?? "trivial", options, prompt[Symbol.asyncIterator]());
   };
 }

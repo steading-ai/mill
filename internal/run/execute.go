@@ -213,6 +213,9 @@ func (r *Runner) sessionEvents(ctx context.Context, s *state, sr *millv1.StepRun
 	}
 	var once sync.Once
 	return func(event *harnessv1.Event) {
+		if beat := event.GetHeartbeat(); beat != nil {
+			r.recordHeartbeat(ctx, s, sr, beat)
+		}
 		once.Do(func() {
 			// Not the step's context: a session that spoke and was then
 			// cancelled has still spoken, and the ledger has to say so
@@ -226,6 +229,30 @@ func (r *Runner) sessionEvents(ctx context.Context, s *state, sr *millv1.StepRun
 			}
 		})
 		log.Send(event)
+	}
+}
+
+// recordHeartbeat writes one heartbeat to the run's history: the harness
+// asked a session that had ended its turn on a task that then went quiet
+// whether the task was still needed (docs/domain-model.md §Session). It is a
+// row of the audit trail and nothing else, so a write that fails is logged
+// and the session goes on: losing the record of the ask must not fail the
+// step the ask was about.
+func (r *Runner) recordHeartbeat(ctx context.Context, s *state, sr *millv1.StepRun, beat *harnessv1.Heartbeat) {
+	// Not the step's context: the last heartbeat before a breaker trips is
+	// written while the step is being stopped, and it is the one that
+	// explains the exit.
+	if _, err := call(context.WithoutCancel(ctx), r.options.Store.RecordHeartbeat, &millv1.RecordHeartbeatRequest{
+		LeaseId:        s.lease,
+		RunId:          s.run.GetId(),
+		StepRunId:      sr.GetId(),
+		Strike:         beat.GetStrike(),
+		Strikes:        beat.GetStrikes(),
+		WaitingSeconds: beat.GetWaitingSeconds(),
+		Tasks:          beat.GetTasks(),
+	}); err != nil {
+		r.options.Log.Warn("recording a session heartbeat",
+			"run", s.run.GetId(), "step_run", sr.GetId(), "error", err)
 	}
 }
 

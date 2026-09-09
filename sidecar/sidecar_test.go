@@ -135,7 +135,10 @@ var _ = Describe("The sidecar", Label("unit"), func() {
 		body, err := os.ReadFile(options)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(json.Unmarshal(body, &applied)).To(Succeed())
-		Expect(applied["allowedTools"]).To(Equal([]any{"Read", "Grep"}))
+		// The task tools are in every step's allow list unless the step
+		// denied them, so what the step asked for is what is here beside
+		// them (sidecar/src/options.ts).
+		Expect(applied["allowedTools"]).To(Equal([]any{"Read", "Grep", "TaskOutput", "TaskStop"}))
 		Expect(applied["disallowedTools"]).To(Equal([]any{"Write", "Edit"}))
 		Expect(applied["model"]).To(Equal("opus"))
 		Expect(applied["effort"]).To(Equal("high"))

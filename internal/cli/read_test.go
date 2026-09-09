@@ -9,6 +9,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	harnessv1 "github.com/ivy/mill/gen/harness/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/testsupport"
 )
@@ -119,6 +120,37 @@ var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 			Expect(out).To(ContainSubstring("ENV PASSTHROUGH"))
 			Expect(out).To(ContainSubstring("GOFLAGS"))
 			Expect(out).To(ContainSubstring("ANTHROPIC_API_KEY DATABASE_URL"))
+		})
+
+		It("shows a stalled attempt with the heartbeats that led to it", func() {
+			r := openRun(ctx, "millcli#11", nodeID(11))
+			sr := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+			for strike := int32(1); strike <= 2; strike++ {
+				_, err := r.store.RecordHeartbeat(ctx, connect.NewRequest(&millv1.RecordHeartbeatRequest{
+					LeaseId:        r.lease,
+					RunId:          r.run.GetId(),
+					StepRunId:      sr.GetId(),
+					Strike:         strike,
+					Strikes:        3,
+					WaitingSeconds: int64(strike) * 180,
+					Tasks:          []string{"Bash: make test"},
+				}))
+				Expect(err).NotTo(HaveOccurred())
+			}
+			_, err := r.store.FailStepRun(ctx, connect.NewRequest(&millv1.FailStepRunRequest{
+				LeaseId: r.lease, StepRunId: sr.GetId(),
+				Exit: &harnessv1.ProcessExit{Status: 1, Reason: harnessv1.ExitReason_EXIT_REASON_STALLED},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+
+			out := r.cli(ctx, "inspect", "millcli#11")
+
+			By("then the attempt's exit says the breaker stopped it")
+			Expect(rowFor(out, "implement")).To(ContainSubstring("1:stalled"))
+
+			By("and the heartbeats it took to get there are under the steps")
+			Expect(out).To(ContainSubstring("HEARTBEATS"))
+			Expect(lines(out)).To(ContainElement(MatchRegexp(`^implement\s+1\s+2$`)))
 		})
 
 		It("says nothing about the environment when no step carved anything out", func() {

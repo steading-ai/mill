@@ -8,3 +8,9 @@ RETURNING *;
 
 -- name: ListEvents :many
 SELECT * FROM events WHERE run_id = $1 ORDER BY occurred_at, id;
+
+-- name: CountHeartbeats :many
+SELECT step_run_id, count(*) AS heartbeats
+FROM events
+WHERE run_id = $1 AND op = 'session_heartbeat' AND step_run_id IS NOT NULL
+GROUP BY step_run_id;

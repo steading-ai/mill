@@ -170,6 +170,15 @@ func (s *StoreService) RecordNotice(ctx context.Context, req *connect.Request[mi
 	return connect.NewResponse(&millv1.RecordNoticeResponse{}), nil
 }
 
+// RecordHeartbeat appends one heartbeat the harness sent a quiet session.
+func (s *StoreService) RecordHeartbeat(ctx context.Context, req *connect.Request[millv1.RecordHeartbeatRequest]) (*connect.Response[millv1.RecordHeartbeatResponse], error) {
+	if err := s.svc.RecordHeartbeat(ctx, req.Msg.GetLeaseId(), req.Msg.GetRunId(), req.Msg.GetStepRunId(),
+		req.Msg.GetStrike(), req.Msg.GetStrikes(), req.Msg.GetWaitingSeconds(), req.Msg.GetTasks()); err != nil {
+		return nil, connectError(err)
+	}
+	return connect.NewResponse(&millv1.RecordHeartbeatResponse{}), nil
+}
+
 // Done marks a run done, after dagger has confirmed the completing patch.
 // SetCompleteRequestId mints the completing patch's idempotency key before
 // that patch is sent.

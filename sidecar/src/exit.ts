@@ -26,6 +26,16 @@ export function ran(status: number, signal = 0): ProcessExit {
   return create(ProcessExitSchema, { status, signal, reason: ExitReason.UNSPECIFIED });
 }
 
+// stalled is the exit for a session the breaker stopped: it ended a turn
+// with a background task that then went silent through every heartbeat, and
+// the sidecar killed the task's processes and took the last working turn's
+// words as the result (tasks.ts). The session ran, so the status is a
+// failure's rather than "never ran"; the reason is what says the words were
+// taken rather than offered.
+export function stalled(): ProcessExit {
+  return create(ProcessExitSchema, { status: 1, reason: ExitReason.STALLED });
+}
+
 // SdkOutcome is the part of the SDK's terminal result that decides the exit.
 // The SDK emits exactly one result message per turn; `subtype` is "success"
 // when the turn completed and names the failure otherwise, and `is_error`

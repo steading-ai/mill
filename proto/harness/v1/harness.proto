@@ -42,6 +42,13 @@ enum ExitReason {
   // EXIT_REASON_CANCELLED means a human or the worker cancelled the run and
   // the session was stopped cleanly.
   EXIT_REASON_CANCELLED = 4;
+  // EXIT_REASON_STALLED means the session ended a turn with a background
+  // task that then produced nothing, stayed silent through every heartbeat,
+  // and had its processes killed by the sidecar's breaker. The session ran
+  // and its last working turn is the final message, so the status is the
+  // turn's and this reason is what says the words were taken rather than
+  // offered.
+  EXIT_REASON_STALLED = 5;
 }
 
 // ProcessExit is how a spawned thing ended. Borrowed wholesale from
@@ -237,6 +244,22 @@ message ToolResult {
   bool is_error = 3;
 }
 
+// Heartbeat is the sidecar asking a session that ended its turn with a
+// background task still running whether it is done. It is sent when the
+// task has produced no output since the last look, so the ledger can show
+// what the wait cost and how close the breaker came to tripping.
+message Heartbeat {
+  // Which heartbeat this is, counting from one.
+  int32 strike = 1;
+  // How many silent heartbeats trip the breaker.
+  int32 strikes = 2;
+  // How long the turn has been over when this heartbeat was sent, in
+  // seconds.
+  int64 waiting_seconds = 3;
+  // The tasks that have gone silent, as the harness described them.
+  repeated string tasks = 4;
+}
+
 // Event is one thing that happened during a turn, streamed to the worker as
 // it happens. Events are for the operator's log and the ledger's usage rows;
 // nothing an event says is evidence.
@@ -253,6 +276,8 @@ message Event {
     ToolResult tool_result = 4;
     // What this turn cost, per model. Written to the ledger per turn.
     Usage usage = 5;
+    // The sidecar asked a silent session whether its task is still needed.
+    Heartbeat heartbeat = 6;
   }
 }
 

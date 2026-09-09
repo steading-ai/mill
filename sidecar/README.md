@@ -15,6 +15,22 @@ the terminal record's `exit`, never in the process's status: a status of `-1`
 means the session never ran and `reason` says why — `refused`, `policy`,
 `cancelled`.
 
+A turn is not the end of a session. A session may background a command and
+end its turn to be woken when it finishes, so the sidecar keeps reading until
+a turn ends with no task still running. It watches that wait: every three
+minutes it looks at each waited-on task's output file, stays silent while the
+output grows, and sends one turn asking about a task that has gone quiet —
+also written to the worker as a `heartbeat` event. Three silent looks trip the
+breaker: the session's child processes are killed, the last *working* turn's
+words become the final message, and the record carries reason `stalled`, which
+the worker reads as a failed attempt. `src/tasks.ts` holds the constants and
+the prompt; `MILL_SIDECAR_HEARTBEAT_MS` shortens the interval for the specs,
+and nothing sets it in production. The session gets `TaskOutput` and `TaskStop`
+in its allowed tools unless the step denies them, a `BASH_DEFAULT_TIMEOUT_MS`
+of ten minutes so an ordinary command is not backgrounded behind its back, and
+a `PreToolUse` hook that refuses a shell loop polling with `pgrep -f` — the
+wait that matches its own shell and never ends (`src/hooks.ts`).
+
 Cancellation is not a request. It arrives as **SIGTERM**, because a sidecar
 mid-turn is not reading its stdin. The sidecar aborts the turn and answers
 with a cancelled terminal record; if the harness has not stopped within the
@@ -53,6 +69,8 @@ src/options.ts the schema for a step's options: model, effort, tools,
                permission_mode, env. Owned here
 src/usage.ts   per-model token counts, per turn and in total
 src/exit.ts    SDK outcomes to ProcessExit
+src/tasks.ts   the wait a turn ends on: the heartbeat, the breaker, the kill
+src/hooks.ts   the PreToolUse hook that refuses a self-matching `pgrep` wait
 gen/           harness.v1 in TypeScript; buf writes it, `make generate` runs buf
 spec/          the fake harness the Go specs drive the sidecar against
 ```

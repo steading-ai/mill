@@ -377,6 +377,29 @@ func (s *Store) RecordNotice(ctx context.Context, leaseID, runID, stepRunID, kin
 	})
 }
 
+// RecordHeartbeat appends one heartbeat the harness sent a session that had
+// gone quiet. Like a notice it changes no run state — the wait is the
+// harness's business and the row of the audit trail is the whole record —
+// and like every other write it is fenced by the lease the caller holds.
+func (s *Store) RecordHeartbeat(ctx context.Context, leaseID, runID, stepRunID string, strike, strikes int32, waitingSeconds int64, tasks []string) error {
+	return s.withTx(ctx, func(ctx context.Context, tx pgx.Tx, q *Queries) error {
+		if _, err := fence(ctx, tx, runID, leaseID); err != nil {
+			return err
+		}
+		return record(ctx, q, event{
+			runID:     runID,
+			stepRunID: stepRunID,
+			op:        "session_heartbeat",
+			after: map[string]any{
+				"strike":          strike,
+				"strikes":         strikes,
+				"waiting_seconds": waitingSeconds,
+				"tasks":           tasks,
+			},
+		})
+	})
+}
+
 // ClearGate takes the answered gate off a run and leaves it running, which
 // is what lets the next gate step file one of its own (Invariant 12).
 //
@@ -1691,12 +1714,29 @@ func (s *Store) Inspect(ctx context.Context, p InspectParams) (*RunDetail, error
 	if err != nil {
 		return nil, fmt.Errorf("step runs of run %s: %w", row.ID, err)
 	}
+	// How many times each attempt's session was asked about a task that had
+	// gone quiet. The rows of the audit trail are the record, so the count
+	// is read off them rather than kept on the attempt.
+	beatRows, err := q.CountHeartbeats(ctx, row.ID)
+	if err != nil {
+		return nil, fmt.Errorf("heartbeats of run %s: %w", row.ID, err)
+	}
+	beats := make(map[string]int64, len(beatRows))
+	for _, beatRow := range beatRows {
+		if beatRow.StepRunID != nil {
+			beats[*beatRow.StepRunID] = beatRow.Heartbeats
+		}
+	}
 	for _, stepRow := range stepRows {
 		stepRun, err := stepRunProto(stepRow)
 		if err != nil {
 			return nil, err
 		}
-		step := &millv1.StepRunDetail{StepRun: stepRun, Session: sessions[stepRun.GetSessionId()]}
+		step := &millv1.StepRunDetail{
+			StepRun:    stepRun,
+			Session:    sessions[stepRun.GetSessionId()],
+			Heartbeats: beats[stepRow.ID],
+		}
 		evidenceRow, err := q.GetEvidence(ctx, stepRow.ID)
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):

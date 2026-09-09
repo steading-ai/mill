@@ -837,6 +837,11 @@ message StepRunDetail {
   Session session = 3;
   // What it cost, by model.
   repeated ModelTotals totals = 4;
+  // How many times the harness asked this attempt's session about a
+  // background task that had gone silent. A stalled attempt is one whose
+  // heartbeats ran out, so the count is what says how the exit was reached
+  // (docs/domain-model.md §Session).
+  int64 heartbeats = 5;
 }
 
 // Event is one row of the ledger's audit trail: what changed about a run,

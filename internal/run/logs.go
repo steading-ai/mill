@@ -154,6 +154,10 @@ func eventLine(event *harnessv1.Event) string {
 			status = "error"
 		}
 		return fmt.Sprintf("result call=%s %s out=%s", body.ToolResult.GetCallId(), status, summarize(body.ToolResult.GetContent()))
+	case *harnessv1.Event_Heartbeat:
+		return fmt.Sprintf("heartbeat %d/%d waiting=%ds tasks=%s",
+			body.Heartbeat.GetStrike(), body.Heartbeat.GetStrikes(),
+			body.Heartbeat.GetWaitingSeconds(), strings.Join(body.Heartbeat.GetTasks(), "; "))
 	case *harnessv1.Event_Usage:
 		models := make([]string, 0, len(body.Usage.GetByModel()))
 		for model, counts := range body.Usage.GetByModel() {

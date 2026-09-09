@@ -18,6 +18,8 @@ const status = await run({
     process.on("SIGTERM", handler);
     process.on("SIGINT", handler);
   },
+  uid: () => process.getuid?.() ?? 0,
+  pid: process.pid,
   loadQuery: async () => fakeQuery(process.env),
 });
 

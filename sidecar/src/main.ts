@@ -53,6 +53,12 @@ export interface Io {
   // onCancel registers the handler that runs when the worker asks the
   // session to stop.
   onCancel: (handler: () => void) => void;
+  // uid is the invoking user, and pid this process. The breaker needs both:
+  // the first is half of where the harness writes a background task's
+  // output, the second is the root of the process tree it kills
+  // (src/tasks.ts).
+  uid: () => number;
+  pid: number;
   // loadQuery resolves the harness. The default is the Claude Agent SDK.
   loadQuery: () => Promise<QueryFn>;
 }
@@ -170,7 +176,17 @@ export async function run(io: Io): Promise<number> {
   });
 
   const outcome = await Promise.race([
-    runSession({ query, turn, options, emit, accumulated, cancelled: () => cancelled }),
+    runSession({
+      query,
+      turn,
+      options,
+      emit,
+      accumulated,
+      cancelled: () => cancelled,
+      env: io.env,
+      uid: io.uid(),
+      pid: io.pid,
+    }),
     expired,
   ]);
 
@@ -214,6 +230,8 @@ export async function bootstrap(): Promise<void> {
       process.on("SIGTERM", handler);
       process.on("SIGINT", handler);
     },
+    uid: () => process.getuid?.() ?? 0,
+    pid: process.pid,
     loadQuery,
   });
   // An unstopped harness child would otherwise hold the event loop open past
