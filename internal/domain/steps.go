@@ -42,6 +42,25 @@ func (s *Service) StartStepRun(ctx context.Context, leaseID string, p StartStepR
 	})
 }
 
+// RecordStepEnvironmentParams records what an attempt's session process was
+// given of the mill's own environment.
+type RecordStepEnvironmentParams struct {
+	StepRunID      string
+	EnvPassthrough []string
+	EnvStripped    []string
+}
+
+// RecordStepEnvironment writes what the environment mode gave an attempt's
+// session process: what the step asked to have passed through, and what the
+// deny list removed.
+func (s *Service) RecordStepEnvironment(ctx context.Context, leaseID string, p RecordStepEnvironmentParams) (*millv1.StepRun, error) {
+	return s.store.RecordStepEnvironment(ctx, leaseID, store.RecordStepEnvironmentParams{
+		StepRunID:      p.StepRunID,
+		EnvPassthrough: p.EnvPassthrough,
+		EnvStripped:    p.EnvStripped,
+	})
+}
+
 // CloseStepRun records the evidence that closes an attempt and marks it
 // closed, in one transaction.
 //

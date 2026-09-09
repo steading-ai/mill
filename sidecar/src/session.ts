@@ -24,7 +24,7 @@ import {
   type Workspace,
 } from "../gen/harness/v1/harness_pb.js";
 import { describe, fromError, fromResult, ran } from "./exit.js";
-import { PolicyError, parseOptions } from "./options.js";
+import { DEFAULT_PERMISSION_MODE, PolicyError, parseOptions, type Env } from "./options.js";
 import type { Options, QueryFn, SDKMessage } from "./sdk.js";
 import { fromModelUsage, fromTurn, type UsageAccumulator } from "./usage.js";
 
@@ -38,6 +38,13 @@ export const TOOL_RESULT_LIMIT = 4096;
 // mill to anything else. The SDK does not merge this with `process.env`, so
 // what is not listed here is not present — no ANTHROPIC key, no forge token,
 // no dagger socket.
+//
+// It is the same list as `envFloor` in internal/harness/claude/environment.go,
+// which answers the same question one hop earlier: what the sidecar itself is
+// spawned with under `--env-mode strict`. The two are stated separately
+// because they are two boundaries; change one and look at the other. A step
+// that needs more says so in its options, as `env.passthrough` or `env.set`,
+// where the workflow shows it.
 const ENVIRONMENT_PASSTHROUGH = [
   "HOME",
   "LANG",
@@ -136,18 +143,35 @@ export function renderPrompt(prompt: string, attachments: Attachment[], nonce = 
 
 // sessionEnv is the environment the session's tools run under: the
 // workspace's socket and token, over a floor of host variables a process
-// needs to start at all. Everything else the sidecar was spawned with stops
-// here.
+// needs to start at all, plus the step's own carve-out. Everything else the
+// sidecar was spawned with stops here.
+//
+// The step's `env.passthrough` copies variables the sidecar itself has —
+// under `--env-mode strict` that is the floor plus the names the same key
+// told the adapter to carry, so the two halves of the carve-out are one line
+// in the workflow — and `env.set` sets literals over them. The socket and
+// the token go on last: they are the session's whole grant, and nothing a
+// step asked for may shadow them.
 export function sessionEnv(
   workspace: Workspace | undefined,
   hostEnv: Record<string, string | undefined>,
+  carveOut?: Env,
 ): Record<string, string> {
   const env: Record<string, string> = {};
-  for (const name of ENVIRONMENT_PASSTHROUGH) {
+  const copy = (name: string): void => {
     const value = hostEnv[name];
     if (value !== undefined) {
       env[name] = value;
     }
+  };
+  for (const name of ENVIRONMENT_PASSTHROUGH) {
+    copy(name);
+  }
+  for (const name of carveOut?.passthrough ?? []) {
+    copy(name);
+  }
+  for (const [name, value] of Object.entries(carveOut?.set ?? {})) {
+    env[name] = value;
   }
   env[WORKSPACE_SOCKET_VAR] = workspace?.socket ?? "";
   env[STEP_TOKEN_VAR] = workspace?.token ?? "";
@@ -183,6 +207,13 @@ function outputFormat(schema: string): Options["outputFormat"] {
 // reaches subagents (docs/spikes/sdk-sessions.md §Q3). A step's deny list is
 // a boundary, so it goes through the one that takes the tool away.
 //
+// The permission mode is the step's, and `auto` — the model classifier — when
+// the step names none. A session runs unattended: under the SDK's `default`
+// mode a tool call that needs permission is a prompt nobody answers, which is
+// where the first end-to-end run stopped. The classifier is an answerer and
+// not a boundary; `tools.deny` and the workspace's socket remain the
+// enforcement (docs/architecture.md §"Skill steps: the harness adapter").
+//
 // `settingSources` is empty: a session's tools and permissions come from the
 // step, never from whatever settings files the account that runs the sidecar
 // happens to have.
@@ -201,7 +232,8 @@ export function buildOptions(
   const declared = parseOptions(turn.settings?.options);
   const options: Options = {
     abortController,
-    env: sessionEnv(turn.workspace, hostEnv),
+    env: sessionEnv(turn.workspace, hostEnv, declared.env),
+    permissionMode: declared.permissionMode ?? DEFAULT_PERMISSION_MODE,
     settingSources: [],
   };
   if (turn.cwd !== "") {

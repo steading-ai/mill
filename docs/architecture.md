@@ -87,11 +87,44 @@ A `Turn` streams events (text, tool calls, tool results, usage) and ends with a 
 
 The first adapter is a **TypeScript sidecar over the Claude Agent SDK**, spawned per step as a child process and spoken to over **newline-delimited JSON on stdio**. Message types are defined once in proto and generated to Go and TypeScript with buf, so both sides are typed without a transport heavier than a pipe. A child process on stdio has the right lifecycle for free: it dies with its parent, it needs no port or socket, and it is how MCP and LSP servers already work. Connect over a unix socket is the upgrade if a sidecar ever has to outlive its worker; nothing in MVP needs that.
 
-The sidecar receives: the session id (deterministic, so `Resume` finds the transcript), the prompt (the skill body plus the node body and inputs plus prior artifacts, rendered with predecessors' content as attributed data), the step's **options document** for its entry in the step's `harness` table, the workspace socket path and step token as the *only* environment, and the structured-output schema if the step has one.
+The sidecar receives: the session id (deterministic, so `Resume` finds the transcript), the prompt (the skill body plus the node body and inputs plus prior artifacts, rendered with predecessors' content as attributed data), the step's **options document** for its entry in the step's `harness` table, the workspace socket path and step token, and the structured-output schema if the step has one.
 
 **The options are the harness's, not mill's.** `Session.Options` is the yaml block as the workflow wrote it, and nothing on this side of the wire reads a key of it: the loader checks only that it is a mapping, the adapter hands it over whole, and the sidecar validates it against its own schema (`sidecar/src/options.ts`) before the SDK is loaded. A key the sidecar does not have, or a value of the wrong type, ends the request as a terminal record with `Status = -1` and `Reason = policy` naming the key, which the worker records as a failed attempt. That is what keeps mill harness-agnostic in fact and not only in shape: a knob the Claude SDK grows next quarter costs a change to the sidecar and to a workflow, and no change to the proto, the loader, or the worker. The one thing mill checks is the harness *name*, at run start, against the adapters it has.
 
 `tools.allow` and `tools.deny` are the Claude sidecar's keys for the tool policy, and in MVP they are the harness's half of a read-only step: the SDK enforces them and the model does not get a vote. Mill's half is the capability set — the workspace refuses `fs.write` and `git.commit` under a step token that lacks `write` — and it becomes the whole of it when the socket is the session's tool server and containers arrive.
+
+**A session runs under the model classifier.** The Claude sidecar sets the SDK's `permissionMode` to `auto` unless the step names another in `permission_mode`; a step may name `default`, `acceptEdits`, `dontAsk` or `plan`, and `bypassPermissions` is refused with `Reason = policy` before the SDK is loaded. A mill session is unattended, and under the SDK's `default` mode a tool call that needs permission raises a prompt nobody answers — which is where the first end-to-end run stopped, at `git add`. The classifier is a permission *answerer*, not a boundary: `tools.deny` and the workspace's socket remain the enforcement. `bypassPermissions` stays refused until the workspace is a sandbox (`docs/roadmap.md` §O4), because today a session runs as the mill's own account on the mill's own host and a mode that says yes to everything would have only the tool policy left between it and that host.
+
+**The environment a sidecar is spawned with is a mode.** The mill's own process is not a floor: it carries `DATABASE_URL`, `MILL_FORGE_TOKEN`, the dagger project it was started for, and — when someone runs `mill run` from a Claude Code session — the markers that make the SDK think it is nested. A mode rather than one fixed floor, because the audiences differ. A person trying mill on a laptop wants their sessions to see what their shell sees (`GOFLAGS`, `GOPRIVATE`, a proxy, `SSH_AUTH_SOCK`) and should not have to learn a carve-out first; a deployment wants the opposite. `--env-mode inherit` is the default, `--env-mode strict` is what `contrib/systemd/mill.service` sets, and `env_mode` in the configuration file says the same thing.
+
+A **deny list** applies in both modes and is not configurable. It is never given to a sidecar or a session, whatever the step asks for:
+
+| Name | Why |
+|---|---|
+| `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` | the login comes from `HOME`; a key in a session's environment is a key its `Bash` tool can print |
+| `DATABASE_URL`, `MILL_*` | the mill's own store and credentials, the forge token among them |
+| `DG_*` | dagger's socket and project: a session reaches the work graph through nothing |
+| `CLAUDECODE`, `CLAUDE_CODE_*` | an interactive session's markers make the SDK think it is nested |
+
+`inherit` is then the mill's environment minus that list. `strict` is a floor, each variable with a reason:
+
+| Variable | Why it is on the floor |
+|---|---|
+| `HOME` | the SDK finds the account's login (`~/.claude/.credentials.json`) and writes transcripts under `~/.claude/projects`; git reads `~/.gitconfig` |
+| `PATH` | the sidecar must find `node`, the SDK its `claude` binary, the session `git` and the project's toolchain |
+| `LANG`, `LC_ALL` | encoding; without them Node and git fall back to ASCII and mangle non-ASCII in bodies and diffs |
+| `LOGNAME`, `USER` | git's identity fallback; a clean `git commit` without `user.name` set |
+| `SHELL` | the SDK's `Bash` tool runs the account's shell |
+| `TERM` | tools that check for a terminal behave predictably; a deployment pins it |
+| `TMPDIR` | the SDK and git write temporary files; a deployment points it inside the runtime directory |
+| `TZ` | timestamps in commits and logs match the host's |
+| `XDG_RUNTIME_DIR` | the sidecar's own sockets and the SDK's IPC live under it |
+
+The workspace socket and the step token are added on top in both modes, last, so nothing a step asked for can shadow them.
+
+**The carve-out is the step's, where a reviewer can see it.** A step's `harness.claude` options may name `env.passthrough: [NAME, …]`, which copies those variables from the mill's process, and `env.set: {NAME: value}`, which sets literals. Both are the sidecar's schema; the adapter reads `env.passthrough` too, because what a child process is given is not the child's to decide. A step naming a deny-listed variable is refused before the sidecar is spawned, with a message naming the variable. In `inherit` mode `env.passthrough` is accepted and redundant; `env.set` applies in both. The attempt records what the step asked for and what was stripped (`step_runs.env_passthrough`, `step_runs.env_stripped`), and `mill inspect` shows both when either is non-empty. The floor is not widened to make a step work: the carve-out exists so that a workflow says what it needs.
+
+The sidecar applies the same shape one hop further along — the session's tools inherit that floor from the sidecar, plus the step's carve-out, plus the socket and the token — so `ENVIRONMENT_PASSTHROUGH` in `sidecar/src/session.ts` and `envFloor` in `internal/harness/claude/environment.go` are the same list stated at two boundaries.
 
 Codex, Pi, and a native Go Claude adapter are further implementations of the same interface. The adapter, not the workflow, translates a skill into whatever the harness wants; a skill is used as a *prompt*, never installed as a harness-native skill, so no harness's discovery rules leak into the workflow.
 
@@ -142,7 +175,7 @@ Implementations behind the interface:
 
 A workflow definition does not change across these. If it has to, the seam leaked.
 
-Adapters get the socket path and token as their entire environment. The adapter is the socket's client, not the session: the Claude sidecar holds the socket and re-exposes the verbs as an MCP server hosted in its own process, and the session's built-in `Read`/`Write`/`Edit`/`Bash` are removed by policy so the workspace's tools are the only filesystem and the only way to a process. A session cannot be pointed at the socket directly — the SDK's MCP transports are stdio, HTTP and in-process, and no URL spelling reaches a unix socket (`docs/spikes/mcp-workspace.md`). The mount is what makes every file and command one auditable call at a seam the mill owns; it is not what enforces. Enforcement is the process boundary `Workspace.Exec` sets — cwd, uid, environment — because a command run through `exec` is bounded by the process it spawns, not by the tool that spawned it.
+A session gets the socket path and token, over the floor its harness's environment mode allows and nothing else (§"Skill steps: the harness adapter"). The adapter is the socket's client, not the session: the Claude sidecar holds the socket and re-exposes the verbs as an MCP server hosted in its own process, and the session's built-in `Read`/`Write`/`Edit`/`Bash` are removed by policy so the workspace's tools are the only filesystem and the only way to a process. A session cannot be pointed at the socket directly — the SDK's MCP transports are stdio, HTTP and in-process, and no URL spelling reaches a unix socket (`docs/spikes/mcp-workspace.md`). The mount is what makes every file and command one auditable call at a seam the mill owns; it is not what enforces. Enforcement is the process boundary `Workspace.Exec` sets — cwd, uid, environment — because a command run through `exec` is bounded by the process it spawns, not by the tool that spawned it.
 
 In MVP the adapter's tool allowlist is the **only** enforcement: the workspace's `local` implementation does not yet gate `exec` against `write`, so a reviewer allowed `Bash` to run tests can also write. MVP detects rather than prevents: a `clean-tree` check after every read-only step fails it if the tree changed, and the ledger says which session did it. The capability set becomes a second, independent layer with the container workspace.
 

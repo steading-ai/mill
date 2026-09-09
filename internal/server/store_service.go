@@ -76,6 +76,20 @@ func (s *StoreService) StartStepRun(ctx context.Context, req *connect.Request[mi
 	return connect.NewResponse(&millv1.StartStepRunResponse{StepRun: stepRun}), nil
 }
 
+// RecordStepEnvironment records what a skill step's session process was
+// given of the mill's own environment.
+func (s *StoreService) RecordStepEnvironment(ctx context.Context, req *connect.Request[millv1.RecordStepEnvironmentRequest]) (*connect.Response[millv1.RecordStepEnvironmentResponse], error) {
+	stepRun, err := s.svc.RecordStepEnvironment(ctx, req.Msg.GetLeaseId(), domain.RecordStepEnvironmentParams{
+		StepRunID:      req.Msg.GetStepRunId(),
+		EnvPassthrough: req.Msg.GetEnvPassthrough(),
+		EnvStripped:    req.Msg.GetEnvStripped(),
+	})
+	if err != nil {
+		return nil, connectError(err)
+	}
+	return connect.NewResponse(&millv1.RecordStepEnvironmentResponse{StepRun: stepRun}), nil
+}
+
 // CloseStepRun records the evidence that closes an attempt.
 func (s *StoreService) CloseStepRun(ctx context.Context, req *connect.Request[millv1.CloseStepRunRequest]) (*connect.Response[millv1.CloseStepRunResponse], error) {
 	stepRun, evidence, err := s.svc.CloseStepRun(ctx, req.Msg.GetLeaseId(), domain.CloseStepRunParams{

@@ -285,10 +285,29 @@ func TerminalFrom(terminal *harnessv1.Terminal) *Terminal {
 	return out
 }
 
+// Environment is an adapter's record of what it gave the process it spawned
+// of the mill's own environment. It is a record, not a setting: the decision
+// is the adapter's and is already made by the time a turn carries it, and
+// the ledger keeps it so a reviewer can see what a workflow asked for and
+// what was taken away (docs/architecture.md §"Skill steps: the harness
+// adapter").
+type Environment struct {
+	// Passthrough are the variables the step asked to have carried from the
+	// mill's environment into its session's process.
+	Passthrough []string
+	// Stripped are the deny-listed variables that were present in the
+	// mill's environment and removed.
+	Stripped []string
+}
+
 // Turn is one Start or Resume in flight. Its events reach the session's sink
 // as they arrive; it ends with exactly one terminal record, which is what
 // Wait returns.
 type Turn struct {
+	// Environment is what the adapter gave the spawned process, set before
+	// the turn is returned and never written again.
+	Environment Environment
+
 	done     chan struct{}
 	once     sync.Once
 	terminal *Terminal

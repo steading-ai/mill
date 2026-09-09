@@ -1296,7 +1296,15 @@ type StepRun struct {
 	// When the attempt started.
 	StartedAt *timestamppb.Timestamp `protobuf:"bytes,13,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
 	// When the attempt ended.
-	EndedAt       *timestamppb.Timestamp `protobuf:"bytes,14,opt,name=ended_at,json=endedAt,proto3" json:"ended_at,omitempty"`
+	EndedAt *timestamppb.Timestamp `protobuf:"bytes,14,opt,name=ended_at,json=endedAt,proto3" json:"ended_at,omitempty"`
+	// Skill steps: the variables the step asked to have carried from the
+	// mill's own environment into its session's process, as the adapter
+	// applied them. A step that asked for nothing has none.
+	EnvPassthrough []string `protobuf:"bytes,15,rep,name=env_passthrough,json=envPassthrough,proto3" json:"env_passthrough,omitempty"`
+	// Skill steps: the deny-listed variables that were present in the mill's
+	// environment and removed before the session's process was spawned. The
+	// deny list is not configurable, so this is a record and not a setting.
+	EnvStripped   []string `protobuf:"bytes,16,rep,name=env_stripped,json=envStripped,proto3" json:"env_stripped,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1425,6 +1433,20 @@ func (x *StepRun) GetStartedAt() *timestamppb.Timestamp {
 func (x *StepRun) GetEndedAt() *timestamppb.Timestamp {
 	if x != nil {
 		return x.EndedAt
+	}
+	return nil
+}
+
+func (x *StepRun) GetEnvPassthrough() []string {
+	if x != nil {
+		return x.EnvPassthrough
+	}
+	return nil
+}
+
+func (x *StepRun) GetEnvStripped() []string {
+	if x != nil {
+		return x.EnvStripped
 	}
 	return nil
 }
@@ -3715,7 +3737,7 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"\n" +
 	"updated_at\x18\x10 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x125\n" +
 	"\bended_at\x18\x11 \x01(\v2\x1a.google.protobuf.TimestampR\aendedAt\x12.\n" +
-	"\x13complete_request_id\x18\x12 \x01(\tR\x11completeRequestId\"\x80\x04\n" +
+	"\x13complete_request_id\x18\x12 \x01(\tR\x11completeRequestId\"\xcc\x04\n" +
 	"\aStepRun\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x1b\n" +
@@ -3734,7 +3756,9 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"\rauto_approved\x18\f \x01(\bR\fautoApproved\x129\n" +
 	"\n" +
 	"started_at\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x125\n" +
-	"\bended_at\x18\x0e \x01(\v2\x1a.google.protobuf.TimestampR\aendedAt\"\x93\x01\n" +
+	"\bended_at\x18\x0e \x01(\v2\x1a.google.protobuf.TimestampR\aendedAt\x12'\n" +
+	"\x0fenv_passthrough\x18\x0f \x03(\tR\x0eenvPassthrough\x12!\n" +
+	"\fenv_stripped\x18\x10 \x03(\tR\venvStripped\"\x93\x01\n" +
 	"\aFinding\x12\x1c\n" +
 	"\tcriterion\x18\x01 \x01(\tR\tcriterion\x124\n" +
 	"\bseverity\x18\x02 \x01(\x0e2\x18.mill.v1.FindingSeverityR\bseverity\x12\x18\n" +

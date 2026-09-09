@@ -67,6 +67,33 @@ var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 			Expect(rowFor(out, "implement")).To(ContainSubstring("failed"))
 			Expect(rowFor(out, "select")).To(ContainSubstring("workflow=quick-fix"))
 		})
+
+		It("shows what the environment mode gave a session, when there is something to show", func() {
+			r := openRun(ctx, "millcli#8", nodeID(8))
+			sr := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+			_, err := r.store.RecordStepEnvironment(ctx, connect.NewRequest(&millv1.RecordStepEnvironmentRequest{
+				LeaseId:        r.lease,
+				StepRunId:      sr.GetId(),
+				EnvPassthrough: []string{"GOFLAGS"},
+				EnvStripped:    []string{"ANTHROPIC_API_KEY", "DATABASE_URL"},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+
+			out := r.cli(ctx, "inspect", "millcli#8")
+
+			Expect(out).To(ContainSubstring("ENV PASSTHROUGH"))
+			Expect(out).To(ContainSubstring("GOFLAGS"))
+			Expect(out).To(ContainSubstring("ANTHROPIC_API_KEY DATABASE_URL"))
+		})
+
+		It("says nothing about the environment when no step carved anything out", func() {
+			r := openRun(ctx, "millcli#9", nodeID(9))
+			r.closeGatherContext(ctx, "sha256:"+strings.Repeat("d", 64))
+
+			out := r.cli(ctx, "inspect", "millcli#9")
+
+			Expect(out).NotTo(ContainSubstring("ENV PASSTHROUGH"))
+		})
 	})
 
 	Describe("mill history", func() {

@@ -63,6 +63,12 @@ steps:
     evidence: commit
     capabilities:
       - write
+    # No `permission_mode` and no `env`: the defaults are what this step
+    # needs. A session runs under the model classifier, so an unattended
+    # `git add` is answered rather than prompted, and the environment its
+    # sidecar is spawned with is the worker's `--env-mode` — the floor
+    # carries HOME, PATH and the rest git and the SDK need
+    # (docs/architecture.md §"Skill steps: the harness adapter").
     harness:
       claude:
         model: sonnet

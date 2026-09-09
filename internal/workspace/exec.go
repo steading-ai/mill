@@ -25,6 +25,12 @@ type Command struct {
 	// over the workspace's own floor rather than replacing it, so a caller
 	// names only the variables that belong to its step and nothing else.
 	Env map[string]string
+	// ClearEnv makes Env the whole of the child's environment: the floor is
+	// not consulted at all. A caller that has decided every variable its
+	// child may see — the harness adapter under an environment mode
+	// (docs/architecture.md §"Skill steps: the harness adapter") — says so
+	// here rather than by naming the floor's variables again.
+	ClearEnv bool
 }
 
 // Result is how a spawned process ended: the raw facts, with none of the
@@ -80,7 +86,7 @@ func (l Spawner) Exec(ctx context.Context, command Command) (*Process, error) {
 
 	cmd := exec.Command(command.Path, command.Args...) //nolint:gosec // the command is the mill's own configuration, never a session's input
 	cmd.Dir = command.Dir
-	cmd.Env = environ(l.Floor, command.Env)
+	cmd.Env = environ(l.Floor, command)
 	// A process group of its own is what makes cancellation reach the whole
 	// tree a session spawns, not just the child mill can see.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -103,9 +109,14 @@ func (l Spawner) Exec(ctx context.Context, command Command) (*Process, error) {
 }
 
 // environ renders the floor with the command's own variables added over it,
-// in a stable order so two identical commands produce identical children.
-func environ(floor []string, own map[string]string) []string {
-	if floor == nil {
+// in a stable order so two identical commands produce identical children. A
+// command that carries its whole environment starts from nothing instead.
+func environ(floor []string, command Command) []string {
+	own := command.Env
+	switch {
+	case command.ClearEnv:
+		floor = nil
+	case floor == nil:
 		floor = os.Environ()
 	}
 	names := make([]string, 0, len(own))

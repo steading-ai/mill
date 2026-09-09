@@ -262,6 +262,39 @@ func renderInspect(cmd *cobra.Command, detail *millv1.InspectResponse, v view) e
 		}
 		_, _ = fmt.Fprintln(w, strings.Join(row, "\t"))
 	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	return renderEnvironments(cmd, detail)
+}
+
+// renderEnvironments prints what the environment mode gave each session,
+// under the steps table and only for the attempts that have something to
+// say. It is a table of its own because the lists are long and per-attempt:
+// folded into the steps table they would widen every row for the one step
+// that carved something out.
+func renderEnvironments(cmd *cobra.Command, detail *millv1.InspectResponse) error {
+	rows := [][]string{}
+	for _, step := range detail.GetSteps() {
+		sr := step.GetStepRun()
+		if len(sr.GetEnvPassthrough()) == 0 && len(sr.GetEnvStripped()) == 0 {
+			continue
+		}
+		rows = append(rows, []string{
+			sr.GetStepName(), fmt.Sprint(sr.GetAttempt()),
+			dash(strings.Join(sr.GetEnvPassthrough(), " ")),
+			dash(strings.Join(sr.GetEnvStripped(), " ")),
+		})
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
+	w := table(cmd)
+	_, _ = fmt.Fprintln(w, "STEP\tATTEMPT\tENV PASSTHROUGH\tENV STRIPPED")
+	for _, row := range rows {
+		_, _ = fmt.Fprintln(w, strings.Join(row, "\t"))
+	}
 	return w.Flush()
 }
 

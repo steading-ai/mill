@@ -39,9 +39,12 @@ const (
 	// second agent ref, which fences the running worker just the same.
 	SecondDaggerConfigVar = "MILL_ACCEPTANCE_SECOND_DAGGER_CONFIG"
 
-	// The Claude credential the sidecar's sessions run on. Either does.
-	anthropicKeyVar = "ANTHROPIC_API_KEY" //nolint:gosec // the name of a variable, not a credential
-	oauthTokenVar   = "CLAUDE_CODE_OAUTH_TOKEN"
+	// credentialsPath is where the account's Claude Code login lives,
+	// relative to $HOME. It is what the sidecar's sessions run on: a key or
+	// an OAuth token in the environment is on the harness adapter's deny
+	// list and never reaches a sidecar (docs/architecture.md §"Skill steps:
+	// the harness adapter").
+	credentialsPath = ".claude/.credentials.json"
 )
 
 // defaultDaggerSocket is where dagger listens when nothing says otherwise.
@@ -111,8 +114,10 @@ func preflight() Environment {
 			missing = append(missing, required.name+" is unset")
 		}
 	}
-	if os.Getenv(anthropicKeyVar) == "" && os.Getenv(oauthTokenVar) == "" {
-		missing = append(missing, "neither "+anthropicKeyVar+" nor "+oauthTokenVar+" is set; the sessions have no Claude credential")
+	if home, err := os.UserHomeDir(); err != nil {
+		missing = append(missing, "no home directory to find the Claude login in: "+err.Error())
+	} else if _, err := os.Stat(filepath.Join(home, credentialsPath)); err != nil {
+		missing = append(missing, "no Claude login at ~/"+credentialsPath+"; the sessions run on the account's own login, never on a credential in the environment")
 	}
 	if _, err := os.Stat(resolved.DaggerSocket); err != nil {
 		missing = append(missing, "nothing is listening on "+resolved.DaggerSocket+" ("+DaggerSocketVar+")")

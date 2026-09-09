@@ -173,6 +173,9 @@ func stepRunProto(row StepRun) (*millv1.StepRun, error) {
 		AutoApproved: row.AutoApproved,
 		StartedAt:    timestamppb.New(row.StartedAt),
 		EndedAt:      stamp(row.EndedAt),
+
+		EnvPassthrough: row.EnvPassthrough,
+		EnvStripped:    row.EnvStripped,
 	}, nil
 }
 

@@ -379,6 +379,14 @@ message StepRun {
   google.protobuf.Timestamp started_at = 13;
   // When the attempt ended.
   google.protobuf.Timestamp ended_at = 14;
+  // Skill steps: the variables the step asked to have carried from the
+  // mill's own environment into its session's process, as the adapter
+  // applied them. A step that asked for nothing has none.
+  repeated string env_passthrough = 15;
+  // Skill steps: the deny-listed variables that were present in the mill's
+  // environment and removed before the session's process was spawned. The
+  // deny list is not configurable, so this is a record and not a setting.
+  repeated string env_stripped = 16;
 }
 
 // Finding is one thing a reviewer found, tied to an acceptance criterion.

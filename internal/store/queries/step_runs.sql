@@ -24,6 +24,13 @@ SELECT DISTINCT ON (step_name) * FROM step_runs
 WHERE run_id = $1
 ORDER BY step_name, attempt DESC;
 
+-- What the environment mode gave the attempt's session process. Written once,
+-- after the adapter has decided and before the session's outcome is known.
+-- name: RecordStepRunEnvironment :one
+UPDATE step_runs SET env_passthrough = $2, env_stripped = $3
+WHERE id = $1
+RETURNING *;
+
 -- name: CloseStepRun :one
 UPDATE step_runs SET status = 'closed', ended_at = now()
 WHERE id = $1 AND status = 'running'

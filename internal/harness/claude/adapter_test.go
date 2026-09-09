@@ -174,22 +174,9 @@ exit 1
 		Expect(terminal.FinalMessage).To(Equal("sidecar: cannot reach the workspace socket"))
 	})
 
-	It("sets the workspace socket and the step token on the child, and nothing else", func() {
-		Expect(os.Setenv("MILL_SPEC_LEAK", "must not reach the child")).To(Succeed())
-		DeferCleanup(func() { Expect(os.Unsetenv("MILL_SPEC_LEAK")).To(Succeed()) })
-		script := stub(`printf '%s\n' '{"terminal":{"exit":{"status":0}}}'`)
-
-		turn, err := adapter(script).Start(lifetime, session, harness.Prompt{Text: "implement"}, nil)
-		Expect(err).NotTo(HaveOccurred())
-		_, err = turn.Wait(lifetime)
-		Expect(err).NotTo(HaveOccurred())
-
-		Expect(spawner.spawned()).To(HaveLen(1))
-		Expect(spawner.spawned()[0].Env).To(Equal(map[string]string{
-			"WORKSPACE_SOCKET": "/run/mill/ws.sock",
-			"STEP_TOKEN":       "step-token-1",
-		}))
-	})
+	// What the child's environment is made of is environment_test.go: it is
+	// a mode's decision now rather than a fixed pair, and the socket and the
+	// token are what survives every mode.
 
 	It("hands the sidecar one request line carrying the session, prompt, settings and workspace", func() {
 		requestFile := scratch("request.json")

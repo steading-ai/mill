@@ -106,6 +106,7 @@ label:
 concurrency: 4
 workflow: feature
 dagger-socket: /run/dagger/other.sock
+env_mode: strict
 `), 0o600)).To(Succeed())
 	})
 
@@ -127,10 +128,15 @@ dagger-socket: /run/dagger/other.sock
 		Expect(opts.concurrency).To(Equal(4))
 		Expect(opts.run.workflow).To(Equal("feature"))
 		Expect(opts.run.daggerSocket).To(Equal("/run/dagger/other.sock"))
+		// The environment mode is what a deployment sets and the one
+		// setting a unit must not forget; the file says it the way the
+		// deployment does.
+		Expect(opts.run.envMode).To(Equal("strict"))
 	})
 
 	It("leaves a flag the command line set alone", func() {
-		opts := parse("--concurrency", "2", "--project", "just-this-one")
+		opts := parse("--concurrency", "2", "--project", "just-this-one", "--env-mode", "inherit")
+		Expect(opts.run.envMode).To(Equal("inherit"))
 		Expect(opts.concurrency).To(Equal(2))
 		Expect(opts.projects).To(Equal([]string{"just-this-one"}))
 		Expect(opts.labels).To(Equal([]string{"agent"}), "the rest still comes from the file")

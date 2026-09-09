@@ -84,6 +84,8 @@ One row per attempt at a step. Append-only.
 | `exit` | JSONB `ProcessExit{status, signal, reason}` for skill and check steps. `status = -1` means never ran |
 | `feedback_from` | The `step_runs.id` whose failure this attempt is the `revise` for, or null |
 | `auto_approved` | Gate steps: true when the `auto` predicate closed it without a human |
+| `env_passthrough` | Skill steps: the variables the step asked to have carried from the mill's environment into its session's process, as the adapter applied them |
+| `env_stripped` | Skill steps: the deny-listed variables that were present in the mill's environment and removed. The deny list is not configurable, so this is a record and not a setting |
 | `started_at`, `ended_at` | |
 
 `closed` means evidence exists for this row. `failed` means the attempt ended and `on_failure` applies. `aborted` means the worker stopped or was fenced out before the attempt ended; the next worker starts a new attempt. `superseded` means a later `revise` reopened this step; the row and its evidence stay as the record of pass one.

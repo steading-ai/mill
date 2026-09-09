@@ -36,7 +36,15 @@ RuntimeDirectoryMode=0750
 # boundary between them is still there, so a second worker on another host
 # stays a configuration change (docs/architecture.md §"One binary, two
 # faces").
-ExecStart=%h/.local/bin/mill serve --work --socket %t/mill/mill.sock
+#
+# --env-mode strict is what a deployment wants: a session's sidecar is given
+# a named floor plus what its step asked for, and not this unit's own
+# environment — which carries DATABASE_URL and MILL_FORGE_TOKEN from the
+# EnvironmentFile above. The default, inherit, is for a person running
+# `mill run` from their shell. A step that needs more than the floor names it
+# in its workflow, as `env.passthrough` (docs/architecture.md §"Skill steps:
+# the harness adapter").
+ExecStart=%h/.local/bin/mill serve --work --env-mode strict --socket %t/mill/mill.sock
 # On stop the worker goes first — it releases its lease as a preemption with
 # detail "shutdown" and leaves its run resumable — and the store drains
 # after it. That is the worker's --grace (30s by default) plus serve's

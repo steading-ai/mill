@@ -58,6 +58,7 @@ type doctorOptions struct {
 	daggerSocket string
 	project      string
 	sidecar      string
+	envMode      string
 	workspaceDir string
 	vcsURL       string
 	identity     string
@@ -74,7 +75,8 @@ func newDoctorCommand() *cobra.Command {
   socket    the service answers on its unix socket
   schema    the database is migrated to the schema this binary carries
   dagger    dagger answers, and this account resolves to a principal there
-  sidecar   the harness sidecar starts and answers a no-op
+  sidecar   the harness sidecar starts, under the environment mode a run
+            would spawn it with, and answers a no-op
   signing   the commit signing key exists and some project trusts it
   forge     the forge credential is accepted
 
@@ -90,6 +92,7 @@ failed.`,
 	f.StringVar(&opts.daggerSocket, "dagger-socket", envOr(daggerSocketEnv, defaultDaggerSocket), "path of dagger's unix socket (default: $"+daggerSocketEnv+")")
 	f.StringVar(&opts.project, "project", os.Getenv(daggerProjectEnv), "dagger project to probe readiness in (default: $"+daggerProjectEnv+")")
 	f.StringVar(&opts.sidecar, "sidecar", envOr(sidecarEnv, claude.DefaultEntrypoint), "path of the harness sidecar's entrypoint (default: $"+sidecarEnv+")")
+	f.StringVar(&opts.envMode, "env-mode", string(claude.DefaultEnvMode), envModeUsage)
 	f.StringVar(&opts.workspaceDir, "workspace-dir", defaultWorkspaceDir(), "directory run workspaces and the signing key live under")
 	f.StringVar(&opts.vcsURL, "vcs-url", os.Getenv(vcsURLEnv), "repository the forge credential is probed against (default: $"+vcsURLEnv+")")
 	f.StringVar(&opts.identity, "identity", "", "address the mill commits under (default: mill@<host>)")
@@ -190,15 +193,25 @@ func probeDagger(ctx context.Context, opts doctorOptions) probe {
 // probeSidecar starts the harness sidecar and asks it for a no-op. Nothing
 // short of running it proves it runs: the entrypoint may be missing, node may
 // be absent, the bundle may be stale.
+//
+// It is spawned under the environment mode a run would spawn it with, and the
+// line says which — a sidecar that starts under `inherit` and not under
+// `strict` is a mode away from a run that cannot start a session, and the
+// probe is where that difference is meant to show up.
 func probeSidecar(ctx context.Context, opts doctorOptions) probe {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	adapter := claude.New(claude.WithEntrypoint(claude.DefaultCommand, opts.sidecar))
+	mode, err := claude.ParseEnvMode(opts.envMode)
+	if err != nil {
+		return fail("sidecar", "%v", err)
+	}
+	adapter := claude.New(claude.WithEntrypoint(claude.DefaultCommand, opts.sidecar), claude.WithEnvMode(mode))
 	terminal, err := adapter.Probe(ctx)
 	if err != nil {
-		return fail("sidecar", "%s did not answer: %v", opts.sidecar, err)
+		return fail("sidecar", "%s did not answer under environment mode %s: %v", opts.sidecar, mode, err)
 	}
-	return pass("sidecar", "%s starts and answers: %s", opts.sidecar, firstLine(terminal.FinalMessage))
+	return pass("sidecar", "%s starts under environment mode %s and answers: %s",
+		opts.sidecar, mode, firstLine(terminal.FinalMessage))
 }
 
 // probeSigning finds the mill's signing key and looks for its public key in

@@ -40,6 +40,18 @@ const reviewSchema = `{
   }
 }`
 
+// applied is the options the fake harness was handed, as the sidecar
+// compiled them.
+func applied(path string) map[string]any {
+	GinkgoHelper()
+
+	body, err := os.ReadFile(path) //nolint:gosec // a spec's own scratch file
+	Expect(err).NotTo(HaveOccurred())
+	options := map[string]any{}
+	Expect(json.Unmarshal(body, &options)).To(Succeed())
+	return options
+}
+
 func startRequest(id string, mutate func(*harnessv1.Start)) string {
 	start := &harnessv1.Start{
 		SessionId: sessionSeed,
@@ -161,6 +173,92 @@ var _ = Describe("The sidecar", Label("unit"), func() {
 		Expect(s.terminal().GetExit().GetReason()).To(Equal(harnessv1.ExitReason_EXIT_REASON_POLICY))
 		Expect(s.terminal().GetFinalMessage()).To(ContainSubstring("thinking_budget"))
 		Expect(s.events()).To(BeEmpty())
+	})
+
+	It("runs a session under the model classifier when the step names no permission mode", func() {
+		By("given a step whose claude options name no permission mode")
+		options := filepath.Join(GinkgoT().TempDir(), "options.json")
+		line := startRequest("permission-1", func(start *harnessv1.Start) {
+			start.Settings = settings(map[string]any{"model": "sonnet"})
+		})
+
+		By("when the sidecar starts the session")
+		run(fakeEntrypoint, map[string]string{
+			"MILL_FAKE_SCENARIO": "trivial",
+			"MILL_FAKE_OPTIONS":  options,
+		}, line)
+
+		By("then the harness was given permissionMode auto")
+		Expect(applied(options)["permissionMode"]).To(Equal("auto"))
+	})
+
+	It("runs a session under the permission mode the step named", func() {
+		By("given a step whose claude options name permission_mode acceptEdits")
+		options := filepath.Join(GinkgoT().TempDir(), "options.json")
+		line := startRequest("permission-2", func(start *harnessv1.Start) {
+			start.Settings = settings(map[string]any{"permission_mode": "acceptEdits"})
+		})
+
+		By("when the sidecar starts the session")
+		run(fakeEntrypoint, map[string]string{
+			"MILL_FAKE_SCENARIO": "trivial",
+			"MILL_FAKE_OPTIONS":  options,
+		}, line)
+
+		By("then the harness was given that mode")
+		Expect(applied(options)["permissionMode"]).To(Equal("acceptEdits"))
+	})
+
+	It("Bypass is refused until there is a sandbox", func() {
+		By("given a step whose claude options name permission_mode bypassPermissions")
+		options := filepath.Join(GinkgoT().TempDir(), "options.json")
+		line := startRequest("permission-3", func(start *harnessv1.Start) {
+			start.Settings = settings(map[string]any{"permission_mode": "bypassPermissions"})
+		})
+
+		By("when the sidecar receives the Start request")
+		s := run(fakeEntrypoint, map[string]string{
+			"MILL_FAKE_SCENARIO": "trivial",
+			"MILL_FAKE_OPTIONS":  options,
+		}, line)
+
+		By("then it writes a terminal record with exit reason policy and starts no session")
+		Expect(s.terminal().GetExit().GetStatus()).To(BeNumerically("==", -1))
+		Expect(s.terminal().GetExit().GetReason()).To(Equal(harnessv1.ExitReason_EXIT_REASON_POLICY))
+		Expect(s.terminal().GetFinalMessage()).To(ContainSubstring("bypassPermissions"))
+		Expect(s.terminal().GetFinalMessage()).To(ContainSubstring("sandbox"))
+		Expect(s.events()).To(BeEmpty())
+		// The refusal happens before the harness is loaded at all, so the
+		// fake never wrote the options it would have run under.
+		_, err := os.Stat(options)
+		Expect(os.IsNotExist(err)).To(BeTrue(), "the harness was loaded for a refused request")
+	})
+
+	It("gives the session what the step carved out of the environment", func() {
+		By("given a step naming a variable to pass through and one to set")
+		options := filepath.Join(GinkgoT().TempDir(), "options.json")
+		line := startRequest("env-1", func(start *harnessv1.Start) {
+			start.Settings = settings(map[string]any{"env": map[string]any{
+				"passthrough": []any{"GOFLAGS"},
+				"set":         map[string]any{"MILL_SPEC_LITERAL": "set-by-the-step"},
+			}})
+		})
+
+		By("when the sidecar starts the session")
+		run(fakeEntrypoint, map[string]string{
+			"MILL_FAKE_SCENARIO": "trivial",
+			"MILL_FAKE_OPTIONS":  options,
+			"GOFLAGS":            "-mod=mod",
+			"MILL_SPEC_ABSENT":   "the sidecar has this and the session does not",
+		}, line)
+
+		By("then the session's environment holds the floor, the carve-out, and nothing else of the sidecar's")
+		env, ok := applied(options)["env"].(map[string]any)
+		Expect(ok).To(BeTrue(), "the harness was given no environment")
+		Expect(env).To(HaveKey("PATH"))
+		Expect(env).To(HaveKeyWithValue("GOFLAGS", "-mod=mod"))
+		Expect(env).To(HaveKeyWithValue("MILL_SPEC_LITERAL", "set-by-the-step"))
+		Expect(env).NotTo(HaveKey("MILL_SPEC_ABSENT"))
 	})
 
 	It("refuses an option whose type is not the one the harness has", func() {

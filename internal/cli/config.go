@@ -28,7 +28,9 @@ import (
 const configEnv = "MILL_CONFIG"
 
 // Config is the settings a file may carry. The keys are the long flag
-// names, so the file and the command line say the same words.
+// names, so the file and the command line say the same words — with one
+// exception, `env_mode`, which is spelled the way the deployment that sets
+// it spells it.
 type Config struct {
 	Socket       string   `yaml:"socket"`
 	DaggerSocket string   `yaml:"dagger-socket"`
@@ -46,6 +48,7 @@ type Config struct {
 	Name         string   `yaml:"name"`
 	WorkspaceDir string   `yaml:"workspace-dir"`
 	LogDir       string   `yaml:"log-dir"`
+	EnvMode      string   `yaml:"env_mode"`
 	Work         bool     `yaml:"work"`
 }
 

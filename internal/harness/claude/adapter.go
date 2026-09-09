@@ -49,10 +49,10 @@ const (
 	// neither is configured.
 	DefaultGrace = 5 * time.Second
 
-	// socketVar and tokenVar are the only environment the adapter sets on
-	// the child: the workspace socket and the step token are the session's
-	// entire environment, and everything else the child needs is the
-	// workspace's to decide.
+	// socketVar and tokenVar are the session's entire grant: a socket to
+	// speak to and a bearer to present on it. They are set on every sidecar
+	// whatever the environment mode, and they are set last, so nothing a
+	// step asked for can shadow them.
 	socketVar = "WORKSPACE_SOCKET"
 	tokenVar  = "STEP_TOKEN"
 
@@ -81,6 +81,12 @@ func WithGrace(grace time.Duration) Option {
 	return func(a *Adapter) { a.grace = grace }
 }
 
+// WithEnvMode sets where a sidecar's environment comes from:
+// [EnvInherit], the default, or [EnvStrict].
+func WithEnvMode(mode EnvMode) Option {
+	return func(a *Adapter) { a.envMode = mode }
+}
+
 // WithTimeout sets the step's wall clock. Zero, the default, means the
 // adapter enforces none and the caller's context is the only bound.
 func WithTimeout(timeout time.Duration) Option {
@@ -94,6 +100,7 @@ type Adapter struct {
 	args    []string
 	grace   time.Duration
 	timeout time.Duration
+	envMode EnvMode
 
 	mu   sync.Mutex
 	live map[string]*flight
@@ -107,6 +114,7 @@ func New(options ...Option) *Adapter {
 		command: DefaultCommand,
 		args:    []string{DefaultEntrypoint},
 		grace:   DefaultGrace,
+		envMode: DefaultEnvMode,
 		live:    map[string]*flight{},
 	}
 	for _, option := range options {
@@ -173,17 +181,19 @@ func (a *Adapter) begin(ctx context.Context, session harness.Session, request *h
 		return nil, err
 	}
 
+	// The whole of the child's environment, decided by the mode and refused
+	// before anything is spawned when the step asked for something it may
+	// not have (environment.go).
+	env, decided, err := a.environment(session)
+	if err != nil {
+		return nil, err
+	}
 	process, err := a.execer.Exec(ctx, workspace.Command{
-		Path: a.command,
-		Args: a.args,
-		Dir:  session.Cwd,
-		// The workspace socket and the step token, and nothing else. The
-		// adapter reads no environment of its own: what the child needs to
-		// start is the workspace's floor, not the adapter's business.
-		Env: map[string]string{
-			socketVar: session.Workspace.Socket,
-			tokenVar:  session.Workspace.Token,
-		},
+		Path:     a.command,
+		Args:     a.args,
+		Dir:      session.Cwd,
+		Env:      env,
+		ClearEnv: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("claude: spawn sidecar: %w", err)
@@ -199,6 +209,7 @@ func (a *Adapter) begin(ctx context.Context, session harness.Session, request *h
 		turn:      harness.NewTurn(),
 		exited:    make(chan struct{}),
 	}
+	running.turn.Environment = decided
 	if err := a.track(running); err != nil {
 		running.kill()
 		return nil, err
@@ -518,7 +529,11 @@ func (a *Adapter) Probe(ctx context.Context) (*harness.Terminal, error) {
 	if err != nil {
 		return nil, err
 	}
-	process, err := a.execer.Exec(ctx, workspace.Command{Path: a.command, Args: a.args})
+	env, _, err := a.environment(harness.Session{})
+	if err != nil {
+		return nil, err
+	}
+	process, err := a.execer.Exec(ctx, workspace.Command{Path: a.command, Args: a.args, Env: env, ClearEnv: true})
 	if err != nil {
 		return nil, fmt.Errorf("claude: spawn sidecar: %w", err)
 	}

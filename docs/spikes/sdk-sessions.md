@@ -309,3 +309,39 @@ Nothing here refutes `docs/architecture.md`. Four things sharpen it:
 
 One question this spike deliberately did not touch: MCP servers, which is the
 sibling `spike-mcp` node.
+
+## Addendum, 2026-09-09 — the permission mode a session runs under
+
+The scripts above ran under `bypassPermissions` wherever a mode mattered, and Q3
+read that as the mode to adopt: `disallowedTools` is the boundary that survives
+it, so the mode looked free. The first end-to-end `mill run` (2026-09-08)
+showed what setting *no* mode costs. The `commit` step's session called
+`git add`, the SDK's permission layer answered "This command requires
+approval", and the session — unattended, with nothing at a terminal — gave up.
+`buildOptions` had set `allowedTools` and `disallowedTools` and never
+`permissionMode`, so the SDK used its `default`: prompt, and wait.
+
+The decision is **`auto`**, the model classifier, as the sidecar's default, with
+`default`, `acceptEdits`, `dontAsk` and `plan` available to a step that names
+one. `bypassPermissions` is **refused** by `sidecar/src/options.ts` with exit
+reason `policy`, before the SDK is loaded.
+
+Why not the spike's recommendation:
+
+- What Q3 established is that `disallowedTools` is a boundary and `allowedTools`
+  is not. It did not establish that a session needs a mode that says yes to
+  everything — only that such a mode cannot reach a tool that was removed.
+- Today a session runs as the mill's own account, in a clone on the mill's own
+  host, with the SDK's own `Bash` (`docs/architecture.md` §"The workspace":
+  MVP's only enforcement is the tool policy). Under `bypassPermissions` the
+  only thing between a session and that host is the deny list. Under `auto` a
+  classifier is asked as well. Neither is a boundary; one is strictly more
+  refusal than the other, at the cost of a classifier call.
+- The refusal is not permanent. It is spelled as a `policy` refusal naming the
+  sandbox because the mode becomes reasonable once the workspace is a
+  container (`docs/roadmap.md` §O4) — at which point this is a one-line change
+  to a list.
+
+What the mode is *not* is enforcement. `tools.deny` and the workspace's socket
+remain the boundary, exactly as Q3 found; the classifier is what answers a
+prompt that would otherwise wait for a human who is not there.

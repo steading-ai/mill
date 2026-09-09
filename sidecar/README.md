@@ -29,17 +29,28 @@ closed: an unknown key or a wrong type ends the request with exit reason
 `policy`, naming the key, before the SDK is loaded. Adding a knob is a change
 here and in a workflow, and mill is not rebuilt for it.
 
+A session runs under the SDK's `auto` permission mode — the model classifier —
+unless the step names another in `permission_mode`. A session is unattended: a
+tool call that raises a prompt under the SDK's `default` mode is a prompt
+nobody answers. The classifier answers; it does not enforce. `tools.deny` and
+the workspace's socket are what enforce, which is why `bypassPermissions` is
+refused here until the workspace is a sandbox.
+
 Credentials for the SDK come from the account the sidecar runs under, through
 `$HOME`; never from the request. What the *session* gets is the workspace's
 socket and step token, as `WORKSPACE_SOCKET` and `STEP_TOKEN`, over a floor of
-host variables a process needs to start. Nothing else the sidecar was spawned
-with is passed on.
+host variables a process needs to start, plus whatever the step's `env`
+carved out — `env.passthrough` names variables to copy from the sidecar's own
+environment, `env.set` sets literals. Nothing else the sidecar was spawned
+with is passed on. What the *sidecar* is spawned with is the worker's
+`--env-mode` (docs/architecture.md §"Skill steps: the harness adapter").
 
 ```
 main.ts        the entrypoint the worker spawns; dist/main.js
 src/main.ts    framing: one request in, events and one terminal record out
 src/session.ts SDK wiring: session id, resume, cwd, environment, policy, schema
-src/options.ts the schema for a step's options: model, effort, tools. Owned here
+src/options.ts the schema for a step's options: model, effort, tools,
+               permission_mode, env. Owned here
 src/usage.ts   per-model token counts, per turn and in total
 src/exit.ts    SDK outcomes to ProcessExit
 gen/           harness.v1 in TypeScript; buf writes it, `make generate` runs buf

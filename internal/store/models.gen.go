@@ -72,20 +72,22 @@ type Skill struct {
 }
 
 type StepRun struct {
-	ID           string
-	RunID        string
-	StepName     string
-	Attempt      int64
-	Kind         string
-	SessionID    *string
-	LeaseID      *string
-	WorkerRef    string
-	Status       string
-	Exit         []byte
-	FeedbackFrom *string
-	AutoApproved bool
-	StartedAt    time.Time
-	EndedAt      *time.Time
+	ID             string
+	RunID          string
+	StepName       string
+	Attempt        int64
+	Kind           string
+	SessionID      *string
+	LeaseID        *string
+	WorkerRef      string
+	Status         string
+	Exit           []byte
+	FeedbackFrom   *string
+	AutoApproved   bool
+	StartedAt      time.Time
+	EndedAt        *time.Time
+	EnvPassthrough []string
+	EnvStripped    []string
 }
 
 type StepToken struct {

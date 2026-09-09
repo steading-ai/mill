@@ -32,6 +32,40 @@ export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
 
 export type EffortLevel = (typeof EFFORT_LEVELS)[number];
 
+// PERMISSION_MODES are the modes a step may name. `auto` — the model
+// classifier — is the default, and the whole reason this option exists: an
+// unattended session under the SDK's `default` mode is prompted for
+// permission and nothing answers, so the first end-to-end run stopped at
+// `git add` with "This command requires approval".
+//
+// `bypassPermissions` is deliberately absent. The spike recommended it
+// (docs/spikes/sdk-sessions.md, and its addendum of 2026-09-09), and it is
+// refused here until the workspace is a sandbox (docs/roadmap.md §O4):
+// today a session runs as the mill's own account on the mill's own host, and
+// a mode that says yes to everything has nothing but the tool policy between
+// it and that host. The classifier answers; `tools.deny` and the workspace's
+// socket are what enforce.
+export const PERMISSION_MODES = ["auto", "default", "acceptEdits", "dontAsk", "plan"] as const;
+
+export type PermissionMode = (typeof PERMISSION_MODES)[number];
+
+// DEFAULT_PERMISSION_MODE is what a step that names none runs under.
+export const DEFAULT_PERMISSION_MODE: PermissionMode = "auto";
+
+// BYPASS is the mode this harness refuses, named so the refusal can say so.
+const BYPASS = "bypassPermissions";
+
+// Env is the step's carve-out from the environment its session's tools see.
+// `passthrough` copies named variables from the sidecar's own environment,
+// which under `--env-mode strict` is the floor plus what the same key told
+// the adapter to carry that far; `set` sets literals. Neither can reach a
+// deny-listed variable: the adapter refuses the step before the sidecar is
+// spawned, so a name on the deny list never arrives here with a value.
+export interface Env {
+  passthrough?: string[];
+  set?: Record<string, string>;
+}
+
 // Tools is the step's tool policy. The two lists are not one mechanism with
 // a sign: `allow` permits, leaving an excluded tool offered and refused at
 // the permission layer, while `deny` removes the tool from the session
@@ -46,6 +80,8 @@ export interface HarnessOptions {
   model?: string;
   effort?: EffortLevel;
   tools?: Tools;
+  permissionMode?: PermissionMode;
+  env?: Env;
 }
 
 // parseOptions validates a step's options document and returns it typed. It
@@ -66,6 +102,12 @@ export function parseOptions(document: JsonObject | undefined): HarnessOptions {
         break;
       case "tools":
         options.tools = toolsAt(key, value);
+        break;
+      case "permission_mode":
+        options.permissionMode = permissionModeAt(key, value);
+        break;
+      case "env":
+        options.env = envAt(key, value);
         break;
       default:
         throw new PolicyError(`${key} is not an option this harness has`);
@@ -90,12 +132,57 @@ function effortAt(key: string, value: JsonValue): EffortLevel {
   return level;
 }
 
-function toolsAt(key: string, value: JsonValue): Tools {
+function permissionModeAt(key: string, value: JsonValue): PermissionMode {
+  const named = stringAt(key, value);
+  if (named === BYPASS) {
+    throw new PolicyError(
+      `${key} ${BYPASS} is refused until the workspace is a sandbox (docs/roadmap.md §O4)`,
+    );
+  }
+  const mode = PERMISSION_MODES.find((known) => known === named);
+  if (mode === undefined) {
+    throw new PolicyError(`${key} ${JSON.stringify(named)} is not one of ${PERMISSION_MODES.join(", ")}`);
+  }
+  return mode;
+}
+
+function envAt(key: string, value: JsonValue): Env {
+  const mapping = mappingAt(key, value);
+  const env: Env = {};
+  for (const [name, entry] of Object.entries(mapping)) {
+    switch (name) {
+      case "passthrough":
+        env.passthrough = stringsAt(`${key}.${name}`, entry);
+        break;
+      case "set":
+        env.set = literalsAt(`${key}.${name}`, entry);
+        break;
+      default:
+        throw new PolicyError(`${key}.${name} is not an option this harness has`);
+    }
+  }
+  return env;
+}
+
+function literalsAt(key: string, value: JsonValue): Record<string, string> {
+  const mapping = mappingAt(key, value);
+  const literals: Record<string, string> = {};
+  for (const [name, entry] of Object.entries(mapping)) {
+    literals[name] = stringAt(`${key}.${name}`, entry);
+  }
+  return literals;
+}
+
+function mappingAt(key: string, value: JsonValue | undefined): { [k: string]: JsonValue } {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new PolicyError(`${key} must be a mapping, and is ${typeName(value)}`);
   }
+  return value;
+}
+
+function toolsAt(key: string, value: JsonValue): Tools {
   const tools: Tools = {};
-  for (const [name, list] of Object.entries(value)) {
+  for (const [name, list] of Object.entries(mappingAt(key, value))) {
     switch (name) {
       case "allow":
         tools.allow = stringsAt(`${key}.${name}`, list);

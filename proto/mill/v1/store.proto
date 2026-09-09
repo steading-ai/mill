@@ -51,6 +51,10 @@ service StoreService {
   // StartStepRun opens the next attempt at a step, numbering it max+1 for
   // the (run, step) pair. At most one running attempt per run.
   rpc StartStepRun(StartStepRunRequest) returns (StartStepRunResponse);
+  // RecordStepEnvironment records what the environment mode gave a skill
+  // step's session process: what the step asked to have passed through, and
+  // what the deny list removed.
+  rpc RecordStepEnvironment(RecordStepEnvironmentRequest) returns (RecordStepEnvironmentResponse);
   // CloseStepRun records the evidence that closes an attempt and marks it
   // closed, in one transaction. The only way a step becomes closed.
   rpc CloseStepRun(CloseStepRunRequest) returns (CloseStepRunResponse);
@@ -221,6 +225,29 @@ message StartStepRunRequest {
 // StartStepRunResponse carries the opened attempt.
 message StartStepRunResponse {
   // The attempt, numbered max+1 for its (run, step) pair.
+  StepRun step_run = 1;
+}
+
+// RecordStepEnvironmentRequest records what a skill step's session process
+// was given, so the ledger shows what a workflow asked for and what the deny
+// list took away.
+message RecordStepEnvironmentRequest {
+  // The lease the caller holds, compared against the run's current lease
+  // inside the writing transaction.
+  string lease_id = 1;
+  // The attempt whose session was spawned.
+  string step_run_id = 2;
+  // The variables the step asked to have carried from the mill's own
+  // environment.
+  repeated string env_passthrough = 3;
+  // The deny-listed variables that were present and removed.
+  repeated string env_stripped = 4;
+}
+
+// RecordStepEnvironmentResponse carries the attempt with its environment
+// recorded.
+message RecordStepEnvironmentResponse {
+  // The attempt.
   StepRun step_run = 1;
 }
 

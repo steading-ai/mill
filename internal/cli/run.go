@@ -60,6 +60,11 @@ const (
 // source tree has to be told where its sidecar is.
 const sidecarEnv = "MILL_SIDECAR"
 
+// envModeUsage is what --env-mode says for itself on every command that has
+// it. The modes themselves are internal/harness/claude/environment.go.
+const envModeUsage = "environment a session's sidecar is spawned with: " +
+	"inherit (the mill's own, minus the deny list) or strict (a floor plus what a step names)"
+
 // defaultForgeUser is the basic-auth username GitLab wants beside a token.
 const defaultForgeUser = "mill"
 
@@ -78,6 +83,7 @@ type runOptions struct {
 	name         string
 	workspaceDir string
 	logDir       string
+	envMode      string
 	ttl          time.Duration
 	interval     time.Duration
 	dryRun       bool
@@ -122,6 +128,7 @@ would be selected, its steps in order, and the evidence each one closes on.`,
 	f.StringVar(&opts.ref, "ref", "", "ref a new workspace checks out (default: the repository's own HEAD)")
 	f.StringVar(&opts.workspaceDir, "workspace-dir", defaultWorkspaceDir(), "directory run workspaces are made under")
 	f.StringVar(&opts.logDir, "log-dir", defaultLogDir(), "directory step logs are written under, one file per attempt")
+	f.StringVar(&opts.envMode, "env-mode", string(claude.DefaultEnvMode), envModeUsage)
 	f.DurationVar(&opts.ttl, "ttl", run.DefaultTTL, "lease TTL to ask dagger for")
 	f.DurationVar(&opts.interval, "heartbeat", 0, "how often to renew the lease (default: a third of the TTL)")
 	f.BoolVar(&opts.dryRun, "dry-run", false, "print the workflow and its steps; claim nothing and execute nothing")
@@ -209,9 +216,15 @@ func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, 
 		dagger.WithSessionRef(sessionRef),
 		dagger.WithTTL(opts.ttl))
 
+	envMode, err := claude.ParseEnvMode(opts.envMode)
+	if err != nil {
+		return nil, err
+	}
 	harnesses := harness.NewRegistry()
 	if err := harnesses.Register(run.DefaultHarness,
-		claude.New(claude.WithEntrypoint(claude.DefaultCommand, opts.sidecar))); err != nil {
+		claude.New(
+			claude.WithEntrypoint(claude.DefaultCommand, opts.sidecar),
+			claude.WithEnvMode(envMode))); err != nil {
 		return nil, err
 	}
 

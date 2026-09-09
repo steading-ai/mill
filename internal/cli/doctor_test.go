@@ -66,6 +66,10 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 		sidecar, reason := probe(out, "sidecar")
 		Expect(sidecar).To(Equal("fail"))
 		Expect(reason).To(ContainSubstring("no-sidecar.js"))
+		// The mode is on the line whether the probe passed or not: a
+		// sidecar that starts under one mode and not the other is the
+		// difference this probe exists to surface.
+		Expect(reason).To(ContainSubstring("environment mode inherit"))
 
 		signing, reason := probe(out, "signing")
 		Expect(signing).To(Equal("fail"))
@@ -74,6 +78,36 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 		forge, reason := probe(out, "forge")
 		Expect(forge).To(Equal("fail"))
 		Expect(reason).To(ContainSubstring("no repository to probe"))
+	})
+
+	It("reports the environment mode a run would spawn the sidecar under", func() {
+		m := serving(ctx)
+
+		out, _ := runCLI(ctx, m.socket, "doctor",
+			"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
+			"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
+			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
+			"--env-mode", "strict",
+			"--project", "", "--vcs-url", "")
+
+		_, reason := probe(out, "sidecar")
+		Expect(reason).To(ContainSubstring("environment mode strict"))
+	})
+
+	It("refuses an environment mode it has never heard of", func() {
+		m := serving(ctx)
+
+		out, err := runCLI(ctx, m.socket, "doctor",
+			"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
+			"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
+			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
+			"--env-mode", "relaxed",
+			"--project", "", "--vcs-url", "")
+		Expect(err).To(HaveOccurred())
+
+		verdict, reason := probe(out, "sidecar")
+		Expect(verdict).To(Equal("fail"))
+		Expect(reason).To(ContainSubstring("relaxed"))
 	})
 
 	It("says the socket did not answer when no service is listening", func() {

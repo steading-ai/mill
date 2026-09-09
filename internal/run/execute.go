@@ -108,6 +108,15 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 	}
 	s.markResumed(sr.GetSessionId())
 
+	// What the adapter gave the session's process, on the attempt, before
+	// the session's own outcome is known: a step that asked for a variable
+	// and a deny list that took one away are both decisions a reviewer
+	// reads off the ledger (docs/architecture.md §"Skill steps: the harness
+	// adapter").
+	if err := r.recordEnvironment(ctx, s, sr, turn.Environment); err != nil {
+		return result{}, err
+	}
+
 	terminal, err := turn.Wait(ctx)
 	if err != nil {
 		// The session was stopped: cancel it so nothing outlives the step,
@@ -140,6 +149,22 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 		return out, err
 	}
 	return out, nil
+}
+
+// recordEnvironment writes what the harness gave the session's process. An
+// adapter that decided nothing — a harness with no environment of its own to
+// speak of — writes nothing.
+func (r *Runner) recordEnvironment(ctx context.Context, s *state, sr *millv1.StepRun, env harness.Environment) error {
+	if len(env.Passthrough) == 0 && len(env.Stripped) == 0 {
+		return nil
+	}
+	_, err := call(ctx, r.options.Store.RecordStepEnvironment, &millv1.RecordStepEnvironmentRequest{
+		LeaseId:        s.lease,
+		StepRunId:      sr.GetId(),
+		EnvPassthrough: env.Passthrough,
+		EnvStripped:    env.Stripped,
+	})
+	return err
 }
 
 // observe is what the mill itself saw after a skill step, which is the only

@@ -36,7 +36,7 @@ in. If it starts, it has what it needs.
 | `MILL_ACCEPTANCE_DATABASE_URL` | PostgreSQL for the `mill serve` the suite starts. `make db-up` and the `DATABASE_URL` from `.env` will do on a development host. Migrations are applied by `mill serve` itself. |
 | `MILL_ACCEPTANCE_DAGGER_SOCKET` | The dagger to file nodes in. Defaults to `$DG_SOCKET`, then `/run/dagger/dg.sock`. |
 | `MILL_ACCEPTANCE_SECOND_DAGGER_CONFIG` | Optional. A `dg --config` file for a second dagger principal, used by the fencing scenario to take a node's lease. Without it the second claim is made by the same principal under a second agent ref, which fences the running worker just the same. |
-| `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` | The credential the sidecar's sessions run on. Either is enough. |
+| — | The sessions run on the account's own Claude Code login, `~/.claude/.credentials.json`. `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` are on the harness adapter's deny list and never reach a sidecar, so setting one does nothing; the preflight checks for the login instead. |
 
 `MILL_FORGE_TOKEN` and `MILL_FORGE_USER` are what `mill run` itself reads;
 the suite sets them on the subprocess from `MILL_ACCEPTANCE_FORGE_TOKEN` and
@@ -45,6 +45,7 @@ the suite sets them on the subprocess from `MILL_ACCEPTANCE_FORGE_TOKEN` and
 ### On the host
 
 - `dg`, `git`, `node` and `go` on `PATH`.
+- A Claude Code login for the account running the suite, under `$HOME`.
 - `sidecar/dist/main.js` built. `make test-acceptance` builds it; by hand it
   is `make sidecar-build`.
 - Something listening on the dagger socket.
@@ -62,7 +63,11 @@ Each scenario stages a fixture and then drives it:
    fixture's files, merge method `merge` and squash disabled.
 2. A scratch dagger project, and the fixture's node filed in it.
 3. One `mill run` per attempt, as a subprocess, with the scratch project as
-   its `--vcs-url` and a workspace root of the scenario's own.
+   its `--vcs-url` and a workspace root of the scenario's own. The
+   environment mode is the default, `inherit`, which is what a person at a
+   shell gets; a deployment runs `--env-mode strict`, as
+   `contrib/systemd/mill.service` does (docs/architecture.md §"Skill steps:
+   the harness adapter").
 
 Three scenarios run, in parallel:
 

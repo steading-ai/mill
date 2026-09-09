@@ -54,6 +54,9 @@ const (
 	// StoreServiceStartStepRunProcedure is the fully-qualified name of the StoreService's StartStepRun
 	// RPC.
 	StoreServiceStartStepRunProcedure = "/mill.v1.StoreService/StartStepRun"
+	// StoreServiceRecordStepEnvironmentProcedure is the fully-qualified name of the StoreService's
+	// RecordStepEnvironment RPC.
+	StoreServiceRecordStepEnvironmentProcedure = "/mill.v1.StoreService/RecordStepEnvironment"
 	// StoreServiceCloseStepRunProcedure is the fully-qualified name of the StoreService's CloseStepRun
 	// RPC.
 	StoreServiceCloseStepRunProcedure = "/mill.v1.StoreService/CloseStepRun"
@@ -135,6 +138,10 @@ type StoreServiceClient interface {
 	// StartStepRun opens the next attempt at a step, numbering it max+1 for
 	// the (run, step) pair. At most one running attempt per run.
 	StartStepRun(context.Context, *connect.Request[v1.StartStepRunRequest]) (*connect.Response[v1.StartStepRunResponse], error)
+	// RecordStepEnvironment records what the environment mode gave a skill
+	// step's session process: what the step asked to have passed through, and
+	// what the deny list removed.
+	RecordStepEnvironment(context.Context, *connect.Request[v1.RecordStepEnvironmentRequest]) (*connect.Response[v1.RecordStepEnvironmentResponse], error)
 	// CloseStepRun records the evidence that closes an attempt and marks it
 	// closed, in one transaction. The only way a step becomes closed.
 	CloseStepRun(context.Context, *connect.Request[v1.CloseStepRunRequest]) (*connect.Response[v1.CloseStepRunResponse], error)
@@ -259,6 +266,12 @@ func NewStoreServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			httpClient,
 			baseURL+StoreServiceStartStepRunProcedure,
 			connect.WithSchema(storeServiceMethods.ByName("StartStepRun")),
+			connect.WithClientOptions(opts...),
+		),
+		recordStepEnvironment: connect.NewClient[v1.RecordStepEnvironmentRequest, v1.RecordStepEnvironmentResponse](
+			httpClient,
+			baseURL+StoreServiceRecordStepEnvironmentProcedure,
+			connect.WithSchema(storeServiceMethods.ByName("RecordStepEnvironment")),
 			connect.WithClientOptions(opts...),
 		),
 		closeStepRun: connect.NewClient[v1.CloseStepRunRequest, v1.CloseStepRunResponse](
@@ -422,36 +435,37 @@ func NewStoreServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 
 // storeServiceClient implements StoreServiceClient.
 type storeServiceClient struct {
-	getRunByNode         *connect.Client[v1.GetRunByNodeRequest, v1.GetRunByNodeResponse]
-	createRun            *connect.Client[v1.CreateRunRequest, v1.CreateRunResponse]
-	setLease             *connect.Client[v1.SetLeaseRequest, v1.SetLeaseResponse]
-	startStepRun         *connect.Client[v1.StartStepRunRequest, v1.StartStepRunResponse]
-	closeStepRun         *connect.Client[v1.CloseStepRunRequest, v1.CloseStepRunResponse]
-	failStepRun          *connect.Client[v1.FailStepRunRequest, v1.FailStepRunResponse]
-	abortOpenStepRuns    *connect.Client[v1.AbortOpenStepRunsRequest, v1.AbortOpenStepRunsResponse]
-	supersedeSteps       *connect.Client[v1.SupersedeStepsRequest, v1.SupersedeStepsResponse]
-	markWaiting          *connect.Client[v1.MarkWaitingRequest, v1.MarkWaitingResponse]
-	park                 *connect.Client[v1.ParkRequest, v1.ParkResponse]
-	setCompleteRequestId *connect.Client[v1.SetCompleteRequestIdRequest, v1.SetCompleteRequestIdResponse]
-	done                 *connect.Client[v1.DoneRequest, v1.DoneResponse]
-	fail                 *connect.Client[v1.FailRequest, v1.FailResponse]
-	resume               *connect.Client[v1.ResumeRequest, v1.ResumeResponse]
-	abandon              *connect.Client[v1.AbandonRequest, v1.AbandonResponse]
-	cancel               *connect.Client[v1.CancelRequest, v1.CancelResponse]
-	issueStepToken       *connect.Client[v1.IssueStepTokenRequest, v1.IssueStepTokenResponse]
-	revokeStepToken      *connect.Client[v1.RevokeStepTokenRequest, v1.RevokeStepTokenResponse]
-	recordUsage          *connect.Client[v1.RecordUsageRequest, v1.RecordUsageResponse]
-	markUsagePosted      *connect.Client[v1.MarkUsagePostedRequest, v1.MarkUsagePostedResponse]
-	getWorkflow          *connect.Client[v1.GetWorkflowRequest, v1.GetWorkflowResponse]
-	listWorkflows        *connect.Client[v1.ListWorkflowsRequest, v1.ListWorkflowsResponse]
-	putWorkflow          *connect.Client[v1.PutWorkflowRequest, v1.PutWorkflowResponse]
-	putSkill             *connect.Client[v1.PutSkillRequest, v1.PutSkillResponse]
-	getSkill             *connect.Client[v1.GetSkillRequest, v1.GetSkillResponse]
-	status               *connect.Client[v1.StatusRequest, v1.StatusResponse]
-	inspect              *connect.Client[v1.InspectRequest, v1.InspectResponse]
-	history              *connect.Client[v1.HistoryRequest, v1.HistoryResponse]
-	cost                 *connect.Client[v1.CostRequest, v1.CostResponse]
-	health               *connect.Client[v1.HealthRequest, v1.HealthResponse]
+	getRunByNode          *connect.Client[v1.GetRunByNodeRequest, v1.GetRunByNodeResponse]
+	createRun             *connect.Client[v1.CreateRunRequest, v1.CreateRunResponse]
+	setLease              *connect.Client[v1.SetLeaseRequest, v1.SetLeaseResponse]
+	startStepRun          *connect.Client[v1.StartStepRunRequest, v1.StartStepRunResponse]
+	recordStepEnvironment *connect.Client[v1.RecordStepEnvironmentRequest, v1.RecordStepEnvironmentResponse]
+	closeStepRun          *connect.Client[v1.CloseStepRunRequest, v1.CloseStepRunResponse]
+	failStepRun           *connect.Client[v1.FailStepRunRequest, v1.FailStepRunResponse]
+	abortOpenStepRuns     *connect.Client[v1.AbortOpenStepRunsRequest, v1.AbortOpenStepRunsResponse]
+	supersedeSteps        *connect.Client[v1.SupersedeStepsRequest, v1.SupersedeStepsResponse]
+	markWaiting           *connect.Client[v1.MarkWaitingRequest, v1.MarkWaitingResponse]
+	park                  *connect.Client[v1.ParkRequest, v1.ParkResponse]
+	setCompleteRequestId  *connect.Client[v1.SetCompleteRequestIdRequest, v1.SetCompleteRequestIdResponse]
+	done                  *connect.Client[v1.DoneRequest, v1.DoneResponse]
+	fail                  *connect.Client[v1.FailRequest, v1.FailResponse]
+	resume                *connect.Client[v1.ResumeRequest, v1.ResumeResponse]
+	abandon               *connect.Client[v1.AbandonRequest, v1.AbandonResponse]
+	cancel                *connect.Client[v1.CancelRequest, v1.CancelResponse]
+	issueStepToken        *connect.Client[v1.IssueStepTokenRequest, v1.IssueStepTokenResponse]
+	revokeStepToken       *connect.Client[v1.RevokeStepTokenRequest, v1.RevokeStepTokenResponse]
+	recordUsage           *connect.Client[v1.RecordUsageRequest, v1.RecordUsageResponse]
+	markUsagePosted       *connect.Client[v1.MarkUsagePostedRequest, v1.MarkUsagePostedResponse]
+	getWorkflow           *connect.Client[v1.GetWorkflowRequest, v1.GetWorkflowResponse]
+	listWorkflows         *connect.Client[v1.ListWorkflowsRequest, v1.ListWorkflowsResponse]
+	putWorkflow           *connect.Client[v1.PutWorkflowRequest, v1.PutWorkflowResponse]
+	putSkill              *connect.Client[v1.PutSkillRequest, v1.PutSkillResponse]
+	getSkill              *connect.Client[v1.GetSkillRequest, v1.GetSkillResponse]
+	status                *connect.Client[v1.StatusRequest, v1.StatusResponse]
+	inspect               *connect.Client[v1.InspectRequest, v1.InspectResponse]
+	history               *connect.Client[v1.HistoryRequest, v1.HistoryResponse]
+	cost                  *connect.Client[v1.CostRequest, v1.CostResponse]
+	health                *connect.Client[v1.HealthRequest, v1.HealthResponse]
 }
 
 // GetRunByNode calls mill.v1.StoreService.GetRunByNode.
@@ -472,6 +486,11 @@ func (c *storeServiceClient) SetLease(ctx context.Context, req *connect.Request[
 // StartStepRun calls mill.v1.StoreService.StartStepRun.
 func (c *storeServiceClient) StartStepRun(ctx context.Context, req *connect.Request[v1.StartStepRunRequest]) (*connect.Response[v1.StartStepRunResponse], error) {
 	return c.startStepRun.CallUnary(ctx, req)
+}
+
+// RecordStepEnvironment calls mill.v1.StoreService.RecordStepEnvironment.
+func (c *storeServiceClient) RecordStepEnvironment(ctx context.Context, req *connect.Request[v1.RecordStepEnvironmentRequest]) (*connect.Response[v1.RecordStepEnvironmentResponse], error) {
+	return c.recordStepEnvironment.CallUnary(ctx, req)
 }
 
 // CloseStepRun calls mill.v1.StoreService.CloseStepRun.
@@ -618,6 +637,10 @@ type StoreServiceHandler interface {
 	// StartStepRun opens the next attempt at a step, numbering it max+1 for
 	// the (run, step) pair. At most one running attempt per run.
 	StartStepRun(context.Context, *connect.Request[v1.StartStepRunRequest]) (*connect.Response[v1.StartStepRunResponse], error)
+	// RecordStepEnvironment records what the environment mode gave a skill
+	// step's session process: what the step asked to have passed through, and
+	// what the deny list removed.
+	RecordStepEnvironment(context.Context, *connect.Request[v1.RecordStepEnvironmentRequest]) (*connect.Response[v1.RecordStepEnvironmentResponse], error)
 	// CloseStepRun records the evidence that closes an attempt and marks it
 	// closed, in one transaction. The only way a step becomes closed.
 	CloseStepRun(context.Context, *connect.Request[v1.CloseStepRunRequest]) (*connect.Response[v1.CloseStepRunResponse], error)
@@ -738,6 +761,12 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 		StoreServiceStartStepRunProcedure,
 		svc.StartStepRun,
 		connect.WithSchema(storeServiceMethods.ByName("StartStepRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	storeServiceRecordStepEnvironmentHandler := connect.NewUnaryHandler(
+		StoreServiceRecordStepEnvironmentProcedure,
+		svc.RecordStepEnvironment,
+		connect.WithSchema(storeServiceMethods.ByName("RecordStepEnvironment")),
 		connect.WithHandlerOptions(opts...),
 	)
 	storeServiceCloseStepRunHandler := connect.NewUnaryHandler(
@@ -906,6 +935,8 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 			storeServiceSetLeaseHandler.ServeHTTP(w, r)
 		case StoreServiceStartStepRunProcedure:
 			storeServiceStartStepRunHandler.ServeHTTP(w, r)
+		case StoreServiceRecordStepEnvironmentProcedure:
+			storeServiceRecordStepEnvironmentHandler.ServeHTTP(w, r)
 		case StoreServiceCloseStepRunProcedure:
 			storeServiceCloseStepRunHandler.ServeHTTP(w, r)
 		case StoreServiceFailStepRunProcedure:
@@ -981,6 +1012,10 @@ func (UnimplementedStoreServiceHandler) SetLease(context.Context, *connect.Reque
 
 func (UnimplementedStoreServiceHandler) StartStepRun(context.Context, *connect.Request[v1.StartStepRunRequest]) (*connect.Response[v1.StartStepRunResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.StartStepRun is not implemented"))
+}
+
+func (UnimplementedStoreServiceHandler) RecordStepEnvironment(context.Context, *connect.Request[v1.RecordStepEnvironmentRequest]) (*connect.Response[v1.RecordStepEnvironmentResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.RecordStepEnvironment is not implemented"))
 }
 
 func (UnimplementedStoreServiceHandler) CloseStepRun(context.Context, *connect.Request[v1.CloseStepRunRequest]) (*connect.Response[v1.CloseStepRunResponse], error) {

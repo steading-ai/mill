@@ -596,6 +596,76 @@ func (s *Store) WorkflowOfRun(ctx context.Context, runID string) (*millv1.Workfl
 	return workflowOfRun(ctx, New(s.pool), runID)
 }
 
+// RecordStepEnvironmentParams records what an attempt's session process was
+// given of the mill's own environment.
+type RecordStepEnvironmentParams struct {
+	// StepRunID is the attempt whose session was spawned.
+	StepRunID string
+	// EnvPassthrough are the variables the step asked to have carried.
+	EnvPassthrough []string
+	// EnvStripped are the deny-listed variables that were present and
+	// removed.
+	EnvStripped []string
+}
+
+// RecordStepEnvironment writes what the environment mode gave an attempt's
+// session process. It is a record of a decision already made, not a setting:
+// the adapter has decided and spawned by the time this is called, so the
+// write neither gates the session nor changes it.
+func (s *Store) RecordStepEnvironment(ctx context.Context, leaseID string, p RecordStepEnvironmentParams) (*millv1.StepRun, error) {
+	var stepRun *millv1.StepRun
+	err := s.withTx(ctx, func(ctx context.Context, tx pgx.Tx, q *Queries) error {
+		open, err := q.GetStepRun(ctx, p.StepRunID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("step run %s: %w", p.StepRunID, ErrNotFound)
+		}
+		if err != nil {
+			return fmt.Errorf("get step run %s: %w", p.StepRunID, err)
+		}
+		if _, err := fence(ctx, tx, open.RunID, leaseID); err != nil {
+			return err
+		}
+		row, err := q.RecordStepRunEnvironment(ctx, RecordStepRunEnvironmentParams{
+			ID: p.StepRunID,
+			// The columns are arrays and not nullable: a step that asked
+			// for nothing asked for nothing, which is the empty list rather
+			// than the absence of an answer.
+			EnvPassthrough: names(p.EnvPassthrough),
+			EnvStripped:    names(p.EnvStripped),
+		})
+		if err != nil {
+			return fmt.Errorf("record the environment of step run %s: %w", p.StepRunID, err)
+		}
+		stepRun, err = stepRunProto(row)
+		if err != nil {
+			return err
+		}
+		return record(ctx, q, event{
+			runID:     row.RunID,
+			stepRunID: row.ID,
+			op:        "record_step_environment",
+			after: map[string]any{
+				"env_passthrough": row.EnvPassthrough,
+				"env_stripped":    row.EnvStripped,
+			},
+			workerRef: row.WorkerRef,
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return stepRun, nil
+}
+
+// names is a list of variable names as the column stores it: never nil, so
+// a nil slice from a caller is an empty array and not a null.
+func names(list []string) []string {
+	if list == nil {
+		return []string{}
+	}
+	return list
+}
+
 // CloseStepRunParams records the evidence that closes an attempt.
 type CloseStepRunParams struct {
 	// StepRunID is the attempt to close.
