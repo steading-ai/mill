@@ -232,6 +232,13 @@ type NotVerifiedError struct {
 	Reason string
 	// Err is what the seam returned, when a seam was the reason.
 	Err error
+	// Malformed says the session's output was not the document the step
+	// asked for, rather than a fact that does not hold. A reviewer whose
+	// verdict does not parse has judged nothing: there is no decision to
+	// act on and nothing to send anybody, so a caller distinguishes the two
+	// to avoid spending another step's attempt on a failure that is this
+	// session's own (docs/domain-model.md §Verdict).
+	Malformed bool
 }
 
 func (e *NotVerifiedError) Error() string {
@@ -261,6 +268,13 @@ func (e *PendingError) Error() string {
 func Pending(err error) bool {
 	var pending *PendingError
 	return errors.As(err, &pending)
+}
+
+// Malformed reports whether an error is a session's output the mill could
+// not parse, rather than a fact that does not hold.
+func Malformed(err error) bool {
+	var refused *NotVerifiedError
+	return errors.As(err, &refused) && refused.Malformed
 }
 
 // commitSHA is a git object name: forty hex digits under SHA-1, sixty-four
@@ -440,17 +454,22 @@ func Codes(check *millv1.Check) []int32 {
 // left to a reader. A finding that names no criterion is recorded as a
 // `note`, because a reviewer that cannot tie a finding to a criterion is
 // drifting from its contract. And a `revise` with zero blocking findings is
-// a definition error: it is recorded as an `approve` with a warning, because
-// a reviewer that asks for changes and names none has not asked for
-// anything, and sending the work back on it would spend an attempt on
-// nothing.
+// not a revise: a reviewer that asks for changes and names none has asked
+// for nothing, so the output is refused as malformed — the same class of
+// failure as output that does not parse at all — rather than being read as
+// either answer. Sending the work back on it would spend an implementer's
+// attempt on nothing, and closing the step on it would approve work a
+// reviewer declined to approve.
+//
+// Every refusal here is [NotVerifiedError.Malformed]: the reviewer produced
+// no verdict, so nothing was judged and there is nothing to send back.
 func verifyVerdict(_ context.Context, step Step) (Evidence, error) {
 	kind := millv1.EvidenceKind_EVIDENCE_KIND_VERDICT
 	refuse := func(reason string, err error) (Evidence, error) {
-		return Evidence{}, &NotVerifiedError{Kind: kind, Reason: reason, Err: err}
+		return Evidence{}, &NotVerifiedError{Kind: kind, Reason: reason, Err: err, Malformed: true}
 	}
 	if step.Session.Output == nil {
-		return refuse("the session produced no structured output", nil)
+		return refuse("the session produced no structured output: a verdict carries a decision field, and no prose is read", nil)
 	}
 	if err := ValidateJSON(VerdictSchema, step.Session.Output); err != nil {
 		return refuse(fmt.Sprintf("the verdict does not parse: %s", err), err)
@@ -491,12 +510,12 @@ func verifyVerdict(_ context.Context, step Step) (Evidence, error) {
 	}
 
 	if verdict.GetDecision() == millv1.VerdictDecision_VERDICT_DECISION_REVISE {
-		if blocking > 0 {
-			return Evidence{Verdict: verdict, Warnings: warnings}, &NotVerifiedError{Kind: kind, Reason: fmt.Sprintf(
-				"the reviewer asked for changes: %d blocking %s", blocking, plural(blocking, "finding", "findings"))}
+		if blocking == 0 {
+			return refuse("the verdict says revise and no finding has severity \"blocking\": "+
+				"a revise carries the finding that blocks it", nil)
 		}
-		verdict.Decision = millv1.VerdictDecision_VERDICT_DECISION_APPROVE
-		warnings = append(warnings, "the verdict said revise with no blocking finding, which is a definition error; recorded as approve")
+		return Evidence{Verdict: verdict, Warnings: warnings}, &NotVerifiedError{Kind: kind, Reason: fmt.Sprintf(
+			"the reviewer asked for changes: %d blocking %s", blocking, plural(blocking, "finding", "findings"))}
 	}
 	return Evidence{
 		Value:    &millv1.Evidence{Value: &millv1.Evidence_Verdict{Verdict: verdict}},

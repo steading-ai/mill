@@ -232,11 +232,17 @@ A review step's structured output. Parsed, never read.
 }
 ```
 
-There is no `needs-human` decision. A reviewer approves or revises; a human is reached only through the circuit breaker. A `revise` with zero blocking findings is a definition error and is treated as `approve` with a warning in the ledger.
+There is no `needs-human` decision. A reviewer approves or revises; a human is reached only through the circuit breaker.
+
+Output that does not match the schema is not a verdict, and neither is a `revise` with zero blocking findings: a reviewer that asks for changes and names none has asked for nothing. Both fail the step as **malformed**, naming the field that is wrong. A malformed verdict is the reviewing session's own failure — nothing was judged, so no other step's work is implicated — and the step is asked again rather than sending an implementer back on it; the run parks when the step's retries are spent.
 
 `findings[].criterion` references the node's acceptance criteria by label. A reviewer that cannot tie a finding to a criterion is drifting from its contract, and the finding is recorded as `note`.
 
-The verdict is stored twice: as evidence here, and as a text artifact on the node's result in dagger, so a human reads it next to the work.
+A verdict step's `output_schema` may be left out, and the mill then hands the reviewer this schema; a workflow that writes it down writes down this one, which the loader checks. A reviewer is asked for exactly the shape the verifier accepts.
+
+The verdict is stored twice: as evidence here, and as a text artifact on the node's result in dagger named `<step>-<attempt>.md`, carrying the decision, the findings and the reviewing session's id, so a human reads it next to the work. Both a `revise` and an `approve` are attached: a `revise` closes no step, so the artifact and the next attempt's prompt are the whole of its record.
+
+What the reviewer is judging is put in front of it by the mill: the diff since the base commit of the first attempt at the step a `revise` would return to. A reviewer has no shell (R-38), so a reviewer left to fetch its own diff would review the checkout without knowing which part of it this run wrote.
 
 ## Check
 

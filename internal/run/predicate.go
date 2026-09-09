@@ -70,7 +70,7 @@ func evidenceValue(e *millv1.Evidence) map[string]any {
 			}
 		}
 		return map[string]any{
-			"decision": strings.ToLower(strings.TrimPrefix(e.GetVerdict().GetDecision().String(), "VERDICT_DECISION_")),
+			"decision": decisionWord(e.GetVerdict().GetDecision()),
 			"findings": float64(len(e.GetVerdict().GetFindings())),
 			"blocking": float64(blocking),
 		}

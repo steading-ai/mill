@@ -68,6 +68,40 @@ var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 			Expect(rowFor(out, "select")).To(ContainSubstring("workflow=quick-fix"))
 		})
 
+		It("shows a verdict's decision and the findings that blocked it, inline", func() {
+			r := openRun(ctx, "millcli#10", nodeID(10))
+			sr := r.start(ctx, "review", millv1.StepKind_STEP_KIND_SKILL)
+			r.close(ctx, sr, &millv1.CloseStepRunRequest{
+				Evidence: &millv1.Evidence{
+					Kind: millv1.EvidenceKind_EVIDENCE_KIND_VERDICT,
+					Value: &millv1.Evidence_Verdict{Verdict: &millv1.Verdict{
+						Decision: millv1.VerdictDecision_VERDICT_DECISION_APPROVE,
+						Findings: []*millv1.Finding{
+							{
+								Criterion: "AC-2",
+								Severity:  millv1.FindingSeverity_FINDING_SEVERITY_BLOCKING,
+								Summary:   "the scenario has no spec",
+							},
+							{
+								Criterion: "AC-3",
+								Severity:  millv1.FindingSeverity_FINDING_SEVERITY_NOTE,
+								Summary:   "the comment could say more",
+							},
+						},
+					}},
+					VerifiedBy: "mill: the verdict parsed",
+				},
+			})
+
+			out := r.cli(ctx, "inspect", "millcli#10")
+
+			row := rowFor(out, "review")
+			Expect(row).To(ContainSubstring("approve"))
+			Expect(row).To(ContainSubstring("AC-2: the scenario has no spec"))
+			Expect(row).NotTo(ContainSubstring("the comment could say more"),
+				"a note decided nothing and is read off the node's artifact")
+		})
+
 		It("shows what the environment mode gave a session, when there is something to show", func() {
 			r := openRun(ctx, "millcli#8", nodeID(8))
 			sr := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)

@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "required": ["decision"],
+  "properties": {
+    "decision": {"type": "string", "enum": ["approve", "revise"]},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["summary"],
+        "properties": {
+          "criterion": {"type": "string"},
+          "severity": {"type": "string", "enum": ["blocking", "note"]},
+          "summary": {"type": "string", "minLength": 1},
+          "location": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

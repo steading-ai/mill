@@ -86,6 +86,25 @@ implement       1        running        unspecified  -
 gate node's id — and not a description of it. `select` is the ledger's record
 of which workflow was chosen and why; no workflow declares it.
 
+A step that closed on a verdict shows the decision, and any blocking finding
+inline as `criterion: summary` — a blocking finding is what the reviewer held
+against the work, and reading it should not cost a second command. Notes are
+not shown: they decided nothing.
+
+```
+review-plan     1        closed         verdict      approve
+review          1        failed
+review          2        closed         verdict      approve (AC-2: the assertion is thin)
+```
+
+A `revise` closes nothing, so the attempt it failed has no evidence and no
+value: that is the empty row above. The verdict behind it is on the node in
+dagger, as a text artifact named `<step>-<attempt>.md` carrying the decision,
+every finding, and the id of the session that reviewed
+([domain-model.md](domain-model.md) §Verdict). The same findings are the next
+attempt's prompt, and `mill logs --step review` is the session that wrote
+them.
+
 ## explain
 
 Where a run is, why that step is open, what would close it, how many attempts

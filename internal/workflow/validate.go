@@ -1,13 +1,16 @@
 package workflow
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 
 	millv1 "github.com/ivy/mill/gen/mill/v1"
+	"github.com/ivy/mill/internal/evidence"
 )
 
 // Validate refuses a definition the design cannot execute. Each rule is one
@@ -33,6 +36,11 @@ import (
 //     is not such a write: that file is on the node.
 //   - An artifact source names a file in the checkout, on a step that
 //     closes on `artifact`.
+//   - A `verdict` step that declares an output schema declares the mill's
+//     own. A verdict is mill's record and not the workflow's, and a
+//     workflow that asked a reviewer for a shape the verifier would then
+//     refuse would fail every review it ran (docs/domain-model.md
+//     §Verdict).
 func Validate(w *millv1.Workflow) error {
 	var errs []error
 	index := map[string]int{}
@@ -65,6 +73,7 @@ func validateStep(step *millv1.Step) []error {
 		errs = append(errs, fmt.Errorf("step %s: evidence is required; nothing else closes a step", name))
 	}
 	errs = append(errs, validateArtifact(step)...)
+	errs = append(errs, validateOutputSchema(step)...)
 	switch step.GetKind() {
 	case millv1.StepKind_STEP_KIND_SKILL:
 		if step.GetSkill().GetName() == "" {
@@ -111,6 +120,31 @@ func validateArtifact(step *millv1.Step) []error {
 		errs = append(errs, fmt.Errorf("step %s: artifact path %q climbs out of the checkout", name, path))
 	}
 	return errs
+}
+
+// validateOutputSchema checks a `verdict` step's declared schema against the
+// one the verifier holds a reviewer's output to. A step may leave it out —
+// the run loop hands the reviewer [evidence.VerdictSchema] then — and a step
+// that writes it down, as `feature` does to keep the schema in a file beside
+// the skill, writes down that schema and no other.
+func validateOutputSchema(step *millv1.Step) []error {
+	declared := step.GetOutputSchema()
+	if step.GetEvidence() != millv1.EvidenceKind_EVIDENCE_KIND_VERDICT || strings.TrimSpace(declared) == "" {
+		return nil
+	}
+	var got, want any
+	if err := json.Unmarshal([]byte(declared), &got); err != nil {
+		return []error{fmt.Errorf("step %s: output_schema is not JSON: %w", step.GetName(), err)}
+	}
+	if err := json.Unmarshal([]byte(evidence.VerdictSchema), &want); err != nil {
+		return []error{fmt.Errorf("step %s: output_schema: %w", step.GetName(), err)}
+	}
+	if !reflect.DeepEqual(got, want) {
+		return []error{fmt.Errorf(
+			"step %s: output_schema is not the verdict schema; a verdict step is asked for the shape the verifier accepts, which is:\n%s",
+			step.GetName(), evidence.VerdictSchema)}
+	}
+	return nil
 }
 
 // validateRevise checks every on_failure target is a step earlier in the

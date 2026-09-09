@@ -57,7 +57,7 @@ func (r *Runner) execute(ctx context.Context, s *state, step *millv1.Step, sr *m
 			r.printf("  the commit the interrupted attempt made is on the branch\n")
 			return result{claim: made}, nil
 		}
-		return r.runSkill(stepCtx, s, step, sr, token, feedback)
+		return r.runSkill(stepCtx, s, step, sr, detail, token, feedback)
 	case millv1.StepKind_STEP_KIND_CHECK:
 		return r.runCheck(stepCtx, s, step)
 	case millv1.StepKind_STEP_KIND_GATE:
@@ -70,13 +70,13 @@ func (r *Runner) execute(ctx context.Context, s *state, step *millv1.Step, sr *m
 // runSkill drives a skill step as a session in a harness. The session is
 // found by its deterministic id, so a step re-run after a crash resumes the
 // same session and the model picks up its own prior context.
-func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, token *millv1.StepToken, feedback string) (result, error) {
+func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, detail *millv1.InspectResponse, token *millv1.StepToken, feedback string) (result, error) {
 	name, settings := harnessFor(step)
 	adapter, err := r.options.Harnesses.Lookup(name)
 	if err != nil {
 		return result{}, err
 	}
-	prompt, err := r.prompt(ctx, s, step, feedback)
+	prompt, err := r.prompt(ctx, s, step, detail, feedback)
 	if err != nil {
 		return result{}, err
 	}
@@ -381,7 +381,7 @@ func digest(content string) string {
 // prompt renders the step's prompt: the skill body verbatim, then the node
 // and its inputs as attributed data, then a check's feedback when this
 // attempt is the revise for one.
-func (r *Runner) prompt(ctx context.Context, s *state, step *millv1.Step, feedback string) (harness.Prompt, error) {
+func (r *Runner) prompt(ctx context.Context, s *state, step *millv1.Step, detail *millv1.InspectResponse, feedback string) (harness.Prompt, error) {
 	skill, err := call(ctx, r.options.Store.GetSkill, &millv1.GetSkillRequest{
 		Name:   step.GetSkill().GetName(),
 		Digest: step.GetSkill().GetDigest(),
@@ -414,6 +414,15 @@ func (r *Runner) prompt(ctx context.Context, s *state, step *millv1.Step, feedba
 	}
 	if brief != "" {
 		text += "\n\n" + brief
+	}
+	// What a reviewer is judging, which it has no shell to fetch for
+	// itself (internal/run/verify.go).
+	review, err := r.reviewBrief(ctx, s, step, detail)
+	if err != nil {
+		return harness.Prompt{}, err
+	}
+	if review != "" {
+		text += "\n\n" + review
 	}
 	if feedback != "" {
 		// A revise's feedback is the mill's own words about a check or a

@@ -252,15 +252,18 @@ steps:
   # capability, so the workspace refuses fs.write and git.commit under this
   # step's token, and a tool policy that keeps the write tools out of the
   # session at all (docs/domain-model.md §Step, R-24, R-38). A revise
-  # returns to implement with the findings.
+  # returns to implement with the findings, which are the implementer's next
+  # prompt.
   #
-  # The skill is a placeholder that always approves; the `review` node
-  # replaces it with the judgement.
+  # The schema is written down beside the skill rather than left implicit:
+  # it is the mill's own verdict schema, and the loader refuses any other,
+  # so the file and the verifier cannot drift.
   - name: review
     kind: skill
     session: review
     skill: review
     evidence: verdict
+    output_schema: skills/review/verdict.schema.json
     capabilities:
       - read
     harness:

@@ -1,13 +1,16 @@
 package workflow_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	millv1 "github.com/ivy/mill/gen/mill/v1"
+	"github.com/ivy/mill/internal/evidence"
 	"github.com/ivy/mill/internal/workflow"
 )
 
@@ -137,6 +140,38 @@ var _ = Describe("The feature workflow", Label("unit"), func() {
 			Expect(review.GetCapabilities()).To(Equal([]millv1.Capability{millv1.Capability_CAPABILITY_READ}))
 			Expect(review.GetSession()).To(Equal("review"))
 			Expect(review.GetSession()).NotTo(Equal(step(loaded, "implement").GetSession()))
+		})
+	})
+
+	// The reviewer is asked for exactly what the verifier accepts: the
+	// schema lives in a file beside the skill, the step names that file, and
+	// the loader refuses any schema but the mill's own
+	// (docs/domain-model.md §Verdict).
+	Describe("the review step's output schema", func() {
+		It("is the mill's verdict schema, loaded from the file the step names", func() {
+			declared := step(loaded, "review").GetOutputSchema()
+			Expect(declared).NotTo(BeEmpty())
+
+			file, err := os.ReadFile(filepath.Join(featureDir, "skills", "review", "verdict.schema.json"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(declared).To(Equal(string(file)), "the step carries the file's content, not its path")
+
+			var fromFile, mills any
+			Expect(json.Unmarshal(file, &fromFile)).To(Succeed())
+			Expect(json.Unmarshal([]byte(evidence.VerdictSchema), &mills)).To(Succeed())
+			Expect(fromFile).To(Equal(mills), "the file and the verifier cannot disagree")
+		})
+
+		It("refuses a verdict step asking for any other shape", func() {
+			dir := GinkgoT().TempDir()
+			Expect(workflow.Write(dir, loaded, skills)).To(Succeed())
+			body, err := os.ReadFile(filepath.Join(dir, "workflow.yaml"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(os.WriteFile(filepath.Join(dir, "workflow.yaml"),
+				[]byte(strings.ReplaceAll(string(body), `"decision"`, `"verdict"`)), 0o600)).To(Succeed())
+
+			_, _, err = workflow.Load(dir)
+			Expect(err).To(MatchError(ContainSubstring("output_schema is not the verdict schema")))
 		})
 	})
 

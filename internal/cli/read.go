@@ -680,12 +680,37 @@ func evidenceValue(value *millv1.Evidence) string {
 	case *millv1.Evidence_Status:
 		return body.Status
 	case *millv1.Evidence_Verdict:
-		return strings.ToLower(strings.TrimPrefix(body.Verdict.GetDecision().String(), "VERDICT_DECISION_"))
+		return verdictValue(body.Verdict)
 	case *millv1.Evidence_Structured:
 		return fields(body.Structured)
 	default:
 		return "-"
 	}
+}
+
+// verdictValue is a verdict as one cell: the decision, and then the findings
+// that blocked it. The blocking findings are inline because they are why the
+// step did not close and what the next attempt has to answer, and reading
+// them should not cost a second command; notes are not, because they did not
+// decide anything. The whole verdict, findings and all, is on the node as a
+// text artifact (docs/domain-model.md §Verdict).
+func verdictValue(verdict *millv1.Verdict) string {
+	decision := strings.ToLower(strings.TrimPrefix(verdict.GetDecision().String(), "VERDICT_DECISION_"))
+	var blocking []string
+	for _, finding := range verdict.GetFindings() {
+		if finding.GetSeverity() != millv1.FindingSeverity_FINDING_SEVERITY_BLOCKING {
+			continue
+		}
+		text := finding.GetSummary()
+		if criterion := finding.GetCriterion(); criterion != "" {
+			text = criterion + ": " + text
+		}
+		blocking = append(blocking, text)
+	}
+	if len(blocking) == 0 {
+		return decision
+	}
+	return decision + " (" + strings.Join(blocking, "; ") + ")"
 }
 
 // fields renders a struct column as `key=value` pairs, sorted, so two

@@ -275,6 +275,19 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 		return outcome{}, err
 	}
 	verified, verifyErr := r.verify(ctx, s, step, sr, detail, result)
+
+	// A verdict that parsed goes on the node whichever way it went, and a
+	// revise's findings become the feedback the revise target is given
+	// (internal/run/verify.go). Output that did not parse leaves both
+	// alone: nothing was judged.
+	findings, err := r.reviewed(ctx, s, step, sr, verified)
+	if err != nil {
+		return outcome{}, err
+	}
+	if findings != "" {
+		result.feedback = findings
+	}
+
 	switch {
 	case verifyErr == nil && execErr == nil:
 		if err := r.closeStep(ctx, s, sr, step, verified, result); err != nil {

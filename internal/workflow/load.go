@@ -63,6 +63,14 @@ func Load(dir string) (*millv1.Workflow, []*millv1.Skill, error) {
 		step.Skill = &millv1.SkillRef{Name: skill.GetName(), Digest: skill.GetDigest()}
 	}
 
+	for _, step := range w.GetSteps() {
+		schema, err := outputSchema(dir, step)
+		if err != nil {
+			return nil, nil, fmt.Errorf("step %s: %w", step.GetName(), err)
+		}
+		step.OutputSchema = schema
+	}
+
 	if err := Validate(w); err != nil {
 		return nil, nil, err
 	}
@@ -117,4 +125,33 @@ func Write(dir string, w *millv1.Workflow, skills []*millv1.Skill) error {
 		}
 	}
 	return nil
+}
+
+// outputSchema is a step's `output_schema`, which a definition writes either
+// inline or as the name of a file in the workflow directory. A schema long
+// enough to be worth reading — the verdict a reviewer answers with — reads
+// as a schema in a `.json` file and as noise in the middle of a YAML step,
+// and a file is also what a session's own tooling can be pointed at.
+//
+// The file's content is stored on the step, so the store still holds one
+// self-contained definition and the workflow's version changes when the
+// schema does.
+func outputSchema(dir string, step *millv1.Step) (string, error) {
+	declared := strings.TrimSpace(step.GetOutputSchema())
+	if declared == "" || strings.HasPrefix(declared, "{") {
+		return step.GetOutputSchema(), nil
+	}
+	if filepath.IsAbs(declared) {
+		return "", fmt.Errorf("output_schema %q is absolute; it is a file in the workflow directory", declared)
+	}
+	for _, segment := range strings.Split(filepath.ToSlash(declared), "/") {
+		if segment == ".." {
+			return "", fmt.Errorf("output_schema %q climbs out of the workflow directory", declared)
+		}
+	}
+	content, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(declared)))
+	if err != nil {
+		return "", fmt.Errorf("output_schema: %w", err)
+	}
+	return string(content), nil
 }

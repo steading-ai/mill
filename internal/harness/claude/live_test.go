@@ -175,3 +175,163 @@ func newSessionID() string {
 	raw[8] = (raw[8] & 0x3f) | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", raw[0:4], raw[4:6], raw[6:8], raw[8:10], raw[10:16])
 }
+
+// The reviewer, live: a real session running the real `review` skill against
+// a two-criterion node, once on a change that satisfies it and once on a
+// change that does not.
+//
+// This is the one thing no fake can answer. The mill's own specs prove what
+// a verdict *does* — an approve closes the step, a revise sends the work
+// back — by scripting the verdict; what they cannot prove is that a reviewer
+// asked to judge a criterion nothing satisfies says no. The reference
+// harness approved 59 nodes in a row without anyone knowing whether it
+// could (docs/prd.md R-25).
+var _ = Describe("The review skill against the real sidecar", Label("live"), func() {
+	var entrypoint string
+
+	BeforeEach(func() {
+		if os.Getenv(liveVar) == "" {
+			Skip("set " + liveVar + "=1 to run the specs that spend a real session")
+		}
+		root, err := filepath.Abs(filepath.Join("..", "..", "..", "sidecar"))
+		Expect(err).NotTo(HaveOccurred())
+		build := exec.Command("pnpm", "run", "build")
+		build.Dir = root
+		build.Stdout, build.Stderr = GinkgoWriter, GinkgoWriter
+		Expect(build.Run()).To(Succeed(), "the sidecar did not build")
+		entrypoint = filepath.Join(root, "dist", "main.js")
+	})
+
+	// review runs one reviewing session over a checkout, under the step's
+	// own settings: the model and effort `feature` gives it, the write tools
+	// denied, and the verdict schema the mill will hold it to.
+	review := func(checkout string) map[string]any {
+		GinkgoHelper()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		DeferCleanup(cancel)
+
+		adapter := New(WithEntrypoint("node", entrypoint), WithTimeout(8*time.Minute))
+		turn, err := adapter.Start(ctx, harness.Session{
+			ID:  newSessionID(),
+			Cwd: checkout,
+			Options: map[string]any{
+				"model":  "opus",
+				"effort": "high",
+				"tools":  map[string]any{"deny": []any{"Write", "Edit", "Bash", "NotebookEdit"}},
+			},
+			Events: (&recorder{}).sink(),
+		}, harness.Prompt{
+			Text:         reviewSkill() + "\n\n## The node\n\n" + reviewNode + "\n\n" + changed(checkout),
+			OutputSchema: verdictSchema(),
+		}, nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		terminal, err := turn.Wait(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(terminal.Exit.NeverRan()).To(BeFalse(), "the session never ran: %s", terminal.FinalMessage)
+		AddReportEntry("verdict", terminal.StructuredOutput)
+		Expect(terminal.StructuredOutput).NotTo(BeNil(), "the session emitted no verdict: %s", terminal.FinalMessage)
+		return terminal.StructuredOutput
+	}
+
+	It("approves an implementation that satisfies every criterion", func() {
+		verdict := review(reviewCheckout(true))
+
+		Expect(verdict["decision"]).To(Equal("approve"))
+	})
+
+	It("revises an implementation with a criterion deliberately unmet, naming that criterion", func() {
+		verdict := review(reviewCheckout(false))
+
+		Expect(verdict["decision"]).To(Equal("revise"))
+		blocking := []string{}
+		findings, _ := verdict["findings"].([]any)
+		for _, item := range findings {
+			finding, ok := item.(map[string]any)
+			if !ok || finding["severity"] != "blocking" {
+				continue
+			}
+			blocking = append(blocking, fmt.Sprintf("%v %v", finding["criterion"], finding["summary"]))
+		}
+		Expect(blocking).NotTo(BeEmpty(), "a revise carries the finding that blocks it")
+		Expect(strings.Join(blocking, "\n")).To(SatisfyAny(
+			ContainSubstring("AC-2"), ContainSubstring("100"), ContainSubstring("too long")),
+			"the blocking finding names the criterion that is unmet")
+	})
+})
+
+// reviewNode is the work order the reviewer judges against: two acceptance
+// criteria and one scenario, small enough that a session can hold all of it
+// and specific enough that "unmet" is not a matter of taste.
+const reviewNode = "# reverse: refuse an input that is too long\n\n" +
+	"## Acceptance criteria\n\n" +
+	"- [ ] AC-1: `Reverse` returns its input reversed.\n" +
+	"- [ ] AC-2: `Reverse` returns an error, and the empty string, for an input longer than 100 bytes.\n\n" +
+	"## Scenarios\n\n```gherkin\nScenario: An input that is too long is refused\n" +
+	"  Given a string of 101 bytes\n  When it is reversed\n" +
+	"  Then an error is returned\n  And the result is empty\n```\n"
+
+// reviewCheckout is the change under review: the whole implementation and
+// its test, either satisfying the node or with AC-2 and its scenario
+// deliberately unmet — the code has no length check and the test that would
+// have caught it does not exist.
+func reviewCheckout(satisfied bool) string {
+	GinkgoHelper()
+
+	dir := GinkgoT().TempDir()
+	body := "package reverse\n\nimport \"errors\"\n\n// Reverse returns s reversed.\nfunc Reverse(s string) (string, error) {\n"
+	test := "package reverse\n\nimport \"testing\"\n\nfunc TestReverse(t *testing.T) {\n" +
+		"\tif got, _ := Reverse(\"abc\"); got != \"cba\" {\n\t\tt.Fatalf(\"got %q\", got)\n\t}\n}\n"
+	if satisfied {
+		body += "\tif len(s) > 100 {\n\t\treturn \"\", errors.New(\"reverse: input is longer than 100 bytes\")\n\t}\n"
+		test += "\n// An input that is too long is refused.\nfunc TestAnInputThatIsTooLongIsRefused(t *testing.T) {\n" +
+			"\tgot, err := Reverse(string(make([]byte, 101)))\n\tif err == nil {\n\t\tt.Fatal(\"no error\")\n\t}\n" +
+			"\tif got != \"\" {\n\t\tt.Fatalf(\"got %q\", got)\n\t}\n}\n"
+	} else {
+		body = strings.Replace(body, "import \"errors\"\n\n", "", 1)
+	}
+	body += "\tout := []rune(s)\n\tfor i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {\n" +
+		"\t\tout[i], out[j] = out[j], out[i]\n\t}\n\treturn string(out), nil\n}\n"
+
+	Expect(os.WriteFile(filepath.Join(dir, "reverse.go"), []byte(body), 0o600)).To(Succeed())
+	Expect(os.WriteFile(filepath.Join(dir, "reverse_test.go"), []byte(test), 0o600)).To(Succeed())
+	return dir
+}
+
+// changed is the brief the mill puts in front of a reviewer: the change it
+// is judging, read out of the checkout, because a reviewer has no shell to
+// read it for itself (internal/run/verify.go).
+func changed(dir string) string {
+	GinkgoHelper()
+
+	var b strings.Builder
+	b.WriteString("## The change you are reviewing\n\nThe whole of it, added by this run:\n")
+	for _, name := range []string{"reverse.go", "reverse_test.go"} {
+		content, err := os.ReadFile(filepath.Join(dir, name))
+		Expect(err).NotTo(HaveOccurred())
+		fmt.Fprintf(&b, "\n### %s\n\n```go\n%s```\n", name, content)
+	}
+	b.WriteString("\nThe test suite passes.\n")
+	return b.String()
+}
+
+// reviewSkill is the body of the `review` skill this repository seeds the
+// store with, and verdictSchema the schema its step names: the spec runs the
+// real instructions against the real contract rather than a paraphrase.
+func reviewSkill() string {
+	GinkgoHelper()
+	return readWorkflowFile("skills", "review", "SKILL.md")
+}
+
+func verdictSchema() string {
+	GinkgoHelper()
+	return readWorkflowFile("skills", "review", "verdict.schema.json")
+}
+
+func readWorkflowFile(parts ...string) string {
+	GinkgoHelper()
+	path := append([]string{"..", "..", "..", "workflows", "feature"}, parts...)
+	body, err := os.ReadFile(filepath.Join(path...))
+	Expect(err).NotTo(HaveOccurred())
+	return string(body)
+}

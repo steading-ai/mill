@@ -829,8 +829,8 @@ const (
 	// VERDICT_DECISION_APPROVE closes the review step.
 	VerdictDecision_VERDICT_DECISION_APPROVE VerdictDecision = 1
 	// VERDICT_DECISION_REVISE sends the work back. A revise with zero blocking
-	// findings is a definition error, treated as approve with a warning in the
-	// ledger.
+	// findings is not a revise: it names nothing to send back, and the output
+	// is refused as malformed.
 	VerdictDecision_VERDICT_DECISION_REVISE VerdictDecision = 2
 )
 

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	millv1 "github.com/ivy/mill/gen/mill/v1"
+	"github.com/ivy/mill/internal/evidence"
 )
 
 // What happens to a failed attempt: `on_failure: revise <target>` while the
@@ -38,6 +39,21 @@ func (r *Runner) failStep(ctx context.Context, s *state, step *millv1.Step, sr *
 	// same finding say something one round does not.
 	s.record(step.GetName(), findings)
 	r.printf("  failed: %v\n", cause)
+
+	// A session whose structured output did not parse judged nothing: there
+	// is no verdict, so there is nothing to send anybody and no other
+	// step's work is implicated. The step is asked again — the same
+	// reviewer, told what its output was missing — instead of spending the
+	// implementer's attempt on a failure that was the reviewer's own
+	// (docs/domain-model.md §Verdict). Nothing is superseded, because
+	// nothing after this step ever closed.
+	if evidence.Malformed(cause) {
+		if s.attemptsAt(step.GetName(), sr.GetAttempt()) <= int64(step.GetRetries()) {
+			r.printf("  malformed output; asking %s again\n", step.GetName())
+			return outcome{feedback: findings, feedbackFrom: sr.GetId()}, nil
+		}
+		return outcome{}, r.park(ctx, s, step, sr, detail, cause)
+	}
 
 	target := step.GetOnFailure().GetReviseTarget()
 	revising := step.GetOnFailure().GetKind() == millv1.OnFailureKind_ON_FAILURE_KIND_REVISE && target != ""

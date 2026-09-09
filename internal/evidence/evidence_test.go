@@ -223,7 +223,7 @@ var _ = Describe("The verdict verifier", Label("unit"), func() {
 		Expect(result.Warnings).To(BeEmpty())
 	})
 
-	It("records a revise with no blocking finding as approve, with a warning", func() {
+	It("refuses a revise with no blocking finding as malformed, naming the field", func() {
 		result, err := verify(map[string]any{
 			"decision": "revise",
 			"findings": []any{map[string]any{
@@ -233,10 +233,13 @@ var _ = Describe("The verdict verifier", Label("unit"), func() {
 			}},
 		})
 
-		Expect(err).NotTo(HaveOccurred())
-		Expect(result.Value.GetVerdict().GetDecision()).To(Equal(millv1.VerdictDecision_VERDICT_DECISION_APPROVE))
-		Expect(result.Warnings).To(ContainElement(ContainSubstring("revise with no blocking finding")))
-		Expect(result.Value.GetVerdict().GetFindings()).To(HaveLen(1))
+		// A reviewer that asks for changes and names none has asked for
+		// nothing: it is neither an approve nor a revise, so it is the
+		// reviewer's own failure and the step is failed as malformed.
+		Expect(err).To(MatchError(ContainSubstring(`severity "blocking"`)))
+		Expect(evidence.Malformed(err)).To(BeTrue())
+		Expect(result.Value).To(BeNil())
+		Expect(result.Verdict).To(BeNil())
 	})
 
 	It("refuses a revise that blocks, and keeps the findings for the revise prompt", func() {
@@ -258,16 +261,25 @@ var _ = Describe("The verdict verifier", Label("unit"), func() {
 
 	It("records a finding that names no criterion as a note", func() {
 		result, err := verify(map[string]any{
-			"decision": "revise",
+			"decision": "approve",
 			"findings": []any{map[string]any{"severity": "blocking", "summary": "this feels wrong"}},
 		})
 
-		// The finding is a note, so nothing blocks, so the verdict is an
-		// approve with warnings rather than a round of revision.
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result.Value.GetVerdict().GetFindings()[0].GetSeverity()).
 			To(Equal(millv1.FindingSeverity_FINDING_SEVERITY_NOTE))
 		Expect(result.Warnings).To(ContainElement(ContainSubstring("names no acceptance criterion")))
+	})
+
+	It("refuses a revise whose only blocking finding names no criterion", func() {
+		// The finding is demoted to a note, so nothing blocks: a reviewer
+		// drifting off the contract cannot send the work back on it.
+		_, err := verify(map[string]any{
+			"decision": "revise",
+			"findings": []any{map[string]any{"severity": "blocking", "summary": "this feels wrong"}},
+		})
+
+		Expect(evidence.Malformed(err)).To(BeTrue())
 	})
 
 	It("refuses output that is not a verdict", func() {
