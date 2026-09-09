@@ -24,6 +24,10 @@ var quickFix = filepath.Join("..", "..", "workflows", "quick-fix")
 // skills quick-fix's directory carries.
 var feature = filepath.Join("..", "..", "workflows", "feature")
 
+// buildWorkflow is the workflow that chooses a workflow: what a run with no
+// project default assesses with (docs/domain-model.md §Selection).
+var buildWorkflow = filepath.Join("..", "..", "workflows", "build-workflow")
+
 // mill runs the binary's command tree against a socket a service is
 // listening on, and returns everything it printed.
 type mill struct {
@@ -37,6 +41,16 @@ func (m mill) run(ctx context.Context, args ...string) string {
 	root.SetArgs(append(args, "--socket", m.socket))
 	Expect(root.ExecuteContext(ctx)).To(Succeed(), stderr.String())
 	return stdout.String()
+}
+
+// try is run for a command a spec expects to refuse: what it printed, and
+// why it stopped.
+func (m mill) try(ctx context.Context, args ...string) (string, error) {
+	var stdout, stderr bytes.Buffer
+	root := cli.NewRootCommand(&stdout, &stderr)
+	root.SetArgs(append(args, "--socket", m.socket))
+	err := root.ExecuteContext(ctx)
+	return stdout.String(), err
 }
 
 // serving starts `mill serve` on its own database and socket for one spec.

@@ -1,0 +1,35 @@
+# build-workflow: the workflow that chooses a workflow.
+#
+# Selection has two rules, in order (docs/domain-model.md §Selection): a
+# project default a person set, else this. A project with no default runs
+# this workflow's one step as step 0 of the run, before any workflow is
+# selected, and the run then walks whatever it named.
+#
+# The step is deliberately the smallest thing that can answer the question:
+# one read-only session, Sonnet, ten minutes, structured output and nothing
+# else. It does not gather context for the run — the selected workflow's
+# first step does that, in its own session, with its own budget — and a
+# selection that took as long as the work would defeat the point of sizing
+# it.
+name: build-workflow
+scope: org
+steps:
+  - name: assess
+    kind: skill
+    session: assess
+    skill: build-workflow
+    evidence: structured
+    output_schema: skills/build-workflow/assessment.schema.json
+    capabilities:
+      - read
+    harness:
+      claude:
+        model: sonnet
+        effort: medium
+        tools:
+          allow:
+            - Glob
+            - Grep
+            - Read
+    retries: 2
+    timeout: 10m

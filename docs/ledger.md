@@ -198,14 +198,24 @@ switch:
       store.AbortOpenStepRuns(run)                 # a 'running' row here belongs to a dead or fenced-out worker
       # not when waiting: that open row is the gate step's own attempt, left open so the answer closes it
       # selecting: the worker died before the workflow was chosen. Nothing else is special —
-      #   the lease is taken over below and the selection is made again, which is idempotent:
-      #   same node, same project default, same version. A selecting run never refuses a claim
+      #   the lease is taken over below and the selection is made again: a project default
+      #   resolves to the same version, and an assessment is asked again as a second attempt
+      #   at the `assess` step. A selecting run never refuses a claim
 store.SetLease(run, node.lease_id, self)          # from here every write is fenced by this lease
 
 go heartbeat(node.lease_id) until run leaves this worker   # renews well inside the TTL; a fenced heartbeat, or cancel_requested, cancels the step
 #   cancel_requested: abort the step run (reason cancelled), Release(PREEMPTED, 'cancel'), return — the run stays resumable
 
 ws := workspace.Attach(run) or workspace.Create(run)   # local? reattach. elsewhere? clone run.branch (pushed, by the loader's rule)
+
+if run.workflow_id == nil:                         # docs/domain-model.md §Selection
+    if project default: w, tier := that                    # a person pinned this project to one workflow
+    else:               w, tier := assess(run, ws)         # build-workflow's `assess` step, as step 0 of the run
+    #   the assessment is an ordinary skill step — its own session, token, evidence and usage —
+    #   and its retries are spent here, before there is a workflow for the breaker to park in
+    sr := store.StartStepRun(run, 'select')
+    if w not in scope: store.Fail(sr); return              # an assessment cannot invent a workflow
+    store.Close(sr, evidence{kind: structured, value: {workflow, version, tier, basis, ...}}, workflow=w, tier=tier)
 
 if run was parked:                                 # the breaker stopped it and a human was asked
     if gate(run.gate_node_id).status != done: dagger.Release(node.lease_id, GATE); return

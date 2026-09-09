@@ -160,8 +160,15 @@ This is the worker's own code path with the claim replaced by an argument.
 The node must be ready; a node that is not is explained and the command
 stops rather than waiting for it.
 
+--workflow pins this project to one workflow, which is the project default
+of docs/domain-model.md §Selection. Left out, the run assesses the node: the
+build-workflow skill runs as its first step and names the workflow and the
+tier, and that assessment is the selection's evidence.
+
 --dry-run claims nothing and executes nothing. It prints the workflow that
-would be selected, its steps in order, and the evidence each one closes on.`,
+would be selected, its steps in order, and the evidence each one closes on —
+or, when the run would assess, the workflows the assessment could choose
+between.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := checkSkillOverrides(opts.skillOverride); err != nil {
@@ -177,8 +184,8 @@ would be selected, its steps in order, and the evidence each one closes on.`,
 	f.StringVar(&opts.socket, "socket", defaultSocketPath(), "path of the service's unix socket")
 	f.StringVar(&opts.daggerSocket, "dagger-socket", envOr(daggerSocketEnv, defaultDaggerSocket), "path of dagger's unix socket (default: $"+daggerSocketEnv+")")
 	f.StringVar(&opts.project, "project", os.Getenv(daggerProjectEnv), "dagger project a bare #7 reference resolves in (default: $"+daggerProjectEnv+")")
-	f.StringVar(&opts.workflow, "workflow", "quick-fix", "workflow to select when the run has none")
-	f.StringVar(&opts.tier, "tier", "quick-fix", "tier that workflow stands for, which gate policies compare against")
+	f.StringVar(&opts.workflow, "workflow", "", "workflow to select when the run has none (default: assess the node and let the assessment name one)")
+	f.StringVar(&opts.tier, "tier", "", "tier that workflow stands for, which gate policies compare against (default: quick-fix, or the assessed tier)")
 	f.StringVar(&opts.workflowDir, "workflow-dir", "", "directory the workflow was loaded from, for a check step's scripts")
 	f.StringVar(&opts.sidecar, "sidecar", envOr(sidecarEnv, claude.DefaultEntrypoint), "path of the harness sidecar's entrypoint (default: $"+sidecarEnv+")")
 	f.StringVar(&opts.vcsURL, "vcs-url", os.Getenv(vcsURLEnv), "repository this project delivers to, which the forge steps push and merge against (default: $"+vcsURLEnv+")")
@@ -201,6 +208,9 @@ would be selected, its steps in order, and the evidence each one closes on.`,
 // no claim, no lease, no run, no workspace, no session.
 func dryRun(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 	store := storeClient(opts.socket)
+	if strings.TrimSpace(opts.workflow) == "" {
+		return dryRunAssessment(cmd, store, opts, nodeRef)
+	}
 	workflow, err := selectedWorkflow(cmd.Context(), store, opts)
 	if err != nil {
 		return err
@@ -213,6 +223,46 @@ func dryRun(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
 			step.GetName(), stepKindName(step.GetKind()), evidenceKindName(step.GetEvidence()),
 			strings.Join(capabilityNames(step.GetCapabilities()), ","))
+	}
+	return w.Flush()
+}
+
+// dryRunAssessment prints what selection would do for a project with no
+// default: run the assessment, and choose between the workflows in scope.
+// The list is the one the assessing session is given, so what an operator is
+// shown here is what the model will be asked to pick from
+// (internal/run/select.go).
+func dryRunAssessment(cmd *cobra.Command, store millv1connect.StoreServiceClient, opts runOptions, nodeRef string) error {
+	ctx := cmd.Context()
+	assessor, err := store.GetWorkflow(ctx, connect.NewRequest(&millv1.GetWorkflowRequest{
+		Name: run.AssessmentWorkflow, Project: opts.project,
+	}))
+	if err != nil {
+		return err
+	}
+	if assessor.Msg.GetWorkflow() == nil {
+		return fmt.Errorf("mill run: %s has no project default and no workflow named %q to assess with; "+
+			"push it, or pin the project with --workflow", nodeRef, run.AssessmentWorkflow)
+	}
+	listed, err := store.ListWorkflows(ctx, connect.NewRequest(&millv1.ListWorkflowsRequest{}))
+	if err != nil {
+		return err
+	}
+	candidates := run.InScope(listed.Msg.GetWorkflows(), opts.project)
+
+	out := cmd.OutOrStdout()
+	_, _ = fmt.Fprintf(out, "%s has no project default, so the run would assess it: %s@%s runs its %s step first "+
+		"and names the workflow and the tier.\n\n",
+		nodeRef, assessor.Msg.GetWorkflow().GetName(), assessor.Msg.GetWorkflow().GetVersion(), run.AssessmentStep)
+	if len(candidates) == 0 {
+		_, _ = fmt.Fprintln(out, "There is no workflow in scope for it to choose between.")
+		return nil
+	}
+	_, _ = fmt.Fprintln(out, "It would choose between:")
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "WORKFLOW\tVERSION")
+	for _, workflow := range candidates {
+		_, _ = fmt.Fprintf(w, "%s\t%s\n", workflow.GetName(), workflow.GetVersion())
 	}
 	return w.Flush()
 }
@@ -348,9 +398,13 @@ func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, 
 
 // tierNamed reads the project default's tier. It is a flag rather than a
 // lookup because dagger's projects carry no tier and mill stores no project
-// row yet; the assessment step that would name one is the router's work
-// (docs/domain-model.md §"Workflow selection").
+// row yet (docs/domain-model.md §Selection). Empty leaves it unset: a run
+// with a project default takes the documented default of quick-fix, and a
+// run that assesses takes the tier the assessment named.
 func tierNamed(name string) (millv1.Tier, error) {
+	if name == "" {
+		return millv1.Tier_TIER_UNSPECIFIED, nil
+	}
 	tier := millv1.Tier(millv1.Tier_value["TIER_"+strings.ToUpper(strings.ReplaceAll(name, "-", "_"))])
 	if tier == millv1.Tier_TIER_UNSPECIFIED {
 		return tier, fmt.Errorf("mill run: %q is not a tier: quick-fix, small, feature or large", name)

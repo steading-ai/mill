@@ -8,94 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"google.golang.org/protobuf/types/known/structpb"
-
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/evidence"
 	"github.com/ivy/mill/internal/workspace"
 )
-
-// selectionStep is the name of the step run that records which workflow a
-// run follows.
-//
-// A run is created `selecting`, and the only write that moves it out is a
-// step run closed with a workflow id (docs/ledger.md §runs, and the store's
-// SetRunWorkflow). The assessment step that would ordinarily do that does
-// not exist yet — mill#10 left it to the router — so O0 records the project
-// default here: one closed attempt, with the choice as structured evidence,
-// so the ledger says which workflow was selected and why rather than a run
-// silently acquiring one.
-const selectionStep = "select"
-
-// selectWorkflow resolves the run's workflow, recording the selection when
-// the run has none yet.
-func (r *Runner) selectWorkflow(ctx context.Context, s *state) error {
-	if id := s.run.GetWorkflowId(); id != "" {
-		res, err := call(ctx, r.options.Store.GetWorkflow, &millv1.GetWorkflowRequest{Id: id})
-		if err != nil {
-			return err
-		}
-		s.workflow = res.GetWorkflow()
-		return nil
-	}
-
-	// The scope is left unspecified on purpose: that is what asks the
-	// store to resolve project over org, which is the precedence
-	// docs/domain-model.md §"Workflow selection" states.
-	res, err := call(ctx, r.options.Store.GetWorkflow, &millv1.GetWorkflowRequest{
-		Name:    r.options.Workflow,
-		Project: projectOf(s.run.GetNodeRef()),
-	})
-	if err != nil {
-		return err
-	}
-	workflow := res.GetWorkflow()
-	if workflow == nil {
-		return fmt.Errorf("run %s: no workflow named %q", s.run.GetId(), r.options.Workflow)
-	}
-
-	base, err := r.head(ctx, s)
-	if err != nil {
-		return err
-	}
-	sr, err := call(ctx, r.options.Store.StartStepRun, &millv1.StartStepRunRequest{
-		LeaseId:    s.lease,
-		RunId:      s.run.GetId(),
-		StepName:   selectionStep,
-		Kind:       millv1.StepKind_STEP_KIND_SKILL,
-		WorkerRef:  r.options.WorkerRef,
-		BaseCommit: base,
-	})
-	if err != nil {
-		return err
-	}
-	chosen, err := structpb.NewStruct(map[string]any{
-		"workflow": workflow.GetName(),
-		"version":  workflow.GetVersion(),
-		"tier":     tierName(r.options.Tier),
-		"basis":    "project default",
-	})
-	if err != nil {
-		return err
-	}
-	if _, err := call(ctx, r.options.Store.CloseStepRun, &millv1.CloseStepRunRequest{
-		LeaseId:    s.lease,
-		StepRunId:  sr.GetStepRun().GetId(),
-		WorkflowId: workflow.GetId(),
-		Tier:       r.options.Tier,
-		Evidence: &millv1.Evidence{
-			StepRunId:  sr.GetStepRun().GetId(),
-			Kind:       millv1.EvidenceKind_EVIDENCE_KIND_STRUCTURED,
-			Value:      &millv1.Evidence_Structured{Structured: chosen},
-			VerifiedBy: "mill: project default",
-		},
-	}); err != nil {
-		return err
-	}
-	s.workflow = workflow
-	r.printf("workflow %s@%s selected\n", workflow.GetName(), short(workflow.GetVersion()))
-	return nil
-}
 
 // requireHarnesses refuses a workflow that names a harness this worker has no
 // adapter for, before the first step runs.
@@ -106,7 +22,13 @@ func (r *Runner) selectWorkflow(ctx context.Context, s *state) error {
 // otherwise commit and open a pull request first. The message names the
 // harness and the step, which is what a definition's author has to fix.
 func (r *Runner) requireHarnesses(s *state) error {
-	for _, step := range s.workflow.GetSteps() {
+	return r.requireHarnessesOf(s, s.workflow)
+}
+
+// requireHarnessesOf is that check over one definition: the run's workflow,
+// or the assessment's, which is read before any of it runs.
+func (r *Runner) requireHarnessesOf(s *state, w *millv1.Workflow) error {
+	for _, step := range w.GetSteps() {
 		if step.GetKind() != millv1.StepKind_STEP_KIND_SKILL {
 			continue
 		}
@@ -118,7 +40,7 @@ func (r *Runner) requireHarnesses(s *state) error {
 		for _, name := range names {
 			if _, err := r.options.Harnesses.Lookup(name); err != nil {
 				return fmt.Errorf("run %s: workflow %s step %s: %w",
-					s.run.GetId(), s.workflow.GetName(), step.GetName(), err)
+					s.run.GetId(), w.GetName(), step.GetName(), err)
 			}
 		}
 	}

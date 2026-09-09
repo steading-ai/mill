@@ -52,12 +52,8 @@ type result struct {
 
 // execute runs one attempt by kind.
 func (r *Runner) execute(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, detail *millv1.InspectResponse, token *millv1.StepToken, feedback string) (result, error) {
-	stepCtx := ctx
-	if timeout := step.GetTimeout().AsDuration(); timeout > 0 {
-		var cancel context.CancelFunc
-		stepCtx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
+	stepCtx, cancel := stepContext(ctx, step)
+	defer cancel()
 	switch step.GetKind() {
 	case millv1.StepKind_STEP_KIND_SKILL:
 		made, err := r.commitAlreadyMade(stepCtx, s, step, sr)
@@ -68,7 +64,7 @@ func (r *Runner) execute(ctx context.Context, s *state, step *millv1.Step, sr *m
 			r.printf("  the commit the interrupted attempt made is on the branch\n")
 			return result{claim: made}, nil
 		}
-		return r.runSkill(stepCtx, s, step, sr, detail, token, feedback)
+		return r.runSkill(stepCtx, s, step, sr, detail, token, feedback, "")
 	case millv1.StepKind_STEP_KIND_CHECK:
 		return r.runCheck(stepCtx, s, step)
 	case millv1.StepKind_STEP_KIND_GATE:
@@ -78,16 +74,30 @@ func (r *Runner) execute(ctx context.Context, s *state, step *millv1.Step, sr *m
 	}
 }
 
+// stepContext is the step's own context: the run's, bounded by the step's
+// timeout when it declares one. The cancel is the caller's to run.
+func stepContext(ctx context.Context, step *millv1.Step) (context.Context, context.CancelFunc) {
+	if timeout := step.GetTimeout().AsDuration(); timeout > 0 {
+		return context.WithTimeout(ctx, timeout)
+	}
+	return context.WithCancel(ctx)
+}
+
 // runSkill drives a skill step as a session in a harness. The session is
 // found by its deterministic id, so a step re-run after a crash resumes the
 // same session and the model picks up its own prior context.
-func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, detail *millv1.InspectResponse, token *millv1.StepToken, feedback string) (result, error) {
+//
+// brief is what the mill has to say to this step's session beyond its skill
+// and the node: the assessment's list of the workflows in scope is the one
+// caller that has any (internal/run/select.go). Every other step passes
+// nothing.
+func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, detail *millv1.InspectResponse, token *millv1.StepToken, feedback, brief string) (result, error) {
 	name, settings := harnessFor(step)
 	adapter, err := r.options.Harnesses.Lookup(name)
 	if err != nil {
 		return result{}, err
 	}
-	prompt, err := r.prompt(ctx, s, step, detail, feedback)
+	prompt, err := r.prompt(ctx, s, step, detail, feedback, brief)
 	if err != nil {
 		return result{}, err
 	}
@@ -450,9 +460,10 @@ func digest(content string) string {
 }
 
 // prompt renders the step's prompt: the skill body verbatim, then the node
-// and its inputs as attributed data, then a check's feedback when this
-// attempt is the revise for one.
-func (r *Runner) prompt(ctx context.Context, s *state, step *millv1.Step, detail *millv1.InspectResponse, feedback string) (harness.Prompt, error) {
+// and its inputs as attributed data, then whatever the mill itself has to
+// tell this step's session, and last a check's feedback when this attempt is
+// the revise for one.
+func (r *Runner) prompt(ctx context.Context, s *state, step *millv1.Step, detail *millv1.InspectResponse, feedback, brief string) (harness.Prompt, error) {
 	skill, err := r.skillFor(ctx, step)
 	if err != nil {
 		return harness.Prompt{}, err
@@ -476,12 +487,15 @@ func (r *Runner) prompt(ctx context.Context, s *state, step *millv1.Step, detail
 		})
 	}
 	text := workflow.Prompt(skill, node)
-	brief, err := r.artifactBrief(s, step)
+	if brief != "" {
+		text += "\n\n" + brief
+	}
+	artifact, err := r.artifactBrief(s, step)
 	if err != nil {
 		return harness.Prompt{}, err
 	}
-	if brief != "" {
-		text += "\n\n" + brief
+	if artifact != "" {
+		text += "\n\n" + artifact
 	}
 	// What a reviewer is judging, which it has no shell to fetch for
 	// itself (internal/run/verify.go).

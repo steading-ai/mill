@@ -109,7 +109,31 @@ How a run gets its workflow, in order:
 1. **Project default** — a project in the store may name a workflow *and the tier it stands for*. Used when set. The tier is what gate policies read when no assessment ran.
 2. **Assessment** — otherwise the `/build-workflow` skill runs as the first step of the run, non-interactively, and emits `{workflow, tier, signals, reasoning}` as structured output. The named workflow must exist in scope; the output is recorded in the ledger as the selection's evidence.
 
-Either way, every run has a `tier` by the time its first gate is evaluated.
+Assessment is the norm. A project default is a person pinning a project to one workflow; without one, the run sizes the node for itself before it walks anything.
+
+Either way, every run has a `tier` by the time its first gate is evaluated, and one `select` step run holds the choice: structured evidence carrying `workflow`, `version`, `tier` and `basis` — `project default` or `assessment` — and, when the assessment answered, its own `signals` and `reasoning` alongside them.
+
+#### The assessment's schema
+
+```json
+{
+  "type": "object",
+  "required": ["workflow", "tier", "signals", "reasoning"],
+  "properties": {
+    "workflow": {"type": "string", "minLength": 1},
+    "tier": {"type": "string", "enum": ["quick-fix", "feature"]},
+    "signals": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "reasoning": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}
+```
+
+`signals` are the observable facts the decision rests on — the files the node's ask touches, whether tests exist for them, whether the ask names a design change — and there is at least one: a decision resting on nothing is not one a person can check. The schema lives beside the skill, at `workflows/build-workflow/skills/build-workflow/assessment.schema.json`, and the step names it; output that does not validate fails the step as malformed, naming the field.
+
+`tier` is the two tiers the workflows in this repository stand for. A change touching one file or a few lines with no design question is `quick-fix`; anything needing a plan, touching several packages, or changing an interface is `feature`. An uncertain assessment says `feature`: the more expensive path is the safe one.
+
+The assessment runs in a read-only session of its own, and it does not gather context for the run — the selected workflow's first step does that. The names it may choose between are the workflows in scope, less `build-workflow` itself, handed to the session by the mill; a name that is not one of them fails the `select` step with the name and the scope in the message, and the run walks nothing.
 
 ### Project default
 
@@ -372,4 +396,3 @@ Moving mill to its own account is a later change and a larger one than it looks:
 
 Settled: a `workflow.yaml` is **one file per workflow**, sitting above a `skills/` directory rather than beside a single `SKILL.md`. A step references its skill by name and digest, so a skill shared across workflows is stored once and each workflow pins the version it ran. `internal/workflow` is the loader.
 
-- The exact schema for `structured` evidence on the assessment step — waiting on the first `/build-workflow` spike.

@@ -19,7 +19,7 @@ var _ = Describe("mill run", func() {
 			m := serving(ctx)
 			m.run(ctx, "workflow", "push", quickFix)
 
-			out := m.run(ctx, "run", "millspec#1", "--dry-run", "--project", "millspec")
+			out := m.run(ctx, "run", "millspec#1", "--dry-run", "--project", "millspec", "--workflow", "quick-fix")
 
 			Expect(out).To(ContainSubstring("millspec#1 would run workflow quick-fix@"))
 			for step, evidence := range map[string]string{
@@ -66,13 +66,42 @@ var _ = Describe("mill run", func() {
 			Expect(lineFor(out, "review")).NotTo(ContainSubstring("write"))
 		})
 
+		// Selection's second rule as an operator sees it before spending
+		// anything: no --workflow means no project default, which means the
+		// assessment chooses (docs/domain-model.md §Selection).
+		It("says it would assess, and names the workflows the assessment could choose between", func(ctx SpecContext) {
+			m := serving(ctx)
+			m.run(ctx, "workflow", "push", quickFix)
+			m.run(ctx, "workflow", "push", feature)
+			m.run(ctx, "workflow", "push", buildWorkflow)
+
+			out := m.run(ctx, "run", "millspec#1", "--dry-run", "--project", "millspec")
+
+			Expect(out).To(ContainSubstring("would assess"))
+			Expect(out).To(ContainSubstring("build-workflow@"))
+			Expect(out).To(ContainSubstring("assess step"))
+			Expect(lineFor(out, "quick-fix")).NotTo(BeEmpty())
+			Expect(lineFor(out, "feature")).NotTo(BeEmpty())
+			// The assessment's own workflow is not something it may choose.
+			Expect(out).NotTo(MatchRegexp(`(?m)^build-workflow\s`))
+		})
+
+		It("refuses to dry-run an assessment the store has no build-workflow for", func(ctx SpecContext) {
+			m := serving(ctx)
+			m.run(ctx, "workflow", "push", quickFix)
+
+			_, err := m.try(ctx, "run", "millspec#1", "--dry-run", "--project", "millspec")
+
+			Expect(err).To(MatchError(ContainSubstring("build-workflow")))
+		})
+
 		It("claims nothing: it never reaches dagger", func(ctx SpecContext) {
 			m := serving(ctx)
 			m.run(ctx, "workflow", "push", quickFix)
 
 			// The dagger socket is a path nothing listens on. A dry run that
 			// claimed, explained, or read a node would fail against it.
-			out := m.run(ctx, "run", "millspec#1", "--dry-run",
+			out := m.run(ctx, "run", "millspec#1", "--dry-run", "--workflow", "quick-fix",
 				"--project", "millspec", "--dagger-socket", "/nonexistent/dg.sock")
 			Expect(out).To(ContainSubstring("quick-fix"))
 		})

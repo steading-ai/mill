@@ -17,7 +17,7 @@ The `feature` workflow with a reviewer that has demonstrably said no, and a plan
 | Item | Decided |
 |---|---|
 | `feature` workflow: gather-context → think → plan → review-plan → implement → simplify → commit → pr → review, one session through `pr`, review in its own | B6, `workflows` node Notes |
-| `/build-workflow` — the `/work-on` tier assessment as a skill step emitting `{workflow, tier, signals, reasoning}` | B1, C4, Domain Model §Selection |
+| `/build-workflow` — the `/work-on` tier assessment as a skill step emitting `{workflow, tier, signals, reasoning}`; the schema is settled in Domain Model §Selection, "The assessment's schema" | B1, C4, Domain Model §Selection |
 | `/review` skill: `/simplify`'s reuse/quality/efficiency plus criteria met, encoded in tests, tests pass; structured verdict `approve \| revise` | B3, C10, Domain Model §Verdict |
 | Plan approval as a gate; `auto` when review-plan approves and tier ≤ feature | R-21, Domain Model §Gate |
 | Gate reaches Slack: `thicket send` from the gate step as the stopgap until the thicket bridge consumes dagger events | D1, B14, Architecture §Gate steps |
@@ -111,7 +111,6 @@ Each wants an ADR when its milestone starts. From the specs' open-question secti
 | Question | Leaning | Milestone |
 |---|---|---|
 | `workflow.yaml` per workflow or per step, given shared skills | per workflow, steps reference skills by name+digest | O1 |
-| Assessment step's structured-output schema | after the first `/build-workflow` spike | O1 |
 | `skills.files` bytes in mill's database or dagger's blob store | mill's, so a workflow loads without dagger | O1 |
 | Gate filed in dagger but not recorded in the store (crash between) — search open user-assigned children before filing | as `gates` node Notes | O0 |
 | `revise` semantics when the target step is in a different session | supersede as usual; the target session resumes with feedback | O1 |

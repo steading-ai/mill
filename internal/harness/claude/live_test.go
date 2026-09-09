@@ -335,3 +335,140 @@ func readWorkflowFile(parts ...string) string {
 	Expect(err).NotTo(HaveOccurred())
 	return string(body)
 }
+
+// The assessment, live: a real session running the real `build-workflow`
+// skill over two nodes whose right answers are not in dispute — a typo, and
+// a new subcommand with tests.
+//
+// Selection by assessment is a model deciding how much a change is worth
+// (docs/domain-model.md §Selection), and no fake can answer whether it
+// decides well. The mill's own specs prove what an assessment *does*: the
+// named workflow is resolved in scope, the tier reaches the gate predicates,
+// malformed output fails the step. What they cannot prove is that a skill
+// asked to size a one-word fix says `quick-fix`.
+var _ = Describe("The build-workflow skill against the real sidecar", Label("live"), func() {
+	var entrypoint string
+
+	BeforeEach(func() {
+		if os.Getenv(liveVar) == "" {
+			Skip("set " + liveVar + "=1 to run the specs that spend a real session")
+		}
+		root, err := filepath.Abs(filepath.Join("..", "..", "..", "sidecar"))
+		Expect(err).NotTo(HaveOccurred())
+		build := exec.Command("pnpm", "run", "build")
+		build.Dir = root
+		build.Stdout, build.Stderr = GinkgoWriter, GinkgoWriter
+		Expect(build.Run()).To(Succeed(), "the sidecar did not build")
+		entrypoint = filepath.Join(root, "dist", "main.js")
+	})
+
+	// assess runs one assessing session over this repository, under the
+	// step's own settings and the brief the mill renders for it: the skill,
+	// the node, and the workflows in scope.
+	assess := func(node string) map[string]any {
+		GinkgoHelper()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		DeferCleanup(cancel)
+
+		repo, err := filepath.Abs(filepath.Join("..", "..", ".."))
+		Expect(err).NotTo(HaveOccurred())
+
+		adapter := New(WithEntrypoint("node", entrypoint), WithTimeout(8*time.Minute))
+		turn, err := adapter.Start(ctx, harness.Session{
+			ID:  newSessionID(),
+			Cwd: repo,
+			Options: map[string]any{
+				"model":  "sonnet",
+				"effort": "medium",
+				"tools":  map[string]any{"allow": []any{"Glob", "Grep", "Read"}},
+			},
+			Events: (&recorder{}).sink(),
+		}, harness.Prompt{
+			Text:         assessSkill() + "\n\n## The node\n\n" + node + "\n\n" + workflowsInScope,
+			OutputSchema: assessmentSchema(),
+		}, nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		terminal, err := turn.Wait(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(terminal.Exit.NeverRan()).To(BeFalse(), "the session never ran: %s", terminal.FinalMessage)
+		AddReportEntry("assessment", terminal.StructuredOutput)
+		Expect(terminal.StructuredOutput).NotTo(BeNil(), "the session emitted no assessment: %s", terminal.FinalMessage)
+		return terminal.StructuredOutput
+	}
+
+	It("sizes a one-word fix as a quick fix", func() {
+		assessment := assess(typoNode)
+
+		Expect(assessment["tier"]).To(Equal("quick-fix"))
+		Expect(assessment["workflow"]).To(Equal("quick-fix"))
+		Expect(assessment["signals"]).NotTo(BeEmpty(), "the decision names the facts it rests on")
+	})
+
+	It("sizes a new subcommand with tests as a feature", func() {
+		assessment := assess(subcommandNode)
+
+		Expect(assessment["tier"]).To(Equal("feature"))
+		Expect(assessment["workflow"]).To(Equal("feature"))
+		Expect(assessment["signals"]).NotTo(BeEmpty(), "the decision names the facts it rests on")
+	})
+})
+
+// typoNode and subcommandNode are the two work orders the live assessment is
+// asked to size. They name this repository's own files, because the session
+// reads the checkout it is standing in and a node about a repository it
+// cannot see is not the question being asked.
+const (
+	typoNode = "# mill#000: Fix the typo in `mill run --dagger-socket`'s usage string\n\n" +
+		"## Context\n\n" +
+		"The flag's usage string in `internal/cli/run.go` spells dagger \"daggr\". It is one " +
+		"word in one string literal.\n\n" +
+		"## Acceptance criteria\n\n" +
+		"- [ ] The usage string spells dagger correctly\n" +
+		"- [ ] `make lint` and `make test` pass\n"
+
+	subcommandNode = "# mill#000: `mill runs` — list the runs in the ledger\n\n" +
+		"## Context\n\n" +
+		"An operator has no way to see which runs the ledger holds without reading the " +
+		"database. Add a `mill runs` subcommand to the cobra tree that lists them — node, " +
+		"workflow, status, current step — reading through the store service like every " +
+		"other read command, with a `--status` filter.\n\n" +
+		"## Deliverables\n\n" +
+		"- `internal/cli/runs.go`: the command, and a `ListRuns` call added to the store " +
+		"service in `proto/mill/v1/store.proto` and its handler\n" +
+		"- `docs/tools.md`: what the command answers\n\n" +
+		"## Acceptance criteria\n\n" +
+		"- [ ] `mill runs` lists every run with its node, workflow, status and current step\n" +
+		"- [ ] `--status waiting` lists only the runs waiting on a gate\n" +
+		"- [ ] The listing is ordered newest first\n" +
+		"- [ ] `make lint` and `make test` pass\n"
+
+	// workflowsInScope is the brief the mill renders for an assessing
+	// session, naming what it may choose between
+	// (internal/run/select.go, candidateBrief).
+	workflowsInScope = "## The workflows in scope\n\n" +
+		"These are the workflows this run may be assessed into, read from the mill's " +
+		"store. Name exactly one of them, spelled as it appears here; any other name " +
+		"fails the selection step and the run walks nothing.\n\n" +
+		"- `feature`\n- `quick-fix`\n"
+)
+
+// assessSkill is the body of the `build-workflow` skill this repository
+// seeds the store with, and assessmentSchema the schema its step names.
+func assessSkill() string {
+	GinkgoHelper()
+	return readAssessmentFile("SKILL.md")
+}
+
+func assessmentSchema() string {
+	GinkgoHelper()
+	return readAssessmentFile("assessment.schema.json")
+}
+
+func readAssessmentFile(name string) string {
+	GinkgoHelper()
+	body, err := os.ReadFile(filepath.Join("..", "..", "..",
+		"workflows", "build-workflow", "skills", "build-workflow", name))
+	Expect(err).NotTo(HaveOccurred())
+	return string(body)
+}

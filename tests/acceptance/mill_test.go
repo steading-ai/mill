@@ -140,12 +140,13 @@ func connectService(socket string) *service {
 }
 
 // pushWorkflow loads this tree's workflow definitions into the store, which
-// is what a deployment does at install time. Both of them: a worker holds
-// every workflow its projects may select, and `feature` reaches for skills
-// `quick-fix` carries.
+// is what a deployment does at install time. All three: a worker holds every
+// workflow its projects may select, `feature` reaches for skills `quick-fix`
+// carries, and `build-workflow` is what a project with no default assesses
+// with (docs/domain-model.md §Selection).
 func pushWorkflow(ctx context.Context) {
 	GinkgoHelper()
-	for _, name := range []string{"quick-fix", "feature"} {
+	for _, name := range []string{"quick-fix", "feature", "build-workflow"} {
 		push := exec.CommandContext(ctx, env.Mill, "workflow", "push", workflowDir(name), "--socket", suite.service.Socket) //nolint:gosec // the suite's own binary
 		push.Stdout, push.Stderr = GinkgoWriter, GinkgoWriter
 		Expect(push.Run()).To(Succeed(), "mill workflow push %s", name)
