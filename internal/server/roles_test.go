@@ -65,6 +65,24 @@ var _ = Describe("A connection's uid", Label(testsupport.DBLabel), func() {
 		Expect(run.GetCancelRequested()).To(BeFalse(), "the refused request changed nothing")
 	})
 
+	It("a reader calling Rerun is refused naming the role, and WhoAmI tells it why", func(ctx SpecContext) {
+		f := newFixture(ctx, "mill#37")
+		_, err := f.as(readerUID).Rerun(ctx, connect.NewRequest(&millv1.RerunRequest{
+			RunId: f.run.GetId(), FromStep: "implement",
+		}))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodePermissionDenied))
+		Expect(err.Error()).To(ContainSubstring(string(interceptor.RoleReader)))
+		Expect(err.Error()).To(ContainSubstring("Rerun"))
+
+		// WhoAmI is a read, so the reader may ask it: it is how a client
+		// with an operate verb of its own — `mill mcp` and workspace clean
+		// — applies the same map the store applies here.
+		who, err := f.as(readerUID).WhoAmI(ctx, connect.NewRequest(&millv1.WhoAmIRequest{}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(who.Msg.GetRole()).To(Equal(string(interceptor.RoleReader)))
+		Expect(who.Msg.GetUid()).To(BeNumerically("==", readerUID))
+	})
+
 	It("a uid in no role calling Cancel is unauthenticated", func(ctx SpecContext) {
 		f := newFixture(ctx, "mill#35")
 		_, err := f.as(strangerUID).Cancel(ctx, connect.NewRequest(&millv1.CancelRequest{RunId: f.run.GetId()}))

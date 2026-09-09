@@ -119,6 +119,13 @@ service StoreService {
   // mutation a principal that holds no lease makes to a run's own row, and
   // the reason the role map exists.
   rpc Cancel(CancelRequest) returns (CancelResponse);
+  // Rerun supersedes every step from a named step through the run's current
+  // one and leaves the run resumable at the named step. The mechanism a
+  // revise uses, driven by a person instead of a verdict: the generation,
+  // the branch and the sessions are kept, so what a rerun throws away is the
+  // span's attempts and nothing else. Carries no lease, for the same reason
+  // Cancel does not — the caller is a person, not the worker.
+  rpc Rerun(RerunRequest) returns (RerunResponse);
   // IssueStepToken mints the step-scoped bearer a session presents on the
   // workspace socket. The bearer is returned once; the store keeps its hash.
   rpc IssueStepToken(IssueStepTokenRequest) returns (IssueStepTokenResponse);
@@ -160,6 +167,11 @@ service StoreService {
   // the database answers, and whether the schema is the one this binary
   // carries. `mill doctor` probes the socket and the migrations with it.
   rpc Health(HealthRequest) returns (HealthResponse);
+  // WhoAmI is what the socket makes of the caller: the peer uid and the role
+  // the map gives it. `mill mcp` asks before it offers a tool that changes
+  // something the store does not hold, so a reader is refused by the same
+  // policy that refuses it Cancel.
+  rpc WhoAmI(WhoAmIRequest) returns (WhoAmIResponse);
 }
 
 // GetRunByNodeRequest asks for the live run on a node.
@@ -566,6 +578,32 @@ message CancelRequest {
   string reason = 2;
 }
 
+// RerunRequest redoes a span of a run's steps without a new generation.
+message RerunRequest {
+  // The run to rerun. Like Cancel, it carries no lease: the caller is a
+  // person, and who asked is the connection's own identity.
+  string run_id = 1;
+  // The first step to redo. Every step from it through the run's current
+  // step is superseded; a step with no attempt in this run is refused.
+  string from_step = 2;
+  // Why, for the event log.
+  string reason = 3;
+}
+
+// RerunResponse carries what the rerun undid.
+message RerunResponse {
+  // The run, unchanged but for the span behind it.
+  Run run = 1;
+  // The last step of the span: the step the run was on.
+  string through_step = 2;
+  // The attempts that were superseded, in workflow order.
+  repeated StepRun step_runs = 3;
+  // Whether the run had ended and was made live again. Only a `failed` run
+  // is: a rerun on one is a person overruling the ending, and a span
+  // superseded on a run no claim can take over would strand the node.
+  bool reopened = 4;
+}
+
 // CancelResponse carries the run the request was recorded on.
 message CancelResponse {
   // The run, with cancel_requested set. Its status is unchanged: the worker
@@ -818,4 +856,18 @@ message HealthResponse {
   // Why database is false, or why the versions could not be read. Empty
   // when everything answered.
   string detail = 5;
+}
+
+// WhoAmIRequest asks the socket who is calling. It takes nothing: identity
+// is the peer uid and there is nothing a request body could add.
+message WhoAmIRequest {
+  // Reserved: the question takes no arguments.
+}
+
+// WhoAmIResponse is the caller as the interceptor resolved it.
+message WhoAmIResponse {
+  // The peer uid the kernel reported.
+  int64 uid = 1;
+  // The role the map gives it: service, operator, or reader.
+  string role = 2;
 }

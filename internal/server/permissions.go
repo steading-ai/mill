@@ -9,9 +9,9 @@ import (
 // the roles in docs/architecture.md §"Identity and credentials" mean:
 //
 //   - read — the ledger seen and nothing changed. Every role has it.
-//   - operate — cancel and restart, and the definitions a push stores. The
-//     verbs a human or an agent drives; they ask the worker for something
-//     and write no evidence.
+//   - operate — cancel, rerun and restart, and the definitions a push
+//     stores. The verbs a human or an agent drives; they ask the worker for
+//     something and write no evidence.
 //   - write — the record of a run. The worker's own calls, made by the
 //     account the service runs as and by no other.
 //
@@ -28,8 +28,10 @@ var permissions = map[string]interceptor.Permission{
 	millv1connect.StoreServiceHistoryProcedure:       interceptor.PermissionRead,
 	millv1connect.StoreServiceCostProcedure:          interceptor.PermissionRead,
 	millv1connect.StoreServiceHealthProcedure:        interceptor.PermissionRead,
+	millv1connect.StoreServiceWhoAmIProcedure:        interceptor.PermissionRead,
 
 	millv1connect.StoreServiceCancelProcedure:      interceptor.PermissionOperate,
+	millv1connect.StoreServiceRerunProcedure:       interceptor.PermissionOperate,
 	millv1connect.StoreServiceAbandonProcedure:     interceptor.PermissionOperate,
 	millv1connect.StoreServicePutWorkflowProcedure: interceptor.PermissionOperate,
 	millv1connect.StoreServicePutSkillProcedure:    interceptor.PermissionOperate,

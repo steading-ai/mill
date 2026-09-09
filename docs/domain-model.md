@@ -47,7 +47,7 @@ selecting ──▶ running ──▶ done
 - `waiting` — a gate node exists and blocks this node. The run holds no lease and no worker. When the gate completes, the node becomes ready again, `ClaimNext` returns it, and the worker that gets it resumes this run: it finds `gate_node_id` set and the current step a gate step, reads the gate's result, and closes that step with `gate` evidence — it does not file the gate again.
 - `parked` — the circuit breaker fired. A comment with the last findings is on the node, a gate asks a human what to do, and the lease is released. Structurally identical to `waiting`; distinguished so `status` can say why.
 - `done` — the terminal step closed with evidence and `Complete` was accepted by dagger.
-- `failed` — a gate was denied, or the node was dropped underneath the run. Terminal. The result on the node says why.
+- `failed` — a gate was denied, or the node was dropped underneath the run. Terminal to the run loop: nothing mill does on its own leaves this state. An operator's `mill rerun <run> --from <step>` does, by overruling the ending — it supersedes the span and returns the run to `running` holding no lease, so the next claim resumes it at that step. `abandoned` has no such door: a later generation already holds the node.
 - `abandoned` — a human restarted the node. Terminal. The run's record stays; the new generation is a different run.
 
 ### Restart

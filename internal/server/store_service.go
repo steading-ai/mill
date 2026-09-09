@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"connectrpc.com/connect"
@@ -237,6 +238,22 @@ func (s *StoreService) Cancel(ctx context.Context, req *connect.Request[millv1.C
 	return connect.NewResponse(&millv1.CancelResponse{Run: run}), nil
 }
 
+// Rerun supersedes a span of a run's steps so the next claim resumes at the
+// step the caller named. Who asked is the connection's caller, as Cancel's
+// is.
+func (s *StoreService) Rerun(ctx context.Context, req *connect.Request[millv1.RerunRequest]) (*connect.Response[millv1.RerunResponse], error) {
+	result, err := s.svc.Rerun(ctx, req.Msg.GetRunId(), req.Msg.GetFromStep(), callerRef(ctx), req.Msg.GetReason())
+	if err != nil {
+		return nil, connectError(err)
+	}
+	return connect.NewResponse(&millv1.RerunResponse{
+		Run:         result.Run,
+		ThroughStep: result.ThroughStep,
+		StepRuns:    result.Superseded,
+		Reopened:    result.Reopened,
+	}), nil
+}
+
 // IssueStepToken mints the bearer a session presents on the workspace
 // socket.
 func (s *StoreService) IssueStepToken(ctx context.Context, req *connect.Request[millv1.IssueStepTokenRequest]) (*connect.Response[millv1.IssueStepTokenResponse], error) {
@@ -396,6 +413,22 @@ func (s *StoreService) Health(ctx context.Context, _ *connect.Request[millv1.Hea
 		MigrationVersion: health.Version,
 		MigrationWanted:  health.Wanted,
 		Detail:           health.Detail,
+	}), nil
+}
+
+// WhoAmI answers with the caller the interceptor resolved: the peer uid and
+// its role. It reports the policy rather than applying it, so a client that
+// offers an operate verb of its own — `mill mcp` and `workspace clean` — can
+// refuse a reader by the same map that refuses it Cancel.
+func (s *StoreService) WhoAmI(ctx context.Context, _ *connect.Request[millv1.WhoAmIRequest]) (*connect.Response[millv1.WhoAmIResponse], error) {
+	caller, ok := interceptor.CallerFromContext(ctx)
+	if !ok {
+		return nil, connect.NewError(connect.CodeUnauthenticated,
+			errors.New("the request was not attributed to a uid"))
+	}
+	return connect.NewResponse(&millv1.WhoAmIResponse{
+		Uid:  int64(caller.UID),
+		Role: string(caller.Role),
 	}), nil
 }
 

@@ -236,12 +236,15 @@ func runWorkflowList(cmd *cobra.Command, opts *workflowOptions) error {
 
 func newWorkflowShowCommand(opts *workflowOptions) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "show <name>",
+		Use:   "show <name>[@version]",
 		Short: "Print one workflow version's steps",
 		Long: `Print a stored version as a run would walk it: every step in order, its
-kind, what evidence closes it, the capabilities its workspace handle grants,
-how many times it may fail before the breaker parks the run, and what a
-failure does.
+kind, what evidence closes it, the skill body it pins by name and digest, the
+capabilities its workspace handle grants, how many times it may fail before
+the breaker parks the run, and what a failure does.
+
+The newest version of a name, or the one an "@" names: "quick-fix@1a91a965"
+is the same as "quick-fix --version 1a91a965".
 
 This is the definition, not a run. "mill inspect" shows what a run made of
 it.`,
@@ -257,16 +260,17 @@ it.`,
 	return cmd
 }
 
-func runWorkflowShow(cmd *cobra.Command, opts *workflowOptions, name string) error {
+func runWorkflowShow(cmd *cobra.Command, opts *workflowOptions, reference string) error {
 	v, err := parseViewName(opts.view)
 	if err != nil {
 		return err
 	}
+	name, version := splitVersion(reference, opts.version)
 	found, err := storeClient(opts.socket).GetWorkflow(cmd.Context(), connect.NewRequest(&millv1.GetWorkflowRequest{
 		Name:    name,
 		Scope:   parseScope(opts.scope),
 		Project: opts.project,
-		Version: opts.version,
+		Version: version,
 	}))
 	if err != nil {
 		return fmt.Errorf("show workflow %s: %w", name, err)
@@ -276,6 +280,17 @@ func runWorkflowShow(cmd *cobra.Command, opts *workflowOptions, name string) err
 		return fmt.Errorf("show workflow %s: no such workflow is stored", name)
 	}
 	return renderWorkflow(cmd, definition, v)
+}
+
+// splitVersion reads a `name@version` reference. The suffix and the flag say
+// the same thing, so a reference that carries one wins over an empty flag
+// and a flag stands for a reference that carries none.
+func splitVersion(reference, flag string) (name, version string) {
+	name, version, found := strings.Cut(reference, "@")
+	if !found || version == "" {
+		return reference, flag
+	}
+	return name, version
 }
 
 // renderWorkflow prints a definition's header and one row per step.
@@ -296,10 +311,11 @@ func renderWorkflow(cmd *cobra.Command, definition *millv1.Workflow, v view) err
 		}
 		return w.Flush()
 	}
-	_, _ = fmt.Fprintln(w, "STEP\tKIND\tEVIDENCE\tCAPABILITIES\tRETRIES\tON FAILURE\tSESSION")
+	_, _ = fmt.Fprintln(w, "STEP\tKIND\tEVIDENCE\tSKILL\tCAPABILITIES\tRETRIES\tON FAILURE\tSESSION")
 	for _, step := range definition.GetSteps() {
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
 			step.GetName(), stepKindName(step.GetKind()), evidenceKindName(step.GetEvidence()),
+			skillText(step.GetSkill()),
 			dash(strings.Join(capabilityNames(step.GetCapabilities()), ",")),
 			step.GetRetries(), onFailureText(step.GetOnFailure()), dash(step.GetSession()))
 	}
@@ -346,6 +362,18 @@ func sortedHarnesses(step *millv1.Step) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// skillText is the skill a step pins: its name and the digest of the body
+// that will be handed to the harness. The digest is what makes a workflow
+// version reproducible — change one byte of a skill and both this and the
+// version `workflow list` prints are different — so `show` prints it beside
+// the step rather than leaving an operator to diff two pulls.
+func skillText(ref *millv1.SkillRef) string {
+	if ref.GetName() == "" {
+		return "-"
+	}
+	return ref.GetName() + "@" + short(ref.GetDigest())
 }
 
 // onFailureText is what a step's failure does to the run: park, or revise a

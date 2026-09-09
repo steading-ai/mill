@@ -32,6 +32,9 @@ var buildWorkflow = filepath.Join("..", "..", "workflows", "build-workflow")
 // listening on, and returns everything it printed.
 type mill struct {
 	socket string
+	// databaseURL is the ledger behind the socket, for a spec that needs a
+	// second face on the same database — one under a different role map.
+	databaseURL string
 }
 
 func (m mill) run(ctx context.Context, args ...string) string {
@@ -79,7 +82,7 @@ func serving(ctx context.Context) mill {
 		_, err := os.Stat(socket)
 		return err
 	}, 60*time.Second, 50*time.Millisecond).Should(Succeed(), stderr.String())
-	return mill{socket: socket}
+	return mill{socket: socket, databaseURL: databaseURL}
 }
 
 // storedVersion reads the version out of a `workflow …` line of push or
@@ -177,6 +180,48 @@ var _ = Describe("mill workflow", Label(testsupport.DBLabel), func() {
 		Expect(listed).To(ContainSubstring("quick-fix"))
 	})
 
+	It("show prints quick-fix's six steps with the skill digest each pins", func(ctx SpecContext) {
+		m := serving(ctx)
+		pushed := m.run(ctx, "workflow", "push", quickFix)
+
+		shown := m.run(ctx, "workflow", "show", "quick-fix")
+		// Six steps, in the order a run walks them.
+		steps := []string{"gather-context", "implement", "commit", "clean-tree", "pr", "merge"}
+		for _, step := range steps {
+			Expect(rowFor(shown, step)).NotTo(BeEmpty(), "step %s is printed", step)
+		}
+		Expect(rowFor(shown, "STEP")).To(ContainSubstring("SKILL"))
+
+		// Each skill step names the digest the push stored, so what an
+		// operator reads here is the body the harness will be handed.
+		for _, step := range []string{"gather-context", "implement", "commit", "pr"} {
+			digest := digestOf(pushed, step)
+			Expect(rowFor(shown, step)).To(ContainSubstring(step+"@"+digest),
+				"%s pins the skill the push stored", step)
+		}
+		// A check step and a gate step pin no skill.
+		Expect(strings.Fields(rowFor(shown, "clean-tree"))).To(ContainElement("-"))
+
+		// And the version show prints is the one list prints: the digests
+		// above are what that version is the hash of.
+		version := storedVersion(pushed)
+		Expect(shown).To(ContainSubstring(version))
+		Expect(rowFor(m.run(ctx, "workflow", "list"), "quick-fix")).To(ContainSubstring(version))
+	})
+
+	It("show takes the version as an @ suffix or as a flag", func(ctx SpecContext) {
+		m := serving(ctx)
+		m.run(ctx, "workflow", "push", quickFix)
+		// The header line is `<name> <scope> <version>`, and the version
+		// there is the full hash a --version resolves against.
+		version := strings.Fields(lines(m.run(ctx, "workflow", "show", "quick-fix"))[0])[2]
+
+		suffixed := m.run(ctx, "workflow", "show", "quick-fix@"+version)
+		flagged := m.run(ctx, "workflow", "show", "quick-fix", "--version", version)
+		Expect(suffixed).To(Equal(flagged))
+		Expect(suffixed).To(ContainSubstring(version))
+	})
+
 	It("a project push shadows an org one without replacing it", func(ctx SpecContext) {
 		m := serving(ctx)
 		m.run(ctx, "workflow", "push", quickFix)
@@ -186,3 +231,15 @@ var _ = Describe("mill workflow", Label(testsupport.DBLabel), func() {
 		Expect(m.run(ctx, "workflow", "list", "--scope", "org")).NotTo(ContainSubstring("project:P"))
 	})
 })
+
+// digestOf is the short digest a `workflow push` reported for one skill.
+func digestOf(output, skill string) string {
+	GinkgoHelper()
+	for _, line := range strings.Split(output, "\n") {
+		if fields := strings.Fields(line); len(fields) > 2 && fields[0] == "skill" && fields[1] == skill {
+			return fields[2]
+		}
+	}
+	Fail("no skill line for " + skill + " in:\n" + output)
+	return ""
+}

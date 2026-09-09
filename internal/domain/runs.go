@@ -153,6 +153,28 @@ func (s *Service) Cancel(ctx context.Context, runID, requestedBy, reason string)
 	return s.store.RequestCancel(ctx, runID, requestedBy, reason)
 }
 
+// Rerun supersedes every step from fromStep through the run's current one,
+// so the next claim resumes at fromStep. What it promises is that the run is
+// resumable afterwards; a `failed` run is therefore reopened by the same
+// transaction, because a rerun is a person overruling the ending, and a span
+// superseded on a run no claim can take over would strand the node.
+//
+// `abandoned` is the one status a rerun refuses. The run has been replaced
+// by a later generation, so reviving it would put two live runs on one node
+// (Invariant 1), and what the operator wants on such a node is the newer
+// generation or a fresh `mill restart`.
+func (s *Service) Rerun(ctx context.Context, runID, fromStep, requestedBy, reason string) (*store.RerunResult, error) {
+	run, err := s.store.GetRun(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	if run.GetStatus() == millv1.RunStatus_RUN_STATUS_ABANDONED {
+		return nil, fmt.Errorf("run %s was replaced by a later generation, so it cannot be reopened; `mill restart` opens a new one: %w",
+			runID, &RunEndedError{Status: run.GetStatus()})
+	}
+	return s.store.Rerun(ctx, runID, fromStep, requestedBy, reason)
+}
+
 // Status lists runs by state with what the ledger derives about each.
 func (s *Service) Status(ctx context.Context, statuses []millv1.RunStatus, project string) ([]*millv1.RunSummary, error) {
 	return s.store.Status(ctx, statuses, project)

@@ -55,6 +55,8 @@ func NewRootCommand(stdout, stderr io.Writer) *cobra.Command {
 "mill work" runs a worker: claim a ready dagger node, then drive its run.
 "mill run" drives a single named node in the calling process.
 "mill restart" abandons a node's run and starts a new generation.
+"mill rerun" redoes a run from a step, keeping the generation and sessions.
+"mill workspace" shows and cleans up the checkouts runs leave on this host.
 "mill workflow" pushes, pulls, shows, and lists workflow definitions.
 "mill status", "inspect", "explain", "logs", "history" and "cost" read the
 ledger; "mill doctor" probes what a run depends on; "mill cancel" stops one.
@@ -75,7 +77,9 @@ ledger; "mill doctor" probes what a run depends on; "mill cancel" stops one.
 		newWorkCommand(),
 		newRunCommand(),
 		newRestartCommand(),
+		newRerunCommand(),
 		newWorkflowCommand(),
+		newWorkspaceCommand(),
 		newStatusCommand(),
 		newInspectCommand(),
 		newExplainCommand(),

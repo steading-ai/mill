@@ -17,14 +17,18 @@ var readOnlyRPCs = map[string]bool{
 	"History":       true,
 	"Cost":          true,
 	"Health":        true,
+	"WhoAmI":        true,
 }
 
 // leaselessRPCs are the mutations no lease fences, because their caller
 // holds none. Cancel is a request a human or an agent makes to the run's
 // worker: it sets a flag the worker reads at its next heartbeat and moves
 // nothing itself, and the principal making it is the connection's own uid.
+// Rerun is the same kind of act on a run no worker holds: the person says
+// the work from a step is to be redone, and the ledger is what says so.
 var leaselessRPCs = map[string]bool{
 	"Cancel": true,
+	"Rerun":  true,
 }
 
 // wantedRPCs is exactly the surface docs/ledger.md's resume algorithm calls,
@@ -35,11 +39,11 @@ var wantedRPCs = []string{
 	"GetRunByNode", "CreateRun", "SetLease",
 	"StartStepRun", "RecordStepEnvironment", "MarkSessionStarted", "CloseStepRun", "FailStepRun",
 	"AbortOpenStepRuns", "SupersedeSteps",
-	"MarkWaiting", "Park", "RecordNotice", "RecordHeartbeat", "SetCompleteRequestId", "Done", "Fail", "Resume", "Abandon", "Cancel",
+	"MarkWaiting", "Park", "RecordNotice", "RecordHeartbeat", "SetCompleteRequestId", "Done", "Fail", "Resume", "Abandon", "Cancel", "Rerun",
 	"IssueStepToken", "RevokeStepToken",
 	"RecordUsage", "MarkUsagePosted",
 	"GetWorkflow", "ListWorkflows", "PutWorkflow", "PutSkill", "GetSkill",
-	"Status", "Inspect", "History", "Cost", "Health",
+	"Status", "Inspect", "History", "Cost", "Health", "WhoAmI",
 }
 
 var _ = Describe("store.proto", func() {

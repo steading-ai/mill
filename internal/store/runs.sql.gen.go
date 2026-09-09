@@ -406,6 +406,45 @@ func (q *Queries) ParkRun(ctx context.Context, arg ParkRunParams) (Run, error) {
 	return i, err
 }
 
+const reopenRun = `-- name: ReopenRun :one
+UPDATE runs
+SET status = 'running', ended_at = NULL, lease_id = NULL, worker_ref = '',
+    cancel_requested = false, gate_node_id = NULL, parked_reason = NULL
+WHERE id = $1
+RETURNING id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at, complete_request_id
+`
+
+// A rerun on a run that ended without being replaced: it becomes live again
+// at the step the rerun sent it back to, holding no lease, which is the
+// state Invariant 9 admits a claim on. ended_at is nulled because
+// runs_terminal_has_ended ties it to the status, and the gate and the park
+// reason go with the ending they belonged to.
+func (q *Queries) ReopenRun(ctx context.Context, id string) (Run, error) {
+	row := q.db.QueryRow(ctx, reopenRun, id)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.NodeID,
+		&i.NodeRef,
+		&i.Generation,
+		&i.ContextID,
+		&i.WorkflowID,
+		&i.Status,
+		&i.LeaseID,
+		&i.WorkerRef,
+		&i.GateNodeID,
+		&i.ParkedReason,
+		&i.CancelRequested,
+		&i.Branch,
+		&i.Tier,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.EndedAt,
+		&i.CompleteRequestID,
+	)
+	return i, err
+}
+
 const requestRunCancel = `-- name: RequestRunCancel :one
 UPDATE runs SET cancel_requested = true WHERE id = $1 RETURNING id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at, complete_request_id
 `

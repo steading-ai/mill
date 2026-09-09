@@ -314,7 +314,7 @@ Every artifact's metadata carries `run_id`. Every `ApplyPatch` mill sends uses `
 - `restart <node>`: release, abandon, destroy, create the next generation — one transaction on the store side, with the dagger release first. A lease dagger says is not live is skipped rather than fatal: the run a human restarts is usually the one whose worker died holding it, and there is nothing to take back.
 - `explain <run>`: current step, its latest step run's status and exit, the evidence kind that would close it, the gate it waits on if any, the attempts used against `retries`.
 - `logs <run> [--step]`: the per-step-run log files, redacted at write time; `--follow` tails the running one.
-- `cancel <run>`, `rerun <run> --from <step>`: set `cancel_requested`; `rerun` also supersedes from the step once the worker has released.
+- `cancel <run>`, `rerun <run> --from <step>`: set `cancel_requested`; `rerun` also supersedes from the step once the worker has released. A run that ended `failed` is reopened by the same transaction — status back to `running`, no lease, `ended_at`, gate and park reason cleared — because the supersede is worth nothing on a run Invariant 9 admits no claim on. `abandoned` is refused: Invariant 1 allows one live run per node.
 - `workspace show|clean <run>`: the retained workspace's location and state; `clean` destroys one a resumed run no longer needs.
 - `doctor`: no store query — probes the socket, migrations, dagger as the mill principal, the sidecar, the signing key, the forge credential.
 

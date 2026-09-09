@@ -18,7 +18,9 @@ already wrote.
 to the mill's host and account. A session elsewhere that wants work done
 files a dagger node ([prd.md](prd.md) R-55).
 
-Every tool takes `--socket`; the readers take `--view`.
+Every tool takes `--socket`; the readers take `--view`; the two `workspace`
+subcommands take `--workspace-dir`, since the files they answer about are on
+this host and not in the ledger.
 
 | Tool | What it answers |
 |---|---|
@@ -29,8 +31,11 @@ Every tool takes `--socket`; the readers take `--view`.
 | `history <run>` | What changed about a run, and when |
 | `cost` | What a window of runs billed |
 | `workflow list\|show` | What a run on this project would follow |
+| `workspace show <run>` | Where a run's files are, and what state they are in |
 | `doctor` | Whether this host could work at all |
 | `cancel <run>` | Stop a run's current step cleanly, leaving it resumable |
+| `rerun <run> --from <step>` | Redo from a step, keeping the generation and the sessions |
+| `workspace clean` | Remove the checkouts of runs that have ended |
 
 A run is named by its node reference — `mill#18` — or by the run id `status`
 prints. Anything carrying a `#` is a node reference; anything else is a run
@@ -237,23 +242,33 @@ construction and one of them cannot come back empty under the other.
 
 ## workflow show
 
-One stored version as a run would walk it: what closes each step, what its
-workspace handle grants, how many times it may fail before the breaker parks
-the run, and what a failure does. This is the definition; `inspect` shows
-what a run made of it.
+One stored version as a run would walk it: what closes each step, the skill
+body it pins, what its workspace handle grants, how many times it may fail
+before the breaker parks the run, and what a failure does. This is the
+definition; `inspect` shows what a run made of it.
+
+`mill workflow show <name>` is the newest version of that name; `<name>@<version>`
+and `--version <version>` both name a particular one.
 
 ```
 $ mill workflow show quick-fix
-quick-fix org fb2764fd70fda30764b59d00d34532c9195b668cb4c6ad446b23b2a44445ee23
+quick-fix org 1a91a9657d7eca08735284abc1ba22c4aa4a500dd65527b3aab9ad0cf78c8eff
 
-STEP            KIND   EVIDENCE  CAPABILITIES     RETRIES  ON FAILURE        SESSION
-gather-context  skill  artifact  read             2        park              implement
-implement       skill  artifact  read,write,exec  3        park              implement
-commit          skill  commit    write            2        park              implement
-clean-tree      check  exit      exec             3        revise:implement  -
-pr              skill  url       forge            2        park              implement
-merge           gate   status    -                1        park              -
+STEP            KIND   EVIDENCE  SKILL                        CAPABILITIES     RETRIES  ON FAILURE        SESSION
+gather-context  skill  artifact  gather-context@7f2f5a2074f3  read             2        park              implement
+implement       skill  artifact  implement@6d0a3794a0cd       read,write,exec  3        park              implement
+commit          skill  commit    commit@6c1aea33c155          write            2        park              implement
+clean-tree      check  exit      -                            exec             3        revise:implement  -
+pr              skill  url       pr@63bfc09f1e95              forge            2        park              implement
+merge           gate   status    -                            -                1        park              -
 ```
+
+The `SKILL` column is the name and digest of the body the harness will be
+handed. A workflow version is the hash of the definition and a step pins its
+skill by name and digest, so the version on the header line is the version
+`workflow list` prints for the same push, and one changed byte of one skill
+body is a new digest here and a new version there. A check step and a gate
+step pin no skill and print `-`.
 
 The same for the tier that plans first. A step's harness options follow the
 steps, printed as the JSON they are stored as: mill interprets no key of one
@@ -262,21 +277,21 @@ the step will hand the harness.
 
 ```
 $ mill workflow show feature
-feature org c6bd94330f49e6edba3c50c3cfa6d9b6b162a0caae1d9a1c278b0da574b69a8c
+feature org 6415ee6fe8105d1764a4031dd70037b947145c505e81a01559b3f07ae4ba1ce2
 
-STEP            KIND   EVIDENCE  CAPABILITIES     RETRIES  ON FAILURE        SESSION
-gather-context  skill  artifact  read             2        park              implement
-think           skill  artifact  read             2        park              implement
-plan            skill  artifact  read,write       2        park              implement
-review-plan     skill  verdict   read             2        revise:plan       review
-plan-approval   gate   gate      -                1        park              -
-implement       skill  artifact  read,write,exec  2        park              implement
-simplify        skill  artifact  read,write,exec  2        park              implement
-commit          skill  commit    write            2        park              implement
-clean-tree      check  exit      exec             3        revise:implement  -
-pr              skill  url       forge            2        park              implement
-review          skill  verdict   read             2        revise:implement  review
-merge           gate   status    -                1        park              -
+STEP            KIND   EVIDENCE  SKILL                        CAPABILITIES     RETRIES  ON FAILURE        SESSION
+gather-context  skill  artifact  gather-context@7f2f5a2074f3  read             2        park              implement
+think           skill  artifact  think@2337c82ccc2c           read             2        park              implement
+plan            skill  artifact  plan@f076e8dd3ef0            read,write       2        park              implement
+review-plan     skill  verdict   review-plan@8c1b12c1d413     read             2        revise:plan       review
+plan-approval   gate   gate      -                            -                1        park              -
+implement       skill  artifact  implement@6d0a3794a0cd       read,write,exec  2        park              implement
+simplify        skill  artifact  simplify@b8333c666bef        read,write,exec  2        park              implement
+commit          skill  commit    commit@6c1aea33c155          write            2        park              implement
+clean-tree      check  exit      -                            exec             3        revise:implement  -
+pr              skill  url       pr@63bfc09f1e95              forge            2        park              implement
+review          skill  verdict   review@68e660b64496          read             2        revise:implement  review
+merge           gate   status    -                            -                1        park              -
 
 STEP            HARNESS  OPTIONS
 gather-context  claude   {"effort":"medium","model":"sonnet","tools":{"allow":["Glob","Grep","Read"]}}
@@ -362,6 +377,127 @@ A cancelled run is not a failed one. It keeps its workflow, its branch and
 its status, so `mill run` on the same node resumes at that step with the next
 attempt. `mill restart` is the verb that throws the work away instead.
 
+## rerun
+
+"The work up to here is fine, redo from this step." Every step from the one
+named through the step the run is on is superseded — the same mechanism a
+`revise` verdict uses — and the run is left resumable at the named step.
+
+```
+$ mill rerun mill#18 --from implement
+rerun mill#18 run 01M23T3ZQA2ZE8MD2V9ZAEKPZA from implement through clean-tree
+STEP        ATTEMPT  STATUS      REASON
+implement   1        superseded  rerun
+commit      1        superseded  rerun
+clean-tree  1        superseded  rerun
+
+mill#18 is resumable at implement in generation 1; the sessions and the branch are kept
+```
+
+**`rerun` keeps the generation and the sessions**: the work before the named
+step stands, the branch is the same one, and the implementer's session
+resumes with the transcript it already has.
+**`restart` does not**: it opens a new generation with new session ids,
+destroys the workspace, deletes the branch and closes the pull request
+([domain-model.md](domain-model.md) §Restart).
+
+The superseded attempts stay in the ledger with the evidence they produced;
+they simply close nothing, which is what moves the run backwards
+([ledger.md](ledger.md) Invariant 10). `mill history` shows one
+`supersede_step_run` event per attempt, each with reason `rerun` and the uid
+that asked.
+
+A run that **failed** is reopened by the same act. Failure is terminal to the
+run loop, but a rerun on one is a person overruling the ending, and a span
+superseded on a run no claim can take over would strand the node; so the run
+goes back to `running` holding no lease — the state Invariant 9 admits a
+claim on — and the gate and the park reason of the ending it left are
+cleared:
+
+```
+$ mill rerun mill#18 --from implement
+rerun mill#18 run 01M23T3ZQA2ZE8MD2V9ZAEKPZA from implement through clean-tree
+STEP        ATTEMPT  STATUS      REASON
+implement   1        superseded  rerun
+commit      1        superseded  rerun
+clean-tree  1        superseded  rerun
+
+mill#18 had ended failed and is live again
+
+mill#18 is resumable at implement in generation 1; the sessions and the branch are kept
+```
+
+Two refusals. An `abandoned` run is refused: a later generation has taken the
+node, so reviving this one would put two live runs on it
+([ledger.md](ledger.md) Invariant 1), and `mill restart` is the verb for a
+node in that state. A run a worker is still holding is refused naming the
+holder, because superseding a span under a running step would have the worker
+close a step the ledger has already put behind it — `mill cancel` it first.
+And a `--from` naming a step the run has never attempted is refused naming
+the ones it has:
+
+```
+$ mill rerun mill#18 --from pr
+mill: rerun mill#18: failed_precondition: run 01M23T3ZQA2ZE8MD2V9ZAEKPZA: step
+"pr": run has no attempt at that step; it has attempted gather-context,
+implement, commit, clean-tree
+```
+
+Needs the `operator` role.
+
+## workspace show
+
+Where a run's files are on this host and what state they are in. A workspace
+is destroyed when its run ends well and retained while the run is waiting or
+parked, so that the worker that resumes it — or the human inspecting it —
+finds the tree intact ([domain-model.md](domain-model.md) §Workspace).
+
+```
+$ mill workspace show mill#18
+mill#18 run 01M23T405PB1AG13CAJBN37V0F
+  path      /var/lib/mill/workspaces/01M23T405PB1AG13CAJBN37V0F/checkout
+  branch    mill/mill-18
+  head      7317601c9fcee24e64526c838dbcbac147a3deed
+  tree      clean
+  socket    /var/lib/mill/workspaces/01M23T405PB1AG13CAJBN37V0F/ws.sock (absent)
+  retained  the run is parked for a human
+```
+
+`tree` is what `git status` says: `clean`, or `dirty (n changed)`, which is
+the same question the `clean-tree` check asks. `socket` is present while a
+worker holds the workspace open and absent once it has let go. `retained` is
+the run's own status, which is the whole of the rule.
+
+Nothing is opened to answer this: no socket is bound, no branch is checked
+out, no signing key is made. This host's workspaces only — a run worked
+elsewhere has nothing here to show.
+
+## workspace clean
+
+Remove the checkouts of runs that have ended: `done`, `failed`, or
+`abandoned`. A run that is selecting, running, waiting or parked keeps its
+workspace whatever its age, because that is what its resume attaches to.
+
+```
+$ mill workspace clean --dry-run
+RUN                         NODE     STATUS  PATH                                      ACTION
+01M23T408J5TXTB7FM2JJ0H3BE  mill#12  done    /var/lib/mill/workspaces/01M23T408J5T…3BE  would remove
+
+$ mill workspace clean --older-than 7d
+RUN                         NODE     STATUS  PATH                                      ACTION
+01M23T408J5TXTB7FM2JJ0H3BE  mill#12  done    /var/lib/mill/workspaces/01M23T408J5T…3BE  removed
+```
+
+The ledger decides, not the directory. A directory whose run the ledger holds
+no ended row for is left alone, because deciding it is rubbish needs a record
+that says so; `--older-than` narrows further to runs that ended longer ago
+than the window. `--dry-run` lists and removes nothing.
+
+The mill's signing key lives above the run directories and survives a clean:
+it is the account's, not any run's.
+
+Needs the `operator` role.
+
 ## Identity
 
 Identity on the store's socket is the peer uid, mapped by configuration to a
@@ -371,13 +507,19 @@ is no token scheme and nothing in a request body says who sent it.
 | Role | May |
 |---|---|
 | the service's own uid | Everything, including writing the record of a run |
-| `operator` | Read and operate: `cancel`, `restart`, `workflow push` |
+| `operator` | Read and operate: `cancel`, `rerun`, `restart`, `workflow push`, `workspace clean` |
 | `reader` | Read |
 
-A `reader` calling `cancel` is refused naming the role; a uid the map does not
-name is refused as unauthenticated. `mill mcp` inherits whatever the account
-it runs as holds: what a session may do is decided by the unix account, not by
-anything the session says.
+A `reader` calling `cancel` or `rerun` is refused naming the role; a uid the
+map does not name is refused as unauthenticated. `mill mcp` inherits whatever
+the account it runs as holds: what a session may do is decided by the unix
+account, not by anything the session says.
+
+`workspace clean` removes directories and asks the store nothing, so there is
+no write for the role map to refuse. `mill mcp` asks `WhoAmI` — a read, which
+every role holds — and applies the same answer: a `reader` calling
+`workspace_clean` is refused naming the role, exactly as it is refused
+`rerun`. `workspace show` and `workflow show` are reads and are not.
 
 ## mill mcp
 
@@ -392,8 +534,9 @@ Claude Code session or a thicket agent. Registered the way dagger's is:
 }
 ```
 
-The tool names are the CLI's verbs, with `workflow list` and `workflow show`
-spelled `workflow_list` and `workflow_show`. Arguments are the flags:
+The tool names are the CLI's verbs, with the two-word ones spelled with an
+underscore: `workflow_list`, `workflow_show`, `workspace_show`,
+`workspace_clean`. Arguments are the flags:
 `{"run": "mill#18", "view": "full"}`. A misspelt argument is reported rather
 than ignored.
 
@@ -430,5 +573,5 @@ after the node has been claimed and its repository cloned.
 
 ## Not built yet
 
-`rerun <run> --from <step>`, `workspace show|clean <run>`, and the
-`plugin/mill` Claude Code plugin are O1 ([roadmap.md](roadmap.md)).
+The `plugin/mill` Claude Code plugin — a skill plus the `.mcp.json` that
+registers `mill mcp` — is O1 ([roadmap.md](roadmap.md)).

@@ -70,6 +70,18 @@ SET status = $2, ended_at = now(), lease_id = NULL
 WHERE id = $1
 RETURNING *;
 
+-- A rerun on a run that ended without being replaced: it becomes live again
+-- at the step the rerun sent it back to, holding no lease, which is the
+-- state Invariant 9 admits a claim on. ended_at is nulled because
+-- runs_terminal_has_ended ties it to the status, and the gate and the park
+-- reason go with the ending they belonged to.
+-- name: ReopenRun :one
+UPDATE runs
+SET status = 'running', ended_at = NULL, lease_id = NULL, worker_ref = '',
+    cancel_requested = false, gate_node_id = NULL, parked_reason = NULL
+WHERE id = $1
+RETURNING *;
+
 -- Cancel is a request to the worker, not a transition: the flag is set and
 -- the run's status is left alone. The worker reads it at its next heartbeat,
 -- stops the step cleanly and releases its lease, and the run stays resumable.

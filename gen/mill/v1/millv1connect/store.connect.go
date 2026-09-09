@@ -96,6 +96,8 @@ const (
 	StoreServiceAbandonProcedure = "/mill.v1.StoreService/Abandon"
 	// StoreServiceCancelProcedure is the fully-qualified name of the StoreService's Cancel RPC.
 	StoreServiceCancelProcedure = "/mill.v1.StoreService/Cancel"
+	// StoreServiceRerunProcedure is the fully-qualified name of the StoreService's Rerun RPC.
+	StoreServiceRerunProcedure = "/mill.v1.StoreService/Rerun"
 	// StoreServiceIssueStepTokenProcedure is the fully-qualified name of the StoreService's
 	// IssueStepToken RPC.
 	StoreServiceIssueStepTokenProcedure = "/mill.v1.StoreService/IssueStepToken"
@@ -131,6 +133,8 @@ const (
 	StoreServiceCostProcedure = "/mill.v1.StoreService/Cost"
 	// StoreServiceHealthProcedure is the fully-qualified name of the StoreService's Health RPC.
 	StoreServiceHealthProcedure = "/mill.v1.StoreService/Health"
+	// StoreServiceWhoAmIProcedure is the fully-qualified name of the StoreService's WhoAmI RPC.
+	StoreServiceWhoAmIProcedure = "/mill.v1.StoreService/WhoAmI"
 )
 
 // StoreServiceClient is a client for the mill.v1.StoreService service.
@@ -215,6 +219,13 @@ type StoreServiceClient interface {
 	// mutation a principal that holds no lease makes to a run's own row, and
 	// the reason the role map exists.
 	Cancel(context.Context, *connect.Request[v1.CancelRequest]) (*connect.Response[v1.CancelResponse], error)
+	// Rerun supersedes every step from a named step through the run's current
+	// one and leaves the run resumable at the named step. The mechanism a
+	// revise uses, driven by a person instead of a verdict: the generation,
+	// the branch and the sessions are kept, so what a rerun throws away is the
+	// span's attempts and nothing else. Carries no lease, for the same reason
+	// Cancel does not — the caller is a person, not the worker.
+	Rerun(context.Context, *connect.Request[v1.RerunRequest]) (*connect.Response[v1.RerunResponse], error)
 	// IssueStepToken mints the step-scoped bearer a session presents on the
 	// workspace socket. The bearer is returned once; the store keeps its hash.
 	IssueStepToken(context.Context, *connect.Request[v1.IssueStepTokenRequest]) (*connect.Response[v1.IssueStepTokenResponse], error)
@@ -256,6 +267,11 @@ type StoreServiceClient interface {
 	// the database answers, and whether the schema is the one this binary
 	// carries. `mill doctor` probes the socket and the migrations with it.
 	Health(context.Context, *connect.Request[v1.HealthRequest]) (*connect.Response[v1.HealthResponse], error)
+	// WhoAmI is what the socket makes of the caller: the peer uid and the role
+	// the map gives it. `mill mcp` asks before it offers a tool that changes
+	// something the store does not hold, so a reader is refused by the same
+	// policy that refuses it Cancel.
+	WhoAmI(context.Context, *connect.Request[v1.WhoAmIRequest]) (*connect.Response[v1.WhoAmIResponse], error)
 }
 
 // NewStoreServiceClient constructs a client for the mill.v1.StoreService service. By default, it
@@ -389,6 +405,12 @@ func NewStoreServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(storeServiceMethods.ByName("Cancel")),
 			connect.WithClientOptions(opts...),
 		),
+		rerun: connect.NewClient[v1.RerunRequest, v1.RerunResponse](
+			httpClient,
+			baseURL+StoreServiceRerunProcedure,
+			connect.WithSchema(storeServiceMethods.ByName("Rerun")),
+			connect.WithClientOptions(opts...),
+		),
 		issueStepToken: connect.NewClient[v1.IssueStepTokenRequest, v1.IssueStepTokenResponse](
 			httpClient,
 			baseURL+StoreServiceIssueStepTokenProcedure,
@@ -473,6 +495,12 @@ func NewStoreServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(storeServiceMethods.ByName("Health")),
 			connect.WithClientOptions(opts...),
 		),
+		whoAmI: connect.NewClient[v1.WhoAmIRequest, v1.WhoAmIResponse](
+			httpClient,
+			baseURL+StoreServiceWhoAmIProcedure,
+			connect.WithSchema(storeServiceMethods.ByName("WhoAmI")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -498,6 +526,7 @@ type storeServiceClient struct {
 	resume                *connect.Client[v1.ResumeRequest, v1.ResumeResponse]
 	abandon               *connect.Client[v1.AbandonRequest, v1.AbandonResponse]
 	cancel                *connect.Client[v1.CancelRequest, v1.CancelResponse]
+	rerun                 *connect.Client[v1.RerunRequest, v1.RerunResponse]
 	issueStepToken        *connect.Client[v1.IssueStepTokenRequest, v1.IssueStepTokenResponse]
 	revokeStepToken       *connect.Client[v1.RevokeStepTokenRequest, v1.RevokeStepTokenResponse]
 	recordUsage           *connect.Client[v1.RecordUsageRequest, v1.RecordUsageResponse]
@@ -512,6 +541,7 @@ type storeServiceClient struct {
 	history               *connect.Client[v1.HistoryRequest, v1.HistoryResponse]
 	cost                  *connect.Client[v1.CostRequest, v1.CostResponse]
 	health                *connect.Client[v1.HealthRequest, v1.HealthResponse]
+	whoAmI                *connect.Client[v1.WhoAmIRequest, v1.WhoAmIResponse]
 }
 
 // GetRunByNode calls mill.v1.StoreService.GetRunByNode.
@@ -614,6 +644,11 @@ func (c *storeServiceClient) Cancel(ctx context.Context, req *connect.Request[v1
 	return c.cancel.CallUnary(ctx, req)
 }
 
+// Rerun calls mill.v1.StoreService.Rerun.
+func (c *storeServiceClient) Rerun(ctx context.Context, req *connect.Request[v1.RerunRequest]) (*connect.Response[v1.RerunResponse], error) {
+	return c.rerun.CallUnary(ctx, req)
+}
+
 // IssueStepToken calls mill.v1.StoreService.IssueStepToken.
 func (c *storeServiceClient) IssueStepToken(ctx context.Context, req *connect.Request[v1.IssueStepTokenRequest]) (*connect.Response[v1.IssueStepTokenResponse], error) {
 	return c.issueStepToken.CallUnary(ctx, req)
@@ -682,6 +717,11 @@ func (c *storeServiceClient) Cost(ctx context.Context, req *connect.Request[v1.C
 // Health calls mill.v1.StoreService.Health.
 func (c *storeServiceClient) Health(ctx context.Context, req *connect.Request[v1.HealthRequest]) (*connect.Response[v1.HealthResponse], error) {
 	return c.health.CallUnary(ctx, req)
+}
+
+// WhoAmI calls mill.v1.StoreService.WhoAmI.
+func (c *storeServiceClient) WhoAmI(ctx context.Context, req *connect.Request[v1.WhoAmIRequest]) (*connect.Response[v1.WhoAmIResponse], error) {
+	return c.whoAmI.CallUnary(ctx, req)
 }
 
 // StoreServiceHandler is an implementation of the mill.v1.StoreService service.
@@ -766,6 +806,13 @@ type StoreServiceHandler interface {
 	// mutation a principal that holds no lease makes to a run's own row, and
 	// the reason the role map exists.
 	Cancel(context.Context, *connect.Request[v1.CancelRequest]) (*connect.Response[v1.CancelResponse], error)
+	// Rerun supersedes every step from a named step through the run's current
+	// one and leaves the run resumable at the named step. The mechanism a
+	// revise uses, driven by a person instead of a verdict: the generation,
+	// the branch and the sessions are kept, so what a rerun throws away is the
+	// span's attempts and nothing else. Carries no lease, for the same reason
+	// Cancel does not — the caller is a person, not the worker.
+	Rerun(context.Context, *connect.Request[v1.RerunRequest]) (*connect.Response[v1.RerunResponse], error)
 	// IssueStepToken mints the step-scoped bearer a session presents on the
 	// workspace socket. The bearer is returned once; the store keeps its hash.
 	IssueStepToken(context.Context, *connect.Request[v1.IssueStepTokenRequest]) (*connect.Response[v1.IssueStepTokenResponse], error)
@@ -807,6 +854,11 @@ type StoreServiceHandler interface {
 	// the database answers, and whether the schema is the one this binary
 	// carries. `mill doctor` probes the socket and the migrations with it.
 	Health(context.Context, *connect.Request[v1.HealthRequest]) (*connect.Response[v1.HealthResponse], error)
+	// WhoAmI is what the socket makes of the caller: the peer uid and the role
+	// the map gives it. `mill mcp` asks before it offers a tool that changes
+	// something the store does not hold, so a reader is refused by the same
+	// policy that refuses it Cancel.
+	WhoAmI(context.Context, *connect.Request[v1.WhoAmIRequest]) (*connect.Response[v1.WhoAmIResponse], error)
 }
 
 // NewStoreServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -936,6 +988,12 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(storeServiceMethods.ByName("Cancel")),
 		connect.WithHandlerOptions(opts...),
 	)
+	storeServiceRerunHandler := connect.NewUnaryHandler(
+		StoreServiceRerunProcedure,
+		svc.Rerun,
+		connect.WithSchema(storeServiceMethods.ByName("Rerun")),
+		connect.WithHandlerOptions(opts...),
+	)
 	storeServiceIssueStepTokenHandler := connect.NewUnaryHandler(
 		StoreServiceIssueStepTokenProcedure,
 		svc.IssueStepToken,
@@ -1020,6 +1078,12 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(storeServiceMethods.ByName("Health")),
 		connect.WithHandlerOptions(opts...),
 	)
+	storeServiceWhoAmIHandler := connect.NewUnaryHandler(
+		StoreServiceWhoAmIProcedure,
+		svc.WhoAmI,
+		connect.WithSchema(storeServiceMethods.ByName("WhoAmI")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/mill.v1.StoreService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case StoreServiceGetRunByNodeProcedure:
@@ -1062,6 +1126,8 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 			storeServiceAbandonHandler.ServeHTTP(w, r)
 		case StoreServiceCancelProcedure:
 			storeServiceCancelHandler.ServeHTTP(w, r)
+		case StoreServiceRerunProcedure:
+			storeServiceRerunHandler.ServeHTTP(w, r)
 		case StoreServiceIssueStepTokenProcedure:
 			storeServiceIssueStepTokenHandler.ServeHTTP(w, r)
 		case StoreServiceRevokeStepTokenProcedure:
@@ -1090,6 +1156,8 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 			storeServiceCostHandler.ServeHTTP(w, r)
 		case StoreServiceHealthProcedure:
 			storeServiceHealthHandler.ServeHTTP(w, r)
+		case StoreServiceWhoAmIProcedure:
+			storeServiceWhoAmIHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1179,6 +1247,10 @@ func (UnimplementedStoreServiceHandler) Cancel(context.Context, *connect.Request
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.Cancel is not implemented"))
 }
 
+func (UnimplementedStoreServiceHandler) Rerun(context.Context, *connect.Request[v1.RerunRequest]) (*connect.Response[v1.RerunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.Rerun is not implemented"))
+}
+
 func (UnimplementedStoreServiceHandler) IssueStepToken(context.Context, *connect.Request[v1.IssueStepTokenRequest]) (*connect.Response[v1.IssueStepTokenResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.IssueStepToken is not implemented"))
 }
@@ -1233,4 +1305,8 @@ func (UnimplementedStoreServiceHandler) Cost(context.Context, *connect.Request[v
 
 func (UnimplementedStoreServiceHandler) Health(context.Context, *connect.Request[v1.HealthRequest]) (*connect.Response[v1.HealthResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.Health is not implemented"))
+}
+
+func (UnimplementedStoreServiceHandler) WhoAmI(context.Context, *connect.Request[v1.WhoAmIRequest]) (*connect.Response[v1.WhoAmIResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.WhoAmI is not implemented"))
 }

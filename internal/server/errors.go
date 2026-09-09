@@ -65,7 +65,9 @@ func codeOf(err error) connect.Code {
 		errors.Is(err, domain.ErrNotClaimable),
 		errors.Is(err, domain.ErrNotRunning),
 		errors.Is(err, domain.ErrUnknownStep),
-		errors.Is(err, domain.ErrNoWorkflow):
+		errors.Is(err, domain.ErrNoWorkflow),
+		errors.Is(err, domain.ErrLeased),
+		errors.Is(err, domain.ErrNotAttempted):
 		return connect.CodeFailedPrecondition
 
 	default:

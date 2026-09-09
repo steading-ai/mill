@@ -20,7 +20,7 @@ import (
 )
 
 // `mill mcp` is the CLI's client wrapped for a session: an MCP server on
-// stdio whose tools are the read commands and `cancel`, taking the same
+// stdio whose tools are the read commands and the operate ones, taking the same
 // references and answering with the same fields. It is dagger's `dg mcp`
 // with mill's verbs — deliberately so, because an agent that knows one
 // should not have to learn the other (docs/architecture.md §"One binary, two
@@ -154,14 +154,15 @@ func newMCPCommand() *cobra.Command {
 	opts := readOptions{}
 	cmd := &cobra.Command{
 		Use:   "mcp",
-		Short: "Serve the read tools and cancel as an MCP server over stdio",
+		Short: "Serve the read and operate tools as an MCP server over stdio",
 		Long: `Serve mill to a session such as Claude Code as an MCP server on stdin and
 stdout. Each tool is one CLI command: same run references, same fields, same
 answers as JSON.
 
-The read tools return ledger data and never transcript content. "cancel" is
-the one operate tool here, and what it may do is decided by the unix account
-this process runs as, not by anything a session says.
+The read tools return ledger data and never transcript content. "cancel",
+"rerun" and "workspace_clean" are the operate tools, and what they may do is
+decided by the unix account this process runs as, not by anything a session
+says: the store maps that account's uid to a role, and a reader is refused.
 
 "run" is deliberately absent. It executes in the calling process and is
 local to the mill's host and account; a session that wants work done files a
@@ -174,6 +175,7 @@ dagger node instead.`,
 	addReadFlags(cmd, &opts)
 	addDaggerFlags(cmd, &opts)
 	cmd.Flags().StringVar(&opts.logDir, "log-dir", defaultLogDir(), "directory the worker writes step logs under")
+	cmd.Flags().StringVar(&opts.workspaceDir, "workspace-dir", defaultWorkspaceDir(), "directory run workspaces live under")
 	return cmd
 }
 
@@ -343,8 +345,14 @@ full is everything the ledger holds.
 
 A run that is waiting or parked is blocked on a dagger gate, and only a
 person can answer it: say what you think should happen, do not try to
-unblock it yourself. cancel stops a run's current step cleanly and leaves it
-resumable; it is the only tool here that changes anything.
+unblock it yourself.
+
+Three tools change something. cancel stops a run's current step cleanly and
+leaves it resumable. rerun redoes a run from a named step, keeping the
+generation, the branch and the sessions — restart, which does not, is not
+offered here. workspace_clean removes the checkouts of runs that have ended.
+The last two need the operator role; the unix account this server runs as
+decides whether you hold it.
 
 Nothing here returns transcript content. The ledger holds evidence, not
 words.`,

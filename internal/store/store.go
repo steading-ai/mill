@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -50,6 +51,13 @@ var (
 	// ErrNoWorkflow: an operation that needs the run's workflow, on a run
 	// that is still selecting.
 	ErrNoWorkflow = errors.New("run has no workflow yet")
+	// ErrLeased: an operator's write to a run a worker is holding. The
+	// wrapping error names the holder, because what the operator has to do
+	// about it is stop that worker.
+	ErrLeased = errors.New("run is held under a live lease")
+	// ErrNotAttempted: a step the run has never made an attempt at. The
+	// wrapping error names the steps it has.
+	ErrNotAttempted = errors.New("run has no attempt at that step")
 )
 
 // claimableStatuses are the run statuses a new claim may take over, from
@@ -1007,6 +1015,206 @@ func (s *Store) SupersedeSteps(ctx context.Context, leaseID, runID, fromStep, th
 		return nil, err
 	}
 	return superseded, nil
+}
+
+// RerunResult is what a rerun undid: the run it was asked of, the step it
+// was on, and the attempts that no longer close anything.
+type RerunResult struct {
+	// Run is the run as the rerun leaves it.
+	Run *millv1.Run
+	// ThroughStep is the last step of the span: the step the run was on.
+	ThroughStep string
+	// Superseded is the attempt superseded at each step of the span, in
+	// workflow order.
+	Superseded []*millv1.StepRun
+	// Reopened says the run had ended and is live again. Only a `failed`
+	// run is reopened; every other rerun leaves the run's own row alone.
+	Reopened bool
+}
+
+// Rerun supersedes the latest attempt at every step from fromStep through
+// the run's current step, so the next claim resumes at fromStep. It is the
+// revise mechanism driven by a person rather than by a verdict: the same
+// rows move the same way, and the generation, the branch and the sessions
+// are left alone. Restart is the verb that replaces those.
+//
+// The caller holds no lease, so the row lock alone serializes this against a
+// concurrent claim — and a run that holds a live lease is refused outright,
+// because superseding the span under a worker that is running one of its
+// steps would have the worker close a step the ledger has already put
+// behind it.
+//
+// A step the run has never attempted is refused rather than accepted as a
+// no-op: `--from` naming a step nothing ran is an operator's mistake about
+// where the run got to, and the answer they need is which steps it did run.
+//
+// A `failed` run is reopened as part of the same transaction. Failure is
+// terminal to the run loop — nothing mill does on its own leaves that state
+// — but a rerun is a person saying the ending was wrong, and a span
+// superseded on a run no claim can take over would leave the node stuck for
+// good. The run goes back to `running` holding no lease, which is the state
+// a claim resumes (Invariant 9), and the gate and the park reason of the
+// ending it left are cleared. `abandoned` is not reopened: a later
+// generation has taken the node, and reviving the old one would put two
+// live runs on it.
+func (s *Store) Rerun(ctx context.Context, runID, fromStep, requestedBy, reason string) (*RerunResult, error) {
+	if reason == "" {
+		reason = "rerun"
+	}
+	var result *RerunResult
+	err := s.withTx(ctx, func(ctx context.Context, tx pgx.Tx, q *Queries) error {
+		state, err := lockRunRow(ctx, tx, runID)
+		if err != nil {
+			return err
+		}
+		row, err := q.GetRun(ctx, runID)
+		if err != nil {
+			return fmt.Errorf("get run %s: %w", runID, err)
+		}
+		if leaseText(state.lease) != "none" {
+			return fmt.Errorf("run %s is %s under lease %s held by %s: %w",
+				runID, state.status, leaseText(state.lease), workerText(row.WorkerRef), ErrLeased)
+		}
+		workflow, err := workflowOfRun(ctx, q, runID)
+		if err != nil {
+			return err
+		}
+		run, err := latestState(ctx, q, row)
+		if err != nil {
+			return err
+		}
+		if _, attempted := run.Latest[fromStep]; !attempted {
+			return fmt.Errorf("run %s: step %q: %w; it has attempted %s",
+				runID, fromStep, ErrNotAttempted, attemptedText(workflow, run))
+		}
+		through, _ := CurrentStep(run, workflow)
+		if through == "" {
+			// Every step is closed: the run is at its end, and the span
+			// runs through the last step the workflow names.
+			steps := workflow.GetSteps()
+			through = steps[len(steps)-1].GetName()
+		}
+		span, err := stepSpan(workflow, fromStep, through)
+		if err != nil {
+			return err
+		}
+		rows, err := q.SupersedeStepRuns(ctx, SupersedeStepRunsParams{RunID: runID, StepNames: span})
+		if err != nil {
+			return fmt.Errorf("rerun steps of run %s: %w", runID, err)
+		}
+		for _, stepRunRow := range rows {
+			if err := record(ctx, q, event{
+				runID:     runID,
+				stepRunID: stepRunRow.ID,
+				op:        "supersede_step_run",
+				after: map[string]any{
+					"status": stepRunRow.Status, "from": fromStep, "through": through,
+					"reason": reason, "requested_by": requestedBy,
+				},
+				workerRef: stepRunRow.WorkerRef,
+			}); err != nil {
+				return err
+			}
+		}
+		superseded, err := stepRunProtos(rows)
+		if err != nil {
+			return err
+		}
+		sortBySpan(superseded, span)
+		reopened := state.status == "failed"
+		if reopened {
+			if err := noLiveRun(ctx, q, row); err != nil {
+				return err
+			}
+			if row, err = q.ReopenRun(ctx, runID); err != nil {
+				return fmt.Errorf("reopen run %s: %w", runID, err)
+			}
+			if err := record(ctx, q, event{
+				runID:     runID,
+				op:        "reopen",
+				before:    map[string]any{"status": state.status},
+				after:     map[string]any{"status": row.Status, "step": fromStep, "requested_by": requestedBy},
+				workerRef: row.WorkerRef,
+			}); err != nil {
+				return err
+			}
+		}
+		result = &RerunResult{
+			Run: runProto(row), ThroughStep: through, Superseded: superseded, Reopened: reopened,
+		}
+		return record(ctx, q, event{
+			runID:  runID,
+			op:     "rerun",
+			before: map[string]any{"status": state.status, "step": through},
+			after: map[string]any{
+				"from": fromStep, "through": through, "steps": span,
+				"reason": reason, "requested_by": requestedBy, "status": row.Status,
+			},
+			workerRef: row.WorkerRef,
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// noLiveRun refuses to reopen a run whose node another generation is
+// already working. Invariant 1 admits one live run per node, and the unique
+// index holds it; catching the case here names the generation in the way an
+// operator can act on.
+func noLiveRun(ctx context.Context, q *Queries, row Run) error {
+	live, err := q.GetRunByNode(ctx, row.NodeID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("get live run of node %s: %w", row.NodeID, err)
+	}
+	if live.ID == row.ID || terminalStatuses[live.Status] {
+		return nil
+	}
+	return fmt.Errorf("run %s cannot be reopened: generation %d of %s is %s: %w",
+		row.ID, live.Generation, row.NodeRef, live.Status, ErrNotClaimable)
+}
+
+// terminalStatuses are the run statuses that have left the live-run index.
+var terminalStatuses = map[string]bool{"done": true, "failed": true, "abandoned": true}
+
+// attemptedText is the steps a run has an attempt at, in workflow order, for
+// the refusal of a `--from` naming one it does not.
+func attemptedText(workflow *millv1.Workflow, run RunState) string {
+	var names []string
+	for _, step := range workflow.GetSteps() {
+		if _, ok := run.Latest[step.GetName()]; ok {
+			names = append(names, step.GetName())
+		}
+	}
+	if len(names) == 0 {
+		return "no step"
+	}
+	return strings.Join(names, ", ")
+}
+
+// sortBySpan puts superseded attempts in workflow order, which is the order
+// an operator reads them in and the order the span was given in.
+func sortBySpan(stepRuns []*millv1.StepRun, span []string) {
+	order := make(map[string]int, len(span))
+	for i, name := range span {
+		order[name] = i
+	}
+	sort.SliceStable(stepRuns, func(i, j int) bool {
+		return order[stepRuns[i].GetStepName()] < order[stepRuns[j].GetStepName()]
+	})
+}
+
+// workerText names the holder of a lease for a refusal, or says there is
+// none recorded.
+func workerText(workerRef string) string {
+	if workerRef == "" {
+		return "an unnamed worker"
+	}
+	return workerRef
 }
 
 // stepSpan is the step names from fromStep through throughStep inclusive,

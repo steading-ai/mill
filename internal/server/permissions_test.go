@@ -22,6 +22,7 @@ var _ = Describe("What a procedure needs", Label("unit"), func() {
 		Entry("GetSkill", millv1connect.StoreServiceGetSkillProcedure),
 		Entry("Status", millv1connect.StoreServiceStatusProcedure),
 		Entry("Inspect", millv1connect.StoreServiceInspectProcedure),
+		Entry("WhoAmI", millv1connect.StoreServiceWhoAmIProcedure),
 	)
 
 	DescribeTable("the verbs a human or an agent drives need operate",
@@ -29,6 +30,7 @@ var _ = Describe("What a procedure needs", Label("unit"), func() {
 			Expect(required(procedure)).To(Equal(interceptor.PermissionOperate))
 		},
 		Entry("Cancel", millv1connect.StoreServiceCancelProcedure),
+		Entry("Rerun", millv1connect.StoreServiceRerunProcedure),
 		Entry("Abandon", millv1connect.StoreServiceAbandonProcedure),
 		Entry("PutWorkflow", millv1connect.StoreServicePutWorkflowProcedure),
 		Entry("PutSkill", millv1connect.StoreServicePutSkillProcedure),

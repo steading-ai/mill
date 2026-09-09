@@ -15,6 +15,8 @@ import (
 
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/run"
+	"github.com/ivy/mill/internal/server/interceptor"
+	"github.com/ivy/mill/internal/workspace/local"
 )
 
 // The tools `mill mcp` offers. Each is one CLI command with its flags as
@@ -341,6 +343,140 @@ made of it.
 			},
 		},
 		{
+			name: "rerun",
+			description: `Redo a run from a named step: every step from it through the step the run
+is on is superseded, and the run is left resumable at the named step. The
+superseded attempts stay in the ledger with the evidence they produced; they
+close nothing, which is what moves the run backwards.
+
+This keeps the generation, the branch and the sessions. Restart, which
+replaces all three, is not offered here. A run a worker is still holding is
+refused naming the holder; cancel it first. Needs the operator role. ` + runIdiom,
+			schema: objectSchema(map[string]any{
+				"run":    stringProp("The run, by node reference or run id."),
+				"from":   stringProp("The step to redo from, such as implement."),
+				"reason": stringProp("Why, recorded on the run's audit trail."),
+			}, "run", "from"),
+			call: func(ctx context.Context, raw json.RawMessage) (any, error) {
+				var args struct {
+					Run    string `json:"run"`
+					From   string `json:"from"`
+					Reason string `json:"reason"`
+				}
+				if err := decodeArgs(raw, &args); err != nil {
+					return nil, err
+				}
+				if args.Run == "" || args.From == "" {
+					return nil, fmt.Errorf("run and from are required")
+				}
+				store := storeClient(s.opts.socket)
+				detail, err := store.Inspect(ctx, connect.NewRequest(target(args.Run)))
+				if err != nil {
+					return nil, err
+				}
+				row := detail.Msg.GetSummary().GetRun()
+				res, err := store.Rerun(ctx, connect.NewRequest(&millv1.RerunRequest{
+					RunId: row.GetId(), FromStep: args.From, Reason: args.Reason,
+				}))
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{
+					"run":          row.GetId(),
+					"node":         row.GetNodeRef(),
+					"from":         args.From,
+					"through":      res.Msg.GetThroughStep(),
+					"generation":   res.Msg.GetRun().GetGeneration(),
+					"superseded":   rerunSteps(res.Msg),
+					"what_happens": rerunSummary(args.From, res.Msg),
+				}, nil
+			},
+		},
+		{
+			name: "workspace_show",
+			description: `Say where a run's workspace is on this host and what state it is in: the
+checkout's path, the branch, the commit it points at, whether the tree is
+clean, whether the workspace socket is still bound, and why the workspace is
+still here.
+
+This host's workspaces only. A run worked elsewhere, or one whose workspace
+has been destroyed, has nothing here to show. ` + runIdiom,
+			schema: objectSchema(map[string]any{
+				"run": stringProp("The run, by node reference or run id."),
+			}, "run"),
+			call: func(ctx context.Context, raw json.RawMessage) (any, error) {
+				var args struct {
+					Run string `json:"run"`
+				}
+				if err := decodeArgs(raw, &args); err != nil {
+					return nil, err
+				}
+				if args.Run == "" {
+					return nil, fmt.Errorf("run is required")
+				}
+				detail, err := storeClient(s.opts.socket).Inspect(ctx, connect.NewRequest(target(args.Run)))
+				if err != nil {
+					return nil, err
+				}
+				row := detail.Msg.GetSummary().GetRun()
+				info, err := inspector(s.workspaceOptions()).Inspect(ctx, row.GetId())
+				if err != nil {
+					return nil, err
+				}
+				return workspaceFields(row, info), nil
+			},
+		},
+		{
+			name: "workspace_clean",
+			description: `Remove the workspaces of runs that have ended: done, failed, or abandoned.
+A run that is selecting, running, waiting or parked keeps its checkout
+whatever its age, because that is what its resume attaches to.
+
+With dry_run, list what would go and remove nothing. Needs the operator
+role.`,
+			schema: objectSchema(map[string]any{
+				"older_than": stringProp("Only runs that ended longer ago than this, such as 7d."),
+				"dry_run":    boolProp("List what would be removed and remove nothing."),
+			}),
+			call: func(ctx context.Context, raw json.RawMessage) (any, error) {
+				var args struct {
+					OlderThan string `json:"older_than"`
+					DryRun    bool   `json:"dry_run"`
+				}
+				if err := decodeArgs(raw, &args); err != nil {
+					return nil, err
+				}
+				if err := s.operating(ctx, "workspace_clean"); err != nil {
+					return nil, err
+				}
+				opts := s.workspaceOptions()
+				opts.olderThan = args.OlderThan
+				opts.dryRun = args.DryRun
+				removable, err := cleanable(ctx, opts)
+				if err != nil {
+					return nil, err
+				}
+				removed := make([]map[string]any, 0, len(removable))
+				i := inspector(opts)
+				for _, c := range removable {
+					if !args.DryRun {
+						if err := i.Remove(c.runID); err != nil {
+							return nil, err
+						}
+					}
+					removed = append(removed, map[string]any{
+						"run": c.runID, "node": c.nodeRef, "status": c.status, "path": c.dir,
+					})
+				}
+				return map[string]any{
+					"root":       opts.workspaceDir,
+					"dry_run":    args.DryRun,
+					"count":      len(removed),
+					"workspaces": removed,
+				}, nil
+			},
+		},
+		{
 			name: "doctor",
 			description: `Probe everything a run depends on and report each as pass or fail with one
 line of reason: the service's socket, the database schema, dagger, the
@@ -433,6 +569,53 @@ func (s *mcpServer) logs(ctx context.Context, reference, step string, tail int) 
 	}, nil
 }
 
+// workspaceOptions is what the server's flags mean to the workspace tools.
+func (s *mcpServer) workspaceOptions() *workspaceOptions {
+	return &workspaceOptions{socket: s.opts.socket, workspaceDir: s.opts.workspaceDir}
+}
+
+// operating refuses a tool that changes something the store does not hold.
+//
+// The store refuses `rerun` itself, because the write goes through it; a
+// `workspace_clean` removes directories and asks it nothing, so it asks the
+// socket who the caller is and applies the same answer. Identity is the peer
+// uid either way — nothing a session says is consulted (docs/architecture.md
+// §"Identity and credentials").
+func (s *mcpServer) operating(ctx context.Context, tool string) error {
+	who, err := storeClient(s.opts.socket).WhoAmI(ctx, connect.NewRequest(&millv1.WhoAmIRequest{}))
+	if err != nil {
+		return err
+	}
+	switch role := who.Msg.GetRole(); role {
+	case string(interceptor.RoleService), string(interceptor.RoleOperator):
+		return nil
+	default:
+		return connect.NewError(connect.CodePermissionDenied,
+			fmt.Errorf("role %s may not call %s", role, tool))
+	}
+}
+
+// workspaceFields is one workspace as workspace_show renders it.
+func workspaceFields(row *millv1.Run, info *local.Info) map[string]any {
+	fields := map[string]any{
+		"run":            row.GetId(),
+		"node":           row.GetNodeRef(),
+		"status":         runStatusName(row.GetStatus()),
+		"path":           info.Checkout,
+		"branch":         info.Branch,
+		"head":           info.Head,
+		"clean":          info.Clean,
+		"changed":        info.Changed,
+		"socket":         info.Socket,
+		"socket_present": info.SocketPresent,
+		"retained":       retainedText(row),
+	}
+	if info.Detail != "" {
+		fields["detail"] = info.Detail
+	}
+	return fields
+}
+
 // doctorOptions is what the server's flags mean to the doctor tool.
 func (s *mcpServer) doctorOptions() doctorOptions {
 	return doctorOptions{
@@ -507,6 +690,7 @@ func workflowFields(definition *millv1.Workflow, v view) map[string]any {
 		row := map[string]any{"step": step.GetName(), "kind": stepKindName(step.GetKind())}
 		if v != viewRefs {
 			row["evidence"] = evidenceKindName(step.GetEvidence())
+			row["skill"] = skillText(step.GetSkill())
 			row["capabilities"] = capabilityNames(step.GetCapabilities())
 			row["retries"] = step.GetRetries()
 			row["on_failure"] = onFailureText(step.GetOnFailure())

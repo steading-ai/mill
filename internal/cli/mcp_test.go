@@ -6,14 +6,21 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/cli"
+	"github.com/ivy/mill/internal/domain"
+	"github.com/ivy/mill/internal/server"
+	"github.com/ivy/mill/internal/server/interceptor"
 	"github.com/ivy/mill/internal/testsupport"
 )
 
@@ -115,7 +122,7 @@ var _ = Describe("mill mcp", Label(testsupport.DBLabel), func() {
 		DeferCleanup(cancel)
 	})
 
-	It("lists every read tool and cancel, and run is not among them", func() {
+	It("lists every read tool and the operate ones, and run is not among them", func() {
 		r := openRun(ctx, "millcli#30", nodeID(30))
 		s := mcp(ctx, "--socket", r.mill.socket)
 
@@ -123,7 +130,8 @@ var _ = Describe("mill mcp", Label(testsupport.DBLabel), func() {
 			To(HaveKeyWithValue("protocolVersion", "2025-06-18"))
 		Expect(s.toolNames()).To(ConsistOf(
 			"status", "inspect", "explain", "logs", "history", "cost",
-			"workflow_list", "workflow_show", "doctor", "cancel"))
+			"workflow_list", "workflow_show", "doctor", "cancel",
+			"rerun", "workspace_show", "workspace_clean"))
 		// `run` executes in the calling process and is local to the mill's
 		// host and account; a session elsewhere files a dagger node.
 		Expect(s.toolNames()).NotTo(ContainElement("run"))
@@ -235,3 +243,94 @@ var _ = Describe("mill mcp", Label(testsupport.DBLabel), func() {
 		Expect(string(raw)).NotTo(ContainSubstring("prompt"))
 	})
 })
+
+// readerSocket serves the ledger on a unix socket this process reaches as a
+// `reader`. The role map's service uid is one nothing on this host holds, so
+// the peer uid the kernel reports for the spec's own connections resolves to
+// the role the map gives it and not to the service (internal/server/interceptor).
+func readerSocket(ctx context.Context, m mill) mill {
+	GinkgoHelper()
+	path := filepath.Join(GinkgoT().TempDir(), "reader.sock")
+	svc, err := domain.Open(ctx, m.databaseURL)
+	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(svc.Close)
+	srv := server.New(server.Config{
+		SocketPath: path,
+		Logger:     slog.New(slog.NewTextHandler(GinkgoWriter, nil)),
+		Interceptors: []connect.Interceptor{interceptor.NewRoles(
+			interceptor.RoleMap{
+				// A uid no account on this host holds, so the spec's own is
+				// not the service's.
+				ServiceUID: -1,
+				Roles:      map[int]interceptor.Role{os.Getuid(): interceptor.RoleReader},
+			}, server.Requirement())},
+	}, server.NewStoreService(svc))
+	Expect(srv.Listen()).To(Succeed())
+
+	serveCtx, stop := context.WithCancel(ctx)
+	served := make(chan error, 1)
+	go func() {
+		defer GinkgoRecover()
+		served <- srv.Serve(serveCtx)
+	}()
+	DeferCleanup(func() {
+		stop()
+		Eventually(served, 10*time.Second).Should(Receive(BeNil()))
+	})
+	return mill{socket: path}
+}
+
+var _ = Describe("mill mcp under a reader uid", Label(testsupport.DBLabel), func() {
+	var ctx context.Context
+
+	BeforeEach(func() {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(context.Background())
+		DeferCleanup(cancel)
+	})
+
+	It("a reader reads a workflow and is refused rerun and workspace clean", func() {
+		// The ledger is composed over a socket the spec reaches as the
+		// service, and then read back over one it reaches as a reader: the
+		// two differ in nothing but the role map.
+		writer := serving(ctx)
+		r := openRunOn(ctx, writer, "millcli#80", nodeID(80))
+		reader := readerSocket(ctx, writer)
+
+		s := mcp(ctx, "--socket", reader.socket, "--workspace-dir", GinkgoT().TempDir())
+		s.call("initialize", nil)
+
+		// A reader may look at what a run would follow.
+		shown := s.tool("workflow_show", map[string]any{"name": "quick-fix"})
+		Expect(shown).To(HaveKeyWithValue("name", "quick-fix"))
+		Expect(shown["steps"]).To(HaveLen(6))
+
+		// It may not redo one. The store refuses the write, naming the
+		// role.
+		refused := s.call("tools/call", map[string]any{
+			"name": "rerun", "arguments": map[string]any{"run": r.run.GetId(), "from": "implement"},
+		})
+		Expect(refused["isError"]).To(BeTrue(), "%v", refused)
+		Expect(textOf(refused)).To(ContainSubstring(string(interceptor.RoleReader)))
+
+		// Nor may it remove a workspace, which the store holds nothing
+		// about: `mill mcp` asks the socket who the caller is and applies
+		// the same map.
+		refused = s.call("tools/call", map[string]any{
+			"name": "workspace_clean", "arguments": map[string]any{"dry_run": true},
+		})
+		Expect(refused["isError"]).To(BeTrue(), "%v", refused)
+		Expect(textOf(refused)).To(ContainSubstring(string(interceptor.RoleReader)))
+	})
+})
+
+// textOf is the text of a tool result's single content block.
+func textOf(result map[string]any) string {
+	GinkgoHelper()
+	content, ok := result["content"].([]any)
+	Expect(ok).To(BeTrue(), "%v", result)
+	Expect(content).To(HaveLen(1))
+	text, ok := content[0].(map[string]any)["text"].(string)
+	Expect(ok).To(BeTrue())
+	return text
+}

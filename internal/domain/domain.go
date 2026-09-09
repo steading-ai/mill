@@ -42,6 +42,12 @@ var (
 	// ErrNoWorkflow: an operation needing the workflow of a run that is
 	// still selecting.
 	ErrNoWorkflow = store.ErrNoWorkflow
+	// ErrLeased: an operator's write to a run a worker is holding. Its
+	// message names the holder.
+	ErrLeased = store.ErrLeased
+	// ErrNotAttempted: a step the run has never attempted. Its message
+	// names the steps it has.
+	ErrNotAttempted = store.ErrNotAttempted
 )
 
 // Service is the ledger with its rules applied. Every handler holds one.
