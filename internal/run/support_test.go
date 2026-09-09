@@ -380,6 +380,13 @@ type fixtureForge struct {
 	deleted  []string
 }
 
+// Authenticate is the credential the workspace hands a clone or a push. The
+// fixture's origin is a path on this host, so there is nothing to prove and
+// nothing to inject.
+func (f *fixtureForge) Authenticate(context.Context) (forge.GitAuth, error) {
+	return forge.GitAuth{}, nil
+}
+
 func (f *fixtureForge) Push(_ context.Context, request forge.PushRequest) (string, error) {
 	return "", nil
 }

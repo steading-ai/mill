@@ -182,6 +182,23 @@ type Credential struct {
 	ExpiresAt time.Time
 }
 
+// GitAuth is what one git command needs to authenticate to the repository:
+// arguments that install a credential helper, and the environment that helper
+// reads. It is the shape a credential travels in wherever git talks to the
+// forge — the clone that starts a run, a fetch, the push at the end of one —
+// so the credential appears in neither the remote URL nor argv, and no
+// helper has to exist on the host.
+//
+// Args go before git's subcommand; Env is added to the environment the
+// workspace already sets for the child, and nothing else.
+type GitAuth struct {
+	// Args are git's own options, such as a `-c credential.helper=`.
+	Args []string
+	// Env is the environment the helper reads. Every value in it is a
+	// secret: the workspace registers them with its redactor.
+	Env map[string]string
+}
+
 // Step is the step a credential is minted for: the bottom rung of the
 // credential ladder, identified by what the store keeps rather than by the
 // bearer, so a minter never needs the bearer itself.
@@ -226,6 +243,12 @@ func (f MinterFunc) Mint(ctx context.Context, step Step) (Credential, error) { r
 // is one round trip; none of them holds state between calls, so a worker that
 // died mid-run can ask again and get the same answers.
 type Forge interface {
+	// Authenticate mints a credential for one git command against the
+	// repository and returns the arguments and environment that hand it to
+	// git. The workspace asks for it before a clone or a fetch of an
+	// origin nothing may read anonymously; [Forge.Push] asks for it too,
+	// so the three reach the forge the same way.
+	Authenticate(ctx context.Context) (GitAuth, error)
 	// Push puts the run's branch on the forge, with a credential minted for
 	// this call and never written to disk. It returns the SHA that landed.
 	Push(ctx context.Context, request PushRequest) (string, error)

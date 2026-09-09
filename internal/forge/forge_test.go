@@ -15,6 +15,9 @@ import (
 // registration, which never reach one.
 type stubForge struct{ repo forge.Repo }
 
+func (s *stubForge) Authenticate(context.Context) (forge.GitAuth, error) {
+	return forge.GitAuth{}, nil
+}
 func (s *stubForge) Push(context.Context, forge.PushRequest) (string, error) { return "", nil }
 func (s *stubForge) OpenPR(context.Context, forge.OpenPRRequest) (forge.PullRequest, error) {
 	return forge.PullRequest{}, nil

@@ -173,12 +173,22 @@ func (w *Workspace) Create(ctx context.Context, spec workspace.Spec) (*workspace
 		return nil, fmt.Errorf("workspace: create %s: %w", dir, err)
 	}
 
-	clone := []string{"clone", "--quiet"}
+	// The clone carries the forge's credential, because a private
+	// repository refuses an anonymous read and a run that cannot clone
+	// never starts.
+	auth, err := w.originAuth(ctx, origin)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, err
+	}
+	clone := make([]string, 0, len(auth.Args)+5)
+	clone = append(clone, auth.Args...)
+	clone = append(clone, "clone", "--quiet")
 	if spec.Ref != "" {
 		clone = append(clone, "--branch", spec.Ref)
 	}
 	clone = append(clone, origin, filepath.Join(dir, checkoutDir))
-	if _, err := w.git(ctx, w.options.Root, clone...); err != nil {
+	if _, err := w.gitWith(ctx, w.options.Root, auth.Env, clone...); err != nil {
 		_ = os.RemoveAll(dir)
 		return nil, err
 	}
@@ -506,15 +516,17 @@ func (w *Workspace) git(ctx context.Context, dir string, args ...string) (string
 	return w.gitWith(ctx, dir, nil, args...)
 }
 
-// gitWith runs git with extra environment on top of the workspace's own. The
-// forge is its only caller: a credential reaches git through the environment
-// and a credential helper, so it appears in neither the remote URL nor argv
-// (docs/architecture.md §"Identity and credentials").
+// gitWith runs git with extra environment on top of the workspace's own. A
+// credential reaches git through that environment and a credential helper, so
+// it appears in neither the remote URL nor argv (docs/architecture.md
+// §"Identity and credentials"). The clone and the forge's own commands are
+// its callers.
 func (w *Workspace) gitWith(ctx context.Context, dir string, extra map[string]string, args ...string) (string, error) {
 	binary := w.options.Git
 	if binary == "" {
 		binary = "git"
 	}
+	verb := gitVerb(args)
 	env := w.gitEnv(dir)
 	for name, value := range extra {
 		env[name] = value
@@ -526,7 +538,7 @@ func (w *Workspace) gitWith(ctx context.Context, dir string, extra map[string]st
 		Env:  env,
 	})
 	if err != nil {
-		return "", fmt.Errorf("workspace: git %s: %w", args[0], err)
+		return "", fmt.Errorf("workspace: git %s: %w", verb, err)
 	}
 	_ = process.Stdin.Close()
 	var stderr []byte
@@ -540,16 +552,34 @@ func (w *Workspace) gitWith(ctx context.Context, dir string, extra map[string]st
 	<-done
 	result := process.Wait()
 	if stdoutErr != nil {
-		return "", fmt.Errorf("workspace: git %s: %w", args[0], stdoutErr)
+		return "", fmt.Errorf("workspace: git %s: %w", verb, stdoutErr)
 	}
 	if stderrErr != nil {
-		return "", fmt.Errorf("workspace: git %s: %w", args[0], stderrErr)
+		return "", fmt.Errorf("workspace: git %s: %w", verb, stderrErr)
 	}
 	if result.Status != 0 {
 		return string(stdout), fmt.Errorf("workspace: git %s exited %d: %s",
-			args[0], result.Status, w.redactor.String(strings.TrimSpace(string(stderr))))
+			verb, result.Status, w.redactor.String(strings.TrimSpace(string(stderr))))
 	}
 	return string(stdout), nil
+}
+
+// gitVerb is the subcommand in a git invocation, for naming it in an error.
+// It is not args[0] whenever the command carries a credential helper, which
+// arrives as git's own `-c` options ahead of the subcommand.
+func gitVerb(args []string) string {
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "-c", "--config-env":
+			index++
+		default:
+			if strings.HasPrefix(args[index], "-") {
+				continue
+			}
+			return args[index]
+		}
+	}
+	return "git"
 }
 
 // gitEnv is what git and everything it spawns — ssh-keygen for a signature,

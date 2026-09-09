@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/cgi"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -231,4 +233,131 @@ func grepTree(dir, value string) []string {
 		return nil
 	})).To(Succeed())
 	return found
+}
+
+var _ = Describe("A workspace on a private origin", Label("unit"), func() {
+	const (
+		theBearer   = "the-live-step-token"
+		theForgeKey = "glpat-only-the-workspace-holds-this" // gitleaks:allow
+		theUser     = "mill"
+	)
+
+	var (
+		remote string
+		log    *bytes.Buffer
+		ws     *local.Workspace
+	)
+
+	BeforeEach(func() {
+		// Given a forge origin that refuses anonymous reads: a real
+		// repository served over git's smart HTTP protocol, behind basic
+		// auth, with nothing on the host that could answer for it.
+		remote = privateOrigin(theUser, theForgeKey)
+		log = &bytes.Buffer{}
+		ws = local.New(local.Options{
+			Root:     filepath.Join(GinkgoT().TempDir(), "workspaces"),
+			Origin:   remote,
+			Log:      log,
+			Redactor: redact.New(),
+			Identity: "mill@example.test",
+			Name:     "mill",
+			Forge: gitlab.New(
+				forge.Repo{Kind: forge.KindGitLab, Path: "group/thing", CloneURL: remote},
+				forge.Static(theUser, theForgeKey),
+			),
+		})
+	})
+
+	It("A private origin clones with the forge's credential", func(ctx context.Context) {
+		// Given a clone with no credential and no helper to answer for one
+		// — the host's own git configuration is out of reach, as it is for
+		// the workspace — is refused
+		anonymous := exec.CommandContext(ctx, "git", "clone", "--quiet", remote,
+			filepath.Join(GinkgoT().TempDir(), "anonymous"))
+		anonymous.Env = append(gitEnv(), "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=true")
+		refused, err := anonymous.CombinedOutput()
+		Expect(err).To(HaveOccurred(), "the origin let an anonymous read through")
+		Expect(string(refused)).To(ContainSubstring("Authentication failed"))
+
+		// When the workspace is created for a run on that origin
+		handle, err := ws.Create(ctx, workspace.Spec{RunID: "01J0RUN44", NodeRef: "mill#44", Origin: remote})
+
+		// Then the clone succeeds
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func(ctx context.Context) { Expect(ws.Destroy(ctx)).To(Succeed()) })
+		Expect(os.ReadFile(filepath.Join(handle.Root, "README.md"))).To(Equal([]byte("as cloned\n")))
+		Expect(handle.Branch).To(Equal("mill/mill-44"))
+
+		// And the session's environment carries no credential
+		Expect(ws.Rotate(ctx, workspace.TokenFor(theBearer, workspace.Exec))).To(Succeed())
+		session := socket.Dial(handle.Socket, theBearer)
+		env, err := session.Exec(ctx, socket.ExecRequest{Path: "/usr/bin/env"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(env.Stdout).NotTo(ContainSubstring(theForgeKey))
+		Expect(lines(env.Stdout)).To(ConsistOf(
+			"STEP_TOKEN="+theBearer,
+			"WORKSPACE_SOCKET="+handle.Socket,
+		))
+
+		// Nor did it reach the checkout, or a log the mill wrote.
+		Expect(grepTree(filepath.Dir(handle.Root), theForgeKey)).To(BeEmpty())
+		Expect(log.String()).NotTo(ContainSubstring(theForgeKey))
+	})
+
+	It("presents the credential to the forge's own repository and to no other origin", func(ctx context.Context) {
+		// A workspace pointed by --origin at a repository the forge does not
+		// serve gets no credential: the mill's forge token is for the
+		// mill's forge.
+		elsewhere := local.New(local.Options{
+			Root:     filepath.Join(GinkgoT().TempDir(), "elsewhere"),
+			Redactor: redact.New(),
+			Identity: "mill@example.test",
+			Forge: gitlab.New(
+				forge.Repo{Kind: forge.KindGitLab, Path: "group/other", CloneURL: "https://gitlab.example.test/group/other.git"},
+				forge.Static(theUser, theForgeKey),
+			),
+		})
+
+		_, err := elsewhere.Create(ctx, workspace.Spec{RunID: "01J0RUN45", NodeRef: "mill#44", Origin: remote})
+
+		Expect(err).To(MatchError(ContainSubstring("git clone exited")))
+	})
+})
+
+// privateOrigin is a repository served over git's smart HTTP protocol, behind
+// basic auth: `git http-backend` as a CGI program, which is how git itself is
+// served, wrapped in a handler that answers 401 to anyone who does not
+// present the credential.
+func privateOrigin(username, password string) string {
+	GinkgoHelper()
+
+	root := GinkgoT().TempDir()
+	git(GinkgoT().TempDir(), "clone", "--quiet", "--bare", origin(), filepath.Join(root, "thing.git"))
+
+	binary, err := exec.LookPath("git")
+	Expect(err).NotTo(HaveOccurred())
+	backend := &cgi.Handler{
+		Path: binary,
+		Args: []string{"http-backend"},
+		Dir:  root,
+		Env: []string{
+			"GIT_PROJECT_ROOT=" + root,
+			"GIT_HTTP_EXPORT_ALL=1",
+			"HOME=" + root,
+			"GIT_CONFIG_GLOBAL=" + os.DevNull,
+			"GIT_CONFIG_SYSTEM=" + os.DevNull,
+			"LC_ALL=C",
+		},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, secret, ok := r.BasicAuth()
+		if !ok || user != username || secret != password {
+			w.Header().Set("WWW-Authenticate", `Basic realm="forge"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		backend.ServeHTTP(w, r)
+	}))
+	DeferCleanup(server.Close)
+	return server.URL + "/thing.git"
 }

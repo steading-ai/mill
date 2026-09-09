@@ -168,12 +168,24 @@ type pipeline struct {
 	Status string `json:"status"`
 }
 
-// Push puts the branch on the forge with a credential minted for this call.
+// Authenticate mints a credential for one git command and returns it as the
+// arguments and environment git reads it through.
 //
 // The credential reaches git through the environment and a credential helper,
 // never through the remote URL and never through argv: the clone's `origin`
 // stays the plain repository URL, so a session that runs `git remote -v` — or
-// reads `.git/config`, or lists the process table — finds no token.
+// reads `.git/config`, or lists the process table — finds no token. The
+// helper is written inline, so nothing has to be installed on the host's
+// PATH for a private repository to be readable.
+func (c *Client) Authenticate(ctx context.Context) (forge.GitAuth, error) {
+	credential, err := c.credential(ctx)
+	if err != nil {
+		return forge.GitAuth{}, err
+	}
+	return forge.GitAuth{Args: credentialArgs(), Env: credentialEnv(credential)}, nil
+}
+
+// Push puts the branch on the forge with a credential minted for this call.
 func (c *Client) Push(ctx context.Context, request forge.PushRequest) (string, error) {
 	if request.Git == nil {
 		return "", errors.New("gitlab: push needs a git runner from the workspace")
@@ -181,18 +193,18 @@ func (c *Client) Push(ctx context.Context, request forge.PushRequest) (string, e
 	if request.Branch == "" {
 		return "", errors.New("gitlab: push needs a branch")
 	}
-	credential, err := c.credential(ctx)
+	auth, err := c.Authenticate(ctx)
 	if err != nil {
 		return "", err
 	}
-	args := append(credentialArgs(),
-		"push", "--porcelain",
-	)
+	args := make([]string, 0, len(auth.Args)+5)
+	args = append(args, auth.Args...)
+	args = append(args, "push", "--porcelain")
 	if request.Force {
 		args = append(args, "--force-with-lease")
 	}
 	args = append(args, c.repo.CloneURL, "refs/heads/"+request.Branch+":refs/heads/"+request.Branch)
-	if _, err := request.Git.Run(ctx, credentialEnv(credential), args...); err != nil {
+	if _, err := request.Git.Run(ctx, auth.Env, args...); err != nil {
 		return "", fmt.Errorf("gitlab: push %s: %w", request.Branch, err)
 	}
 	head, err := request.Git.Run(ctx, nil, "rev-parse", "refs/heads/"+request.Branch)

@@ -37,6 +37,52 @@ func (f forgeVerbs) client() (forge.Forge, error) {
 	}), nil
 }
 
+// originAuth is the credential a git command against origin runs with: the
+// same one the push carries, taken from the forge adapter for the run's
+// repository, minted for whichever step is live.
+//
+// Cloning is the first thing a run does and a private repository refuses it
+// anonymously, so the credential has to reach the clone as it reaches the
+// push (docs/prd.md R-37: credentials are injected by the workspace, never
+// held by the session). Every value is registered with the redactor before
+// the command runs, so a failure that quotes git's stderr cannot quote the
+// token.
+//
+// The zero value — no credential, no arguments — is what a run whose project
+// has no forge gets, and what a run pointed at some other origin gets: the
+// mill presents its forge credential to its forge's repository and to
+// nothing else, so `--origin` cannot be used to send the token somewhere it
+// does not belong.
+func (w *Workspace) originAuth(ctx context.Context, origin string) (forge.GitAuth, error) {
+	if w.options.Forge == nil || !sameRepo(origin, forgeVerbs{w: w}.remote()) {
+		return forge.GitAuth{}, nil
+	}
+	client, err := forgeVerbs{w: w}.client()
+	if err != nil {
+		return forge.GitAuth{}, err
+	}
+	auth, err := client.Authenticate(ctx)
+	if err != nil {
+		return forge.GitAuth{}, err
+	}
+	for _, value := range auth.Env {
+		w.redactor.Add(value)
+	}
+	return auth, nil
+}
+
+// sameRepo reports whether two remotes name the same repository, allowing for
+// the `.git` suffix and the trailing slash git treats as noise.
+func sameRepo(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	trim := func(url string) string {
+		return strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(url, "/"), ".git"), "/")
+	}
+	return trim(a) == trim(b)
+}
+
 // Push puts the run's branch on the forge. The branch is the workspace's, not
 // the request's: a session may push, but only what the run is working on.
 func (f forgeVerbs) Push(ctx context.Context, request workspace.PushRequest) (workspace.PushResult, error) {
