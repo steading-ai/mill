@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -165,6 +166,43 @@ var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 			Expect(rowFor(out, "claude-sonnet")).To(ContainSubstring("20"))
 			Expect(out).To(ContainSubstring("quick-fix@"))
 		})
+
+		// One assistant turn bills an auxiliary model alongside the one the
+		// step asked for, so the MODEL table is where "which model billed"
+		// is answered. It is filled from the rows the STEP table renders,
+		// so the two cannot disagree and it cannot come back empty under a
+		// STEP table that has rows.
+		It("prints one MODEL row per model that has usage, summing to the STEP table's totals", func() {
+			r := openRun(ctx, "millcli#26", nodeID(26))
+			// One attempt at a time, because the ledger allows one: the
+			// first step's usage is recorded and the step closed before the
+			// second opens.
+			gather := r.start(ctx, "gather-context", millv1.StepKind_STEP_KIND_SKILL)
+			record(ctx, r, gather, map[string]int64{"claude-opus-5": 300, "claude-haiku-4-5": 7})
+			r.close(ctx, gather, &millv1.CloseStepRunRequest{
+				Evidence: &millv1.Evidence{
+					Kind:       millv1.EvidenceKind_EVIDENCE_KIND_ARTIFACT,
+					Value:      &millv1.Evidence_Artifact{Artifact: "sha256:" + strings.Repeat("e", 64)},
+					VerifiedBy: "spec",
+				},
+			})
+			implement := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+			record(ctx, r, implement, map[string]int64{"claude-opus-5": 500, "claude-sonnet-4-5": 90})
+
+			out := r.cli(ctx, "cost")
+
+			// One row per model, and the input column of each is the sum of
+			// what the steps billed it.
+			models := section(out, "MODEL")
+			Expect(lines(models)).To(HaveLen(3), out)
+			Expect(rowFor(models, "claude-opus-5")).To(ContainSubstring("800"))
+			Expect(rowFor(models, "claude-haiku-4-5")).To(ContainSubstring("7"))
+			Expect(rowFor(models, "claude-sonnet-4-5")).To(ContainSubstring("90"))
+
+			// And the two tables agree: 300+7+500+90 either way.
+			Expect(inputTotal(section(out, "MODEL"))).To(Equal(inputTotal(section(out, "STEP"))))
+			Expect(inputTotal(section(out, "MODEL"))).To(Equal(int64(897)))
+		})
 	})
 
 	Describe("mill workflow show", func() {
@@ -189,3 +227,52 @@ var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 		})
 	})
 })
+
+// record puts one attempt's usage in the ledger, one entry per model, as a
+// session's terminal record does.
+func record(ctx context.Context, r *runs, sr *millv1.StepRun, byModel map[string]int64) {
+	GinkgoHelper()
+	usage := make([]*millv1.Usage, 0, len(byModel))
+	for model, input := range byModel {
+		usage = append(usage, &millv1.Usage{StepRunId: sr.GetId(), Model: model, InputTokens: input})
+	}
+	_, err := r.store.RecordUsage(ctx, connect.NewRequest(&millv1.RecordUsageRequest{
+		LeaseId: r.lease, StepRunId: sr.GetId(), Usage: usage,
+	}))
+	Expect(err).NotTo(HaveOccurred())
+}
+
+// section is one of `mill cost`'s four tables: the rows under the header
+// that names it, up to the blank line that ends the table. The header itself
+// is dropped, so what comes back is what the section reported.
+func section(output, title string) string {
+	var rows []string
+	inside := false
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		switch {
+		case len(fields) == 0:
+			inside = false
+		case !inside && fields[0] == title:
+			inside = true
+		case inside:
+			rows = append(rows, line)
+		}
+	}
+	return strings.Join(rows, "\n")
+}
+
+// inputTotal sums a cost section's INPUT column, which is what "the two
+// tables agree" means.
+func inputTotal(rows string) int64 {
+	GinkgoHelper()
+	var total int64
+	for _, line := range lines(rows) {
+		fields := strings.Fields(line)
+		Expect(len(fields)).To(BeNumerically(">=", 2), line)
+		count, err := strconv.ParseInt(fields[1], 10, 64)
+		Expect(err).NotTo(HaveOccurred(), line)
+		total += count
+	}
+	return total
+}

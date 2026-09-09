@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -18,6 +19,7 @@ import (
 	"github.com/ivy/mill/internal/cli"
 	"github.com/ivy/mill/internal/sdnotify"
 	"github.com/ivy/mill/internal/testsupport"
+	"github.com/ivy/mill/internal/workspace/socket"
 )
 
 // notifier stands in for systemd: a datagram socket named by NOTIFY_SOCKET,
@@ -104,6 +106,28 @@ var _ = Describe("mill serve", Label(testsupport.DBLabel), func() {
 		listed, err := client.Status(ctx, connect.NewRequest(&millv1.StatusRequest{}))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(listed.Msg.GetRuns()).To(BeEmpty(), "an empty ledger has no runs to report")
+	})
+
+	// A socket path over the kernel's limit fails on the bind as "invalid
+	// argument", and by then the migrations have run for a service that
+	// will not start. It is refused first, and the refusal says by how much
+	// the path is too long.
+	It("refuses a socket path the kernel cannot bind, before it migrates or binds", func(ctx SpecContext) {
+		var stdout, stderr bytes.Buffer
+		path := filepath.Join(GinkgoT().TempDir(), strings.Repeat("s", socket.MaxPathLen), "mill.sock")
+		root := cli.NewRootCommand(&stdout, &stderr)
+		// A database URL nothing serves: reaching it at all would be the
+		// failure this refusal comes before.
+		root.SetArgs([]string{"serve", "--socket", path,
+			"--database-url", "postgres://nobody@127.0.0.1:1/none"})
+
+		err := root.ExecuteContext(ctx)
+
+		Expect(err).To(MatchError(ContainSubstring(path)))
+		Expect(err).To(MatchError(ContainSubstring(strconv.Itoa(len(path)))))
+		Expect(err).To(MatchError(ContainSubstring(strconv.Itoa(socket.MaxPathLen))))
+		Expect(err).To(MatchError(ContainSubstring("--socket")))
+		Expect(err).NotTo(MatchError(ContainSubstring("migrate")))
 	})
 
 	It("refuses to start without a database URL", func(ctx SpecContext) {

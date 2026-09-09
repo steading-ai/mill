@@ -9,6 +9,7 @@ import (
 	"time"
 
 	harnessv1 "github.com/ivy/mill/gen/harness/v1"
+	"github.com/ivy/mill/internal/check"
 	"github.com/ivy/mill/internal/workspace/redact"
 )
 
@@ -67,6 +68,60 @@ func logPrompt(w io.Writer, redactor *redact.Redactor, now func() time.Time, pro
 	_, _ = fmt.Fprintf(out, "%s prompt begin bytes=%d\n", stamp, len(prompt))
 	_, _ = fmt.Fprintln(out, strings.TrimRight(prompt, "\n"))
 	_, _ = fmt.Fprintf(out, "%s prompt end\n", stamp)
+}
+
+// logDiagnostics writes what the harness's own process said for itself when
+// a session refused or crashed: the sidecar's standard error, whole, under a
+// banner that says whose words these are. It goes through the redactor like
+// everything else, because a crash dumps whatever was in scope.
+func logDiagnostics(w io.Writer, redactor *redact.Redactor, now func() time.Time, diagnostics string) {
+	if w == nil || strings.TrimSpace(diagnostics) == "" {
+		return
+	}
+	out := redactor.Writer(w)
+	stamp := now().UTC().Format(time.RFC3339)
+	_, _ = fmt.Fprintf(out, "%s harness stderr begin bytes=%d\n", stamp, len(diagnostics))
+	_, _ = fmt.Fprintln(out, strings.TrimRight(diagnostics, "\n"))
+	_, _ = fmt.Fprintf(out, "%s harness stderr end\n", stamp)
+}
+
+// logCheck writes a check step's own log: the command's two streams, as the
+// step run's attempt produced them.
+//
+// A check has no session and no events, so nothing else would write the file
+// and `mill logs --step <check>` would answer "no log" for a step that
+// certainly ran. Stdout is written when the contract kept it — a `none`
+// contract drops it before it gets here — and stderr always, because stderr
+// is where a check says why it failed.
+//
+// A failure to open or write the log is not a failure of the check: the
+// check's result is a fact about the work, and losing the record of it must
+// not turn a passing check into a failing step. It is dropped, as the log
+// sink's own writes are.
+func logCheck(dir, runID, step string, attempt int64, redactor *redact.Redactor, now func() time.Time, res check.Result) {
+	file, err := openStepLog(dir, runID, step, attempt)
+	if err != nil || file == nil {
+		return
+	}
+	defer func() { _ = file.Close() }()
+
+	out := redactor.Writer(file)
+	stamp := now().UTC().Format(time.RFC3339)
+	_, _ = fmt.Fprintf(out, "%s check %s exit status=%d\n", stamp, step, res.Exit.GetStatus())
+	for _, stream := range []struct {
+		name string
+		body string
+	}{{"stdout", res.Stdout}, {"stderr", res.Stderr}} {
+		if strings.TrimSpace(stream.body) == "" {
+			continue
+		}
+		_, _ = fmt.Fprintf(out, "%s check %s %s begin bytes=%d\n", stamp, step, stream.name, len(stream.body))
+		_, _ = fmt.Fprintln(out, strings.TrimRight(stream.body, "\n"))
+		_, _ = fmt.Fprintf(out, "%s check %s %s end\n", stamp, step, stream.name)
+	}
+	if res.Reason != "" {
+		_, _ = fmt.Fprintf(out, "%s check %s failed: %s\n", stamp, step, res.Reason)
+	}
 }
 
 // logSink renders a turn's events into the step log, through the redactor.

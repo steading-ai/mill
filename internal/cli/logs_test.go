@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -102,6 +103,50 @@ var _ = Describe("mill logs", Label(testsupport.DBLabel), func() {
 		Expect(out).To(ContainSubstring("no log for implement attempt 1"))
 	})
 
+	// A node reference is what an operator has in front of them, and the
+	// run it names has usually ended by the time they ask. A run that has
+	// ended is on no step, and answering "the run is on no step" to a
+	// question about the only run the node has is a tool refusing to read a
+	// file it can name.
+	It("reads the last step a finished run attempted, given the node's reference", func() {
+		r := openRun(ctx, "millcli#24", nodeID(24))
+		r.closeGatherContext(ctx, "sha256:"+strings.Repeat("a", 64))
+		sr := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+		r.close(ctx, sr, &millv1.CloseStepRunRequest{
+			Evidence: &millv1.Evidence{
+				Kind:       millv1.EvidenceKind_EVIDENCE_KIND_ARTIFACT,
+				Value:      &millv1.Evidence_Artifact{Artifact: "sha256:" + strings.Repeat("b", 64)},
+				VerifiedBy: "spec",
+			},
+		})
+
+		logDir := filepath.Join(GinkgoT().TempDir(), "logs")
+		path := run.StepLogPath(logDir, r.run.GetId(), "implement", sr.GetAttempt())
+		Expect(os.MkdirAll(filepath.Dir(path), 0o750)).To(Succeed())
+		Expect(os.WriteFile(path, []byte("text the implementer's last words\n"), 0o600)).To(Succeed())
+
+		// The rest of quick-fix, closed: the run is on no step now, which
+		// is the state every finished run is in.
+		last := finish(ctx, r)
+		lastPath := run.StepLogPath(logDir, r.run.GetId(), last, 1)
+		Expect(os.WriteFile(lastPath, []byte("status merged\n"), 0o600)).To(Succeed())
+
+		out := r.cli(ctx, "logs", "millcli#24", "--log-dir", logDir)
+
+		Expect(out).To(ContainSubstring("status merged"))
+		Expect(out).NotTo(ContainSubstring("is on no step"))
+	})
+
+	It("says the node has no run rather than printing nothing", func() {
+		r := openRun(ctx, "millcli#25", nodeID(25))
+
+		out, err := runCLI(ctx, r.mill.socket, "logs", "millcli#99")
+
+		Expect(err).To(HaveOccurred())
+		Expect(out).To(ContainSubstring("millcli#99"))
+		Expect(out).To(ContainSubstring("no run"))
+	})
+
 	It("refuses a run it cannot find", func() {
 		r := openRun(ctx, "millcli#23", nodeID(23))
 		_, err := r.store.Inspect(ctx, connect.NewRequest(&millv1.InspectRequest{NodeRef: "millcli#404"}))
@@ -112,3 +157,37 @@ var _ = Describe("mill logs", Label(testsupport.DBLabel), func() {
 		Expect(out).To(ContainSubstring("millcli#404"))
 	})
 })
+
+// finish closes the rest of quick-fix — commit, clean-tree, pr, merge — each
+// on the evidence its step takes, and names the last step it closed. A run
+// with every step closed is on no step, which is what a finished run looks
+// like to the read tools.
+func finish(ctx context.Context, r *runs) string {
+	GinkgoHelper()
+	for _, step := range []struct {
+		name  string
+		kind  millv1.StepKind
+		value *millv1.Evidence
+	}{
+		{"commit", millv1.StepKind_STEP_KIND_SKILL, &millv1.Evidence{
+			Kind:  millv1.EvidenceKind_EVIDENCE_KIND_COMMIT,
+			Value: &millv1.Evidence_Commit{Commit: strings.Repeat("c", 40)},
+		}},
+		{"clean-tree", millv1.StepKind_STEP_KIND_CHECK, &millv1.Evidence{
+			Kind:  millv1.EvidenceKind_EVIDENCE_KIND_EXIT,
+			Value: &millv1.Evidence_Exit{Exit: processExit(0)},
+		}},
+		{"pr", millv1.StepKind_STEP_KIND_SKILL, &millv1.Evidence{
+			Kind:  millv1.EvidenceKind_EVIDENCE_KIND_URL,
+			Value: &millv1.Evidence_Url{Url: "https://gitlab.example.test/group/thing/-/merge_requests/1"},
+		}},
+		{"merge", millv1.StepKind_STEP_KIND_SKILL, &millv1.Evidence{
+			Kind:  millv1.EvidenceKind_EVIDENCE_KIND_STATUS,
+			Value: &millv1.Evidence_Status{Status: "merged"},
+		}},
+	} {
+		step.value.VerifiedBy = "spec"
+		r.close(ctx, r.start(ctx, step.name, step.kind), &millv1.CloseStepRunRequest{Evidence: step.value})
+	}
+	return "merge"
+}

@@ -263,7 +263,9 @@ rate table is applied by whoever wants money.`,
 				if err != nil {
 					return nil, err
 				}
-				return wire(res.Msg)
+				// The same rollup the CLI renders, by-model section
+				// included: the two faces are one client.
+				return wire(fillByModel(res.Msg))
 			},
 		},
 		{
@@ -401,10 +403,13 @@ func (s *mcpServer) logs(ctx context.Context, reference, step string, tail int) 
 		return nil, err
 	}
 	if step == "" {
-		step = detail.Msg.GetSummary().GetCurrentStep()
+		// The step the run is on, or the last one it attempted: the two
+		// faces read the same file for the same reference
+		// (internal/cli/logs.go).
+		step = currentOrLastStep(detail.Msg)
 	}
 	if step == "" {
-		return nil, fmt.Errorf("the run is on no step; name one")
+		return nil, fmt.Errorf("the run has attempted no step; there is nothing to read")
 	}
 	attempt := latestAttempt(detail.Msg.GetSteps(), step)
 	if attempt == nil {

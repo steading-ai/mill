@@ -59,6 +59,18 @@ const (
 	// maxLine bounds one wire frame. A tool result is truncated by the
 	// sidecar long before this.
 	maxLine = 8 << 20
+
+	// stderrLimit is how much of the sidecar's standard error is kept. A
+	// sidecar that crashes writes its stack trace here and nowhere else, so
+	// the whole stream is kept rather than a line of it; the bound is what
+	// stops a sidecar that loops on a warning from growing the worker's
+	// memory without limit.
+	stderrLimit = 64 << 10
+
+	// messageLines is how many of stderr's last lines a failure with no
+	// terminal record carries as its message. One line of a Node crash is
+	// always `Node.js v24.x`; twenty is the stack that preceded it.
+	messageLines = 20
 )
 
 // Option configures an [Adapter].
@@ -267,6 +279,11 @@ type flight struct {
 	exited   chan struct{}
 	stopOnce sync.Once
 
+	// stderr is everything the sidecar wrote to its standard error, bounded
+	// to the last [stderrLimit] bytes. It is written by one goroutine and
+	// read once the process has exited, and holds its own lock.
+	stderr tail
+
 	mu       sync.Mutex
 	reason   harness.ExitReason
 	terminal *harness.Terminal
@@ -346,17 +363,12 @@ func (s *flight) deliver(response *harnessv1.Response) {
 	}
 }
 
-// readStderr keeps the last non-empty line the sidecar wrote to its standard
-// error. It is what a refusal has to say for itself when the process died
-// before writing a terminal record.
+// readStderr keeps everything the sidecar wrote to its standard error, less
+// whatever the bound dropped off the front. It is what a refusal has to say
+// for itself when the process died before writing a terminal record, and it
+// is the crash's stack trace when the crash was a crash.
 func (s *flight) readStderr() {
-	scanner := bufio.NewScanner(s.process.Stderr)
-	scanner.Buffer(make([]byte, 0, 4096), maxLine)
-	for scanner.Scan() {
-		if line := strings.TrimSpace(scanner.Text()); line != "" {
-			s.note(line)
-		}
-	}
+	_, _ = io.Copy(&s.stderr, s.process.Stderr)
 }
 
 // accumulate sums what a turn billed. The terminal record's own total is
@@ -400,11 +412,17 @@ func (s *flight) resolve(result workspace.Result) *harness.Terminal {
 		if s.reason != harness.ReasonNone && s.terminal.Exit.NeverRan() {
 			s.terminal.Exit.Reason = s.reason
 		}
+		// A session that ended cleanly has nothing to explain, and its
+		// stderr is the sidecar's own chatter. A refusal has everything to
+		// explain, so what the sidecar wrote goes with the record.
+		if s.terminal.Exit.NeverRan() || s.terminal.Exit.Status != 0 {
+			s.terminal.Diagnostics = s.stderr.String()
+		}
 		return s.terminal
 	}
 
 	reason := s.reason
-	message := s.lastErr
+	message := words(s.stderr.lines(messageLines), s.lastErr)
 	if reason == harness.ReasonNone {
 		reason = harness.ReasonRefused
 		if message == "" {
@@ -421,6 +439,7 @@ func (s *flight) resolve(result workspace.Result) *harness.Terminal {
 	return &harness.Terminal{
 		RequestID:    s.requestID,
 		FinalMessage: message,
+		Diagnostics:  s.stderr.String(),
 		Usage:        s.streamed,
 		Exit: harness.ProcessExit{
 			Status: -1,
@@ -428,6 +447,77 @@ func (s *flight) resolve(result workspace.Result) *harness.Terminal {
 			Reason: reason,
 		},
 	}
+}
+
+// words is what a failure with no terminal record says for itself: the tail
+// of the sidecar's standard error, or — when it wrote none — the adapter's
+// own note about what happened on the wire.
+//
+// Stderr wins because it is the cause and the note is usually the symptom. A
+// sidecar that throws on startup dies before reading its request, so the
+// note is "the sidecar did not read its request: broken pipe" while the
+// stack trace that explains it is on stderr. Nothing is lost either way: the
+// whole stream reaches the step's log.
+func words(stderr, note string) string {
+	if stderr != "" {
+		return stderr
+	}
+	return note
+}
+
+// tail is an [io.Writer] keeping the last [stderrLimit] bytes written to it.
+// It is what "the sidecar's whole stderr, bounded" means: a stream longer
+// than the bound loses its beginning, because a crash's last words are at
+// the end.
+type tail struct {
+	mu   sync.Mutex
+	buf  []byte
+	over bool
+}
+
+func (t *tail) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.buf = append(t.buf, p...)
+	if len(t.buf) > stderrLimit {
+		t.buf = t.buf[len(t.buf)-stderrLimit:]
+		t.over = true
+	}
+	return len(p), nil
+}
+
+// String is what was kept, with a marker when the bound dropped anything, so
+// a reader is not left thinking a stack trace began where it was cut.
+func (t *tail) String() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(t.buf) == 0 {
+		return ""
+	}
+	if t.over {
+		return fmt.Sprintf("[…the first bytes of stderr were dropped; the last %d are kept]\n%s",
+			stderrLimit, t.buf)
+	}
+	return string(t.buf)
+}
+
+// lines is the last n non-empty lines kept, newest last: the message a
+// terminal-less failure carries.
+func (t *tail) lines(n int) string {
+	t.mu.Lock()
+	kept := string(t.buf)
+	t.mu.Unlock()
+
+	var out []string
+	for _, line := range strings.Split(kept, "\n") {
+		if line = strings.TrimRight(line, "\r"); strings.TrimSpace(line) != "" {
+			out = append(out, line)
+		}
+	}
+	if len(out) > n {
+		out = out[len(out)-n:]
+	}
+	return strings.Join(out, "\n")
 }
 
 // stop is interrupt, grace, kill. It returns as soon as the interrupt is

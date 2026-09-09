@@ -18,6 +18,7 @@ import (
 	"github.com/ivy/mill/internal/server"
 	"github.com/ivy/mill/internal/server/interceptor"
 	"github.com/ivy/mill/internal/version"
+	"github.com/ivy/mill/internal/workspace/socket"
 )
 
 // databaseURLEnv is the variable the service reads its connection string
@@ -95,6 +96,12 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 		if err := applyConfig(cmd, &opts.worker, &opts.socket); err != nil {
 			return err
 		}
+	}
+	// Before the migrations, the pool and the bind: a socket path the
+	// kernel cannot hold fails as "bind: invalid argument", and by then the
+	// schema has been migrated for a service that will not start.
+	if err := socket.CheckPath(opts.socket); err != nil {
+		return fmt.Errorf("mill serve: --socket: %w", err)
 	}
 	if opts.databaseURL == "" {
 		return fmt.Errorf("mill serve: a database URL is required; pass --database-url or set %s", databaseURLEnv)

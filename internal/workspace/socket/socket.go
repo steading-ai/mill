@@ -188,6 +188,11 @@ func (s *Server) Listen(path string) error {
 	if s.listener != nil {
 		return fmt.Errorf("socket: already listening on %s", s.path)
 	}
+	// Before the directory is made and before bind: a path the kernel
+	// cannot hold fails as "invalid argument", which names nothing.
+	if err := CheckPath(path); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("socket: create %s: %w", filepath.Dir(path), err)
 	}

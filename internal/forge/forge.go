@@ -68,28 +68,27 @@ const (
 // Project is a dagger project as the forge needs it: a name for errors, and
 // somewhere to find the repository it delivers to.
 //
-// dagger's project model carries no VCS URL field (dagger's
-// docs/domain-model.md §Project), so O0 reads it from a `vcs_url` label and
-// the field is filed against dagger (docs/roadmap.md, the deferred table).
-// VCSURL is here for the day the field exists; Labels is what is read today.
+// dagger's project model carries neither a VCS URL field nor labels of its
+// own (dagger's docs/domain-model.md §Project), so there is one source for
+// the repository — what the operator passed the run — and VCSURL is it. The
+// field on dagger's project model is filed as dagger#23; until it lands,
+// [VCSURLFlag] and [VCSURLEnv] are what an error tells an operator to set.
 type Project struct {
 	// Slug is the dagger project, named in every error this package raises.
 	Slug string
-	// VCSURL is the repository URL when dagger carries one. Empty until it
-	// does.
+	// VCSURL is the repository the project delivers to.
 	VCSURL string
-	// Labels are the project's labels. `vcs_url` is read when VCSURL is
-	// empty, and `forge_kind` overrides the kind inferred from the host.
-	Labels map[string]string
 }
 
-// Label names read off a dagger project. Both disappear when dagger's project
-// model carries the fields itself.
+// Where a repository URL comes from today, named in the error a project with
+// none raises. They are here rather than in the CLI because this package is
+// what refuses, and a refusal that cannot say what to set is a bug report
+// nobody can act on.
 const (
-	// VCSURLLabel is where a project's repository URL is read from.
-	VCSURLLabel = "vcs_url"
-	// ForgeKindLabel names the forge when the host does not give it away.
-	ForgeKindLabel = "forge_kind"
+	// VCSURLFlag is the flag `mill run` and `mill work` take it on.
+	VCSURLFlag = "--vcs-url"
+	// VCSURLEnv is the variable they read when the flag is absent.
+	VCSURLEnv = "MILL_VCS_URL"
 )
 
 // Repo is one repository on one forge: enough to reach its API and to push to
@@ -274,7 +273,9 @@ type NoVCSURLError struct {
 }
 
 func (e *NoVCSURLError) Error() string {
-	return fmt.Sprintf("forge: project %s has no VCS URL: set a %s label on it", e.Project, VCSURLLabel)
+	return fmt.Sprintf("forge: project %s has no repository: pass %s or set %s; "+
+		"dagger's project model has no repository field yet (dagger#23)",
+		e.Project, VCSURLFlag, VCSURLEnv)
 }
 
 // UnsupportedError is a repository on a forge the mill has no adapter for.
@@ -396,23 +397,16 @@ func (r *Registry) For(project Project, minter Minter) (Forge, error) {
 	return factory(repo, minter)
 }
 
-// RepoFor resolves the repository a dagger project delivers to, from the
-// project's VCS URL or, until dagger's project model carries one, from its
-// `vcs_url` label.
+// RepoFor resolves the repository a dagger project delivers to, which is the
+// URL the run was given and nothing else.
 func RepoFor(project Project) (Repo, error) {
 	raw := strings.TrimSpace(project.VCSURL)
-	if raw == "" {
-		raw = strings.TrimSpace(project.Labels[VCSURLLabel])
-	}
 	if raw == "" {
 		return Repo{}, &NoVCSURLError{Project: project.Slug}
 	}
 	repo, err := ParseRepo(raw)
 	if err != nil {
 		return Repo{}, fmt.Errorf("forge: project %s: %w", project.Slug, err)
-	}
-	if kind := strings.TrimSpace(project.Labels[ForgeKindLabel]); kind != "" {
-		repo.Kind = Kind(kind)
 	}
 	return repo, nil
 }
@@ -464,9 +458,8 @@ func splitRepo(raw string) (host, path string, err error) {
 }
 
 // kindOfHost guesses the forge from its host, which is right for the two
-// forges that exist and overridable by the `forge_kind` label for anything
-// else. A self-hosted GitLab has no name the mill could recognise, so GitLab
-// is the default rather than the exception.
+// forges that exist. A self-hosted GitLab has no name the mill could
+// recognise, so GitLab is the default rather than the exception.
 func kindOfHost(host string) Kind {
 	name := host
 	if index := strings.IndexByte(name, ':'); index >= 0 {

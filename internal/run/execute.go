@@ -66,7 +66,7 @@ func (r *Runner) execute(ctx context.Context, s *state, step *millv1.Step, sr *m
 		}
 		return r.runSkill(stepCtx, s, step, sr, detail, token, feedback, "")
 	case millv1.StepKind_STEP_KIND_CHECK:
-		return r.runCheck(stepCtx, s, step)
+		return r.runCheck(stepCtx, s, step, sr)
 	case millv1.StepKind_STEP_KIND_GATE:
 		return r.runGate(stepCtx, s, step, sr, detail)
 	default:
@@ -170,6 +170,11 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 		_ = adapter.Cancel(s.processContext(), session)
 		return result{}, err
 	}
+
+	// What the harness's own process had to say when it refused or crashed.
+	// A sidecar that died before writing a terminal record left its stack
+	// trace on its standard error, and this is the only place it is kept.
+	logDiagnostics(logFile, r.options.Redactor, r.options.Now, terminal.Diagnostics)
 
 	out := result{
 		session: evidence.Session{
@@ -373,8 +378,14 @@ func (r *Runner) commitAlreadyMade(ctx context.Context, s *state, step *millv1.S
 	return head, nil
 }
 
-// runCheck runs a check step through the workspace's chokepoint.
-func (r *Runner) runCheck(ctx context.Context, s *state, step *millv1.Step) (result, error) {
+// runCheck runs a check step through the workspace's chokepoint, and writes
+// what the command said to the attempt's log.
+//
+// A check is a step run like any other, so `mill logs <run> --step
+// clean-tree` has to answer with something: what the command wrote is the
+// whole of what a check produces, and an operator asked to explain a failed
+// check has nowhere else to read it.
+func (r *Runner) runCheck(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun) (result, error) {
 	res, err := check.Run(ctx, s.workspace, check.Request{
 		Name:        step.GetName(),
 		Check:       step.GetCheck(),
@@ -383,6 +394,8 @@ func (r *Runner) runCheck(ctx context.Context, s *state, step *millv1.Step) (res
 	if err != nil {
 		return result{}, err
 	}
+	logCheck(r.options.LogDir, s.run.GetId(), step.GetName(), sr.GetAttempt(),
+		r.options.Redactor, r.options.Now, res)
 	out := result{exit: res.Exit, stderr: strings.TrimRight(res.Stderr, "\n")}
 	if !res.Passed {
 		out.feedback = check.Feedback(step.GetCheck(), res)

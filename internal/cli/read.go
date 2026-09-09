@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -79,11 +81,47 @@ type readOptions struct {
 // target names the run a tool was asked about. A reference carrying a `#` is
 // a dagger node's display key; anything else is the run's own id, which is
 // what `mill status` prints.
+//
+// A node reference resolves to that node's most recent run in the ledger —
+// the highest generation, which is the run a restart left in place — so
+// `mill logs mill#18` answers about the node an operator has in front of
+// them without their having to look a run id up first.
 func target(reference string) *millv1.InspectRequest {
 	if strings.Contains(reference, "#") {
 		return &millv1.InspectRequest{NodeRef: reference}
 	}
 	return &millv1.InspectRequest{Id: reference}
+}
+
+// isNodeRef reports whether a reference is a dagger node's rather than a
+// run's.
+func isNodeRef(reference string) bool { return strings.Contains(reference, "#") }
+
+// inspected is one run as the read tools ask for it, with the ledger's
+// not-found turned into the sentence the operator needs.
+//
+// The store answers a reference it holds no run for with a not-found, whose
+// wire message is about a row. What an operator asked was about a node, and
+// "the node has no run" is a different fact from "there is no such node":
+// the mill's ledger only ever knows the first, so that is what it says.
+func inspected(ctx context.Context, store millv1connect.StoreServiceClient, tool, reference string) (*millv1.InspectResponse, error) {
+	res, err := store.Inspect(ctx, connect.NewRequest(target(reference)))
+	if err != nil {
+		return nil, fmt.Errorf("%s %s: %w", tool, reference, noRun(reference, err))
+	}
+	return res.Msg, nil
+}
+
+// noRun replaces a not-found with what it means for the reference asked
+// about, and leaves every other failure alone.
+func noRun(reference string, err error) error {
+	if connect.CodeOf(err) != connect.CodeNotFound {
+		return err
+	}
+	if isNodeRef(reference) {
+		return fmt.Errorf("the ledger holds no run for node %s: the mill has never worked it", reference)
+	}
+	return fmt.Errorf("the ledger holds no run with id %s", reference)
 }
 
 // Status.
@@ -198,11 +236,11 @@ func runInspect(cmd *cobra.Command, opts readOptions, reference string) error {
 	if err != nil {
 		return err
 	}
-	res, err := storeClient(opts.socket).Inspect(cmd.Context(), connect.NewRequest(target(reference)))
+	detail, err := inspected(cmd.Context(), storeClient(opts.socket), "inspect", reference)
 	if err != nil {
-		return fmt.Errorf("inspect %s: %w", reference, err)
+		return err
 	}
-	return renderInspect(cmd, res.Msg, v)
+	return renderInspect(cmd, detail, v)
 }
 
 // renderInspect prints a run's header and one row per attempt. Every closed
@@ -388,11 +426,10 @@ type gates func(ctx context.Context, nodeRef, runID, gateNodeID string) (referen
 
 // explain builds the explanation both faces render.
 func explain(ctx context.Context, store millv1connect.StoreServiceClient, gate gates, reference string) (*Explanation, error) {
-	res, err := store.Inspect(ctx, connect.NewRequest(target(reference)))
+	detail, err := inspected(ctx, store, "explain", reference)
 	if err != nil {
-		return nil, fmt.Errorf("explain %s: %w", reference, err)
+		return nil, err
 	}
-	detail := res.Msg
 	run := detail.GetSummary().GetRun()
 	explanation := &Explanation{
 		Node:         run.GetNodeRef(),
@@ -485,7 +522,7 @@ func runHistory(cmd *cobra.Command, opts readOptions, reference string) error {
 		Id: asked.GetId(), NodeRef: asked.GetNodeRef(),
 	}))
 	if err != nil {
-		return fmt.Errorf("history %s: %w", reference, err)
+		return fmt.Errorf("history %s: %w", reference, noRun(reference, err))
 	}
 	w := table(cmd)
 	if v == viewFull {
@@ -543,6 +580,7 @@ func runCost(cmd *cobra.Command, opts readOptions) error {
 		return fmt.Errorf("cost: %w", err)
 	}
 	out := cmd.OutOrStdout()
+	fillByModel(res.Msg)
 	for i, section := range []struct {
 		title   string
 		buckets []*millv1.CostBucket
@@ -568,6 +606,44 @@ func runCost(cmd *cobra.Command, opts readOptions) error {
 		}
 	}
 	return nil
+}
+
+// fillByModel derives the MODEL section from the rows the STEP section
+// renders, and returns the response for chaining.
+//
+// The four sections are one pass over the same usage rows, so every model
+// that billed anything billed it under some step, and each step's bucket
+// already carries its totals per model. Summing them here is what makes the
+// two tables agree by construction: a MODEL section with headers and no rows
+// under a STEP section with rows is a contradiction an operator has to spend
+// a command discovering, and there is nothing the by-model rollup knows that
+// the by-step one does not.
+func fillByModel(cost *millv1.CostResponse) *millv1.CostResponse {
+	if cost == nil {
+		return cost
+	}
+	totals := map[string]*millv1.ModelTotals{}
+	for _, bucket := range cost.GetByStep() {
+		for _, model := range bucket.GetTotals() {
+			running, seen := totals[model.GetModel()]
+			if !seen {
+				running = &millv1.ModelTotals{Model: model.GetModel()}
+				totals[model.GetModel()] = running
+			}
+			running.InputTokens += model.GetInputTokens()
+			running.OutputTokens += model.GetOutputTokens()
+			running.CacheReadTokens += model.GetCacheReadTokens()
+			running.CacheWriteTokens += model.GetCacheWriteTokens()
+		}
+	}
+	cost.ByModel = make([]*millv1.CostBucket, 0, len(totals))
+	for _, model := range slices.Sorted(maps.Keys(totals)) {
+		cost.ByModel = append(cost.ByModel, &millv1.CostBucket{
+			Key:    model,
+			Totals: []*millv1.ModelTotals{totals[model]},
+		})
+	}
+	return cost
 }
 
 // parseWindow reads a --since window. Go's duration syntax, plus `d` for a

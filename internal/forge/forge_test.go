@@ -42,10 +42,10 @@ var _ = Describe("The forge registry", Label("unit"), func() {
 		})
 	})
 
-	It("resolves a project's repository from the vcs_url label dagger carries today", func() {
+	It("resolves a project's repository from the URL the run was given", func() {
 		resolved, err := registry.For(forge.Project{
 			Slug:   "mill",
-			Labels: map[string]string{forge.VCSURLLabel: "https://gitlab.example.test/group/thing.git"},
+			VCSURL: "https://gitlab.example.test/group/thing.git",
 		}, nil)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -63,7 +63,13 @@ var _ = Describe("The forge registry", Label("unit"), func() {
 		Expect(errors.As(err, &missing)).To(BeTrue(), "%v", err)
 		Expect(missing.Project).To(Equal("mill"))
 		Expect(err.Error()).To(ContainSubstring("mill"))
-		Expect(err.Error()).To(ContainSubstring(forge.VCSURLLabel))
+		// The one source there is, named: dagger's project model carries
+		// no repository field yet (dagger#23), so there is no label to
+		// point an operator at.
+		Expect(err.Error()).To(ContainSubstring(forge.VCSURLFlag))
+		Expect(err.Error()).To(ContainSubstring(forge.VCSURLEnv))
+		Expect(err.Error()).To(ContainSubstring("dagger#23"))
+		Expect(err.Error()).NotTo(ContainSubstring("label"))
 		Expect(forge.Retryable(err)).To(BeFalse(), "no number of attempts adds a URL to the project")
 	})
 
@@ -105,16 +111,16 @@ var _ = Describe("The forge registry", Label("unit"), func() {
 		}),
 	)
 
-	It("lets a project name its forge when the host does not give it away", func() {
+	// A self-hosted forge is a GitLab until mill has another adapter: the
+	// kind follows the host, and there is nothing on a dagger project to
+	// override it with.
+	It("takes a self-hosted host for a GitLab", func() {
 		repo, err := forge.RepoFor(forge.Project{
-			Slug: "mill",
-			Labels: map[string]string{
-				forge.VCSURLLabel:    "https://code.example.test/group/thing.git",
-				forge.ForgeKindLabel: string(forge.KindGitHub),
-			},
+			Slug:   "mill",
+			VCSURL: "https://code.example.test/group/thing.git",
 		})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(repo.Kind).To(Equal(forge.KindGitHub))
+		Expect(repo.Kind).To(Equal(forge.KindGitLab))
 	})
 })
 

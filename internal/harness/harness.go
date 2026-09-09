@@ -257,6 +257,14 @@ type Terminal struct {
 	// when the step declared one. Nil otherwise, and nil when parsing
 	// failed — Exit says so.
 	StructuredOutput map[string]any
+	// Diagnostics is what the harness's own process wrote to its standard
+	// error, when the session refused or crashed. It is the harness's, not
+	// the session's: a sidecar that died before it could write a terminal
+	// record left its stack trace here and nowhere else, and the step's log
+	// is where an operator goes looking for it
+	// (docs/architecture.md §"Failure and stop"). Empty for a session that
+	// ended cleanly.
+	Diagnostics string
 	// Usage is what the whole session cost, per model. The harness's own
 	// total, not a running sum of the usage events.
 	Usage Usage

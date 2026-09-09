@@ -3,6 +3,7 @@ package claude
 import (
 	"context"
 	"os"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -172,6 +173,58 @@ exit 1
 		Expect(err).NotTo(HaveOccurred())
 		Expect(terminal.Exit).To(Equal(harness.ProcessExit{Status: -1, Reason: harness.ReasonRefused}))
 		Expect(terminal.FinalMessage).To(Equal("sidecar: cannot reach the workspace socket"))
+	})
+
+	// A Node crash's last line is always its version, so a diagnostic that
+	// kept one line kept the least useful one. The whole stream is kept for
+	// the step's log, and the message is the tail of it.
+	It("keeps a crashed sidecar's whole stderr, and says its last lines", func() {
+		script := stub(`
+i=1
+while [ $i -le 40 ]; do echo "    at frame$i (main.js:$i:1)" >&2; i=$((i+1)); done
+echo "Node.js v24.4.1" >&2
+exit 1
+`)
+
+		turn, err := adapter(script).Start(lifetime, session, harness.Prompt{Text: "implement"}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		terminal, err := turn.Wait(lifetime)
+		Expect(err).NotTo(HaveOccurred())
+
+		// The message is the last twenty lines: the version line, and the
+		// nineteen frames before it.
+		lines := strings.Split(terminal.FinalMessage, "\n")
+		Expect(lines).To(HaveLen(20))
+		Expect(lines[len(lines)-1]).To(Equal("Node.js v24.4.1"))
+		Expect(lines[0]).To(Equal("    at frame22 (main.js:22:1)"))
+
+		// The diagnostics are all of it, which is what reaches the step's
+		// log file.
+		Expect(terminal.Diagnostics).To(ContainSubstring("at frame1 (main.js:1:1)"))
+		Expect(terminal.Diagnostics).To(ContainSubstring("at frame40 (main.js:40:1)"))
+	})
+
+	It("bounds what it keeps at 64 KiB, and says the front was dropped", func() {
+		// Two hundred thousand bytes of it: more than the bound, in lines
+		// long enough that the count is not the interesting part.
+		script := stub(`
+i=1
+while [ $i -le 2000 ]; do
+  printf 'line %04d %s\n' "$i" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" >&2
+  i=$((i+1))
+done
+exit 1
+`)
+
+		turn, err := adapter(script).Start(lifetime, session, harness.Prompt{Text: "implement"}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		terminal, err := turn.Wait(lifetime)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(len(terminal.Diagnostics)).To(BeNumerically("<", 70<<10))
+		Expect(terminal.Diagnostics).To(ContainSubstring("were dropped"))
+		Expect(terminal.Diagnostics).To(ContainSubstring("line 2000"))
+		Expect(terminal.Diagnostics).NotTo(ContainSubstring("line 0001"))
 	})
 
 	// What the child's environment is made of is environment_test.go: it is

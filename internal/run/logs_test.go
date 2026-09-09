@@ -10,7 +10,9 @@ import (
 	. "github.com/onsi/gomega"
 
 	harnessv1 "github.com/ivy/mill/gen/harness/v1"
+	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/harness"
+	"github.com/ivy/mill/internal/harness/claude"
 	"github.com/ivy/mill/internal/harness/fake"
 	"github.com/ivy/mill/internal/run"
 	"github.com/ivy/mill/internal/testsupport"
@@ -59,7 +61,110 @@ var _ = Describe("The step log", Label(testsupport.DBLabel), func() {
 		Expect(string(raw)).To(ContainSubstring("result call=call-1"))
 		Expect(string(raw)).NotTo(ContainSubstring(secret))
 	})
+
+	// Scenario: A crashed sidecar explains itself
+	//   Given a sidecar entrypoint that throws before reading its request
+	//   When a skill step runs
+	//   Then the step run is failed
+	//   And its log file contains the thrown error's stack
+	//
+	// A sidecar that dies before its terminal record leaves nothing on the
+	// wire, so its standard error is the only account of what happened. The
+	// last line of a Node crash is always `Node.js v24.x`, which is why the
+	// whole of it is kept and written here.
+	It("A crashed sidecar explains itself", func() {
+		By("given a sidecar entrypoint that throws before reading its request")
+		f.node(ctx, "a step whose sidecar crashes", "This one never gets a session.")
+		logDir := filepath.Join(GinkgoT().TempDir(), "logs")
+		adapter := claude.New(
+			claude.WithEntrypoint("/bin/sh", crashingSidecar()),
+			claude.WithGrace(time.Second))
+
+		By("when a skill step runs")
+		Expect(f.runner(withHarness(adapter), func(o *run.Options) { o.LogDir = logDir }).
+			Execute(ctx, f.nodeRef)).To(Succeed())
+
+		By("then the step run is failed")
+		attempts := stepRuns(f.inspect(ctx), "gather-context")
+		Expect(attempts).NotTo(BeEmpty())
+		for _, attempt := range attempts {
+			Expect(attempt.GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_FAILED))
+		}
+
+		By("and its log file contains the thrown error's stack")
+		raw, err := os.ReadFile(run.StepLogPath(logDir, f.runOf(ctx).GetId(), "gather-context", 1))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(raw)).To(ContainSubstring("Error: the sidecar could not start"))
+		Expect(string(raw)).To(ContainSubstring("at Object.<anonymous>"))
+		Expect(string(raw)).To(ContainSubstring("at Module._compile"))
+
+		// And what the failure said for itself is the same stack, not the
+		// one line that follows it.
+		body := f.theGate(ctx).GetBody()
+		Expect(body).To(ContainSubstring("Error: the sidecar could not start"))
+		Expect(body).To(ContainSubstring("at Object.<anonymous>"))
+	})
+
+	// A check has no session and so no events, and before this it wrote no
+	// log at all: `mill logs <run> --step clean-tree` answered "no log" for
+	// a step that had certainly run and certainly failed.
+	It("writes a failed check's stderr to the attempt's log", func() {
+		f.node(ctx, "a failing check", "This one leaves the tree dirty.")
+		logDir := filepath.Join(GinkgoT().TempDir(), "logs")
+		workflow := f.variant(ctx, "logged-check-fix", func(definition *millv1.Workflow) {
+			check := stepOf(definition, "clean-tree").GetCheck()
+			check.Command = []string{
+				"sh", "-c", "echo 'the tree is dirty: README.md' >&2; echo 'M README.md'; exit 1",
+			}
+			// Both streams reach the log, so the contract keeps stdout: a
+			// `none` contract drops it before the runner sees it.
+			check.Stdout = millv1.StdoutShape_STDOUT_SHAPE_TEXT
+		})
+		f.script(
+			fake.Script{Terminal: fake.Terminal("context gathered", nil, usage(10)), Do: f.commits},
+			fake.Script{Terminal: fake.Terminal("the change is made", nil, usage(20)), Do: f.commits},
+			fake.Script{Terminal: fake.Terminal("committed", nil, usage(5)), Do: f.commits},
+			fake.Script{Terminal: fake.Terminal("the change is made again", nil, usage(20)), Do: f.commits},
+			fake.Script{Terminal: fake.Terminal("committed again", nil, usage(5)), Do: f.commits},
+		)
+
+		Expect(f.runner(withHarness(f.harness),
+			func(o *run.Options) { o.Workflow = workflow; o.LogDir = logDir }).
+			Execute(ctx, f.nodeRef)).To(Succeed())
+
+		raw, err := os.ReadFile(run.StepLogPath(logDir, f.runOf(ctx).GetId(), "clean-tree", 1))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(raw)).To(ContainSubstring("the tree is dirty: README.md"))
+		Expect(string(raw)).To(ContainSubstring("M README.md"))
+		Expect(string(raw)).To(ContainSubstring("check clean-tree exit status=1"))
+	})
 })
+
+// crashingSidecar is a sidecar entrypoint that throws before it reads its
+// request: a shell script writing what a Node crash writes — the stack, then
+// the version line that is all a one-line diagnostic would have kept — and
+// exiting non-zero. A real node is not needed to specify what the adapter
+// does with a process that dies talking to nobody.
+func crashingSidecar() string {
+	GinkgoHelper()
+	path := filepath.Join(GinkgoT().TempDir(), "crash.sh")
+	Expect(os.WriteFile(path, []byte(`#!/bin/sh
+cat >&2 <<'EOT'
+/opt/mill/sidecar/dist/main.js:42
+    throw new Error('the sidecar could not start');
+    ^
+
+Error: the sidecar could not start
+    at Object.<anonymous> (/opt/mill/sidecar/dist/main.js:42:11)
+    at Module._compile (node:internal/modules/cjs/loader:1234:14)
+    at Module._load (node:internal/modules/cjs/loader:1023:12)
+
+Node.js v24.4.1
+EOT
+exit 1
+`), 0o700)).To(Succeed())
+	return path
+}
 
 // toolResult is one tool's answer on the wire. The fake harness builds the
 // other event shapes; this one it does not.

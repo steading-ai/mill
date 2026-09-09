@@ -39,6 +39,22 @@ const (
 	signingDir  = "signing"
 )
 
+// runIDLen is how long the run id in a workspace's path is: the store mints
+// run ids as canonical ULIDs, which are 26 characters. It is here so
+// [CheckRoot] can answer before a run exists to be named.
+const runIDLen = 26
+
+// CheckRoot reports whether a run's workspace socket under root could be
+// bound, as a *[socket.PathTooLongError] when it could not.
+//
+// It is asked before a node is claimed. The socket's path is derived from the
+// root and the run's id, so a root that is too long by one byte takes a
+// claim, a lease, a clone and a session before failing on the bind — which is
+// the failure this exists to move earlier.
+func CheckRoot(root string) error {
+	return socket.CheckPath(filepath.Join(root, strings.Repeat("0", runIDLen), socketName))
+}
+
 // ErrNotCreated is a verb called before Create or Attach.
 var ErrNotCreated = errors.New("workspace: not created")
 
@@ -137,6 +153,11 @@ func (w *Workspace) Create(ctx context.Context, spec workspace.Spec) (*workspace
 	}
 	if origin == "" {
 		return nil, errors.New("workspace: no origin to clone")
+	}
+	// Before the clone: a socket that cannot be bound is a workspace that
+	// cannot serve, and finding that out after a clone costs the clone.
+	if err := socket.CheckPath(filepath.Join(w.dirFor(spec.RunID), socketName)); err != nil {
+		return nil, err
 	}
 	if err := os.MkdirAll(w.options.Root, 0o700); err != nil {
 		return nil, fmt.Errorf("workspace: create %s: %w", w.options.Root, err)

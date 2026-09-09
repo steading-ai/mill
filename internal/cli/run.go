@@ -55,7 +55,9 @@ const defaultDaggerSocket = "/run/dagger/dg.sock"
 const (
 	forgeTokenEnv = "MILL_FORGE_TOKEN" //nolint:gosec // the name of a variable, not a credential
 	forgeUserEnv  = "MILL_FORGE_USER"
-	vcsURLEnv     = "MILL_VCS_URL"
+	// The forge names this one, because the forge is what refuses a project
+	// with no repository and its refusal has to say where a URL comes from.
+	vcsURLEnv = forge.VCSURLEnv
 )
 
 // sidecarEnv names the harness sidecar's entrypoint. The adapter's default
@@ -316,6 +318,13 @@ func execute(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 // `mill run` names the node it was given; a worker has none to name, because
 // the node is not known until the claim it is an argument to has returned.
 func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, answers run.Answerer) (*run.Runner, error) {
+	// The first thing, because it is the cheapest thing that can be wrong
+	// and the most expensive to find out late: a workspace directory whose
+	// run socket the kernel cannot bind fails on the bind, after the node
+	// has been claimed and cloned (internal/workspace/socket/path.go).
+	if err := local.CheckRoot(opts.workspaceDir); err != nil {
+		return nil, fmt.Errorf("mill run: --workspace-dir: %w", err)
+	}
 	worker, err := workerRef()
 	if err != nil {
 		return nil, err

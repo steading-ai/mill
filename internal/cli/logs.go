@@ -56,22 +56,22 @@ summary line per tool result is.`,
 
 func runLogs(cmd *cobra.Command, opts readOptions, reference string) error {
 	store := storeClient(opts.socket)
-	detail, err := store.Inspect(cmd.Context(), connect.NewRequest(target(reference)))
+	detail, err := inspected(cmd.Context(), store, "logs", reference)
 	if err != nil {
-		return fmt.Errorf("logs %s: %w", reference, err)
+		return err
 	}
 	step := opts.step
 	if step == "" {
-		step = detail.Msg.GetSummary().GetCurrentStep()
+		step = currentOrLastStep(detail)
 	}
 	if step == "" {
-		return fmt.Errorf("logs %s: the run is on no step; name one with --step", reference)
+		return fmt.Errorf("logs %s: the run has attempted no step; there is nothing to read", reference)
 	}
-	attempt := latestAttempt(detail.Msg.GetSteps(), step)
+	attempt := latestAttempt(detail.GetSteps(), step)
 	if attempt == nil {
 		return fmt.Errorf("logs %s: no attempt at step %q has been made", reference, step)
 	}
-	runID := detail.Msg.GetSummary().GetRun().GetId()
+	runID := detail.GetSummary().GetRun().GetId()
 	path := run.StepLogPath(opts.logDir, runID, step, attempt.GetStepRun().GetAttempt())
 
 	file, err := os.Open(path) //nolint:gosec // the path is built from the ledger's own ids
@@ -89,6 +89,24 @@ func runLogs(cmd *cobra.Command, opts readOptions, reference string) error {
 		return err
 	}
 	return follow(cmd.Context(), cmd.OutOrStdout(), file, store, attempt.GetStepRun().GetId(), runID)
+}
+
+// currentOrLastStep is the step this tool reads with no --step: the step the
+// run is on, or — for a run that has ended, and so is on none — the last step
+// it attempted.
+//
+// A run that finished is exactly the run whose logs somebody wants: the
+// alternative is answering "the run is on no step" to a question about the
+// only run the node has, which is a tool refusing to read a file it can name.
+func currentOrLastStep(detail *millv1.InspectResponse) string {
+	if current := detail.GetSummary().GetCurrentStep(); current != "" {
+		return current
+	}
+	steps := detail.GetSteps()
+	if len(steps) == 0 {
+		return ""
+	}
+	return steps[len(steps)-1].GetStepRun().GetStepName()
 }
 
 // follow tails the log until the attempt leaves running.

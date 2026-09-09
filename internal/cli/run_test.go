@@ -3,6 +3,8 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"path/filepath"
+	"strconv"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -11,6 +13,7 @@ import (
 	"github.com/ivy/mill/internal/cli"
 	"github.com/ivy/mill/internal/run"
 	"github.com/ivy/mill/internal/testsupport"
+	"github.com/ivy/mill/internal/workspace/socket"
 )
 
 var _ = Describe("mill run", func() {
@@ -156,6 +159,99 @@ var _ = Describe("mill run", func() {
 			Expect(invoke("--skill-override", "implement="+GinkgoT().TempDir())).NotTo(BeZero())
 			Expect(stderr.String()).NotTo(ContainSubstring("test seam"))
 			Expect(stderr.String()).To(ContainSubstring("--skill-override implement="))
+		})
+	})
+
+	// Scenario: A socket path that cannot bind is refused before the claim
+	//   Given a workspace directory whose socket path would exceed the limit
+	//   When mill run is invoked for a ready node
+	//   Then it exits before claiming
+	//   And the message names the length and the limit
+	//
+	// The workspace socket lives under --workspace-dir, one directory per
+	// run, so the run id and the socket's own name are part of the path a
+	// claim will later try to bind. A directory that is short enough to
+	// create and too long to serve is the case an operator hit: the failure
+	// arrived as "bind: invalid argument", after the node was claimed and
+	// the repository cloned.
+	Describe("--workspace-dir", Label("unit"), func() {
+		var stdout, stderr bytes.Buffer
+
+		BeforeEach(func() {
+			stdout.Reset()
+			stderr.Reset()
+		})
+
+		It("A socket path that cannot bind is refused before the claim", func() {
+			By("given a workspace directory whose socket path would exceed the limit")
+			dir := filepath.Join(GinkgoT().TempDir(), strings.Repeat("w", socket.MaxPathLen))
+
+			By("when mill run is invoked for a ready node")
+			// Every socket named here is a path nothing listens on, so a
+			// command that reached the store, dagger or a lease would fail
+			// on one of them and say so.
+			exit := cli.Run([]string{
+				"run", "millspec#1",
+				"--project", "millspec",
+				"--workspace-dir", dir,
+				"--vcs-url", "https://gitlab.example.test/group/thing.git",
+				"--socket", "/nonexistent/mill.sock",
+				"--dagger-socket", "/nonexistent/dg.sock",
+			}, strings.NewReader(""), &stdout, &stderr)
+
+			By("then it exits before claiming")
+			Expect(exit).NotTo(BeZero())
+			Expect(stderr.String()).NotTo(ContainSubstring("nonexistent"),
+				"the refusal came before anything was read, claimed or leased")
+
+			By("and the message names the length and the limit")
+			Expect(stderr.String()).To(ContainSubstring("--workspace-dir"))
+			Expect(stderr.String()).To(ContainSubstring(strconv.Itoa(socket.MaxPathLen)))
+			// The path it would have bound, and how long that is.
+			Expect(stderr.String()).To(ContainSubstring(dir))
+			Expect(stderr.String()).To(MatchRegexp(`is \d+ bytes long`))
+			Expect(stderr.String()).NotTo(ContainSubstring("invalid argument"))
+		})
+
+		It("takes a workspace directory whose socket path fits", func() {
+			// The same command, with a directory short enough to serve
+			// from: past the check, it fails on the store it cannot reach,
+			// which is proof the check let it through.
+			exit := cli.Run([]string{
+				"run", "millspec#1",
+				"--project", "millspec",
+				"--workspace-dir", GinkgoT().TempDir(),
+				"--vcs-url", "https://gitlab.example.test/group/thing.git",
+				"--socket", "/nonexistent/mill.sock",
+				"--dagger-socket", "/nonexistent/dg.sock",
+			}, strings.NewReader(""), &stdout, &stderr)
+
+			Expect(exit).NotTo(BeZero())
+			Expect(stderr.String()).NotTo(ContainSubstring("bytes long"))
+		})
+	})
+
+	// The project a run delivers to comes from the flag or the variable and
+	// from nowhere else: dagger's project model carries neither a
+	// repository field nor labels (dagger#23), so a refusal that named a
+	// label sent an operator looking for something that cannot exist.
+	Describe("without a repository", Label("unit"), func() {
+		It("names the flag and the variable, and mentions no label", func() {
+			var stdout, stderr bytes.Buffer
+			GinkgoT().Setenv("MILL_VCS_URL", "")
+
+			exit := cli.Run([]string{
+				"run", "millspec#1",
+				"--project", "millspec",
+				"--socket", "/nonexistent/mill.sock",
+				"--dagger-socket", "/nonexistent/dg.sock",
+			}, strings.NewReader(""), &stdout, &stderr)
+
+			Expect(exit).NotTo(BeZero())
+			Expect(stderr.String()).To(ContainSubstring("--vcs-url"))
+			Expect(stderr.String()).To(ContainSubstring("MILL_VCS_URL"))
+			Expect(stderr.String()).To(ContainSubstring("dagger#23"))
+			Expect(stderr.String()).NotTo(ContainSubstring("label"))
 		})
 	})
 

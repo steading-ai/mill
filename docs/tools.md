@@ -34,7 +34,11 @@ Every tool takes `--socket`; the readers take `--view`.
 
 A run is named by its node reference — `mill#18` — or by the run id `status`
 prints. Anything carrying a `#` is a node reference; anything else is a run
-id.
+id. A node reference resolves to that node's most recent run in the ledger,
+so the reference an operator already has in front of them is enough; a
+reference the ledger holds no run for is told so — *the ledger holds no run
+for node mill#99: the mill has never worked it* — rather than answered with
+silence.
 
 ## Views
 
@@ -144,9 +148,10 @@ printed and nothing else is lost.
 The per-step-run log: the session's events, one summary line each, as the
 worker wrote them through the redactor
 ([architecture.md](architecture.md) §Observability). With no `--step` this is
-the step the run is on. `--follow` tails the file and returns when the
-attempt leaves `running`, so a session watching a step is told the step ended
-rather than guessing from silence.
+the step the run is on, or — for a run that has finished, and so is on
+none — the last step it attempted. `--follow` tails the file and returns when
+the attempt leaves `running`, so a session watching a step is told the step
+ended rather than guessing from silence.
 
 ```
 $ mill logs mill#18 --step implement --follow
@@ -160,6 +165,27 @@ The redaction happened at write time and there is no unredacted copy: a value
 a session registered with the workspace's `redact` verb was masked before it
 reached the file. Full tool output is never written; a summary line per
 result is.
+
+Every kind of step writes one. A **check** step has no session and no events,
+so its file is what its command wrote: the exit status, then stdout when the
+check's contract keeps it, then stderr — which is where a check says why it
+failed.
+
+```
+$ mill logs mill#18 --step clean-tree
+2026-09-08T16:11:02Z check clean-tree exit status=1
+2026-09-08T16:11:02Z check clean-tree stderr begin bytes=29
+the tree is dirty: README.md
+2026-09-08T16:11:02Z check clean-tree stderr end
+2026-09-08T16:11:02Z check clean-tree failed: exited 1
+```
+
+A **skill** step whose harness refused or crashed carries the harness's own
+standard error under a `harness stderr` banner — for the claude adapter, the
+sidecar's, bounded to the last 64 KiB. A sidecar that dies before writing its
+terminal record leaves its stack trace there and nowhere else, and the
+failure's own message is that stream's last twenty lines rather than the one
+line a crash ends on.
 
 Logs live under `--log-dir`, one file per attempt, defaulting to
 `$XDG_STATE_HOME/mill/logs`. A worker started without one keeps no logs and
@@ -204,6 +230,10 @@ implement  184213  9820    1204331     0
 MODEL              INPUT   OUTPUT  CACHE READ  CACHE WRITE
 claude-sonnet-4-5  184213  9820    1204331     0
 ```
+
+The MODEL table is summed from the rows the STEP table renders — every step's
+bucket carries its own totals per model — so the two tables agree by
+construction and one of them cannot come back empty under the other.
 
 ## workflow show
 
@@ -359,6 +389,33 @@ than ignored.
 `initialize` returns instructions telling a session what mill is, how a run is
 named, what the views mean, and that a gate is a person's to answer. Reading
 them is enough to use the rest.
+
+## When a tool cannot start
+
+Two of mill's paths bind a unix socket, and a unix socket path has a hard
+limit the kernel enforces: `sun_path` holds 108 bytes on Linux, including its
+terminator, so 107 is the longest path that can be bound. Over it, `bind`
+answers `invalid argument`, which names neither the path nor the length nor
+the limit.
+
+Both are checked before anything else happens, and the refusal names all
+three.
+
+| Path | Checked by | Before |
+|---|---|---|
+| `mill serve --socket` | `mill serve` | The migrations and the bind |
+| `<workspace-dir>/<run>/ws.sock` | `mill run`, `mill work` | The claim, the lease and the clone |
+
+```
+$ mill serve --socket /home/mill/a/very/long/path/.../mill.sock
+mill serve: --socket: socket: /home/mill/…/mill.sock is 121 bytes long, and a
+unix socket path can be at most 107 (the kernel's sun_path holds 108 bytes
+including its terminator): use a shorter path
+```
+
+The workspace one is the expensive one to find late: its path is derived from
+`--workspace-dir` and the run's id, so without the check it fails on the bind
+after the node has been claimed and its repository cloned.
 
 ## Not built yet
 
