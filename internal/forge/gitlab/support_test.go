@@ -2,6 +2,7 @@ package gitlab_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -42,11 +43,12 @@ type call struct {
 type stub struct {
 	server *httptest.Server
 
-	mu      sync.Mutex
-	routes  map[string]answer
-	seen    []call
-	minted  int
-	forStep []forge.Step
+	mu       sync.Mutex
+	routes   map[string]answer
+	handlers map[string]func(http.ResponseWriter, []byte)
+	seen     []call
+	minted   int
+	forStep  []forge.Step
 }
 
 type answer struct {
@@ -55,7 +57,7 @@ type answer struct {
 }
 
 func newStub() *stub {
-	s := &stub{routes: map[string]answer{}}
+	s := &stub{routes: map[string]answer{}, handlers: map[string]func(http.ResponseWriter, []byte){}}
 	s.server = httptest.NewServer(http.HandlerFunc(s.serve))
 	DeferCleanup(s.server.Close)
 	return s
@@ -81,8 +83,14 @@ func (s *stub) serve(w http.ResponseWriter, r *http.Request) {
 		Token:  r.Header.Get("PRIVATE-TOKEN"),
 	})
 	route, known := s.routes[key]
+	handler, handled := s.handlers[key]
 	s.mu.Unlock()
 
+	if handled {
+		w.Header().Set("Content-Type", "application/json")
+		handler(w, body)
+		return
+	}
 	if !known {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"message":"the spec recorded no route for ` + key + `"}`))
@@ -101,6 +109,35 @@ func (s *stub) on(method, path string, status int, fixture string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.routes[method+" "+path] = answer{status: status, body: body}
+}
+
+// onMerge answers a merge the way GitLab 19 does: the request must name the
+// commit it merges, and it must be the branch's head. A merge with no `sha`
+// is `400 SHA must be provided when merging`; one naming anything but head
+// is a 409, which is the forge saying the branch moved under the mill.
+func (s *stub) onMerge(path, head, fixture string) {
+	GinkgoHelper()
+	merged, err := os.ReadFile(filepath.Join("testdata", fixture))
+	Expect(err).NotTo(HaveOccurred())
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.handlers[http.MethodPut+" "+path] = func(w http.ResponseWriter, body []byte) {
+		var request struct {
+			SHA string `json:"sha"`
+		}
+		_ = json.Unmarshal(body, &request)
+		switch {
+		case request.SHA == "":
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"message":"SHA must be provided when merging"}`))
+		case request.SHA != head:
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"message":"SHA does not match HEAD of source branch"}`))
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(merged)
+		}
+	}
 }
 
 // calls is every request the stub received.

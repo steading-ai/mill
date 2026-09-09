@@ -7,13 +7,15 @@
 // `merge_commit_sha`. The mapping is this package's whole job: nothing
 // outside it says "merge request", and nothing inside it decides policy.
 //
-// Two GitLab facts shape the code. A project with no `.gitlab-ci.yml` has no
+// Three GitLab facts shape the code. A project with no `.gitlab-ci.yml` has no
 // pipelines at all rather than a green one, so an empty pipeline list is
 // [forge.Success] — there is nothing to be red. And a merge GitLab declines
 // answers 405 or 406 with a message, which becomes a
 // [forge.MergeRefusedError] carrying that message and the merge request's
 // `detailed_merge_status`: the mill reports the forge's reason and does not
-// retry.
+// retry. And a merge names the commit it merges: GitLab 19 requires `sha` on
+// the merge and answers 409 when it is not the branch's head, which is how
+// the mill learns the head moved and the merge is worth another attempt.
 package gitlab
 
 import (
@@ -343,17 +345,30 @@ func statusOf(status string) forge.Status {
 }
 
 // Merge merges the merge request, squashing when the project's setting says
-// so. A GitLab that declines yields a [forge.MergeRefusedError] naming its
-// reason; the mill does not retry it.
+// so. It names the head it merges: `sha` is the source branch's head as the
+// caller read it, so GitLab merges the commit the run's steps checked and
+// nothing else. GitLab 19 requires the field — a merge without it is
+// answered `400 SHA must be provided when merging` — and it is what makes the
+// merge safe rather than merely accepted.
+//
+// A GitLab that declines yields a [forge.MergeRefusedError] naming its
+// reason; the mill does not retry it. A head that has moved since it was read
+// is the one exception: GitLab answers 409, and that is a
+// [forge.HeadMovedError], which the step tries again with the head it finds.
 func (c *Client) Merge(ctx context.Context, pr forge.PullRequest) (forge.PullRequest, error) {
 	if pr.Number == 0 {
 		return forge.PullRequest{}, errors.New("gitlab: merging needs a merge request number")
+	}
+	head, err := c.head(ctx, pr)
+	if err != nil {
+		return forge.PullRequest{}, err
 	}
 	project, err := c.projectInfo(ctx)
 	if err != nil {
 		return forge.PullRequest{}, err
 	}
 	body := map[string]any{
+		"sha":                         head,
 		"squash":                      project.squashes() || pr.Squash,
 		"should_remove_source_branch": project.RemoveBranch,
 	}
@@ -361,6 +376,13 @@ func (c *Client) Merge(ctx context.Context, pr forge.PullRequest) (forge.PullReq
 	err = c.call(ctx, http.MethodPut, c.path("merge_requests", strconv.Itoa(pr.Number), "merge"), nil, body, &merged)
 	if err != nil {
 		var failure *apiError
+		if errors.As(err, &failure) && failure.Status == http.StatusConflict {
+			return forge.PullRequest{}, &forge.HeadMovedError{
+				PR:     pr.Number,
+				SHA:    head,
+				Reason: failure.Message,
+			}
+		}
 		if errors.As(err, &failure) && refusal(failure.Status) {
 			return forge.PullRequest{}, &forge.MergeRefusedError{
 				PR:     pr.Number,
@@ -374,13 +396,34 @@ func (c *Client) Merge(ctx context.Context, pr forge.PullRequest) (forge.PullReq
 	return merged.pullRequest(), nil
 }
 
+// head is the commit a merge names: the one on the pull request the caller
+// read. A caller that carries no head — a resumed run holding nothing but a
+// number — has it read here rather than merging blind, and a merge request
+// GitLab reports no head for is refused, because a merge that names no commit
+// is a merge of whatever the branch is at when GitLab gets to it.
+func (c *Client) head(ctx context.Context, pr forge.PullRequest) (string, error) {
+	if pr.HeadSHA != "" {
+		return pr.HeadSHA, nil
+	}
+	var current mergeRequest
+	if err := c.call(ctx, http.MethodGet,
+		c.path("merge_requests", strconv.Itoa(pr.Number)), nil, nil, &current); err != nil {
+		return "", err
+	}
+	if current.SHA == "" {
+		return "", fmt.Errorf("gitlab: !%d has no head commit to merge", pr.Number)
+	}
+	return current.SHA, nil
+}
+
 // refusal reports whether a status is GitLab declining rather than failing.
 // 405 is "not mergeable" — a protected branch, an unapproved request, a
-// pipeline that must pass; 406 is a branch that cannot be merged; 409 is the
-// head moving under it; 422 is the request being unprocessable as posed.
+// pipeline that must pass; 406 is a branch that cannot be merged; 422 is the
+// request being unprocessable as posed. 409 is not among them: that is the
+// head moving under the merge, which [Merge] reports on its own.
 func refusal(status int) bool {
 	switch status {
-	case http.StatusMethodNotAllowed, http.StatusNotAcceptable, http.StatusConflict, http.StatusUnprocessableEntity:
+	case http.StatusMethodNotAllowed, http.StatusNotAcceptable, http.StatusUnprocessableEntity:
 		return true
 	default:
 		return false

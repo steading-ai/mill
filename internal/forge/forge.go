@@ -22,8 +22,13 @@
 // GitLab declines — a protected branch, a missing approval — is a
 // [MergeRefusedError] naming the forge's own reason and is not retried:
 // repository protections are the repository's job (docs/core-principles.md
-// §1). Only the transport's own failures are worth another attempt, which is
-// what [Retryable] reports.
+// §1). Only the transport's own failures and a head that moved under the
+// merge are worth another attempt, which is what [Retryable] reports.
+//
+// A merge names the commit it merges. [Forge.Merge] is given the pull request
+// the caller read, and the head on it is the head that merges: a forge that
+// finds the branch somewhere else refuses with a [HeadMovedError] rather than
+// merging work no step ever checked.
 //
 // GitLab says *merge request* where the design says PR. The names here are
 // the design's; the GitLab adapter maps.
@@ -262,7 +267,9 @@ type Forge interface {
 	// Checks is what the forge's checks say about a commit.
 	Checks(ctx context.Context, sha string) (Status, error)
 	// Merge merges a pull request, squashing when the project's settings
-	// say so. A forge that refuses yields a [MergeRefusedError].
+	// say so. The merge names pr's head, so what merges is the commit the
+	// caller read: a head that moved since yields a *[HeadMovedError], and
+	// a forge that declines for its own reasons a *[MergeRefusedError].
 	Merge(ctx context.Context, pr PullRequest) (PullRequest, error)
 	// MergeCommit is the SHA on the default branch that the pull request
 	// became: the squash commit when it was squashed, the merge commit
@@ -330,6 +337,30 @@ type MergeRefusedError struct {
 	Detail string
 }
 
+// HeadMovedError is the forge declining a merge because the head the mill
+// named is no longer the branch's. The mill merges a commit it has read and
+// checked, never whatever the branch happens to be at (docs/domain-model.md
+// §Evidence), so a head that moved under it is not an error to hide: the
+// work the run pushed is still there, the facts about it are simply one
+// commit stale. Reading the pull request again and merging the new head is
+// what the next attempt does, which is why this is [Retryable].
+type HeadMovedError struct {
+	// PR is the pull request that would not merge.
+	PR int
+	// SHA is the head the mill merged against.
+	SHA string
+	// Reason is the forge's message, verbatim.
+	Reason string
+}
+
+func (e *HeadMovedError) Error() string {
+	reason := e.Reason
+	if reason == "" {
+		reason = "the head moved"
+	}
+	return fmt.Sprintf("forge: !%d is no longer at %s: %s", e.PR, e.SHA, reason)
+}
+
 func (e *MergeRefusedError) Error() string {
 	reason := e.Reason
 	if e.Detail != "" {
@@ -348,6 +379,8 @@ func (e *MergeRefusedError) Error() string {
 // Retryable reports whether trying err again could plausibly succeed. A
 // refusal to merge never is: nothing the mill can do changes the forge's
 // answer, and a retry loop against a protected branch is a way to look busy.
+// A [HeadMovedError] is the one merge failure that is: the next attempt reads
+// the pull request again and merges the head it finds.
 func Retryable(err error) bool {
 	if err == nil {
 		return false

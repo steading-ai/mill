@@ -191,7 +191,10 @@ var _ = Describe("The GitLab forge adapter", Label("unit"), func() {
 			api.on(http.MethodGet, escaped, http.StatusOK, "project_no_squash.json")
 			api.on(http.MethodPut, escaped+"/merge_requests/8/merge", http.StatusOK, "merge_request_merged.json")
 
-			merged, err := client.Merge(ctx, forge.PullRequest{Number: 8, Branch: branch, State: "open"})
+			merged, err := client.Merge(ctx, forge.PullRequest{
+				Number: 8, Branch: branch, State: "open",
+				HeadSHA: "9a1f0c3f2b6d4e5a7c8b9d0e1f2a3b4c5d6e7f80",
+			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(merged.MergeCommit).To(Equal("5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f"))
 
@@ -226,12 +229,96 @@ var _ = Describe("The GitLab forge adapter", Label("unit"), func() {
 			Expect(before).To(Equal(1), "one attempt, and no retry inside the adapter")
 		})
 
+		It("reads the head itself when the caller carries none, rather than merging blind", func(ctx context.Context) {
+			api.on(http.MethodGet, escaped, http.StatusOK, "project.json")
+			api.on(http.MethodGet, escaped+"/merge_requests/7", http.StatusOK, "merge_request_opened.json")
+			api.onMerge(escaped+"/merge_requests/7/merge", "9a1f0c3f2b6d4e5a7c8b9d0e1f2a3b4c5d6e7f80",
+				"merge_request_squash_merged.json")
+
+			merged, err := client.Merge(ctx, forge.PullRequest{Number: 7})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(merged.Merged()).To(BeTrue())
+			Expect(api.count(http.MethodGet, escaped+"/merge_requests/7")).To(Equal(1),
+				"the head is read once, from the merge request")
+		})
+
 		It("refuses to read a merge commit before the merge", func(ctx context.Context) {
 			api.on(http.MethodGet, escaped+"/merge_requests/7", http.StatusOK, "merge_request_opened.json")
 
 			_, err := client.MergeCommit(ctx, forge.PullRequest{Number: 7})
 			Expect(errors.Is(err, forge.ErrNotMerged)).To(BeTrue())
 		})
+	})
+
+	It("Merging a merge request names the head it merges", func(ctx context.Context) {
+		// Given an open merge request whose source branch is at SHA S.
+		const s = "9a1f0c3f2b6d4e5a7c8b9d0e1f2a3b4c5d6e7f80"
+		api.on(http.MethodGet, escaped, http.StatusOK, "project.json")
+		api.on(http.MethodGet, escaped+"/merge_requests", http.StatusOK, "merge_requests_open.json")
+		api.on(http.MethodGet, escaped+"/merge_requests/7", http.StatusOK, "merge_request_squash_merged.json")
+		api.onMerge(escaped+"/merge_requests/7/merge", s, "merge_request_squash_merged.json")
+
+		pr, err := client.PR(ctx, branch)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pr.HeadSHA).To(Equal(s))
+
+		// When the merge step merges it.
+		merged, err := client.Merge(ctx, pr)
+		Expect(err).NotTo(HaveOccurred(), "%v", err)
+
+		// Then the request to the forge carries sha S. The fake answers a
+		// merge with no sha the way GitLab 19 does — 400 — so omitting the
+		// field fails this spec at the merge, not only at the assertion.
+		var body string
+		for _, seen := range api.calls() {
+			if seen.Method == http.MethodPut {
+				body = seen.Body
+			}
+		}
+		Expect(body).To(ContainSubstring(`"sha":"` + s + `"`))
+
+		// And the merge evidence is the merge commit on the default branch.
+		Expect(merged.Merged()).To(BeTrue())
+		commit, err := client.MergeCommit(ctx, merged)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(commit).To(Equal("1c4a5b6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b"))
+		Expect(commit).NotTo(Equal(s), "the commit on main is not the branch's head")
+		Expect(merged.Target).To(Equal("main"))
+	})
+
+	It("A head that moved is not merged blind", func(ctx context.Context) {
+		// Given an open merge request whose source branch moved after it was
+		// read: the mill holds S, and the branch is at S' by the time the
+		// merge arrives.
+		const moved = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c"
+		api.on(http.MethodGet, escaped, http.StatusOK, "project.json")
+		api.on(http.MethodGet, escaped+"/merge_requests", http.StatusOK, "merge_requests_open.json")
+		api.onMerge(escaped+"/merge_requests/7/merge", moved, "merge_request_squash_merged.json")
+
+		pr, err := client.PR(ctx, branch)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pr.HeadSHA).NotTo(Equal(moved))
+
+		// When the merge step merges it.
+		_, err = client.Merge(ctx, pr)
+
+		// Then the forge refuses and the step records the refusal as a
+		// retryable failure: the failure names the head the mill merged
+		// against and GitLab's own words, and it is not swallowed as a
+		// success or hidden behind a refusal the mill would never try again.
+		Expect(err).To(HaveOccurred())
+		var stale *forge.HeadMovedError
+		Expect(errors.As(err, &stale)).To(BeTrue(), "%v", err)
+		Expect(stale.PR).To(Equal(7))
+		Expect(stale.SHA).To(Equal(pr.HeadSHA))
+		Expect(stale.Reason).To(Equal("SHA does not match HEAD of source branch"))
+		Expect(err.Error()).To(ContainSubstring("SHA does not match HEAD of source branch"))
+		Expect(forge.Retryable(err)).To(BeTrue(), "the next attempt reads the head again")
+
+		var refused *forge.MergeRefusedError
+		Expect(errors.As(err, &refused)).To(BeFalse(), "a moved head is not the forge declining the merge")
+		Expect(api.count(http.MethodPut, escaped+"/merge_requests/7/merge")).To(Equal(1),
+			"one attempt, and no retry inside the adapter")
 	})
 
 	It("Squash merge evidence is the merge commit, not the branch", func(ctx context.Context) {
