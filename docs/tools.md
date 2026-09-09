@@ -216,7 +216,7 @@ $ mill doctor
 pass  socket   /run/user/1000/mill/mill.sock answers; mill 0.0.0-dev
 pass  schema   migration 14, current
 pass  dagger   /run/dagger/dg.sock answers; this account is a principal on mill, 1 node(s) ready for an agent
-fail  sidecar  sidecar/dist/main.js did not answer: claudecode: the sidecar answered nothing before it exited
+fail  sidecar  sidecar/dist/main.js did not answer: claude: the sidecar answered nothing before it exited
 fail  signing  no signing key under ~/.local/state/mill/workspaces/signing
 fail  forge    no repository to probe: pass --vcs-url or set MILL_VCS_URL
 ```

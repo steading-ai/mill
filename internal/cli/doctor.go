@@ -17,7 +17,7 @@ import (
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/dagger"
 	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/harness/claudecode"
+	"github.com/ivy/mill/internal/harness/claude"
 	"github.com/ivy/mill/internal/workspace/signing"
 )
 
@@ -89,7 +89,7 @@ failed.`,
 	f.StringVar(&opts.socket, "socket", defaultSocketPath(), "path of the service's unix socket")
 	f.StringVar(&opts.daggerSocket, "dagger-socket", envOr(daggerSocketEnv, defaultDaggerSocket), "path of dagger's unix socket (default: $"+daggerSocketEnv+")")
 	f.StringVar(&opts.project, "project", os.Getenv(daggerProjectEnv), "dagger project to probe readiness in (default: $"+daggerProjectEnv+")")
-	f.StringVar(&opts.sidecar, "sidecar", envOr(sidecarEnv, claudecode.DefaultEntrypoint), "path of the harness sidecar's entrypoint (default: $"+sidecarEnv+")")
+	f.StringVar(&opts.sidecar, "sidecar", envOr(sidecarEnv, claude.DefaultEntrypoint), "path of the harness sidecar's entrypoint (default: $"+sidecarEnv+")")
 	f.StringVar(&opts.workspaceDir, "workspace-dir", defaultWorkspaceDir(), "directory run workspaces and the signing key live under")
 	f.StringVar(&opts.vcsURL, "vcs-url", os.Getenv(vcsURLEnv), "repository the forge credential is probed against (default: $"+vcsURLEnv+")")
 	f.StringVar(&opts.identity, "identity", "", "address the mill commits under (default: mill@<host>)")
@@ -193,7 +193,7 @@ func probeDagger(ctx context.Context, opts doctorOptions) probe {
 func probeSidecar(ctx context.Context, opts doctorOptions) probe {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	adapter := claudecode.New(claudecode.WithEntrypoint(claudecode.DefaultCommand, opts.sidecar))
+	adapter := claude.New(claude.WithEntrypoint(claude.DefaultCommand, opts.sidecar))
 	terminal, err := adapter.Probe(ctx)
 	if err != nil {
 		return fail("sidecar", "%s did not answer: %v", opts.sidecar, err)

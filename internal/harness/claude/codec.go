@@ -1,4 +1,4 @@
-package claudecode
+package claude
 
 import (
 	"fmt"
@@ -26,7 +26,7 @@ var unmarshal = protojson.UnmarshalOptions{DiscardUnknown: true}
 func encodeRequest(request *harnessv1.Request) ([]byte, error) {
 	line, err := marshal.Marshal(request)
 	if err != nil {
-		return nil, fmt.Errorf("claudecode: encode request: %w", err)
+		return nil, fmt.Errorf("claude: encode request: %w", err)
 	}
 	return append(line, '\n'), nil
 }
@@ -35,7 +35,7 @@ func encodeRequest(request *harnessv1.Request) ([]byte, error) {
 func decodeResponse(line []byte) (*harnessv1.Response, error) {
 	response := &harnessv1.Response{}
 	if err := unmarshal.Unmarshal(line, response); err != nil {
-		return nil, fmt.Errorf("claudecode: decode response: %w", err)
+		return nil, fmt.Errorf("claude: decode response: %w", err)
 	}
 	return response, nil
 }

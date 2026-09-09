@@ -1,4 +1,4 @@
-package claudecode
+package claude
 
 import (
 	"context"
@@ -20,7 +20,7 @@ import (
 // a credential or on the model being reachable.
 const liveVar = "MILL_SIDECAR_LIVE"
 
-var _ = Describe("The claudecode adapter against the real sidecar", Label("live"), func() {
+var _ = Describe("The claude adapter against the real sidecar", Label("live"), func() {
 	var entrypoint string
 
 	BeforeEach(func() {

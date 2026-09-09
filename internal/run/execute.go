@@ -206,7 +206,7 @@ func harnessFor(step *millv1.Step) (string, *millv1.HarnessSettings) {
 }
 
 // DefaultHarness is the adapter a step names none for.
-const DefaultHarness = "claude-code"
+const DefaultHarness = "claude"
 
 // exitText renders a process exit for an error message.
 func exitText(exit harness.ProcessExit) string {

@@ -1,4 +1,4 @@
-package claudecode
+package claude
 
 import (
 	"context"
@@ -22,7 +22,7 @@ const twoModels = `{"terminal":{"request_id":"","final_message":"implemented the
 	`"claude-haiku-4-5-20251001":{"input":"3870","output":"76","cache_read":"0","cache_write":"0"}` +
 	`}},"exit":{"status":0}}}`
 
-var _ = Describe("The claudecode adapter", Label("unit"), func() {
+var _ = Describe("The claude adapter", Label("unit"), func() {
 	var (
 		log      *recorder
 		spawner  *watching

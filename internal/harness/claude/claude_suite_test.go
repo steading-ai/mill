@@ -1,4 +1,4 @@
-package claudecode
+package claude
 
 import (
 	"testing"
@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-func TestClaudecode(t *testing.T) {
+func TestClaude(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "claudecode adapter")
+	RunSpecs(t, "claude adapter")
 }

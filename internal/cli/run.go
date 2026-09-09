@@ -20,7 +20,7 @@ import (
 	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/forge/gitlab"
 	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/harness/claudecode"
+	"github.com/ivy/mill/internal/harness/claude"
 	"github.com/ivy/mill/internal/run"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/local"
@@ -116,7 +116,7 @@ would be selected, its steps in order, and the evidence each one closes on.`,
 	f.StringVar(&opts.workflow, "workflow", "quick-fix", "workflow to select when the run has none")
 	f.StringVar(&opts.tier, "tier", "quick-fix", "tier that workflow stands for, which gate policies compare against")
 	f.StringVar(&opts.workflowDir, "workflow-dir", "", "directory the workflow was loaded from, for a check step's scripts")
-	f.StringVar(&opts.sidecar, "sidecar", envOr(sidecarEnv, claudecode.DefaultEntrypoint), "path of the harness sidecar's entrypoint (default: $"+sidecarEnv+")")
+	f.StringVar(&opts.sidecar, "sidecar", envOr(sidecarEnv, claude.DefaultEntrypoint), "path of the harness sidecar's entrypoint (default: $"+sidecarEnv+")")
 	f.StringVar(&opts.vcsURL, "vcs-url", os.Getenv(vcsURLEnv), "repository this project delivers to, which the forge steps push and merge against (default: $"+vcsURLEnv+")")
 	f.StringVar(&opts.origin, "origin", "", "repository a new workspace clones (default: the --vcs-url repository)")
 	f.StringVar(&opts.ref, "ref", "", "ref a new workspace checks out (default: the repository's own HEAD)")
@@ -211,7 +211,7 @@ func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, 
 
 	harnesses := harness.NewRegistry()
 	if err := harnesses.Register(run.DefaultHarness,
-		claudecode.New(claudecode.WithEntrypoint(claudecode.DefaultCommand, opts.sidecar))); err != nil {
+		claude.New(claude.WithEntrypoint(claude.DefaultCommand, opts.sidecar))); err != nil {
 		return nil, err
 	}
 

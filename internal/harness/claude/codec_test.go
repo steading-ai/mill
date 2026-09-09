@@ -1,4 +1,4 @@
-package claudecode
+package claude
 
 import (
 	. "github.com/onsi/ginkgo/v2"

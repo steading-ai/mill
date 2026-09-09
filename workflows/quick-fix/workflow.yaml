@@ -21,7 +21,7 @@ steps:
     capabilities:
       - read
     harness:
-      claude-code:
+      claude:
         model: sonnet
         effort: medium
         tools:
@@ -42,7 +42,7 @@ steps:
       - write
       - exec
     harness:
-      claude-code:
+      claude:
         model: opus
         effort: high
         tools:
@@ -64,7 +64,7 @@ steps:
     capabilities:
       - write
     harness:
-      claude-code:
+      claude:
         model: sonnet
         effort: medium
     retries: 2
@@ -98,7 +98,7 @@ steps:
     capabilities:
       - forge
     harness:
-      claude-code:
+      claude:
         model: sonnet
         effort: medium
     retries: 2

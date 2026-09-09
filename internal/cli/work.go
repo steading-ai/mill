@@ -11,7 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ivy/mill/internal/harness/claudecode"
+	"github.com/ivy/mill/internal/harness/claude"
 	"github.com/ivy/mill/internal/run"
 )
 
@@ -70,7 +70,7 @@ func bindWorkFlags(cmd *cobra.Command, opts *workOptions) {
 	f.StringVar(&opts.run.workflow, "workflow", "quick-fix", "workflow to select when a run has none")
 	f.StringVar(&opts.run.tier, "tier", "quick-fix", "tier that workflow stands for, which gate policies compare against")
 	f.StringVar(&opts.run.workflowDir, "workflow-dir", "", "directory the workflow was loaded from, for a check step's scripts")
-	f.StringVar(&opts.run.sidecar, "sidecar", envOr(sidecarEnv, claudecode.DefaultEntrypoint), "path of the harness sidecar's entrypoint (default: $"+sidecarEnv+")")
+	f.StringVar(&opts.run.sidecar, "sidecar", envOr(sidecarEnv, claude.DefaultEntrypoint), "path of the harness sidecar's entrypoint (default: $"+sidecarEnv+")")
 	f.StringVar(&opts.run.vcsURL, "vcs-url", os.Getenv(vcsURLEnv), "repository the projects deliver to (default: $"+vcsURLEnv+")")
 	f.StringVar(&opts.run.origin, "origin", "", "repository a new workspace clones (default: the --vcs-url repository)")
 	f.StringVar(&opts.run.ref, "ref", "", "ref a new workspace checks out (default: the repository's own HEAD)")

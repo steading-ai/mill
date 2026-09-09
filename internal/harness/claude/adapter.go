@@ -1,4 +1,4 @@
-// Package claudecode drives the TypeScript sidecar over the Claude Agent
+// Package claude drives the TypeScript sidecar over the Claude Agent
 // SDK: the first implementation of [harness.Harness].
 //
 // The sidecar is a child process spawned per step and spoken to over
@@ -10,7 +10,7 @@
 // package does not import os/exec: the workspace is the single chokepoint
 // where cwd, uid and environment are decided, and the forbidigo rule in
 // .golangci.yml makes that checkable rather than aspirational.
-package claudecode
+package claude
 
 import (
 	"bufio"
@@ -33,7 +33,7 @@ import (
 
 const (
 	// Name is what a step's `harness` table calls this adapter.
-	Name = "claudecode"
+	Name = "claude"
 
 	// DefaultCommand and DefaultEntrypoint are what the sidecar is spawned
 	// as. sidecar/main.ts exists so this path is literal and stable.
@@ -176,7 +176,7 @@ func (a *Adapter) begin(ctx context.Context, session harness.Session, request *h
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("claudecode: spawn sidecar: %w", err)
+		return nil, fmt.Errorf("claude: spawn sidecar: %w", err)
 	}
 
 	running := &flight{
@@ -214,7 +214,7 @@ func (a *Adapter) track(running *flight) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if _, busy := a.live[running.id]; busy {
-		return fmt.Errorf("claudecode: session %q is already running", running.id)
+		return fmt.Errorf("claude: session %q is already running", running.id)
 	}
 	a.live[running.id] = running
 	return nil
@@ -499,7 +499,7 @@ func (a *Adapter) Probe(ctx context.Context) (*harness.Terminal, error) {
 	}
 	process, err := a.execer.Exec(ctx, workspace.Command{Path: a.command, Args: a.args})
 	if err != nil {
-		return nil, fmt.Errorf("claudecode: spawn sidecar: %w", err)
+		return nil, fmt.Errorf("claude: spawn sidecar: %w", err)
 	}
 	defer func() {
 		_ = process.Signal(syscall.SIGKILL)
@@ -508,7 +508,7 @@ func (a *Adapter) Probe(ctx context.Context) (*harness.Terminal, error) {
 	}()
 
 	if _, err := process.Stdin.Write(line); err != nil {
-		return nil, fmt.Errorf("claudecode: the sidecar did not read its request: %w", err)
+		return nil, fmt.Errorf("claude: the sidecar did not read its request: %w", err)
 	}
 	_ = process.Stdin.Close()
 
@@ -524,15 +524,15 @@ func (a *Adapter) Probe(ctx context.Context) (*harness.Terminal, error) {
 				return harness.TerminalFrom(terminal), nil
 			}
 			if failure := response.GetFailure(); failure != nil {
-				return nil, fmt.Errorf("claudecode: the sidecar refused: %s", failure.GetMessage())
+				return nil, fmt.Errorf("claude: the sidecar refused: %s", failure.GetMessage())
 			}
 			continue
 		}
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				return nil, errors.New("claudecode: the sidecar answered nothing before it exited")
+				return nil, errors.New("claude: the sidecar answered nothing before it exited")
 			}
-			return nil, fmt.Errorf("claudecode: read the sidecar: %w", err)
+			return nil, fmt.Errorf("claude: read the sidecar: %w", err)
 		}
 	}
 }

@@ -228,7 +228,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			// exists for: the adapter's Cancel does not return until the
 			// process group is gone, and here it is gone only when the kill
 			// arrives. The real adapter's escalation to SIGKILL is
-			// specified in internal/harness/claudecode.
+			// specified in internal/harness/claude.
 			stubborn := newStubborn()
 			worker := f.workerOver(f.runner(quick, withHarness(stubborn)))
 

@@ -59,4 +59,6 @@ Same sidecar, heavier transport.
 
 ## More Information
 
+The adapter this ADR decides is `internal/harness/claude`, and a step names it `harness.claude`. The loader refuses the retired `claude-code` spelling of that key rather than aliasing it.
+
 Related: [ADR-010](010-workflows-in-the-store-skills-portable.md), [ADR-011](011-usage-per-step-per-model.md).

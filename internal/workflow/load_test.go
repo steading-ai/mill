@@ -83,6 +83,47 @@ steps:
 		Expect(err).To(MatchError(ContainSubstring("models")))
 	})
 
+	It("reads the harness settings a step names for the claude adapter", func() {
+		loaded, _, err := workflow.Load(dir(`
+name: tiny
+steps:
+  - name: implement
+    kind: skill
+    session: implement
+    skill: implement
+    evidence: artifact
+    harness:
+      claude:
+        model: sonnet
+        effort: medium
+        tools:
+          allow: [Glob]
+`, map[string]string{"implement": "Make the change."}))
+		Expect(err).NotTo(HaveOccurred())
+		settings := step(loaded, "implement").GetHarness()["claude"]
+		Expect(settings.GetModel()).To(Equal("sonnet"))
+		Expect(settings.GetEffort()).To(Equal("medium"))
+		Expect(settings.GetToolPolicy().GetAllow()).To(Equal([]string{"Glob"}))
+	})
+
+	It("The old key is not silently accepted", func() {
+		_, _, err := workflow.Load(dir(`
+name: tiny
+steps:
+  - name: implement
+    kind: skill
+    session: implement
+    skill: implement
+    evidence: artifact
+    harness:
+      claude-code:
+        model: sonnet
+`, map[string]string{"implement": "Make the change."}))
+		Expect(err).To(HaveOccurred(), "the load is refused")
+		Expect(err).To(MatchError(MatchRegexp(`harness\.claude($|[^-])`)),
+			"the message names the key the adapter answers to")
+	})
+
 	It("fills the documented defaults for how a status step watches the forge's checks", func() {
 		loaded, _, err := workflow.Load(dir(`
 name: tiny

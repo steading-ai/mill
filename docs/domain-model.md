@@ -143,8 +143,8 @@ A resumable agent session inside a run. Named by the step definition, identified
 |---|---|
 | `run_id`, `name` | Composite key. `name` is the step's `session` value: `implement`, `review` |
 | `id` | UUIDv5 of (`context_id`, `generation`, `name`). Deterministic, so a resumed worker computes the same id and the harness resumes the same transcript; a restart's new generation yields ids the harness has never seen |
-| `harness` | `claude-code` today. Which adapter owns it |
-| `adapter_ref` | Whatever the adapter needs to find the transcript: a config dir and cwd for Claude Code |
+| `harness` | `claude` today. Which adapter owns it |
+| `adapter_ref` | Whatever the adapter needs to find the transcript: a config dir and cwd for Claude |
 | `started_at`, `last_turn_at` | |
 
 Sessions exist so that gather-context → think → plan → implement → simplify → commit → PR share one context window and its cache, while review runs in another. Feedback from a `revise` returns to the *implementing* session, so the reviewer's findings land where the work was done and the reviewer, on the next pass, still has its own prior findings. Two sessions per code workflow is the expected shape; the model permits more.

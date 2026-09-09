@@ -33,7 +33,7 @@ internal/cli/         the cobra command tree: serve, work, run, restart, workflo
 internal/store/       persistence and its migrations; only internal/domain may import it
 internal/dagger/      the client for dagger's dagger.v1 API, and the refusals mill owes a gate
 internal/run/         the loop: claim, heartbeat, steps, evidence, finish. docs/ledger.md §Resume in Go
-internal/harness/     the adapter seam: the Harness interface, the claudecode sidecar driver, a scripted fake
+internal/harness/     the adapter seam: the Harness interface, the claude sidecar driver, a scripted fake
 internal/workflow/    the loader: a workflow directory in, a versioned definition and its skills out
 internal/workspace/   the process chokepoint. os/exec is forbidden everywhere else
 internal/testsupport/ the testcontainers PostgreSQL fixture db-labelled specs use, and a real `dg serve` for the run loop

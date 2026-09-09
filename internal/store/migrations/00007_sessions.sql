@@ -14,9 +14,9 @@ CREATE TABLE sessions (
     -- UUIDv5 of (context_id, generation, name). Stored for lookup;
     -- recomputable.
     id           text        NOT NULL,
-    -- Adapter name: claude-code today.
+    -- Adapter name: claude today.
     harness      text        NOT NULL,
-    -- Whatever the adapter needs to resume: for Claude Code, the config dir
+    -- Whatever the adapter needs to resume: for Claude, the config dir
     -- and cwd the transcript lives under.
     adapter_ref  jsonb       NOT NULL DEFAULT '{}'::jsonb,
     -- The host the transcript is on. A different worker cannot

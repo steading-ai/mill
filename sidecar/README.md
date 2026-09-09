@@ -1,7 +1,9 @@
 # The Claude Agent SDK sidecar
 
-The first harness adapter. The worker spawns one of these per skill step and
-speaks `harness.v1` to it over newline-delimited JSON on stdio:
+The first harness adapter; its Go side is `internal/harness/claude`, which a
+step names as `claude` in its `harness` table. The worker spawns one of these
+per skill step and speaks `harness.v1` to it over newline-delimited JSON on
+stdio:
 
 ```
 node sidecar/dist/main.js  < one Start or Resume, as protojson on one line

@@ -73,6 +73,20 @@ type askYAML struct {
 	Body  string `yaml:"body,omitempty"`
 }
 
+const (
+	// harnessName is the key a step's `harness` table uses for the Claude
+	// Agent SDK adapter, matching the package that implements it
+	// (internal/harness/claude).
+	harnessName = "claude"
+
+	// retiredHarnessName is a spelling of that key no adapter answers to.
+	// It is refused rather than aliased: a definition that uses it carries
+	// settings nothing would read, and a silently dropped model or tool
+	// policy is the failure mode this document's strict decoding exists to
+	// prevent.
+	retiredHarnessName = "claude-code"
+)
+
 type harnessYAML struct {
 	Model  string     `yaml:"model,omitempty"`
 	Effort string     `yaml:"effort,omitempty"`
@@ -272,6 +286,10 @@ func (s stepYAML) toProto() (*millv1.Step, error) {
 	if len(s.Harness) > 0 {
 		step.Harness = map[string]*millv1.HarnessSettings{}
 		for name, settings := range s.Harness {
+			if name == retiredHarnessName {
+				return fail(fmt.Errorf("harness.%s: the adapter is named %s; rename the key to harness.%s",
+					retiredHarnessName, harnessName, harnessName))
+			}
 			entry := &millv1.HarnessSettings{Model: settings.Model, Effort: settings.Effort}
 			if settings.Tools != nil {
 				entry.ToolPolicy = &harnessv1.ToolPolicy{Allow: settings.Tools.Allow, Deny: settings.Tools.Deny}
