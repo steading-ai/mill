@@ -23,6 +23,8 @@ The work order names the documents that govern it. Read them before writing code
 
 Your contract is the node's **Acceptance criteria** and **Scenarios**. Every criterion must hold, and every Gherkin scenario must exist as an executable Ginkgo spec whose assertions match its Then clauses. A reviewer checks exactly this and nothing else.
 
+**If you changed a proto contract, say so in your final message** — which file, which message, which field, and whether the change is breaking. `make lint` does not check compatibility, so nothing else will tell the reviewer; `make lint-contract` is the report, and `proto/README.md` says when breaking the contract is allowed. Your final message is the node's result and what the commit message is written from, so a contract change you do not name is a contract change nobody reviewed.
+
 **Do not modify** `harness/`, `.claude/`, `scripts/`, or `backlog.toml`. That is the machinery running you; the harness reverts changes there and counts them as a review failure. `docs/` is not protected, because work orders name documents as deliverables — but a work order is the only reason to touch a design document. If the design is wrong, say so in your final message and carry on. Do not commit; the harness owns history.
 
 ## Repo map
@@ -38,7 +40,7 @@ internal/workflow/    the loader: a workflow directory in, a versioned definitio
 internal/workspace/   the process chokepoint. os/exec is forbidden everywhere else
 internal/testsupport/ the testcontainers PostgreSQL fixture db-labelled specs use, and a real `dg serve` for the run loop
 internal/version/     the version injected at link time by the Makefile
-proto/                the contracts: mill.v1 the store API, harness.v1 the sidecar wire, dagger.v1 vendored from dagger
+proto/                the contracts: mill.v1 the store API, harness.v1 the sidecar wire, dagger.v1 vendored from dagger; README.md is the compatibility policy
 gen/                  generated Go, committed. buf owns it; `make generate` writes it
 sidecar/              the TypeScript harness adapter; sidecar/gen is harness.v1 in TypeScript
 workflows/            the workflow definitions this repo seeds the store with; `mill workflow push` loads them
@@ -72,6 +74,8 @@ make test-unit          # specs needing no database
 make test-db            # specs needing PostgreSQL, via testcontainers
 make test-acceptance    # the whole mill against a real dagger, GitLab and Claude account
 make lint               # go vet and golangci-lint
+make lint-contract      # buf breaking against main: a report, not a gate
+make check              # the release gate: lint, the contract report, every spec
 make generate           # code generators; commit the output
 make db-up              # local PostgreSQL for interactive work
 make db-migrate         # apply migrations to it
@@ -85,6 +89,8 @@ make lint && make test
 ```
 
 `hk check` runs the same gate a commit does: `make lint`, then `make test-unit`.
+
+Contract compatibility is reported, not gated: `make lint` does not run `buf breaking`, so a deliberate proto change commits. `make lint-contract` runs the report, and `hk`'s `pre-push` hook does too. `proto/README.md` says when breaking the contract is allowed.
 
 Specs are Ginkgo and Gomega, in the package the code lives in, and a scenario's text is its spec name. Specs that touch PostgreSQL take a database from `internal/testsupport` and must carry the `db` label; the suite starts one container and clones a migrated template per spec.
 

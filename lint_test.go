@@ -82,6 +82,24 @@ var _ = Describe("Lint and package boundaries", Label("unit", "slow"), func() {
 		))
 	})
 
+	It("make lint still refuses generated code that lags its proto", func() {
+		By("given a proto whose generated code has not been rewritten")
+		dir := checkout()
+		path := filepath.Join(dir, "proto/harness/v1/harness.proto")
+		source, err := os.ReadFile(path)
+		Expect(err).NotTo(HaveOccurred())
+		field := "  int32 grace_ms = 2;\n"
+		Expect(string(source)).To(ContainSubstring(field))
+		Expect(os.WriteFile(path, []byte(strings.Replace(string(source), field, "", 1)), 0o644)).To(Succeed())
+
+		By("when make lint runs")
+		session := makeTarget(dir, "lint")
+
+		By("then it fails, naming the generated code rather than the broken contract")
+		Expect(session).NotTo(gexec.Exit(0))
+		Expect(string(session.Out.Contents())).To(ContainSubstring("run make generate"))
+	})
+
 	It("Only the domain layer may reach the store", func() {
 		By(`given a file under "internal/worker" importing "internal/store"`)
 		dir := checkout()

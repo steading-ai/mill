@@ -24,9 +24,13 @@ COMPOSE := podman compose
 # Silence podman's "executing external compose provider" banner.
 export PODMAN_COMPOSE_WARNING_LOGS = false
 
-.PHONY: all build test test-unit test-db test-acceptance lint check-breaking check-generated typecheck-ts generate sidecar-deps sidecar-build clean db-up db-down db-reset db-migrate
+.PHONY: all build check test test-unit test-db test-acceptance lint lint-contract check-breaking check-generated typecheck-ts generate sidecar-deps sidecar-build clean db-up db-down db-reset db-migrate
 
 all: build
+
+# The gate before a release, and what CI runs: every lint the commit hook
+# applies, the contract report it deliberately does not, and every spec.
+check: lint lint-contract test
 
 build:
 	go build -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/mill
@@ -54,23 +58,35 @@ test-db:
 test-acceptance: sidecar-build
 	MILL_ACCEPTANCE=1 ginkgo -p --randomize-all --fail-on-pending --timeout=90m ./tests/acceptance
 
-# go vet catches what golangci-lint's analyzers do not overlap with; the
-# rules that carry design decisions (depguard, forbidigo) live in
-# .golangci.yml. buf lints the proto contracts and refuses a change that
-# would break a generated client, and sqlc parses the migrations and the
-# queries against each other, so a query the schema cannot answer fails the
-# build rather than a spec.
+# The gate a commit passes. go vet catches what golangci-lint's analyzers do
+# not overlap with; the rules that carry design decisions (depguard,
+# forbidigo) live in .golangci.yml. buf lints the proto contracts for style
+# and documentation, and sqlc parses the migrations and the queries against
+# each other, so a query the schema cannot answer fails the build rather than
+# a spec.
+#
+# Compatibility of the contract is deliberately not here: mill's protos move
+# with its design, so a breaking change is a thing a node does on purpose and
+# a commit gate that refuses it is the wrong instrument. lint-contract
+# reports it instead. See proto/README.md.
 lint:
 	go vet ./...
 	golangci-lint run ./...
 	buf lint
 	sqlc vet
-	@$(MAKE) --no-print-directory check-breaking
 	$(MAKE) --no-print-directory check-generated
 	$(MAKE) --no-print-directory typecheck-ts
 
+# The compatibility report: what this tree's contract would break for a
+# client generated from main. It is out of `lint` and so out of the
+# pre-commit hook, and in `check`, which is what CI and a person run before a
+# release. Run it by hand whenever a proto changes; proto/README.md says when
+# breaking it is allowed.
+lint-contract:
+	@$(MAKE) --no-print-directory check-breaking
+
 # The proto contracts are compared against main, so a change that would
-# break a generated client fails the build. A checkout whose main carries no
+# break a generated client is named. A checkout whose main carries no
 # proto/ — before this contract first landed there, or a clone with no main
 # branch — has nothing to compare against, and buf treats an empty module as
 # an error rather than as "no breaking changes".

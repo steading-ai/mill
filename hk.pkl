@@ -4,6 +4,11 @@ amends "package://github.com/jdx/hk/releases/download/v1.57.0/hk@1.57.0#/Config.
 // `make lint`, then the specs that need no database. Both run over the whole
 // tree rather than the staged files, because the lint rules that matter here
 // (depguard, forbidigo) are about package boundaries, not individual files.
+//
+// `make lint` does not check contract compatibility, so a node that changes a
+// proto on purpose can commit its change. The report lives in
+// `make lint-contract`, which runs before a push and in `make check`;
+// proto/README.md says when breaking the contract is allowed.
 local checks = new Mapping<String, Step> {
     ["lint"] {
         glob = List("**/*.go", "**/*.sql", "go.mod", "go.sum", ".golangci.yml", "Makefile")
@@ -21,6 +26,15 @@ hooks {
         fix = false
         stash = "git"
         steps = checks
+    }
+    ["pre-push"] {
+        fix = false
+        steps {
+            ["lint-contract"] {
+                glob = List("proto/**/*.proto", "buf.yaml", "Makefile")
+                check = "make lint-contract"
+            }
+        }
     }
     ["check"] {
         steps = checks
