@@ -79,9 +79,11 @@ HEARTBEAT = 180
 HEARTBEAT_STRIKES = 3
 
 # The CLI backgrounds a foreground command that runs past this, and a
-# backgrounded test run is what taught sessions to poll. Ten minutes: the
-# suite takes half a minute warm and a little over one cold.
-BASH_TIMEOUT_MS = "600000"
+# backgrounded test run is what taught sessions to poll. Thirty minutes: the
+# unit suite takes half a minute warm and a little over one cold, and the
+# acceptance suite takes eight, which a ten-minute ceiling left no room over.
+# A session that can wait in the foreground never has a task to lose.
+BASH_TIMEOUT_MS = "1800000"
 
 HEARTBEAT_PROMPT = """\
 You ended your turn {minutes} minutes ago with a background task still running and \
