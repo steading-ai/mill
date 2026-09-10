@@ -175,6 +175,19 @@ func tryInspect(ctx context.Context, nodeRef string) *millv1.InspectResponse {
 	return res.Msg
 }
 
+// millInspect is `mill inspect` as an operator runs it. The ledger is read
+// over the API everywhere else in this suite; a scenario reaches for the
+// tool when what it is asserting is what the tool shows.
+func millInspect(ctx context.Context, nodeRef string) string {
+	GinkgoHelper()
+	command := exec.CommandContext(ctx, env.Mill, //nolint:gosec // the suite's own binary
+		"inspect", nodeRef, "--socket", suite.service.Socket)
+	var printed strings.Builder
+	command.Stdout, command.Stderr = &printed, GinkgoWriter
+	Expect(command.Run()).To(Succeed(), "mill inspect %s", nodeRef)
+	return printed.String()
+}
+
 // worker is one `mill run` subprocess: started, watched, killed, waited on.
 type worker struct {
 	command *exec.Cmd
@@ -197,6 +210,12 @@ type runOptions struct {
 	// is what every scenario but the feature one wants.
 	Workflow string
 	Tier     string
+	// Assess leaves both out, which is what a project with no default
+	// looks like: the run runs `build-workflow` as its step 0 and the
+	// assessment names the workflow (docs/domain-model.md §Selection). It
+	// requires a WorkflowDir, because the suite cannot know before the run
+	// what the assessment will choose.
+	Assess bool
 	// WorkflowDir is where the selected workflow was loaded from, which a
 	// check step's relative command resolves against. Empty is this tree's
 	// own `workflows/<name>`.
@@ -206,6 +225,10 @@ type runOptions struct {
 	// seeded bad implementation is written through, and `mill run` refuses
 	// it unless MILL_ACCEPTANCE is set (docs/runbook.md).
 	SkillOverrides map[string]string
+	// NotifyCommand is the program a filed gate is written to as JSON, so a
+	// scenario can assert that the person the gate was filed for was told
+	// about it (internal/notify).
+	NotifyCommand string
 }
 
 // start invokes `mill run` for a node, against the suite's service, the
@@ -214,11 +237,12 @@ type runOptions struct {
 func start(ctx context.Context, s *staged, opts runOptions) *worker {
 	GinkgoHelper()
 	selected, tier := opts.Workflow, opts.Tier
-	if selected == "" {
+	if selected == "" && !opts.Assess {
 		selected, tier = "quick-fix", "quick-fix"
 	}
 	dir := opts.WorkflowDir
 	if dir == "" {
+		Expect(opts.Assess).To(BeFalse(), "an assessing run names the directory its workflow will be loaded from")
 		dir = workflowDir(selected)
 	}
 	args := []string{
@@ -226,8 +250,6 @@ func start(ctx context.Context, s *staged, opts runOptions) *worker {
 		"--socket", suite.service.Socket,
 		"--dagger-socket", env.DaggerSocket,
 		"--project", s.Graph.Slug,
-		"--workflow", selected,
-		"--tier", tier,
 		"--workflow-dir", dir,
 		"--vcs-url", s.VCSURL,
 		"--origin", s.Origin,
@@ -236,6 +258,18 @@ func start(ctx context.Context, s *staged, opts runOptions) *worker {
 		"--log-dir", s.LogDir,
 		"--sidecar", env.Sidecar,
 		"--no-ask",
+	}
+	// Left out rather than passed empty when the run is to assess itself:
+	// what an operator does to pin a project is pass the flag, and what the
+	// suite is proving is the other rule.
+	if selected != "" {
+		args = append(args, "--workflow", selected)
+	}
+	if tier != "" {
+		args = append(args, "--tier", tier)
+	}
+	if opts.NotifyCommand != "" {
+		args = append(args, "--notify-command", opts.NotifyCommand)
 	}
 	if opts.TTL > 0 {
 		args = append(args, "--ttl", opts.TTL.String())

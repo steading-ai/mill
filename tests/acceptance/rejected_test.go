@@ -1,6 +1,7 @@
 package acceptance_test
 
 import (
+	"context"
 	"os"
 	"regexp"
 	"sort"
@@ -32,7 +33,7 @@ var _ = Describe("Acceptance", Label("acceptance"), func() {
 	//   And implement runs again with that finding as its prompt
 	It("The reviewer says no", func(ctx SpecContext) {
 		By("given a node with two acceptance criteria")
-		s := seeded.stage(ctx)
+		s := reviewerFixture(forgeConfigured()).stage(ctx)
 		Expect(s.Graph.show(ctx, s.NodeRef).Node.Status).To(Equal("open"))
 		Expect(seeded.Body).To(SatisfyAll(ContainSubstring("AC-1"), ContainSubstring("AC-2")))
 
@@ -41,13 +42,11 @@ var _ = Describe("Acceptance", Label("acceptance"), func() {
 		// runs a scripted skill that dictates the code instead of deriving
 		// it. Everything else about the step — its session, its model, its
 		// tools — is the workflow's own.
-		dir, dropped := deriveForgelessFeature(ctx)
-		Expect(dropped).To(ConsistOf("pr", "merge"),
-			"only the steps that talk to a forge were dropped from feature")
+		selected, dir := reviewerWorkflow(ctx, s.Graph.Slug)
 
 		By("when the feature workflow reaches review")
 		exit := s.start(ctx, runOptions{
-			Workflow:       forgelessFeature,
+			Workflow:       selected,
 			Tier:           "feature",
 			WorkflowDir:    dir,
 			SkillOverrides: map[string]string{"implement": scriptedImplement()},
@@ -57,8 +56,10 @@ var _ = Describe("Acceptance", Label("acceptance"), func() {
 		detail := inspect(ctx, s.NodeRef)
 		reviews := attempts(detail, "review")
 		Expect(reviews).NotTo(BeEmpty(), "the run reached review")
-		Expect(attempts(detail, "pr")).To(BeEmpty(),
-			"the run never reached a forge: there is none on this host")
+		if !forgeConfigured() {
+			Expect(attempts(detail, "pr")).To(BeEmpty(),
+				"the run never reached a forge: there is none on this host")
+		}
 
 		By("then the verdict is revise")
 		view := s.Graph.show(ctx, s.NodeRef)
@@ -116,6 +117,13 @@ var _ = Describe("Acceptance", Label("acceptance"), func() {
 			Expect(later).To(BeTrue(), "a later review reached a verdict")
 			Expect(approved).To(ContainSubstring("- decision: approve"))
 			Expect(s.Graph.show(ctx, s.NodeRef).Node.Status).To(Equal("done"))
+			if forgeConfigured() {
+				// Delivered, not merely approved: the fix for the seeded
+				// violation is on the default branch of a real repository.
+				merged := view.artifact("merge-commit")
+				AddReportEntry("the merge commit the run delivered after the reviewer's no", merged)
+				Expect(s.Project.branchesContaining(ctx, merged)).To(ContainElement(s.Project.DefaultBranch))
+			}
 		case millv1.RunStatus_RUN_STATUS_PARKED:
 			gates := s.Graph.gates(ctx, detail.GetSummary().GetRun().GetId())
 			Expect(gates).NotTo(BeEmpty(), "the breaker filed a gate")
@@ -127,6 +135,37 @@ var _ = Describe("Acceptance", Label("acceptance"), func() {
 		}
 	})
 })
+
+// reviewerFixture is the seeded bad implementation, staged for the host it
+// runs on. With a forge it is a scratch project, so a run that answers the
+// reviewer's no can deliver and the scenario sees the whole of what the
+// pipeline does with a rejection; without one it is a bare repository on
+// this host, which is what keeps the milestone's own proof off an account
+// not every host has (docs/prd.md R-25, docs/runbook.md §"Without a forge").
+func reviewerFixture(forge bool) fixture {
+	f := seeded
+	f.Local = !forge
+	return f
+}
+
+// reviewerWorkflow is the definition the scenario runs and the directory it
+// was loaded from.
+//
+// With a forge it is `feature` itself, byte for byte. Without one, `feature`
+// opens the pull request before the reviewer reads the change, so a run of
+// it parks at `pr` and the reviewer never speaks; the scenario then runs the
+// same definition less exactly the two steps whose evidence only a forge can
+// state, derived from the file at run time so it cannot drift.
+func reviewerWorkflow(ctx context.Context, project string) (name, dir string) {
+	GinkgoHelper()
+	if forgeConfigured() {
+		return "feature", workflowDir("feature")
+	}
+	forgeless, dropped := deriveForgelessFeature(ctx, project)
+	Expect(dropped).To(ConsistOf("pr", "merge"),
+		"only the steps that talk to a forge were dropped from feature")
+	return forgelessFeature, forgeless
+}
 
 // verdictPattern matches the artifacts the run attaches for each review
 // attempt that reached a verdict: `review-1.md` (internal/run/verify.go).

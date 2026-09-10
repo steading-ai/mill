@@ -107,16 +107,7 @@ func preflight() Environment {
 	}
 
 	var missing []string
-	required := []struct{ name, value string }{{DatabaseURLVar, resolved.DatabaseURL}}
-	// A forge is optional, and half a forge is not: a URL with no token or
-	// no namespace is a configuration mistake, and skipping the scenarios
-	// that need one would hide it.
-	if resolved.ForgeURL != "" {
-		required = append(required,
-			struct{ name, value string }{ForgeTokenVar, resolved.ForgeToken},
-			struct{ name, value string }{ForgeNamespaceVar, resolved.ForgeNamespace})
-	}
-	for _, want := range required {
+	for _, want := range required(resolved) {
 		if want.value == "" {
 			missing = append(missing, want.name+" is unset")
 		}
@@ -163,6 +154,25 @@ func preflight() Environment {
 	return resolved
 }
 
+// variable is one thing the environment must carry, and what it carries.
+type variable struct{ name, value string }
+
+// required is what an environment must have for the suite to start.
+//
+// A forge is optional, and half a forge is not: a URL with no token or no
+// namespace is a configuration mistake, and skipping the scenarios that
+// need one would hide it. Everything else here is needed by every scenario
+// there is.
+func required(resolved Environment) []variable {
+	wanted := []variable{{DatabaseURLVar, resolved.DatabaseURL}}
+	if resolved.ForgeURL != "" {
+		wanted = append(wanted,
+			variable{ForgeTokenVar, resolved.ForgeToken},
+			variable{ForgeNamespaceVar, resolved.ForgeNamespace})
+	}
+	return wanted
+}
+
 // forgeConfigured reports whether the suite was given a forge to deliver to.
 // Without one every scenario that ends in a merge request skips, and the
 // scenarios that end before a run reaches a forge run against a bare
@@ -172,9 +182,21 @@ func forgeConfigured() bool { return env.ForgeURL != "" }
 // needsForge skips the calling spec when the suite has no forge.
 func needsForge() {
 	GinkgoHelper()
-	if !forgeConfigured() {
-		Skip("set " + ForgeURLVar + " to run the scenarios that deliver to a forge; see docs/runbook.md")
+	if reason := forgeSkipReason(forgeConfigured()); reason != "" {
+		Skip(reason)
 	}
+}
+
+// forgeSkipReason is why a forge-dependent scenario did not run, or empty
+// when it can. A skipped scenario is a scenario nobody proved, so the
+// message names the variable that would have run it and where to read about
+// it: a suite that quietly ran four of its five scenarios would be a suite
+// that lied about the milestone.
+func forgeSkipReason(configured bool) string {
+	if configured {
+		return ""
+	}
+	return "set " + ForgeURLVar + " to run the scenarios that deliver to a forge; see docs/runbook.md"
 }
 
 // valueOr is a value or a fallback.
@@ -184,3 +206,43 @@ func valueOr(value, fallback string) string {
 	}
 	return value
 }
+
+var _ = Describe("Acceptance", Label("acceptance"), func() {
+	// Scenario: The suite is honest about what it could not run
+	//   Given no forge is configured
+	//   When the suite runs
+	//   Then forge-dependent scenarios are skipped naming MILL_ACCEPTANCE_FORGE_URL
+	//   And the reviewer scenario runs
+	It("The suite is honest about what it could not run", func(ctx SpecContext) {
+		By("given no forge is configured")
+		// The environment a host with no GitLab resolves to. It starts the
+		// suite — a forge is optional — and it is the input every decision
+		// below is made from.
+		unconfigured := Environment{DatabaseURL: env.DatabaseURL}
+		Expect(unconfigured.ForgeURL).To(BeEmpty())
+		Expect(required(unconfigured)).To(ConsistOf(variable{DatabaseURLVar, env.DatabaseURL}),
+			"a host with no forge is asked for no forge credentials")
+
+		By("when the suite runs")
+		reason := forgeSkipReason(unconfigured.ForgeURL != "")
+
+		By("then forge-dependent scenarios are skipped naming MILL_ACCEPTANCE_FORGE_URL")
+		Expect(ForgeURLVar).To(Equal("MILL_ACCEPTANCE_FORGE_URL"))
+		Expect(reason).To(SatisfyAll(
+			ContainSubstring(ForgeURLVar),
+			ContainSubstring("docs/runbook.md")), "the skip says which variable would have run it")
+		Expect(forgeSkipReason(true)).To(BeEmpty(), "a configured forge skips nothing")
+
+		By("and the reviewer scenario runs")
+		// It is the milestone's own proof and it must not depend on an
+		// account not every host has, so with no forge it stages a bare
+		// repository on this host and clones it with real git. Staged here
+		// as that scenario stages it, and asserted to have reached for
+		// nothing the unconfigured environment lacks.
+		s := reviewerFixture(false).stage(ctx)
+		Expect(s.Project).To(BeNil(), "no scratch project on a forge")
+		Expect(s.Origin).To(HavePrefix("file://"), "a repository on this host")
+		Expect(s.VCSURL).To(Equal(placeholderVCSURL))
+		Expect(s.NodeRef).NotTo(BeEmpty(), "the node is filed and the scenario can run")
+	})
+})

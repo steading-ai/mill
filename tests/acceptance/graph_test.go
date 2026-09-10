@@ -161,25 +161,46 @@ func (v nodeView) attachment(name string) string {
 	return ""
 }
 
-// gates are the gate nodes mill filed for a run, newest last, with their
-// bodies. They are found by the labels mill puts on every gate it files
-// (internal/dagger.GateLabels), which is how mill itself finds them again.
-func (g *scratchGraph) gates(ctx context.Context, runID string) []string {
+// gateNode is one gate mill filed, as the suite reads it back: the
+// reference a person answers it by, and the ask they are answering.
+type gateNode struct {
+	Reference string `json:"reference"`
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	Status    string `json:"status"`
+}
+
+// gateNodes are the gates mill filed for a run, newest last. They are found
+// by the labels mill puts on every gate it files (internal/dagger.GateLabels),
+// which is how mill itself finds them again.
+func (g *scratchGraph) gateNodes(ctx context.Context, runID string) []gateNode {
 	GinkgoHelper()
 	var listed struct {
-		Nodes []struct {
-			Reference string `json:"reference"`
-			Title     string `json:"title"`
-			Body      string `json:"body"`
-		} `json:"nodes"`
+		Nodes []gateNode `json:"nodes"`
 	}
 	g.cli.json(ctx, &listed, "node", "list", "--view", "full",
 		"--label", "mill-gate", "--label", "mill-run-"+runID)
-	bodies := make([]string, 0, len(listed.Nodes))
-	for _, node := range listed.Nodes {
+	return listed.Nodes
+}
+
+// gates are those gates as the ask a person reads.
+func (g *scratchGraph) gates(ctx context.Context, runID string) []string {
+	GinkgoHelper()
+	nodes := g.gateNodes(ctx, runID)
+	bodies := make([]string, 0, len(nodes))
+	for _, node := range nodes {
 		bodies = append(bodies, node.Title+"\n\n"+node.Body)
 	}
 	return bodies
+}
+
+// complete answers a gate the way the person it was filed for does: `dg
+// complete`, from the operator's own dagger configuration, with no lease —
+// mill released the node when it filed the gate, and the answer is the
+// user's write and not the mill's (docs/domain-model.md §Principal).
+func (g *scratchGraph) complete(ctx context.Context, ref, result string) {
+	GinkgoHelper()
+	g.cli.json(ctx, nil, "complete", ref, "--result", result)
 }
 
 // artifact is the named artifact on a node's result, or a failure saying it

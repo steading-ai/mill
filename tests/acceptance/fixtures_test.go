@@ -186,3 +186,158 @@ func (s *staged) start(ctx context.Context, opts runOptions) *worker {
 	GinkgoHelper()
 	return start(ctx, s, opts)
 }
+
+// The feature fixture (docs/prd.md §8 O1, docs/roadmap.md §O1).
+//
+// A Go module with one subcommand and a table to register more in, and a
+// node asking for a second subcommand with its tests. The shape is the one
+// the assessment's own skill calls a feature before it has opened a file —
+// "a new command or subcommand", "new behaviour that has to be tested",
+// "a decision about *how* that a reviewer could reasonably disagree with",
+// which the node leaves open twice over: the shape of the registry it asks
+// for, and how `words` splits. So the scenario's first assertion, that the
+// run sized itself into `feature`, rests on the fixture and not on a model's
+// mood (workflows/build-workflow/skills/build-workflow/SKILL.md §"The
+// tiers").
+//
+// Neither the program nor the node hands the change to the assessment
+// pre-sized. An earlier fixture shipped a `subcommands` map and told the run
+// to touch two named files; the assessment read that as an entry in a table
+// somebody else had written and answered `quick-fix` twice running.
+//
+// It is sized so `implement` is one session: a small registry, one function,
+// one test. Three criteria and two scenarios are what make it worth
+// planning; they are not what make it long.
+var feature = fixture{
+	Name: "feature",
+	Files: map[string]string{
+		"go.mod": "module example.invalid/tally\n\ngo 1.25\n",
+		"README.md": "# tally\n\nA small text tool: one subcommand per question it answers about\n" +
+			"the text on its standard input.\n\n" +
+			"    $ printf 'alpha\\nbeta\\n' | tally lines\n    2\n",
+		"main.go":      tallyMain,
+		"main_test.go": tallyTest,
+	},
+	Title: "tally: add a `words` subcommand",
+	Body: "`tally` knows one verb, `lines`, and `main` dispatches it by comparing\n" +
+		"`os.Args[1]` against that one name. Add a second verb, and give the\n" +
+		"program somewhere to put the third.\n" +
+		"\n" +
+		"## Acceptance criteria\n" +
+		"\n" +
+		"- [ ] **AC-1** `tally words` reads standard input, writes the number of\n" +
+		"      whitespace-separated words it holds followed by a newline to\n" +
+		"      standard output, and exits 0.\n" +
+		"- [ ] **AC-2** Subcommands are dispatched from one registry rather than\n" +
+		"      by comparing argument strings in `main`, and the usage message is\n" +
+		"      derived from that registry: adding a third verb is its function\n" +
+		"      and its registration and no other edit.\n" +
+		"- [ ] **AC-3** A test named `TestWords`, in `main_test.go`, covers empty\n" +
+		"      input, one line and several lines; the usage message names both\n" +
+		"      verbs; `go test ./...` passes.\n" +
+		"\n" +
+		"## Scenarios\n" +
+		"\n" +
+		"```gherkin\n" +
+		"Scenario: Counting the words of a paragraph\n" +
+		"  Given three lines holding six words between them\n" +
+		"  When they are piped to `tally words`\n" +
+		"  Then it writes 6 and exits 0\n" +
+		"\n" +
+		"Scenario: The usage message names every subcommand\n" +
+		"  Given no subcommand on the command line\n" +
+		"  When tally is run\n" +
+		"  Then it exits 2 and its usage message names lines and words\n" +
+		"```\n" +
+		"\n" +
+		"## Notes\n" +
+		"\n" +
+		"Leave what `lines` prints as it is: its output is what the README\n" +
+		"documents. What the registry looks like, and how `words` splits —\n" +
+		"`strings.Fields`, a `bufio.Scanner` with `ScanWords`, or a rule of its\n" +
+		"own for punctuation and unicode — are open, and whichever is chosen has\n" +
+		"to be the one the usage message and the tests describe.\n",
+}
+
+// tallyMain is the fixture's whole program: one subcommand, dispatched by
+// hand. There is deliberately no table to register a second in — the node
+// asks for the extension point as well as the verb, which is the design
+// decision that makes it a feature rather than an entry in a map somebody
+// else already wrote.
+const tallyMain = `// Command tally is a small text tool: one subcommand per question it
+// answers about the text on its standard input.
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"io"
+	"os"
+)
+
+func main() {
+	if len(os.Args) < 2 {
+		usage()
+	}
+	if os.Args[1] != "lines" {
+		fmt.Fprintf(os.Stderr, "tally: unknown subcommand %q\n", os.Args[1])
+		usage()
+	}
+	if err := lines(os.Stdin, os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, "tally:", err)
+		os.Exit(1)
+	}
+}
+
+// usage names the subcommands there are and exits 2.
+func usage() {
+	fmt.Fprintln(os.Stderr, "usage: tally <lines>")
+	os.Exit(2)
+}
+
+// lines writes how many lines it was given.
+func lines(in io.Reader, out io.Writer) error {
+	scanner := bufio.NewScanner(in)
+	count := 0
+	for scanner.Scan() {
+		count++
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(out, count)
+	return err
+}
+`
+
+// tallyTest is the fixture's existing test, which is the pattern AC-3 asks
+// the run to follow for the subcommand it adds.
+const tallyTest = `package main
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestLines(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"empty", "", "0\n"},
+		{"one line", "alpha\n", "1\n"},
+		{"three lines", "alpha\nbeta\ngamma\n", "3\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out strings.Builder
+			if err := lines(strings.NewReader(tc.input), &out); err != nil {
+				t.Fatalf("lines: %v", err)
+			}
+			if out.String() != tc.want {
+				t.Errorf("lines(%q) = %q, want %q", tc.input, out.String(), tc.want)
+			}
+		})
+	}
+}
+`

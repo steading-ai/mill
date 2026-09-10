@@ -68,7 +68,7 @@ func (c *clone) verifyCommit(ctx context.Context, sha, allowedSigners string) (s
 	Expect(os.WriteFile(signers, line, 0o600)).To(Succeed())
 
 	command := exec.CommandContext(ctx, "git", //nolint:gosec // the suite's own git
-		"-c", "gpg.ssh.allowedSignersFile="+signers, "verify-commit", "--raw", sha)
+		"-c", "gpg.ssh.allowedSignersFile="+signers, "verify-commit", sha)
 	command.Dir = c.dir
 	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	out, err := command.CombinedOutput()
@@ -94,6 +94,21 @@ func (c *clone) run(ctx context.Context, args ...string) string {
 	out, err := command.CombinedOutput()
 	Expect(err).NotTo(HaveOccurred(), "git %s: %s", strings.Join(args, " "), out)
 	return string(out)
+}
+
+// goodSignatureFor is what git prints for a good SSH signature made by the
+// key an allowed_signers file trusts, naming that line's principal — which
+// is the identity the mill commits under (internal/workspace/signing,
+// Key.AllowedSignersLine). The mill signs with `gpg.format=ssh`, so git
+// hands verification to ssh-keygen and prints its words rather than GPG's
+// status keywords.
+func goodSignatureFor(allowedSigners string) string {
+	GinkgoHelper()
+	line, err := os.ReadFile(allowedSigners) //nolint:gosec // a path the suite computed
+	Expect(err).NotTo(HaveOccurred(), "the mill published an allowed_signers line at %s", allowedSigners)
+	fields := strings.Fields(string(line))
+	Expect(fields).NotTo(BeEmpty(), "the allowed_signers line names a principal")
+	return `Good "git" signature for ` + fields[0]
 }
 
 // allowedSignersPath is where the local workspace publishes the mill's line,

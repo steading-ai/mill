@@ -15,12 +15,19 @@ import (
 const deliveredTimeout = 10 * time.Minute
 
 // quickFixSteps are the steps of workflows/quick-fix in order, each with the
-// evidence its definition names. The ledger must show one closed attempt of
-// each, closed on evidence of that kind and no other.
+// evidence its definition names, preceded by the step the run makes for
+// itself. The ledger must show one closed attempt of each, closed on
+// evidence of that kind and no other.
+//
+// `select` is not in the workflow file: it is the attempt that records which
+// workflow the run walks and on what basis, and a run told which one on the
+// command line records `project default` rather than skipping it
+// (docs/domain-model.md §Selection).
 var quickFixSteps = []struct {
 	name     string
 	evidence millv1.EvidenceKind
 }{
+	{"select", millv1.EvidenceKind_EVIDENCE_KIND_STRUCTURED},
 	{"gather-context", millv1.EvidenceKind_EVIDENCE_KIND_ARTIFACT},
 	{"implement", millv1.EvidenceKind_EVIDENCE_KIND_ARTIFACT},
 	{"commit", millv1.EvidenceKind_EVIDENCE_KIND_COMMIT},
@@ -90,7 +97,7 @@ var _ = Describe("Acceptance", Label("acceptance"), func() {
 		signed := repo.signedCommitIn(ctx, merged)
 		out, err := repo.verifyCommit(ctx, signed, allowedSignersPath(s.WorkspaceDir))
 		Expect(err).NotTo(HaveOccurred(), "git verify-commit %s: %s", signed, out)
-		Expect(out).To(ContainSubstring("GOODSIG"))
+		Expect(out).To(ContainSubstring(goodSignatureFor(allowedSignersPath(s.WorkspaceDir))))
 
 		By("and dagger reports what the run cost, per step and across models")
 		// Dagger's rollup sums by model and keeps a count of the records it

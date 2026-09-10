@@ -4,8 +4,9 @@
 deployed dagger, a real GitLab, the real sidecar, and a real Claude account.
 It is the executable form of O0's done-when — a quick-fix node delivered by
 `mill run`, with every step's evidence in the ledger ([prd.md](prd.md) §8) —
-and of O1's: a `feature` node planned, and a seeded bad implementation the
-pipeline refuses (M.2, R-25).
+and of O1's: a `feature` node the run sized for itself, delivered through a
+plan gate a person answered, and a seeded bad implementation the pipeline
+refuses (M.2, R-25).
 
 Every other suite in this tree proves a part against a fake. This one proves
 the whole against nothing fake at all, because the facts it asserts —
@@ -44,6 +45,11 @@ in. If it starts, it has what it needs.
 the suite sets them on the subprocess from `MILL_ACCEPTANCE_FORGE_TOKEN` and
 `MILL_ACCEPTANCE_FORGE_USER`, so nothing needs to be exported twice.
 
+On the homestead host these variables come from `~/.config/mill/acceptance.env`
+— written by the `mill_forge` Ansible role, mode `0600` — so a suite run there
+is `set -a; . ~/.config/mill/acceptance.env; set +a` and then
+`make test-acceptance`.
+
 ### On the host
 
 - `dg`, `git`, `node` and `go` on `PATH`.
@@ -73,7 +79,7 @@ Each scenario stages a fixture and then drives it:
    `contrib/systemd/mill.service` does (docs/architecture.md §"Skill steps:
    the harness adapter").
 
-Five scenarios run, in parallel. Four of them deliver to a forge and skip
+Seven scenarios run, in parallel. Five of them deliver to a forge and skip
 when there is none:
 
 - **One node, delivered.** The happy path, end to end: the README's one word,
@@ -85,28 +91,70 @@ when there is none:
   killed during `implement` — the ledger, not the log, says when — its lease
   taken from it, and a second run invoked. The second reattaches rather than
   cloning, `implement` shows attempt 1 `aborted` and attempt 2 `closed` in
-  the same session, and the node is delivered anyway. It takes about a minute
-  and a half and one quick-fix run's tokens: 1.7k in, 4.0k out, 532k read
-  from cache, 38k written to it.
+  the same session, and the node is delivered anyway.
 - **A worker fenced out writes nothing.** A run in flight has its lease taken
   and the node claimed by a second worker. The running `mill run` exits `75`,
   and a fresh run finishes the node with no second merge request on the
-  branch. It takes about three minutes — a fenced worker notices at its next
-  heartbeat, and the scenario gives it a short one — and one quick-fix run's
-  tokens: 0.05k in, 5.3k out, 694k read from cache, 37k written to it.
+  branch. A fenced worker notices at its next heartbeat, and the scenario
+  gives it a short one.
 - **One node, planned and delivered.** The `feature` workflow end to end:
   every step through `pr` closed on the evidence its definition names, the
   plan in the branch under `docs/plans` naming the run, the reviewer in a
   session of its own, and a pull request for the run's branch.
+- **A feature is delivered through the gate.** The milestone's whole: a node
+  with no workflow named, sized by the run itself, planned, stopped at a
+  gate a person answers, and merged. See
+  [A feature is delivered through the gate](#a-feature-is-delivered-through-the-gate).
 
-The fifth needs no forge and runs on every host that can start the suite:
+Two need no forge and run on every host that can start the suite:
 
 - **The reviewer says no.** The seeded bad implementation, rejected on the
-  record. See [The reviewer says no](#the-reviewer-says-no).
+  record. It uses the forge when there is one, and a bare repository on this
+  host when there is not. See
+  [The reviewer says no](#the-reviewer-says-no).
+- **The suite is honest about what it could not run.** The skip machinery
+  itself: a host with no forge is asked for no forge credentials, a
+  forge-dependent scenario's skip names `MILL_ACCEPTANCE_FORGE_URL` and
+  points at this document, and the reviewer scenario stages without
+  reaching for a forge at all. It costs no session and no merge request.
 
-The forge scenarios fit inside fifteen minutes on the host because they run
-concurrently; the suite's wall clock is its slowest scenario, not their sum.
-*The reviewer says no* is the slowest, at up to seventy-five minutes.
+### What it takes
+
+Scenarios run concurrently, so the suite's wall clock is its slowest
+scenario and not their sum. The numbers below are observed on the
+development host on 2026-09-09, `ginkgo -p` across fifteen processes,
+against the homestead GitLab and one Claude account.
+
+| Scenario | Wall clock | Cost |
+|---|---|---|
+| One node, delivered | 2 min 20 s | $0.37 |
+| A killed worker's node is resumed by the next run | 1 min 58 s | $0.36 |
+| A worker fenced out writes nothing | 2 min 00 s | $0.37 |
+| One node, planned and delivered | 4 min 28 s | $1.09 |
+| The reviewer says no | 6 min 33 s | $2.44 |
+| A feature is delivered through the gate | 9 min 11 s over its two passes | $2.22 |
+| The suite is honest about what it could not run | under a second | nothing |
+| **The whole suite** | **9–10 min** | **$6.85** |
+
+So the suite fits inside thirty minutes on this host with room to spare.
+Its wall clock is *A feature is delivered through the gate*, which is the
+longest path by a margin — nine sessions over two passes, five of them
+Opus — and every other scenario finishes while it is still running: the
+other six together took 6 min 34 s. What would put the suite over is a
+retry: the reviewer's scenario and the feature gate's are the two that can
+go round again, and a second round costs each of them roughly what the
+first did. `make test-acceptance` allows ninety
+minutes, which is that worst case and not the expectation.
+
+The dollars are derived, not recorded. The ledger holds token counts and
+says so — `mill cost` is *counts, never currency* — so the figures above
+apply the published per-model rates to what `mill cost --project <scratch
+project>` reports for the run: input, output, cache read at a tenth of
+input, cache write at a quarter over it. The sessions themselves run on the
+account's Claude Code login, so this is the list-price equivalent of the
+work and not an invoice. Recompute it the same way after a change to the
+models a workflow pins; the shape of the bill is Opus output and Sonnet
+cache reads, and nothing else comes close.
 
 The two lease scenarios take the lease away rather than waiting it out,
 because killing a worker releases nothing and dagger hands a node to nobody
@@ -130,6 +178,7 @@ failed or interrupted scenario still tears down what it made.
 | Workspaces, clones, step logs, bare local origins, the built binary | Removed | Temporary directories the suite owns |
 | `mill serve` | Killed | Its process group, at the end of the suite |
 | Rows in `MILL_ACCEPTANCE_DATABASE_URL` | **Kept** | The ledger is the record of the run and is worth reading after a failure |
+| Workflow versions a scenario derived | **Kept**, at project scope | A workflow is immutable and `mill workflow` has no unpush, so a derived definition is pushed into the scenario's own dagger project — where the next suite run's assessment cannot see it |
 
 A `SIGKILL` to the suite itself skips all of it. To clean up by hand:
 
@@ -144,15 +193,33 @@ dg project archive <slug>
 
 # Whatever a killed run left on this host.
 rm -rf /tmp/mill-acceptance-*
+
+# Workflows at org scope, which is what every assessment chooses between.
+mill workflow list --socket <socket>
 ```
 
 Nothing is named without a nonce, so a leftover from an earlier run never
-collides with a later one.
+collides with a later one — with one exception, which is workflows. They are
+not named with a nonce, because a scenario that derives one is deriving a
+definition a deployment could plausibly have, and the assessment picks
+between them *by name*. So a derived definition goes in at project scope,
+where only the scenario that pushed it can resolve it. An org-scope
+definition this tree's `workflows/` does not hold is a leftover, and there
+is no verb to remove it: the store is a deployment's, and dropping the row
+is the operator's own `DELETE FROM workflows WHERE name = … AND scope =
+'org'`. *A feature is delivered through the gate* asserts the org scope is
+clean before it spends a session, so the failure names the leftover rather
+than the wrong workflow it caused to be chosen.
 
 ## When it fails
 
 - **The preflight refuses.** Read the list; every line names a variable, a
   path or a tool. Nothing has been spent.
+- **A scenario refuses before it starts, naming a workflow.** The org scope
+  of `MILL_ACCEPTANCE_DATABASE_URL` holds a definition this tree does not,
+  left by an older suite run, and the assessment would have been free to
+  choose it instead of `feature`. See
+  [What it leaves behind](#what-it-leaves-behind). Nothing has been spent.
 - **A step run is `failed` in the ledger.** `mill run`'s own output is in the
   spec's report. `Inspect` is the fuller story: the attempt, its exit, and
   the evidence that did not arrive.
@@ -165,6 +232,67 @@ collides with a later one.
   whose squash option is not `never`, replaces that commit with one GitLab
   wrote; the suite pins both at creation, so a failure here means the
   namespace overrode them.
+
+## A feature is delivered through the gate
+
+O1's done-when, executable ([prd.md](prd.md) §8 O1,
+[roadmap.md](roadmap.md) §O1): a feature node the reference harness would
+have worked, delivered by mill, with a plan gate answered by a person.
+
+**The fixture** is a Go module with one subcommand dispatched by hand, and a
+node asking for a second subcommand, for somewhere to put the third, and for
+tests — three acceptance criteria and two scenarios. That shape is what the
+assessment's own skill calls a feature before it has opened a file: a new
+subcommand, new behaviour that has to be tested, and a design decision left
+open twice over — what the registry looks like, and how words are split. It
+is sized so `implement` is one session: a small registry, one function, one
+test.
+
+Neither the program nor the node hands the change to the assessment
+pre-sized, and that is load-bearing rather than stylistic. An earlier
+fixture shipped a `subcommands` map and a note saying to touch two named
+files; the assessment read that as an entry in a table somebody else had
+written and answered `quick-fix` twice running, with the two files and the
+existing `lines` template as its signals. A work order that has done its own
+sizing is a work order the assessment will agree with.
+
+**Nothing names a workflow.** `mill run` is invoked with neither `--workflow`
+nor `--tier`, which is what a project with no default looks like, so the run
+runs `build-workflow`'s `assess` as its step 0 and the assessment names
+`feature` ([domain-model.md](domain-model.md) §Selection). The spec asserts
+the selection's basis is `assessment`, the workflow is `feature` and the
+tier is `feature`, and puts the whole assessment in its report.
+
+**The gate is not automatic.** `feature`'s `plan-approval` auto-approves an
+approved plan at this tier, which is the right default and the wrong thing
+to test with, so the scenario pushes `feature` **into its own dagger
+project** with the `auto` key removed and nothing else changed. A project
+definition shadows an org one of the same name, so the run resolves
+`feature` to that definition and every scenario beside it still resolves the
+real thing. Everything else — the skills, the models, the retries, the ask —
+is `workflows/feature/workflow.yaml` byte for byte, read at run time.
+
+**Then the two passes.** The first ends when the gate is filed: `mill run`
+exits `0`, the run is `waiting`, and one gate node hangs off the fixture's
+node with the plan's first forty lines quoted in its ask. The suite asserts
+the notify command was handed it — `--notify-command` points at a script
+that keeps the notice, and the spec decodes the JSON and checks the kind,
+the gate, the node and the run — then completes the gate with `dg complete`,
+under the operator's own configuration and with no lease, which is what a
+person answering in dagger does. The second pass is `mill run` again: it
+resumes at the gate, reads the answer, and delivers.
+
+**What is asserted at the end**: the node is `done`; the merge-commit
+artifact is a SHA on the default branch; the reviewer's last verdict on the
+node is `approve`; every step of the run — `assess` and `select` included —
+closed on the evidence its definition names; `mill inspect` shows no closed
+attempt with `unspecified` evidence; and dagger's usage rollup carries at
+least three models. The assessment, the gate and its notify payload, the
+verdict and the merge SHA all go into the spec's report.
+
+**Answering the gate from Slack** is the person's part of `prove-o1` and not
+this suite's: the suite answers in dagger, which is where the answer is
+written either way.
 
 ## The reviewer says no
 
@@ -193,21 +321,27 @@ one where the seeded implementation was approved.
 The reviewer's findings go into the spec's report verbatim, so a
 retrospective can quote the no.
 
-**The workflow it runs.** `feature` opens the pull request before the
-reviewer reads the change, so a run of it on a host with no forge parks at
-`pr` and the reviewer never speaks. The scenario derives its definition from
-`workflows/feature/workflow.yaml` at run time and drops the two steps whose
-evidence only a forge can state — `pr`, whose evidence is a URL, and the
-`merge` gate, whose evidence is a status — keeping every other step, skill,
-model, retry and `on_failure` exactly as `feature` writes them. It is pushed
-under the name `feature-no-forge` so a scenario running beside it still
-selects the real thing.
+**The workflow it runs**, and the repository, depend on the host. With a
+forge, it is `feature` itself against a scratch project, so a run that
+answers the reviewer's no goes all the way to a merge on the default branch
+and the scenario asserts that too.
+
+Without a forge, `feature` opens the pull request before the reviewer reads
+the change, so a run of it parks at `pr` and the reviewer never speaks. The
+scenario then derives its definition from `workflows/feature/workflow.yaml`
+at run time and drops the two steps whose evidence only a forge can state —
+`pr`, whose evidence is a URL, and the `merge` gate, whose evidence is a
+status — keeping every other step, skill, model, retry and `on_failure`
+exactly as `feature` writes them. It is pushed under the name
+`feature-no-forge` so a scenario running beside it still selects the real
+thing, and the spec asserts the run never reached `pr`.
 
 **Cost.** Two sessions, and up to eight Opus steps across them: the
 implementing session's think, plan, implement and simplify, and the
 reviewer's review-plan and review, plus a further implement and review for
-each round the reviewer sends back. Budget seventy-five minutes and a few
-dollars. It is the most expensive scenario in the suite.
+each round the reviewer sends back. One round is six and a half minutes and
+$2.44 ([What it takes](#what-it-takes)); it is the most expensive scenario
+in the suite, and a second round roughly doubles it.
 
 ## The scripted implementer
 
@@ -232,10 +366,12 @@ back to a pushed workflow. Nothing in a deployment sets that variable, and
 ## Without a forge
 
 With `MILL_ACCEPTANCE_FORGE_URL` unset, the suite runs in local-origin mode:
-the scenarios that end in a merge request skip, and *The reviewer says no*
-runs against a bare git repository in a temporary directory, which
-`mill run --origin` points a workspace at. It is a real repository cloned by
-real git; the only thing missing is the API no step in that scenario calls.
+the scenarios that end in a merge request skip — naming that variable and
+this document, which *The suite is honest about what it could not run*
+asserts — and *The reviewer says no* runs against a bare git repository in a
+temporary directory, which `mill run --origin` points a workspace at. It is
+a real repository cloned by real git; the only thing missing is the API no
+step in that scenario calls.
 
 `--vcs-url` is still required — the project's forge is resolved before
 anything is claimed, so a project with no repository fails before it has
