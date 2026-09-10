@@ -33,6 +33,13 @@ type Workspace struct {
 	// Token is the step token, the session's only credential. It is scoped
 	// to one step run and revoked when that step run leaves `running`.
 	Token string
+	// Env is what the workspace requires the session's own processes to run
+	// under: the run's commit identity and the mill's signing key
+	// (docs/architecture.md §"The workspace"). An adapter sets it last,
+	// with the socket and the token, so nothing a step asked for can shadow
+	// it — a session's `git commit` is the workspace's commit whether the
+	// session meant it to be or not.
+	Env map[string]string
 }
 
 // Sink receives a turn's events as they arrive, in the order the harness

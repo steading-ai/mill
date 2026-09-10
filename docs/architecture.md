@@ -107,22 +107,23 @@ A **deny list** applies in both modes and is not configurable. It is never given
 | `DATABASE_URL`, `MILL_*` | the mill's own store and credentials, the forge token among them |
 | `DG_*` | dagger's socket and project: a session reaches the work graph through nothing |
 | `CLAUDECODE`, `CLAUDE_CODE_*` | an interactive session's markers make the SDK think it is nested |
+| `GIT_CONFIG_*` | the host's git configuration, in the form that outranks a file; the workspace sets its own after this filter (§"The workspace") |
 
 `inherit` is then the mill's environment minus that list. `strict` is a floor, each variable with a reason:
 
 | Variable | Why it is on the floor |
 |---|---|
-| `HOME` | the SDK finds the account's login (`~/.claude/.credentials.json`) and writes transcripts under `~/.claude/projects`; git reads `~/.gitconfig` |
+| `HOME` | the SDK finds the account's login (`~/.claude/.credentials.json`) and writes transcripts under `~/.claude/projects`. Not git's identity: the workspace's `GIT_CONFIG_GLOBAL` displaces the account's configuration on every session (§"The workspace") |
 | `PATH` | the sidecar must find `node`, the SDK its `claude` binary, the session `git` and the project's toolchain |
 | `LANG`, `LC_ALL` | encoding; without them Node and git fall back to ASCII and mangle non-ASCII in bodies and diffs |
-| `LOGNAME`, `USER` | git's identity fallback; a clean `git commit` without `user.name` set |
+| `LOGNAME`, `USER` | the account a tool reports itself running as |
 | `SHELL` | the SDK's `Bash` tool runs the account's shell |
 | `TERM` | tools that check for a terminal behave predictably; a deployment pins it |
 | `TMPDIR` | the SDK and git write temporary files; a deployment points it inside the runtime directory |
 | `TZ` | timestamps in commits and logs match the host's |
 | `XDG_RUNTIME_DIR` | the sidecar's own sockets and the SDK's IPC live under it |
 
-The workspace socket and the step token are added on top in both modes, last, so nothing a step asked for can shadow them.
+The workspace socket, the step token and the workspace's git environment are added on top in both modes, last, so nothing a step asked for can shadow them: a step may widen what its session sees, and may not choose who its commits are by.
 
 **The carve-out is the step's, where a reviewer can see it.** A step's `harness.claude` options may name `env.passthrough: [NAME, …]`, which copies those variables from the mill's process, and `env.set: {NAME: value}`, which sets literals. Both are the sidecar's schema; the adapter reads `env.passthrough` too, because what a child process is given is not the child's to decide. A step naming a deny-listed variable is refused before the sidecar is spawned, with a message naming the variable. In `inherit` mode `env.passthrough` is accepted and redundant; `env.set` applies in both. The attempt records what the step asked for and what was stripped (`step_runs.env_passthrough`, `step_runs.env_stripped`), and `mill inspect` shows both when either is non-empty. The floor is not widened to make a step work: the carve-out exists so that a workflow says what it needs.
 
@@ -180,6 +181,8 @@ Implementations behind the interface:
 | `remote` | A clone on another host reached over the tailnet | That host's account | when a worker lives elsewhere |
 
 A workflow definition does not change across these. If it has to, the seam leaked.
+
+**Commit identity and signing are the workspace's, not the session's.** Who a commit is by, and what signs it, is decided once per run by the workspace and imposed on every process it or its harness spawns: an SSH signing key under the mill's account, and a git configuration in the run's directory — beside the checkout, never in it — named by `GIT_CONFIG_GLOBAL`, with `GIT_CONFIG_SYSTEM` and the four `GIT_AUTHOR_*`/`GIT_COMMITTER_*` variables alongside it. So the account's `~/.gitconfig` and `~/.config/git/config` are displaced on every session, a plain `git commit` in a session's own shell is the mill's commit, signed, and the `commit` verifier is comparing against the identity git was actually given rather than against whatever the host was configured for. The mill's own git says the same thing a different way — `-c user.name=`, `-c user.email=`, `-c user.signingkey=`, `-c commit.gpgsign=true` per invocation — and for the same reason: the answer lives outside the checkout, where a session can neither read the key nor change who it is committing as. A run never reads, and never asks an operator to change, any git configuration of the host's.
 
 A session gets the socket path and token, over the floor its harness's environment mode allows and nothing else (§"Skill steps: the harness adapter"). The adapter is the socket's client, not the session: the Claude sidecar holds the socket and re-exposes the verbs as an MCP server hosted in its own process, and the session's built-in `Read`/`Write`/`Edit`/`Bash` are removed by policy so the workspace's tools are the only filesystem and the only way to a process. A session cannot be pointed at the socket directly — the SDK's MCP transports are stdio, HTTP and in-process, and no URL spelling reaches a unix socket (`docs/spikes/mcp-workspace.md`). The mount is what makes every file and command one auditable call at a seam the mill owns; it is not what enforces. Enforcement is the process boundary `Workspace.Exec` sets — cwd, uid, environment — because a command run through `exec` is bounded by the process it spawns, not by the tool that spawned it.
 

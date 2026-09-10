@@ -67,13 +67,14 @@ func ParseEnvMode(name string) (EnvMode, error) {
 // are two boundaries; change one and look at the other.
 //
 //	HOME             the SDK finds ~/.claude/.credentials.json and writes
-//	                 transcripts under ~/.claude/projects; git reads ~/.gitconfig
+//	                 transcripts under ~/.claude/projects. Not git's identity:
+//	                 the workspace's GIT_CONFIG_GLOBAL displaces the account's
+//	                 configuration on every session
 //	PATH             the sidecar finds node, the SDK its claude binary, the
 //	                 session git and the project's toolchain
 //	LANG, LC_ALL     encoding; without them Node and git fall back to ASCII
 //	                 and mangle non-ASCII in bodies and diffs
-//	LOGNAME, USER    git's identity fallback, so a commit works without
-//	                 user.name set
+//	LOGNAME, USER    the account a tool reports itself running as
 //	SHELL            the SDK's Bash tool runs the account's shell
 //	TERM             tools that check for a terminal behave predictably
 //	TMPDIR           the SDK and git write temporary files; a deployment
@@ -101,7 +102,10 @@ var envFloor = []string{
 // session's environment is a credential its Bash tool can print, and the
 // login the SDK needs comes from HOME rather than from a key. The Claude
 // Code markers are here for a different reason: an interactive session's
-// variables make the SDK believe it is nested inside one.
+// variables make the SDK believe it is nested inside one. So is the host's
+// git configuration: what a session commits as is the workspace's answer,
+// and an inherited variable that overrode it would be the defect this list
+// exists to make impossible.
 var (
 	deniedNames = []string{
 		// The login comes from HOME. A key here is a key a tool can echo.
@@ -113,6 +117,12 @@ var (
 		"CLAUDECODE",
 	}
 	deniedPrefixes = []string{
+		// The host's git configuration, in the one form that outranks a
+		// file: GIT_CONFIG_COUNT and its key/value pairs. The workspace's
+		// own GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM are set after this
+		// filter, because who a session commits as is the workspace's
+		// answer and never the mill's ambient environment's.
+		"GIT_CONFIG_",
 		// The mill's own settings and credentials, MILL_FORGE_TOKEN among
 		// them.
 		"MILL_",
@@ -141,8 +151,9 @@ func denied(name string) bool {
 }
 
 // environment is what the sidecar is spawned with, and the record of how it
-// was arrived at. The socket and the token are added last, so nothing a step
-// asked for can shadow the session's only grant.
+// was arrived at. The socket, the token and the workspace's git environment
+// are added last, so nothing a step asked for can shadow the session's only
+// grant or the identity it commits under.
 //
 // A step asking for a deny-listed variable is refused here — before the
 // sidecar is spawned and in either mode — naming the variable, because the
@@ -180,6 +191,13 @@ func (a *Adapter) environment(session harness.Session) (map[string]string, harne
 
 	env[socketVar] = session.Workspace.Socket
 	env[tokenVar] = session.Workspace.Token
+	// The workspace's own variables go on with them: the run's commit
+	// identity and signing key are the workspace's to decide, so a step's
+	// carve-out and the account's `~/.gitconfig` alike are past having a
+	// say by the time the sidecar starts.
+	for name, value := range session.Workspace.Env {
+		env[name] = value
+	}
 	return env, harness.Environment{Passthrough: asked, Stripped: stripped}, nil
 }
 

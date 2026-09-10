@@ -76,6 +76,12 @@ type Workspace interface {
 	// options so that what is checked is the identity git was actually
 	// given.
 	Committer() workspace.Committer
+	// GitEnvironment is what a process the workspace spawns must run git
+	// under: the run's identity and the mill's signing key, and no
+	// configuration of the host account's. The loop hands it to the session
+	// so that a session that runs `git commit` itself makes the same commit
+	// the workspace would have.
+	GitEnvironment() map[string]string
 }
 
 // Workspaces makes the workspace a run works in: reattached when this worker

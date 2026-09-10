@@ -264,6 +264,30 @@ var _ = Describe("The sidecar", Label("unit"), func() {
 		Expect(env).NotTo(HaveKey("MILL_SPEC_ABSENT"))
 	})
 
+	It("gives the session the workspace's git identity, which the step cannot set aside", func() {
+		By("given a step that names an identity of its own")
+		options := filepath.Join(GinkgoT().TempDir(), "options.json")
+		line := startRequest("env-2", func(start *harnessv1.Start) {
+			start.Settings = settings(map[string]any{"env": map[string]any{
+				"set": map[string]any{"GIT_AUTHOR_EMAIL": "somebody@elsewhere.test"},
+			}})
+		})
+
+		By("when the sidecar starts the session, carrying what the workspace decided")
+		run(fakeEntrypoint, map[string]string{
+			"MILL_FAKE_SCENARIO": "trivial",
+			"MILL_FAKE_OPTIONS":  options,
+			"GIT_AUTHOR_EMAIL":   "mill@example.test",
+			"GIT_CONFIG_GLOBAL":  "/run/mill/01J0RUN/gitconfig",
+		}, line)
+
+		By("then the session's git is the workspace's, not the step's")
+		env, ok := applied(options)["env"].(map[string]any)
+		Expect(ok).To(BeTrue(), "the harness was given no environment")
+		Expect(env).To(HaveKeyWithValue("GIT_AUTHOR_EMAIL", "mill@example.test"))
+		Expect(env).To(HaveKeyWithValue("GIT_CONFIG_GLOBAL", "/run/mill/01J0RUN/gitconfig"))
+	})
+
 	It("refuses an option whose type is not the one the harness has", func() {
 		By("given a step whose tool lists are a string rather than a list")
 		line := startRequest("policy-4", func(start *harnessv1.Start) {

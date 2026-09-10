@@ -121,10 +121,14 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 		// here reads a key of it: the harness owns its own schema and
 		// refuses what it does not know, so a knob mill has never heard of
 		// still reaches the harness that has (docs/domain-model.md §Step).
-		Options:   settings.GetOptions().AsMap(),
-		Workspace: harness.Workspace{Socket: handle.Socket, Token: token.GetToken()},
-		Cwd:       handle.Root,
-		Events:    r.sessionEvents(ctx, s, sr, logSink(logFile, r.options.Redactor, r.options.Now)),
+		Options: settings.GetOptions().AsMap(),
+		Workspace: harness.Workspace{
+			Socket: handle.Socket,
+			Token:  token.GetToken(),
+			Env:    s.workspace.GitEnvironment(),
+		},
+		Cwd:    handle.Root,
+		Events: r.sessionEvents(ctx, s, sr, logSink(logFile, r.options.Redactor, r.options.Now)),
 	}
 
 	// The prompt heads the attempt's log. What a session was asked is the

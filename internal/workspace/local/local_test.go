@@ -13,6 +13,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	millv1 "github.com/ivy/mill/gen/mill/v1"
+	"github.com/ivy/mill/internal/evidence"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/local"
 	"github.com/ivy/mill/internal/workspace/redact"
@@ -157,14 +159,12 @@ var _ = Describe("The local workspace", Label("unit"), func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(strings.TrimSpace(where.Stdout)).To(Equal(resolved(handle.Root)))
 
-			// And the environment it ran with contains no variable but the
-			// two named
+			// And the environment it ran with contains nothing of the host's:
+			// the step's two credentials, and the git identity the workspace
+			// decided for the run
 			environment, err := session.Exec(ctx, socket.ExecRequest{Path: "/usr/bin/env"})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(lines(environment.Stdout)).To(ConsistOf(
-				"STEP_TOKEN="+theBearer,
-				"WORKSPACE_SOCKET="+handle.Socket,
-			))
+			Expect(lines(environment.Stdout)).To(ConsistOf(grant(ws, handle.Socket, theBearer)))
 		})
 
 		It("gives a child nothing the mill's own process carries", func(ctx context.Context) {
@@ -175,7 +175,7 @@ var _ = Describe("The local workspace", Label("unit"), func() {
 
 			Expect(err).NotTo(HaveOccurred())
 			Expect(environment.Stdout).NotTo(ContainSubstring("MILL_A_SECRET_THE_MILL_HOLDS"))
-			Expect(lines(environment.Stdout)).To(HaveLen(2))
+			Expect(lines(environment.Stdout)).To(ConsistOf(grant(ws, handle.Socket, theBearer)))
 		})
 
 		It("Rotate to a new token makes the previous token fail on the next request", func(ctx context.Context) {
@@ -319,6 +319,97 @@ var _ = Describe("The local workspace", Label("unit"), func() {
 			Expect(again.Root).To(Equal(handle.Root))
 			Expect(resumed.Rotate(ctx, workspace.TokenFor("a-fresh-bearer", workspace.Read))).To(Succeed())
 			Expect(socket.Dial(again.Socket, "a-fresh-bearer").Read(ctx, "notes.md")).To(Equal([]byte("half done\n")))
+		})
+	})
+
+	// A session runs git in its own shell — the `commit` skill has it do
+	// exactly that — and it is handed HOME, because the SDK's login lives
+	// there. What it must not be handed is the account's git identity: who
+	// a commit is by is the workspace's answer, and the `commit` verifier
+	// is checking that answer. docs/architecture.md §"The workspace".
+	Describe("the session's own git", func() {
+		var host string
+
+		// sessionGit runs git the way a session's shell does: the account's
+		// HOME and PATH, and what the workspace says about git over them.
+		// Nothing else, which is what the sidecar hands the SDK.
+		sessionGit := func(args ...string) (string, error) {
+			command := exec.Command("git", args...) //nolint:gosec // the arguments are this spec's own
+			command.Dir = handle.Root
+			command.Env = []string{"HOME=" + host, "PATH=" + os.Getenv("PATH"), "LC_ALL=C"}
+			for name, value := range ws.GitEnvironment() {
+				command.Env = append(command.Env, name+"="+value)
+			}
+			out, err := command.CombinedOutput()
+			return strings.TrimSpace(string(out)), err
+		}
+
+		BeforeEach(func(ctx context.Context) {
+			// The host account's own git identity, in a HOME this spec owns:
+			// nothing of the operator's is read or written. It disagrees with
+			// the run's on every field a commit carries.
+			host = filepath.Join(GinkgoT().TempDir(), "host-home")
+			Expect(os.MkdirAll(filepath.Join(host, ".config", "git"), 0o700)).To(Succeed())
+			config := "[user]\n\tname = Somebody Else\n\temail = somebody@elsewhere.test\n[commit]\n\tgpgsign = false\n"
+			Expect(os.WriteFile(filepath.Join(host, ".gitconfig"), []byte(config), 0o600)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(host, ".config", "git", "config"), []byte(config), 0o600)).To(Succeed())
+			handle = create(ctx, "run-06", "mill#12")
+		})
+
+		It("A session commits under the run's identity on a host that disagrees", func(ctx context.Context) {
+			base := git(handle.Root, "rev-parse", "HEAD")
+			Expect(os.WriteFile(filepath.Join(handle.Root, "notes.md"), []byte("what I did\n"), 0o600)).To(Succeed())
+			Expect(sessionGit("add", "notes.md")).Error().NotTo(HaveOccurred())
+
+			Expect(sessionGit("commit", "--message", "mill#12: implement")).Error().NotTo(HaveOccurred())
+
+			sha, err := sessionGit("rev-parse", "HEAD")
+			Expect(err).NotTo(HaveOccurred())
+			identity := ws.Committer()
+			Expect(sessionGit("show", "--no-patch", "--format=%an <%ae>", sha)).To(Equal(identity.String()))
+			Expect(sessionGit("show", "--no-patch", "--format=%cn <%ce>", sha)).To(Equal(identity.String()))
+
+			// The signature is the mill's key, verified against the
+			// allowed_signers the same configuration names.
+			out, err := sessionGit("verify-commit", sha)
+			Expect(err).NotTo(HaveOccurred(), "git verify-commit: %s", out)
+			Expect(out).To(ContainSubstring("Good \"git\" signature for " + identity.Email))
+
+			// And that is what closes the step: the `commit` verifier, given
+			// the commit the workspace observed, accepts it.
+			verified, err := evidence.Verify(ctx, millv1.EvidenceKind_EVIDENCE_KIND_COMMIT, evidence.Step{
+				Branch:    handle.Branch,
+				Claim:     sha,
+				Base:      base,
+				Committer: evidence.Committer{Name: identity.Name, Email: identity.Email},
+				Git:       ws.GitRunner(),
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(verified.Value.GetCommit()).To(Equal(sha))
+		})
+
+		It("The host's git configuration is never consulted", func() {
+			listed, err := sessionGit("config", "--list", "--show-origin")
+			Expect(err).NotTo(HaveOccurred())
+
+			run := filepath.Dir(handle.Root)
+			for _, line := range strings.Split(listed, "\n") {
+				origin, _, found := strings.Cut(strings.TrimPrefix(line, "file:"), "\t")
+				if !found || origin == os.DevNull {
+					continue
+				}
+				// git names the checkout's own configuration relative to the
+				// directory it ran in.
+				if !filepath.IsAbs(origin) {
+					origin = filepath.Join(handle.Root, origin)
+				}
+				// Every file git read is the workspace's own: the run's
+				// configuration beside the checkout, or the checkout's.
+				Expect(resolved(origin)).To(HavePrefix(resolved(run)),
+					"git read %s, which is outside the workspace", origin)
+			}
+			Expect(listed).NotTo(ContainSubstring("somebody@elsewhere.test"))
+			Expect(sessionGit("config", "user.email")).To(Equal(ws.Committer().Email))
 		})
 	})
 })

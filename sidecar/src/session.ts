@@ -70,6 +70,21 @@ const ENVIRONMENT_PASSTHROUGH = [
   "XDG_RUNTIME_DIR",
 ];
 
+// WORKSPACE_GIT_ENVIRONMENT is what the workspace decided about git before
+// the sidecar was spawned: the run's commit identity, the mill's signing key,
+// and configuration files that displace the account's own
+// (internal/workspace/local, `GitEnvironment`). Who a commit is by is the
+// workspace's answer and not the session's, so these are copied past the
+// step's carve-out rather than being part of the floor a step may widen.
+const WORKSPACE_GIT_ENVIRONMENT = [
+  "GIT_AUTHOR_EMAIL",
+  "GIT_AUTHOR_NAME",
+  "GIT_COMMITTER_EMAIL",
+  "GIT_COMMITTER_NAME",
+  "GIT_CONFIG_GLOBAL",
+  "GIT_CONFIG_SYSTEM",
+];
+
 // WORKSPACE_SOCKET_VAR and STEP_TOKEN_VAR are the names a session finds its
 // workspace under. They are the session's entire grant: a socket to speak to
 // and a bearer to present on it.
@@ -160,8 +175,9 @@ export function renderPrompt(prompt: string, attachments: Attachment[], nonce = 
 // The step's `env.passthrough` copies variables the sidecar itself has —
 // under `--env-mode strict` that is the floor plus the names the same key
 // told the adapter to carry, so the two halves of the carve-out are one line
-// in the workflow — and `env.set` sets literals over them. The socket and
-// the token go on last: they are the session's whole grant, and nothing a
+// in the workflow — and `env.set` sets literals over them. The workspace's
+// git environment, the socket and the token go on last: they are the
+// session's whole grant and the identity it commits under, and nothing a
 // step asked for may shadow them.
 export function sessionEnv(
   workspace: Workspace | undefined,
@@ -183,6 +199,11 @@ export function sessionEnv(
   }
   for (const [name, value] of Object.entries(carveOut?.set ?? {})) {
     env[name] = value;
+  }
+  // The workspace's git, after the carve-out: a step may not choose who its
+  // commits are by.
+  for (const name of WORKSPACE_GIT_ENVIRONMENT) {
+    copy(name);
   }
   // The foreground cap. Above it the harness backgrounds the command and
   // wakes the session when it ends, which is the wait the heartbeat watches

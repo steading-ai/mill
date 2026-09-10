@@ -15,6 +15,12 @@ write the message, and commit.
 
 - **Never `git add -A` or `git add .`** Be intentional about every path.
 - **Never `git -C <path>`** Run git from the working directory.
+- **Never set an identity or a signature, and never change git's
+  configuration.** Who the run commits as, and the key the commit is signed
+  with, are the workspace's and already in place: a plain `git commit` makes
+  the right commit. `--author`, `-c user.name=`, `-c user.email=`,
+  `--no-gpg-sign` and `git config` are all wrong here, and a commit that
+  carries any other identity is refused by the step that verifies this one.
 - **Never amend, rebase, or force.** The run's history is the record of what
   happened; a rewritten commit makes earlier evidence point at nothing.
 - **Never push.** The step that opens the pull request pushes.

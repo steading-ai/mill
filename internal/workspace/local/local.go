@@ -37,6 +37,13 @@ const (
 	checkoutDir = "checkout"
 	socketName  = "ws.sock"
 	signingDir  = "signing"
+	// gitConfigFile is the git configuration every process the workspace
+	// spawns runs under, the session's own git included. It carries the
+	// run's identity and the mill's signing key, so who a commit is by is
+	// the workspace's decision and not the session's, and it sits beside
+	// the checkout so the session runs under it without being able to
+	// rewrite it.
+	gitConfigFile = "gitconfig"
 )
 
 // runIDLen is how long the run id in a workspace's path is: the store mints
@@ -104,10 +111,11 @@ type Workspace struct {
 	execer   workspace.Execer
 	server   *socket.Server
 
-	mu     sync.RWMutex
-	handle *workspace.Handle
-	token  workspace.Token
-	signer *signing.Key
+	mu        sync.RWMutex
+	handle    *workspace.Handle
+	token     workspace.Token
+	signer    *signing.Key
+	gitConfig string
 }
 
 // keyMu serialises generating the mill's signing key, which every workspace
@@ -238,6 +246,10 @@ func (w *Workspace) open(ctx context.Context, dir string, spec workspace.Spec) (
 	if err := w.arrangeSigner(ctx); err != nil {
 		return nil, err
 	}
+	config, err := w.writeGitConfig(dir)
+	if err != nil {
+		return nil, err
+	}
 
 	handle := &workspace.Handle{
 		RunID:  spec.RunID,
@@ -249,6 +261,7 @@ func (w *Workspace) open(ctx context.Context, dir string, spec workspace.Spec) (
 	}
 	w.mu.Lock()
 	w.handle = handle
+	w.gitConfig = config
 	w.mu.Unlock()
 
 	if err := w.server.Listen(handle.Socket); err != nil {
@@ -277,6 +290,86 @@ func (w *Workspace) arrangeSigner(ctx context.Context) error {
 	w.signer = key
 	w.mu.Unlock()
 	return nil
+}
+
+// writeGitConfig writes the git configuration every process this workspace
+// spawns runs under, and returns its path.
+//
+// It is the same decision [signing.Key.GitConfig] makes for the mill's own
+// git — the run's name and address, the mill's key, `commit.gpgsign` — in
+// the one form a process the mill did not itself invoke can be held to: a
+// file named by `GIT_CONFIG_GLOBAL`. A session commits under the run's
+// identity because its git was pointed here, not because the session chose
+// to (docs/architecture.md §"The workspace").
+//
+// The file sits in the run's directory rather than in the checkout, beside
+// the key it names. A session may read it and may not change what it says,
+// and `git status` never reports it.
+func (w *Workspace) writeGitConfig(dir string) (string, error) {
+	w.mu.RLock()
+	signer := w.signer
+	w.mu.RUnlock()
+	identity := w.Committer()
+
+	var b strings.Builder
+	b.WriteString("# Written by mill for one run. The identity and the key a\n")
+	b.WriteString("# commit in this workspace carries are the mill's, not the session's.\n")
+	b.WriteString("[user]\n")
+	b.WriteString("\tname = " + gitConfigValue(identity.Name) + "\n")
+	b.WriteString("\temail = " + gitConfigValue(identity.Email) + "\n")
+	if signer != nil {
+		b.WriteString("\tsigningkey = " + gitConfigValue(signer.Path) + "\n")
+		b.WriteString("[gpg]\n\tformat = ssh\n")
+		b.WriteString("[gpg \"ssh\"]\n\tallowedSignersFile = " + gitConfigValue(signer.AllowedSigners) + "\n")
+		b.WriteString("[commit]\n\tgpgsign = true\n")
+		b.WriteString("[tag]\n\tgpgsign = true\n")
+	}
+
+	path := filepath.Join(dir, gitConfigFile)
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
+		return "", fmt.Errorf("workspace: write %s: %w", path, err)
+	}
+	return path, nil
+}
+
+// gitConfigValue renders a value the way git's configuration parser reads it
+// back: quoted, with the two characters that would otherwise end or escape
+// the string escaped.
+func gitConfigValue(value string) string {
+	escaped := strings.ReplaceAll(value, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+	return `"` + escaped + `"`
+}
+
+// GitEnvironment is what a process the workspace spawns must run git under.
+// It is the workspace's answer to "who is this commit by, and what signs
+// it", and it is an environment rather than a checkout-local configuration
+// because a session that could edit the answer would be deciding it.
+//
+// `GIT_CONFIG_GLOBAL` displaces the account's `~/.gitconfig` and
+// `~/.config/git/config` both, and `GIT_CONFIG_SYSTEM` the host's, so
+// nothing outside the workspace is read. The four identity variables say the
+// same thing again where no configuration file can be overridden at all,
+// which is what makes the answer hold in a checkout a session has written a
+// `user.name` into.
+//
+// Nil before Create or Attach: there is no run to have an identity yet.
+func (w *Workspace) GitEnvironment() map[string]string {
+	w.mu.RLock()
+	config := w.gitConfig
+	w.mu.RUnlock()
+	if config == "" {
+		return nil
+	}
+	identity := w.Committer()
+	return map[string]string{
+		"GIT_CONFIG_GLOBAL":   config,
+		"GIT_CONFIG_SYSTEM":   os.DevNull,
+		"GIT_AUTHOR_NAME":     identity.Name,
+		"GIT_AUTHOR_EMAIL":    identity.Email,
+		"GIT_COMMITTER_NAME":  identity.Name,
+		"GIT_COMMITTER_EMAIL": identity.Email,
+	}
 }
 
 // Close stops the socket and leaves the checkout where it is. It is what a
@@ -340,8 +433,9 @@ func (w *Workspace) SigningKey() *signing.Key {
 
 // Exec runs a command inside the checkout. This is the chokepoint: cwd is the
 // clone, the account is the mill's own, and the environment is exactly the
-// socket path and the current step token — nothing of the mill's own process
-// reaches the child, so a transcript that leaks holds nothing reusable.
+// socket path, the current step token and the run's git identity — nothing of
+// the mill's own process reaches the child, so a transcript that leaks holds
+// nothing reusable.
 //
 // The command's own name is still resolved against the mill's PATH, because
 // resolution happens in the parent; what the child is given is the map below
@@ -358,14 +452,22 @@ func (w *Workspace) Exec(ctx context.Context, command workspace.Command) (*works
 	w.mu.RLock()
 	token := w.token
 	w.mu.RUnlock()
+	env := map[string]string{
+		"WORKSPACE_SOCKET": handle.Socket,
+		"STEP_TOKEN":       token.Value,
+	}
+	// A child that runs git commits as the run, signed with the mill's key,
+	// and reads no configuration of the account's. That is the workspace's
+	// decision wherever the git runs, so it is made here rather than left to
+	// whatever spawned the process.
+	for name, value := range w.GitEnvironment() {
+		env[name] = value
+	}
 	return w.execer.Exec(ctx, workspace.Command{
 		Path: command.Path,
 		Args: command.Args,
 		Dir:  dir,
-		Env: map[string]string{
-			"WORKSPACE_SOCKET": handle.Socket,
-			"STEP_TOKEN":       token.Value,
-		},
+		Env:  env,
 	})
 }
 

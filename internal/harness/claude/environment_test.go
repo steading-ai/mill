@@ -173,6 +173,26 @@ printf '%s\n' '{"terminal":{"exit":{"status":0}}}'
 		}
 	})
 
+	It("gives the sidecar the git identity the workspace decided, over the host's", func() {
+		By("given a host account that commits as somebody else")
+		carrying("GIT_AUTHOR_EMAIL", "somebody@elsewhere.test")
+		carrying("GIT_CONFIG_GLOBAL", "/home/somebody/.gitconfig")
+
+		By("and a workspace that has decided who the run commits as")
+		session.Workspace.Env = map[string]string{
+			"GIT_CONFIG_GLOBAL": "/run/mill/01J0RUN/gitconfig",
+			"GIT_AUTHOR_EMAIL":  "mill@example.test",
+		}
+
+		for _, mode := range []EnvMode{EnvInherit, EnvStrict} {
+			env, _ := spawn(New(WithExecer(&watching{Execer: workspace.Spawner{}}), WithEnvMode(mode)))
+
+			By("then the sidecar runs under the workspace's, in " + string(mode) + " mode")
+			Expect(env).To(HaveKeyWithValue("GIT_CONFIG_GLOBAL", "/run/mill/01J0RUN/gitconfig"), "mode %s", mode)
+			Expect(env).To(HaveKeyWithValue("GIT_AUTHOR_EMAIL", "mill@example.test"), "mode %s", mode)
+		}
+	})
+
 	It("names the mode it was told about, and refuses one it has never heard of", func() {
 		Expect(ParseEnvMode("inherit")).To(Equal(EnvInherit))
 		Expect(ParseEnvMode("strict")).To(Equal(EnvStrict))

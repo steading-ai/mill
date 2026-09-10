@@ -153,18 +153,6 @@ collides with a later one.
 
 - **The preflight refuses.** Read the list; every line names a variable, a
   path or a tool. Nothing has been spent.
-- **`commit` fails with "was committed by … not by …".** The `commit` skill
-  has the session run `git commit` in its own shell, and the session's git
-  reads the host account's `~/.gitconfig` (docs/architecture.md
-  §"Skill steps: the harness adapter", the environment floor). The `commit`
-  verifier compares the result against the identity `mill run` was told to
-  commit under, which defaults to `mill <user@host>`. On a host whose git
-  identity is anything else, every `commit` step fails three times and the
-  run parks. This is a gap in the commit path and not in the suite: a
-  session's git also cannot reach the mill's signing key, so a commit it
-  makes is unsigned and *One node, delivered*'s `git verify-commit`
-  assertion cannot hold either. Until it is closed, run the suite on a host
-  whose git identity is the one the mill commits under.
 - **A step run is `failed` in the ledger.** `mill run`'s own output is in the
   spec's report. `Inspect` is the fuller story: the attempt, its exit, and
   the evidence that did not arrive.

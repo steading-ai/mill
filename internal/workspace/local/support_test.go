@@ -8,6 +8,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/ivy/mill/internal/workspace/local"
 )
 
 // gitEnv is what the specs' own git invocations run with: none of the
@@ -53,4 +55,16 @@ func origin() string {
 	git(dir, "add", "README.md")
 	git(dir, "commit", "--quiet", "--no-gpg-sign", "--message", "seed")
 	return dir
+}
+
+// grant is the whole environment the workspace gives a process it spawns:
+// the session's two credentials, and the run's git identity — which is the
+// workspace's answer and not the host's (docs/architecture.md §"The
+// workspace").
+func grant(ws *local.Workspace, socketPath, bearer string) []string {
+	entries := []string{"STEP_TOKEN=" + bearer, "WORKSPACE_SOCKET=" + socketPath}
+	for name, value := range ws.GitEnvironment() {
+		entries = append(entries, name+"="+value)
+	}
+	return entries
 }
