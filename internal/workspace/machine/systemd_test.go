@@ -47,6 +47,7 @@ func newHost() *host {
 			Podman:     stub("podman"),
 			Tar:        stub("tar"),
 			Setcap:     stub("setcap"),
+			Du:         stub("du"),
 		},
 	}
 }
@@ -252,13 +253,27 @@ var _ = Describe("The systemd driver", Label("unit"), func() {
 
 		Expect(driver.Snapshot(ctx, "/var/lib/mill/cache/global/go-mod/gen-3", "/var/lib/mill/runs/01RUN/cache/go-mod", false)).To(Succeed())
 		Expect(driver.Snapshot(ctx, "/var/lib/mill/runs/01RUN/cache/go-mod", "/var/lib/mill/runs/01RUN/cache/go-mod.candidate", true)).To(Succeed())
-		Expect(driver.DeleteSubvolume(ctx, "/var/lib/mill/runs/01RUN/cache/go-mod")).To(Succeed())
+		Expect(driver.DeleteSubvolume(ctx, "/var/lib/mill/runs/01RUN/cache/go-mod", false)).To(Succeed())
+		Expect(driver.SetReadOnly(ctx, "/var/lib/mill/cache/global/go-mod/gen-1", false)).To(Succeed())
+		Expect(driver.DeleteSubvolume(ctx, "/var/lib/mill/cache/global/go-mod/gen-1", true)).To(Succeed())
 
 		Expect(h.calls("btrfs")).To(Equal([]string{
 			"subvolume", "snapshot", "/var/lib/mill/cache/global/go-mod/gen-3", "/var/lib/mill/runs/01RUN/cache/go-mod",
 			"subvolume", "snapshot", "-r", "/var/lib/mill/runs/01RUN/cache/go-mod", "/var/lib/mill/runs/01RUN/cache/go-mod.candidate",
 			"subvolume", "delete", "/var/lib/mill/runs/01RUN/cache/go-mod",
+			"property", "set", "-ts", "/var/lib/mill/cache/global/go-mod/gen-1", "ro", "false",
+			"subvolume", "delete", "/var/lib/mill/cache/global/go-mod/gen-1",
+			"filesystem", "sync", "/var/lib/mill/cache/global/go-mod",
 		}))
+	})
+
+	It("estimates a tree's size with du, in bytes", func(ctx context.Context) {
+		h.stub("du", `printf '2834100\t%s\n' "$2"`)
+
+		size, err := driver.DiskUsage(ctx, "/var/lib/mill/cache/repo/r/go-build/gen-2")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(size).To(Equal(uint64(2834100 * 1024)))
+		Expect(h.calls("du")).To(Equal([]string{"-sk", "/var/lib/mill/cache/repo/r/go-build/gen-2"}))
 	})
 
 	It("reports the filesystem under a path by name, and nothing for a path that is not there", func() {

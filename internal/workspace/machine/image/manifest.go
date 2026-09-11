@@ -142,7 +142,7 @@ func (s *Store) remove(ctx context.Context, digest Digest) error {
 		return err
 	}
 	defer unlock()
-	if err := s.driver.DeleteSubvolume(ctx, s.Path(digest)); err != nil {
+	if err := s.driver.DeleteSubvolume(ctx, s.Path(digest), false); err != nil {
 		return err
 	}
 	if err := os.Remove(s.manifestPath(digest)); err != nil && !isNotExist(err) {

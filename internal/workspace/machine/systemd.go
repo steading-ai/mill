@@ -8,7 +8,9 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -35,6 +37,8 @@ type Commands struct {
 	Tar string
 	// Setcap restores file capabilities on an exported tree; `setcap`.
 	Setcap string
+	// Du estimates a generation's size at promotion; `du`.
+	Du string
 	// Sudo runs the verbs that write the image directory as root, because
 	// that directory is root's on the host (docs/sandbox.md §Storage): the
 	// subvolume create, rename and delete, the extraction, setcap, and the
@@ -66,6 +70,9 @@ func (c Commands) withDefaults() Commands {
 	}
 	if c.Setcap == "" {
 		c.Setcap = "setcap"
+	}
+	if c.Du == "" {
+		c.Du = "du"
 	}
 	return c
 }
@@ -226,9 +233,41 @@ func (d *systemdDriver) Snapshot(ctx context.Context, source, destination string
 }
 
 // DeleteSubvolume is `btrfs subvolume delete <path>`, as root when the
-// commands name sudo.
-func (d *systemdDriver) DeleteSubvolume(ctx context.Context, path string) error {
-	return d.runPrivileged(ctx, d.commands.Btrfs, "subvolume", "delete", path)
+// commands name sudo, then `btrfs filesystem sync` of the parent directory
+// when asked, because the parent is on the filesystem the subvolume was on
+// and still exists once it is gone.
+func (d *systemdDriver) DeleteSubvolume(ctx context.Context, path string, sync bool) error {
+	if err := d.runPrivileged(ctx, d.commands.Btrfs, "subvolume", "delete", path); err != nil {
+		return err
+	}
+	if !sync {
+		return nil
+	}
+	return d.runPrivileged(ctx, d.commands.Btrfs, "filesystem", "sync", filepath.Dir(path))
+}
+
+// SetReadOnly is `btrfs property set -ts <path> ro true|false`, as the
+// worker: the subvolumes it is asked of are the worker's own.
+func (d *systemdDriver) SetReadOnly(ctx context.Context, path string, readOnly bool) error {
+	_, err := d.run(ctx, d.commands.Btrfs, "property", "set", "-ts", path, "ro", strconv.FormatBool(readOnly))
+	return err
+}
+
+// DiskUsage is `du -sk <path>`, read as bytes.
+func (d *systemdDriver) DiskUsage(ctx context.Context, path string) (uint64, error) {
+	out, err := d.run(ctx, d.commands.Du, "-sk", path)
+	if err != nil {
+		return 0, err
+	}
+	fields := strings.Fields(out)
+	if len(fields) == 0 {
+		return 0, fmt.Errorf("machine: du -sk %s said nothing", path)
+	}
+	kib, err := strconv.ParseUint(fields[0], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("machine: du -sk %s: %q is not a size", path, fields[0])
+	}
+	return kib * 1024, nil
 }
 
 // Exists is a stat as the worker, or `test -e` as root when the commands

@@ -262,6 +262,19 @@ For each lineage the run uses: `btrfs subvolume snapshot <lineage>/gen-<latest> 
 - **A nested run never promotes into the outer's lineages.** An inner acceptance run's steps close on evidence too, and a lineage bind-mounted from the outer would receive a generation produced by a test. When `[machine].nested` is granted, the inner worker is given a lineage root of its own under the outer's ephemeral root, and the outer's caches are mounted into the outer machine only; an inner promotion that somehow addresses an outer lineage is refused.
 - The manifest is operational state of the worker, not the ledger. The ledger records only that a run restored and promoted which lineages.
 
+### Decided
+
+What the rules above leave open, `internal/workspace/machine/cache` decides as follows; every subvolume operation goes through the `Driver`, as the worker's uid, never through `sudo`.
+
+- **Repo id.** `repo/<repo-id>` uses `RepoID(origin)`: the origin with its scheme, user and `.git` dropped and every character outside `[A-Za-z0-9._]` replaced by `-`, then `-` and the first eight hex characters of the origin's sha256 — `gitlab.com-ivy-mill-1a2b3c4d`. Readable in `mill cache ls`, path-safe, and two origins that slug alike stay apart. Lineage names and repo ids must match `^[A-Za-z0-9][A-Za-z0-9._-]*$`; a lineage that does not is refused before anything is snapshotted.
+- **The run's record.** `runs/<id>/cache.json` is the run's own note: the lineage root it restored from, each lineage with the generation it restored (or why it started empty: `no generation`, `key changed`), and the step whose candidate it holds. `Promote` reads it. The ledger duplicates none of it; what it is handed is the `Restored` and `Promoted` values.
+- **Candidates** live at `runs/<id>/candidate/<name>`, read-only. A new candidate is taken whole into `candidate.next` before the previous step's is deleted, so a failure part way leaves the previous candidate standing. A candidate that cannot be taken is a warning in the worker's log, never a failed step: the evidence is recorded and the run promotes from the last candidate it did take, or nothing.
+- **Promotion is a rename.** `rename(2)` refuses a read-only subvolume's root with `EROFS`, as `unlink` does, so the candidate's `ro` is cleared, it is renamed into `gen-<n+1>`, and `ro` is set again: the generation is the candidate's own subvolume, not a copy. The size estimate is `du -s` of the candidate once, before the rename. Generations are numbered from the directory tree — the highest `gen-<n>` present plus one — under a `flock` on `<lineage>/lock` that a restore holds too, so two runs promoting at once take consecutive numbers and a restore never snapshots a generation being pruned.
+- **The manifest** is reconciled with the tree on every read: a `gen-<n>` the tree has and the manifest does not is listed by number alone, and one the manifest has and the tree does not is dropped. The manifest is written before pruning and again after it. A lineage gets its directory and manifest at its first restore, so `mill cache ls` shows a lineage that restores empty every run, with when it was last restored.
+- **Caps.** The global cap is worker configuration — `cache-global-cap`, 20 GiB unless set — compared against the candidate's estimate; a reset deletes the candidate and every generation and records `reset` (when, which run and step, the estimate, the cap, one sentence) in the manifest, which `mill cache ls` shows as the `reset` flag until the next promotion. The repo cap — `cache-repo-cap`, 10 GiB unless set — is only the `over-cap` flag.
+- **Outside the root.** `Promote` compares the record's lineage root with the worker's own and refuses any other with `ErrOutsideRoot`; a nested worker's record names its own root, so its promotion never reaches the outer's lineages.
+- **Discard.** Removing the run's copies and candidates is `Discard(run)`, the cache half of removing the run directory at destroy; it is called after `Promote`, or instead of it when the run promotes nothing.
+
 ## Eviction
 
 Three mechanisms, applied in this order at each trigger.
@@ -270,7 +283,7 @@ Three mechanisms, applied in this order at each trigger.
 2. **Expiry**: a repo-scoped lineage or an image subvolume not restored or booted for 30 days (worker config) is deleted.
 3. **Watermarks**: when free space on the cache filesystem — `statfs`, the truth — is below the high watermark, delete repo-scoped lineages and image subvolumes in order of least recent use until free space exceeds the low watermark. Two thresholds so eviction does not run at every promotion. Global lineages are not evicted by watermark; they are bounded by their caps (§Promote).
 
-- After each `btrfs subvolume delete`, `btrfs subvolume sync` before re-reading free space; deletion frees space asynchronously and an eviction loop that does not wait over-evicts.
+- After each `btrfs subvolume delete`, `btrfs filesystem sync` on the volume before re-reading free space; deletion frees space asynchronously and an eviction loop that does not wait over-evicts. `subvolume sync` needs root and does not move `statfs`; `filesystem sync` is the unprivileged commit that does (the spike's E9). The driver's `DeleteSubvolume` takes a `sync` flag for it.
 - Do not enable qgroups for this. Per-lineage sizes are estimates for ranking victims; free space decides whether to evict.
 - A lineage under eviction may be the parent of an in-flight run's writable snapshot. That is safe: btrfs snapshots are independent. A run whose lineage was evicted mid-run promotes into a fresh lineage.
 - Triggers: after each promotion; at worker start, with reconciliation; on a systemd timer for expiry.

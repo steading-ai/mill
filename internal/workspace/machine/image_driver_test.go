@@ -100,7 +100,7 @@ var _ = Describe("The systemd driver's image verbs", Label("unit"), func() {
 		present, err = driver.Exists(ctx, filepath.Join(dir, "absent"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(present).To(BeFalse())
-		Expect(driver.DeleteSubvolume(ctx, "/x/a")).To(Succeed())
+		Expect(driver.DeleteSubvolume(ctx, "/x/a", false)).To(Succeed())
 
 		Expect(h.calls("btrfs")).To(Equal([]string{"subvolume", "create", "/x/a.building", "subvolume", "delete", "/x/a"}))
 		Expect(h.calls("setcap")).To(Equal([]string{"cap_setuid=ep", "/x/a.building/usr/bin/newuidmap"}))
@@ -120,7 +120,7 @@ var _ = Describe("The systemd driver's image verbs", Label("unit"), func() {
 		present, err := privileged.Exists(ctx, "/x/a")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(present).To(BeTrue())
-		Expect(privileged.DeleteSubvolume(ctx, "/x/a")).To(Succeed())
+		Expect(privileged.DeleteSubvolume(ctx, "/x/a", false)).To(Succeed())
 		Expect(privileged.RemoveImage(ctx, "localhost/mill/derived:d")).To(Succeed())
 
 		Expect(h.calls("sudo")).To(Equal([]string{

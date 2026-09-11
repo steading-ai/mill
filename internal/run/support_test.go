@@ -86,6 +86,9 @@ type fixture struct {
 	// keepWorkspace leaves the run's checkout on disk after the run
 	// finishes, for a spec that reads the branch the run left behind.
 	keepWorkspace bool
+	// wrapWorkspace, when set, wraps the workspace the run is given, for a
+	// spec that watches what the loop asks of it.
+	wrapWorkspace func(run.Workspace) run.Workspace
 
 	// theirs counts the commits a spec made under somebody else's
 	// identity, so each one is a commit and not an empty write.
@@ -287,6 +290,9 @@ func (f *fixture) workspaces() run.Workspaces {
 		var ws run.Workspace = local
 		if f.keepWorkspace {
 			ws = keeping{Workspace: ws}
+		}
+		if f.wrapWorkspace != nil {
+			ws = f.wrapWorkspace(ws)
 		}
 		f.workspace = ws
 		if _, err := local.Attach(ctx, spec); err == nil {

@@ -41,6 +41,7 @@ knows either.
 | `image ls` | Which image subvolumes this host holds, from what, and when last booted |
 | `image prune` | Remove the image subvolumes nothing has booted within the expiry |
 | `image build-base` | Build the base image machines boot from, and push it |
+| `cache ls` | Which cache lineages this worker holds, their generations, size and last restore |
 
 A run is named by its node reference — `mill#18` — or by the run id `status`
 prints. Anything carrying a `#` is a node reference; anything else is a run
@@ -633,6 +634,29 @@ digest sha256:7d3a1f0c9b2e…
 resolves `:latest` to a digest at each provision, so a pushed base takes
 effect on the next run; `base-image` in the configuration file — a tag or
 a digest — is the rollback.
+
+## cache ls
+
+Which cache lineages this worker holds (`docs/sandbox.md` §Caching): the
+scope — `global`, or `repo/<repo-id>` — the name, the generations on disk,
+the latest generation's `du -s` estimate at promotion, when a run last
+restored it, and a flag: `over-cap` when the latest estimate exceeds the
+scope's cap, `reset` when the last promotion emptied a global lineage for
+exceeding its cap. Global lineages first, then by repository and name.
+
+```
+$ mill cache ls
+SCOPE                              NAME      GENERATIONS  LATEST SIZE  LAST RESTORED         FLAGS
+global                             go-mod    3,4          1.2G         2026-09-11T06:35:20Z  -
+global                             mise      2,3          640M         2026-09-11T06:35:20Z  -
+repo/gitlab.com-ivy-mill-1a2b3c4d  go-build  7,8          2.7G         2026-09-11T06:35:20Z  -
+```
+
+The listing is the directory tree under `<sandbox-root>/cache` and each
+lineage's `manifest.json`, never `btrfs subvolume list`, which needs root.
+The caps are `--global-cap` and `--repo-cap`, or `cache-global-cap` and
+`cache-repo-cap` in the configuration file; the global one is what a
+promotion is measured against, the repo one is only the flag.
 
 ## Identity
 

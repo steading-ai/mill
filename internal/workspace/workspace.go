@@ -512,6 +512,20 @@ type Workspace interface {
 	Redact(values ...string)
 }
 
+// CacheCandidate is what a workspace that carries cache lineages implements
+// beside [Workspace]: the run loop calls Candidate each time a step closes
+// on evidence, before the step's slice is stopped, so the run's writable
+// cache copies are snapshotted as the promotion candidate at that moment
+// and a later evidence-closed step replaces it (docs/sandbox.md §"Step
+// boundary", §Promote). A cancelled, timed-out or failed step never reaches
+// it. A workspace without lineages — the local backend — does not
+// implement it, and the loop asks nothing of it.
+type CacheCandidate interface {
+	// Candidate snapshots the run's cache copies as the candidate of the
+	// named step.
+	Candidate(ctx context.Context, step string) error
+}
+
 // BranchFor is the run's working branch, derived from the node ref: `mill/`
 // and the ref with everything git forbids in a branch name replaced. A node
 // ref of `mill#12` becomes `mill/mill-12`. A node ref with nothing usable in

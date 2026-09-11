@@ -213,7 +213,7 @@ var _ = Describe("Ensuring an image subvolume", Label("unit"), func() {
 		Expect(finding.Err).To(MatchError(ContainSubstring("no space left")))
 
 		derived := image.Derived(baseA, []string{"libpq-devel"})
-		Expect(f.fake.CallsTo(machine.DeleteSubvolume)[0].Args).To(Equal([]any{f.store.Path(derived) + image.BuildingSuffix}))
+		Expect(f.fake.CallsTo(machine.DeleteSubvolume)[0].Args).To(Equal([]any{f.store.Path(derived) + image.BuildingSuffix, false}))
 		Expect(f.store.Path(derived) + image.BuildingSuffix).NotTo(BeAnExistingFile())
 		Expect(f.store.Path(derived)).NotTo(BeAnExistingFile())
 		Expect(f.fake.CallsTo(machine.RemoveImage)).To(HaveLen(2), "the built image is removed on failure too")
@@ -367,7 +367,7 @@ var _ = Describe("Listing and pruning images", Label("unit"), func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(pruned).To(HaveLen(1))
 		Expect(pruned[0].Digest).To(Equal(old))
-		Expect(f.fake.CallsTo(machine.DeleteSubvolume)[0].Args).To(Equal([]any{f.store.Path(old)}))
+		Expect(f.fake.CallsTo(machine.DeleteSubvolume)[0].Args).To(Equal([]any{f.store.Path(old), false}))
 		Expect(f.store.Path(old)).NotTo(BeAnExistingFile())
 		Expect(f.store.Path(fresh)).To(BeADirectory())
 

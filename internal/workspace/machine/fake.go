@@ -3,7 +3,9 @@ package machine
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 
@@ -19,6 +21,8 @@ const (
 	ListMachines    = "ListMachines"
 	Snapshot        = "Snapshot"
 	DeleteSubvolume = "DeleteSubvolume"
+	SetReadOnly     = "SetReadOnly"
+	DiskUsage       = "DiskUsage"
 	Statfs          = "Statfs"
 
 	Exists           = "Exists"
@@ -66,11 +70,14 @@ type Output struct {
 // about. A scripted error is returned as the call's error; a scripted value
 // is returned as its result.
 //
-// The subvolume verbs an image build needs — Exists, CreateSubvolume,
-// Rename, DeleteSubvolume — act on plain directories when they succeed, so
-// a spec's temporary directory stands in for the image directory and a
-// second caller finds what the first built. Snapshot and the podman verbs
-// touch nothing.
+// The subvolume verbs — Exists, CreateSubvolume, Rename, DeleteSubvolume,
+// Snapshot — act on plain directories when they succeed, so a spec's
+// temporary directory stands in for the image directory or a cache
+// lineage and a second caller finds what the first built: a snapshot is a
+// copy of the tree, which is what a snapshot is to everyone but the disk.
+// What a plain directory cannot stand in for is not modelled: SetReadOnly
+// records the call and changes nothing, and DiskUsage answers what is
+// scripted or the tree's apparent size. The podman verbs touch nothing.
 type FakeDriver struct {
 	mu      sync.Mutex
 	calls   []Call
@@ -193,18 +200,71 @@ func (f *FakeDriver) ListMachines(_ context.Context) ([]Machine, error) {
 	}
 }
 
-// Snapshot records the call and returns the scripted error, if any.
+// Snapshot records the call, returns the scripted error if any, and
+// otherwise copies the directory standing in for the source subvolume to
+// the destination, which must not exist yet, as btrfs requires.
 func (f *FakeDriver) Snapshot(_ context.Context, source, destination string, readOnly bool) error {
-	return asError(f.record(Snapshot, source, destination, readOnly))
+	if err := asError(f.record(Snapshot, source, destination, readOnly)); err != nil {
+		return err
+	}
+	if _, err := os.Stat(destination); err == nil {
+		return fmt.Errorf("machine: fake driver: snapshot destination %s exists", destination)
+	}
+	return os.CopyFS(destination, os.DirFS(source))
 }
 
 // DeleteSubvolume records the call, returns the scripted error if any, and
 // otherwise removes the directory standing in for the subvolume.
-func (f *FakeDriver) DeleteSubvolume(_ context.Context, path string) error {
-	if err := asError(f.record(DeleteSubvolume, path)); err != nil {
+func (f *FakeDriver) DeleteSubvolume(_ context.Context, path string, sync bool) error {
+	if err := asError(f.record(DeleteSubvolume, path, sync)); err != nil {
 		return err
 	}
 	return os.RemoveAll(path)
+}
+
+// SetReadOnly records the call and returns the scripted error, if any. A
+// plain directory has no such property to set.
+func (f *FakeDriver) SetReadOnly(_ context.Context, path string, readOnly bool) error {
+	return asError(f.record(SetReadOnly, path, readOnly))
+}
+
+// DiskUsage records the call and answers the scripted size, or the sum of
+// the regular files under the path.
+func (f *FakeDriver) DiskUsage(_ context.Context, path string) (uint64, error) {
+	switch result := f.record(DiskUsage, path).(type) {
+	case nil:
+		return apparentSize(path)
+	case error:
+		return 0, result
+	case uint64:
+		return result, nil
+	case int:
+		return uint64(result), nil //nolint:gosec // a scripted size is never negative
+	default:
+		return 0, scriptMismatch(DiskUsage, result)
+	}
+}
+
+// apparentSize is the bytes of every regular file under a tree.
+func apparentSize(root string) (uint64, error) {
+	var total uint64
+	err := filepath.WalkDir(root, func(_ string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.Type().IsRegular() {
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			total += uint64(info.Size()) //nolint:gosec // a file size is never negative
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("machine: fake driver: du %s: %w", root, err)
+	}
+	return total, nil
 }
 
 // Exists records the call and answers the scripted value, or whether the

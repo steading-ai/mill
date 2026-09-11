@@ -146,7 +146,7 @@ func (s *Store) buildOnHostOutsideAnyMachine(ctx context.Context, base, digest D
 	if err := s.driver.CreateSubvolume(budget, building); err != nil {
 		return fail("export", "", err)
 	}
-	cleanup := func() { _ = s.driver.DeleteSubvolume(context.WithoutCancel(ctx), building) }
+	cleanup := func() { _ = s.driver.DeleteSubvolume(context.WithoutCancel(ctx), building, false) }
 
 	if err := s.driver.ExportImage(budget, tag, building); err != nil {
 		cleanup()

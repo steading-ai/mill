@@ -93,7 +93,20 @@ type Driver interface {
 	Snapshot(ctx context.Context, source, destination string, readOnly bool) error
 	// DeleteSubvolume is `btrfs subvolume delete <path>`: a run's cache
 	// copy at destroy, a generation at eviction (§Destroy, §Eviction).
-	DeleteSubvolume(ctx context.Context, path string) error
+	// Deletion frees space asynchronously; sync follows it with `btrfs
+	// filesystem sync` on the path's filesystem, the unprivileged commit
+	// that makes statfs tell the truth (docs/spikes/nspawn-per-run-sandbox.md
+	// E9). A read-only subvolume must be made writable first, which is
+	// SetReadOnly's.
+	DeleteSubvolume(ctx context.Context, path string, sync bool) error
+	// SetReadOnly is `btrfs property set -ts <path> ro true|false`: a
+	// generation is read-only from promotion until the moment it is
+	// deleted, because its owner cannot delete it while it is (§Promote).
+	SetReadOnly(ctx context.Context, path string, readOnly bool) error
+	// DiskUsage is `du -s` of a tree in bytes: the size estimate a
+	// generation's manifest records at promotion, and the number a global
+	// lineage's cap is compared against (§Promote). Never qgroups.
+	DiskUsage(ctx context.Context, path string) (uint64, error)
 	// Statfs is the filesystem under a path: what it is and what is free,
 	// which is what eviction decides on and what doctor asks of the
 	// sandbox root (§Eviction, §Storage).

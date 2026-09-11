@@ -310,6 +310,9 @@ func (r *Runner) closeStep(ctx context.Context, s *state, sr *millv1.StepRun, st
 	if message := res.session.FinalMessage; message != "" {
 		s.summary = message
 	}
+	// The step is closed on evidence: its cache copies are what the run
+	// would promote, until a later step closes (internal/run/cache.go).
+	r.cacheCandidate(ctx, s, step)
 	// The attempt goes in the span whether it closed or failed: what a park
 	// gate has to show a human is every attempt in the span, and a step
 	// that closed on evidence can still be the reason a later one could not

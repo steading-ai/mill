@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -29,8 +31,11 @@ var _ = Describe("The fake driver", Label("unit"), func() {
 		drain(process)
 		_, err = fake.ListMachines(ctx)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(fake.Snapshot(ctx, "/src", "/dst", true)).To(Succeed())
-		Expect(fake.DeleteSubvolume(ctx, "/dst")).To(Succeed())
+		src := filepath.Join(GinkgoT().TempDir(), "src")
+		dst := filepath.Join(GinkgoT().TempDir(), "dst")
+		Expect(os.Mkdir(src, 0o755)).To(Succeed())
+		Expect(fake.Snapshot(ctx, src, dst, true)).To(Succeed())
+		Expect(fake.DeleteSubvolume(ctx, dst, false)).To(Succeed())
 		_, err = fake.Statfs("/var/lib/mill")
 		Expect(err).NotTo(HaveOccurred())
 
@@ -40,8 +45,8 @@ var _ = Describe("The fake driver", Label("unit"), func() {
 			{Method: machine.ShowMachine, Args: []any{"mill-01RUN"}},
 			{Method: machine.Exec, Args: []any{request}},
 			{Method: machine.ListMachines, Args: nil},
-			{Method: machine.Snapshot, Args: []any{"/src", "/dst", true}},
-			{Method: machine.DeleteSubvolume, Args: []any{"/dst"}},
+			{Method: machine.Snapshot, Args: []any{src, dst, true}},
+			{Method: machine.DeleteSubvolume, Args: []any{dst, false}},
 			{Method: machine.Statfs, Args: []any{"/var/lib/mill"}},
 		}))
 		Expect(fake.CallsTo(machine.Snapshot)).To(HaveLen(1))

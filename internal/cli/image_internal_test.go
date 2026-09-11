@@ -41,7 +41,7 @@ var _ = Describe("mill image prune", Label("unit"), func() {
 		Expect(stdout.String()).To(ContainSubstring("removed"))
 		Expect(stdout.String()).NotTo(ContainSubstring(fresh.Short()))
 		Expect(fake.CallsTo(machine.DeleteSubvolume)).To(Equal([]machine.Call{
-			{Method: machine.DeleteSubvolume, Args: []any{store.Path(old)}},
+			{Method: machine.DeleteSubvolume, Args: []any{store.Path(old), false}},
 		}))
 		Expect(store.Path(old)).NotTo(BeAnExistingFile())
 		Expect(store.Path(fresh)).To(BeADirectory())

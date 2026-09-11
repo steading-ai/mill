@@ -82,6 +82,7 @@ ledger; "mill doctor" probes what a run depends on; "mill cancel" stops one.
 		newWorkflowCommand(),
 		newWorkspaceCommand(),
 		newImageCommand(),
+		newCacheCommand(),
 		newStatusCommand(),
 		newInspectCommand(),
 		newExplainCommand(),

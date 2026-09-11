@@ -59,8 +59,13 @@ type Config struct {
 	BaseImage        string `yaml:"base-image"`
 	ImageBuildBudget string `yaml:"image-build-budget"`
 	ImageExpiry      string `yaml:"image-expiry"`
-	LogDir           string `yaml:"log-dir"`
-	EnvMode          string `yaml:"env_mode"`
+	// The cache lineages (docs/sandbox.md §Caching): the size estimate past
+	// which a global lineage is reset at promotion, and past which a
+	// repo-scoped one is flagged. Sizes such as `20G`.
+	CacheGlobalCap string `yaml:"cache-global-cap"`
+	CacheRepoCap   string `yaml:"cache-repo-cap"`
+	LogDir         string `yaml:"log-dir"`
+	EnvMode        string `yaml:"env_mode"`
 	// NotifyCommand is spelled the way env_mode is, for the same reason: a
 	// deployment sets it, and a deployment spells it with an underscore.
 	NotifyCommand string `yaml:"notify_command"`
