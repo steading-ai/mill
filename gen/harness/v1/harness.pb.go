@@ -540,7 +540,15 @@ type Start struct {
 	// harness's own default (docs/architecture.md §"Skill steps: the harness
 	// adapter"). Required: a step without a budget is refused before the
 	// session starts, by the adapter and by the sidecar alike.
-	TimeoutMs     int32 `protobuf:"varint,8,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
+	TimeoutMs int32 `protobuf:"varint,8,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
+	// What the session is told about where it is, appended to the harness's
+	// own system prompt: the mill's facts about the session's surroundings
+	// rather than the step's instructions, which are the prompt. Today that
+	// is the workspace's egress — that every outbound connection goes through
+	// the proxy named in the environment and the model through the gateway
+	// (docs/sandbox.md §Network). Empty when the workspace decided neither,
+	// and then nothing is appended.
+	SystemPrompt  string `protobuf:"bytes,9,opt,name=system_prompt,json=systemPrompt,proto3" json:"system_prompt,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -631,6 +639,13 @@ func (x *Start) GetTimeoutMs() int32 {
 	return 0
 }
 
+func (x *Start) GetSystemPrompt() string {
+	if x != nil {
+		return x.SystemPrompt
+	}
+	return ""
+}
+
 // Resume continues an existing session with a new prompt, so a `revise`
 // returns to the implementing session and the model picks up its own prior
 // context. A step is never resumed mid-flight; a session is.
@@ -664,7 +679,15 @@ type Resume struct {
 	// harness's own default (docs/architecture.md §"Skill steps: the harness
 	// adapter"). Required: a step without a budget is refused before the
 	// session starts, by the adapter and by the sidecar alike.
-	TimeoutMs     int32 `protobuf:"varint,8,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
+	TimeoutMs int32 `protobuf:"varint,8,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
+	// What the session is told about where it is, appended to the harness's
+	// own system prompt: the mill's facts about the session's surroundings
+	// rather than the step's instructions, which are the prompt. Today that
+	// is the workspace's egress — that every outbound connection goes through
+	// the proxy named in the environment and the model through the gateway
+	// (docs/sandbox.md §Network). Empty when the workspace decided neither,
+	// and then nothing is appended.
+	SystemPrompt  string `protobuf:"bytes,9,opt,name=system_prompt,json=systemPrompt,proto3" json:"system_prompt,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -753,6 +776,13 @@ func (x *Resume) GetTimeoutMs() int32 {
 		return x.TimeoutMs
 	}
 	return 0
+}
+
+func (x *Resume) GetSystemPrompt() string {
+	if x != nil {
+		return x.SystemPrompt
+	}
+	return ""
 }
 
 // Cancel stops a running session: SIGTERM, a grace window, SIGKILL. The
@@ -1612,7 +1642,7 @@ const file_harness_v1_harness_proto_rawDesc = "" +
 	"\x06source\x18\x02 \x01(\tR\x06source\x12\x1d\n" +
 	"\n" +
 	"media_type\x18\x03 \x01(\tR\tmediaType\x12\x18\n" +
-	"\acontent\x18\x04 \x01(\tR\acontent\"\xb5\x02\n" +
+	"\acontent\x18\x04 \x01(\tR\acontent\"\xda\x02\n" +
 	"\x05Start\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x16\n" +
@@ -1623,7 +1653,8 @@ const file_harness_v1_harness_proto_rawDesc = "" +
 	"\routput_schema\x18\x06 \x01(\tR\foutputSchema\x12\x10\n" +
 	"\x03cwd\x18\a \x01(\tR\x03cwd\x12\x1d\n" +
 	"\n" +
-	"timeout_ms\x18\b \x01(\x05R\ttimeoutMs\"\xb6\x02\n" +
+	"timeout_ms\x18\b \x01(\x05R\ttimeoutMs\x12#\n" +
+	"\rsystem_prompt\x18\t \x01(\tR\fsystemPrompt\"\xdb\x02\n" +
 	"\x06Resume\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x16\n" +
@@ -1634,7 +1665,8 @@ const file_harness_v1_harness_proto_rawDesc = "" +
 	"\routput_schema\x18\x06 \x01(\tR\foutputSchema\x12\x10\n" +
 	"\x03cwd\x18\a \x01(\tR\x03cwd\x12\x1d\n" +
 	"\n" +
-	"timeout_ms\x18\b \x01(\x05R\ttimeoutMs\"B\n" +
+	"timeout_ms\x18\b \x01(\x05R\ttimeoutMs\x12#\n" +
+	"\rsystem_prompt\x18\t \x01(\tR\fsystemPrompt\"B\n" +
 	"\x06Cancel\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x19\n" +

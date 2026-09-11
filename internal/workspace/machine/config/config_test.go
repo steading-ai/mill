@@ -308,3 +308,15 @@ path = "/etc"
 func strconv(value string) string {
 	return `"` + strings.ReplaceAll(value, `"`, `\"`) + `"`
 }
+
+var _ = Describe("The grammar's keys", Label("unit"), func() {
+	It("are every key Load accepts, read off the grammar itself", func() {
+		Expect(config.Keys()).To(Equal([]string{
+			"image.packages",
+			"cache.<name>.path",
+			"cache.<name>.key",
+			"cache.<name>.enabled",
+			"machine.nested",
+		}))
+	})
+})

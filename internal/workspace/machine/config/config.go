@@ -16,6 +16,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -345,4 +346,45 @@ func undecoded(meta toml.MetaData) []string {
 		keys = append(keys, name)
 	}
 	return keys
+}
+
+// Keys is every key Load accepts, in dotted form with `<name>` standing
+// for a cache's name: `image.packages`, `cache.<name>.path`, and so on. It
+// is read off the grammar's own types rather than written out, so a key
+// added to the grammar is a key here, and the mill skill — which must
+// document every one of them (docs/sandbox.md §"Skill mount") — is held to
+// it by a spec.
+func Keys() []string {
+	return keysOf(reflect.TypeFor[file](), "")
+}
+
+// keysOf walks a TOML-tagged type: a struct contributes its tagged fields, a
+// map one `<name>` level, and anything else is a leaf.
+func keysOf(t reflect.Type, prefix string) []string {
+	switch t.Kind() { //nolint:exhaustive // every other kind is a leaf
+	case reflect.Struct:
+		var keys []string
+		for i := range t.NumField() {
+			field := t.Field(i)
+			tag, _, _ := strings.Cut(field.Tag.Get("toml"), ",")
+			if tag == "" || tag == "-" {
+				continue
+			}
+			keys = append(keys, keysOf(field.Type, join(prefix, tag))...)
+		}
+		return keys
+	case reflect.Map:
+		return keysOf(t.Elem(), join(prefix, "<name>"))
+	case reflect.Pointer:
+		return keysOf(t.Elem(), prefix)
+	default:
+		return []string{prefix}
+	}
+}
+
+func join(prefix, key string) string {
+	if prefix == "" {
+		return key
+	}
+	return prefix + "." + key
 }

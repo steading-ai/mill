@@ -138,6 +138,10 @@ export interface Turn {
   // timeoutMs is the step's budget: the session's wall clock, and the
   // foreground cap its shell runs under.
   timeoutMs: number;
+  // systemPrompt is what the worker says about the session's surroundings
+  // — its way out through the proxy and the gateway — appended to the
+  // harness's own system prompt. Empty appends nothing.
+  systemPrompt: string;
   resume: boolean;
 }
 
@@ -170,6 +174,7 @@ export function turnOf(request: Request): Turn {
         outputSchema: value.outputSchema,
         cwd: value.cwd,
         timeoutMs: value.timeoutMs,
+        systemPrompt: value.systemPrompt,
         resume: body.case === "resume",
       };
     }
@@ -338,6 +343,13 @@ function outputFormat(schema: string): Options["outputFormat"] {
 // step, never from whatever settings files the account that runs the sidecar
 // happens to have.
 //
+// The system prompt stays the harness's own preset — the session is a Claude
+// Code session and behaves as one — with the worker's paragraph about the
+// session's surroundings appended when there is one. It is not the step's
+// instructions, which are the prompt; it is the mill telling the session how
+// its host is wired, which is what an agent debugging a connection that hangs
+// needs to have been told (docs/sandbox.md §Network).
+//
 // No MCP server is registered. The workspace's socket reaches the session as
 // two environment variables and not yet as a tool server, because whether
 // the socket can be one is the question the `spike-mcp` node asks and it has
@@ -359,6 +371,9 @@ export function buildOptions(
   };
   if (turn.cwd !== "") {
     options.cwd = turn.cwd;
+  }
+  if (turn.systemPrompt !== "") {
+    options.systemPrompt = { type: "preset", preset: "claude_code", append: turn.systemPrompt };
   }
   if (declared.model !== undefined && declared.model !== "") {
     options.model = declared.model;

@@ -288,6 +288,11 @@ func (c Config) runsDir() string { return filepath.Join(c.Root, "runs") }
 // runDir is `<root>/runs/<id>`.
 func (c Config) runDir(id string) string { return filepath.Join(c.runsDir(), id) }
 
+// SkillDir is the directory bound read-only into every machine as the mill
+// skill, with the default applied: what the worker materialises the skill
+// into before [Check] asks whether it is there (internal/skill).
+func (c Config) SkillDir() string { return c.withDefaults().Skill }
+
 // socketDir is `<run state>/<id>`, bound into the machine at `/run/mill`.
 func (c Config) socketDir(id string) string { return filepath.Join(c.RunState, id) }
 

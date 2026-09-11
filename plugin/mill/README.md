@@ -8,7 +8,13 @@ run through it, or through the `mill` CLI.
 | Component | Path | Effect |
 |-----------|------|--------|
 | MCP server | `.mcp.json` | a `mill` server, run as `mill mcp` over stdio |
-| Skill | `skills/mill/SKILL.md` | `mill:mill`, model-invoked when the conversation touches a mill run |
+| Skill | `skills/mill/SKILL.md` | `mill:mill`, model-invoked when the conversation touches a mill run, `mill.toml`, or how a session in a mill machine reaches out |
+
+The same skill rides with the worker: a `mill` running the machine backend
+embeds this directory and writes it, with a `VERSION` breadcrumb beside
+`SKILL.md`, to its skill directory, which every machine mounts read-only at
+`~/.claude/skills/mill` (`docs/sandbox.md` §"Skill mount"). A session inside
+a machine reads it without installing this plugin.
 
 ## Requirements
 

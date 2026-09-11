@@ -14,6 +14,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
+
+	"github.com/ivy/mill/internal/workspace/machine/config"
 )
 
 // The Claude Code plugin: the `.mcp.json` that starts `mill mcp` and the
@@ -208,6 +210,47 @@ var _ = Describe("The mill plugin", Label("unit", "slow"), func() {
 		for _, tool := range []string{"`cancel`", "`rerun`", "`workspace_clean`"} {
 			Expect(firstScreen).To(ContainSubstring(tool))
 		}
+	})
+
+	// Scenario: The skill documents mill.toml completely
+	It("The skill documents mill.toml completely", func() {
+		By("when the parser's accepted keys are compared with the skill's text")
+		body, err := os.ReadFile(pluginSkill)
+		Expect(err).NotTo(HaveOccurred())
+		frontmatter, prose, found := splitFrontmatter(string(body))
+		Expect(found).To(BeTrue())
+		// The breadcrumb the worker writes is a sibling file, and the
+		// frontmatter stays the plugin's (docs/core-principles.md §6).
+		Expect(frontmatter).NotTo(MatchRegexp(`(?m)^version:`))
+		keys := config.Keys()
+		Expect(keys).NotTo(BeEmpty())
+
+		By("then every key is documented")
+		for _, key := range keys {
+			Expect(prose).To(ContainSubstring("`"+key+"`"), "the skill does not document %s", key)
+		}
+
+		By("and so are the default lineages an ecosystem brings, the path rules, and what a dnf install is not")
+		for _, lineage := range config.Defaults([]string{"go", "rust", "node", "bun", "ruby"}) {
+			Expect(prose).To(ContainSubstring("`"+lineage.Name+"`"), "the skill does not name the default lineage %s", lineage.Name)
+		}
+		for _, rule := range []string{config.Home, config.Work, config.RunDir} {
+			Expect(prose).To(ContainSubstring("`" + rule + "`"))
+		}
+		Expect(prose).To(ContainSubstring("`dnf install"))
+		Expect(prose).To(ContainSubstring("packages = ["))
+	})
+
+	It("tells a session that every outbound connection goes through the proxy and the model through the gateway", func() {
+		body, err := os.ReadFile(pluginSkill)
+		Expect(err).NotTo(HaveOccurred())
+		_, prose, _ := splitFrontmatter(string(body))
+		Expect(prose).To(ContainSubstring("Every outbound connection goes through the proxy"))
+		for _, name := range []string{"`HTTPS_PROXY`", "`HTTP_PROXY`", "`NO_PROXY`", "`ANTHROPIC_BASE_URL`", "`ANTHROPIC_AUTH_TOKEN`"} {
+			Expect(prose).To(ContainSubstring(name))
+		}
+		Expect(prose).To(ContainSubstring("times out, by design"))
+		Expect(prose).To(ContainSubstring("`VERSION` beside this file"))
 	})
 
 	// The service side of the plugin. It needs a mill answering on a socket,

@@ -28,6 +28,8 @@ import (
 	"github.com/ivy/mill/internal/harness/claude"
 	"github.com/ivy/mill/internal/notify"
 	"github.com/ivy/mill/internal/run"
+	"github.com/ivy/mill/internal/skill"
+	"github.com/ivy/mill/internal/version"
 	"github.com/ivy/mill/internal/workflow"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/local"
@@ -583,7 +585,14 @@ func cacheDriver() driver.Driver {
 // For the machine backend it is whether this host can run one at all.
 func checkWorkspace(kind workspace.Kind, opts runOptions) error {
 	if kind == workspace.KindMachine {
-		if err := machine.Check(machineDriver(), machineConfig(opts, nil, nil)); err != nil {
+		config := machineConfig(opts, nil, nil)
+		// The skill every machine mounts is this binary's, written where
+		// the helper's policy admits a read-only bind from, with the
+		// version beside it (docs/sandbox.md §"Skill mount").
+		if err := skill.Materialise(config.SkillDir(), version.String()); err != nil {
+			return fmt.Errorf("mill run: --workspace machine: %w", err)
+		}
+		if err := machine.Check(machineDriver(), config); err != nil {
 			return fmt.Errorf("mill run: --workspace machine: %w", err)
 		}
 		return nil

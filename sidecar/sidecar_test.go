@@ -151,6 +151,43 @@ var _ = Describe("The sidecar", Label("unit"), func() {
 		Expect(applied["settingSources"]).To(BeEmpty())
 	})
 
+	It("appends the worker's paragraph about the session's surroundings to the harness's own system prompt", func() {
+		By("given a start whose system_prompt says how the session reaches out")
+		options := filepath.Join(GinkgoT().TempDir(), "options.json")
+		egress := "Every outbound connection from this session goes through the proxy named by HTTPS_PROXY."
+		line := startRequest("system-prompt-1", func(start *harnessv1.Start) {
+			start.SystemPrompt = egress
+		})
+
+		By("when the sidecar starts the session")
+		run(fakeEntrypoint, map[string]string{
+			"MILL_FAKE_SCENARIO": "trivial",
+			"MILL_FAKE_OPTIONS":  options,
+		}, line)
+
+		By("then the harness keeps its own preset with the paragraph appended")
+		Expect(applied(options)["systemPrompt"]).To(Equal(map[string]any{
+			"type":   "preset",
+			"preset": "claude_code",
+			"append": egress,
+		}))
+	})
+
+	It("leaves the harness's system prompt alone when the worker has nothing to add", func() {
+		By("given a start with an empty system_prompt")
+		options := filepath.Join(GinkgoT().TempDir(), "options.json")
+		line := startRequest("system-prompt-2", nil)
+
+		By("when the sidecar starts the session")
+		run(fakeEntrypoint, map[string]string{
+			"MILL_FAKE_SCENARIO": "trivial",
+			"MILL_FAKE_OPTIONS":  options,
+		}, line)
+
+		By("then no system prompt option is set")
+		Expect(applied(options)).NotTo(HaveKey("systemPrompt"))
+	})
+
 	It("refuses settings it cannot apply without starting a session", func() {
 		By("given a step asking for an effort level the harness has no name for")
 		line := startRequest("policy-2", func(start *harnessv1.Start) {

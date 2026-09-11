@@ -10,6 +10,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/ivy/mill/internal/skill"
+	"github.com/ivy/mill/internal/version"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/local"
 	"github.com/ivy/mill/internal/workspace/redact"
@@ -105,11 +107,16 @@ var _ = Describe("Choosing the workspace backend", Label("unit"), func() {
 
 	It("refuses the machine backend before a claim on a host that cannot run it, naming the reason", func() {
 		opts.sandboxRoot = filepath.Join(GinkgoT().TempDir(), "absent-sandbox")
+		opts.sandbox.skillDir = filepath.Join(GinkgoT().TempDir(), "skill")
 
 		err := checkWorkspace(workspace.KindMachine, opts)
 
 		Expect(err).To(MatchError(ContainSubstring("--workspace machine")))
 		Expect(err).To(MatchError(ContainSubstring("absent-sandbox")))
+
+		By("and the skill every machine would mount was written first, with this binary's version beside it")
+		Expect(filepath.Join(opts.sandbox.skillDir, "SKILL.md")).To(BeAnExistingFile())
+		Expect(skill.Version(opts.sandbox.skillDir)).To(Equal(version.String()))
 	})
 
 	It("refuses a kind the tree does not know, and the remote one it has not built", func() {

@@ -121,6 +121,60 @@ while :; do sleep 0.1; done
 		Expect(terminal.Exit.Signal).To(BeNumerically("==", 9))
 	})
 
+	// Scenario: The session is told about the proxy
+	It("The session is told about the proxy", func() {
+		By("given a workspace that decided a proxy and a gateway")
+		session.Workspace.Env = workspace.Egress{
+			Proxy:   "http://10.99.255.1:3128",
+			NoProxy: "localhost,127.0.0.1",
+			Gateway: "http://10.99.255.1:8080",
+		}.Environment(session.Workspace.Token)
+		kept := scratch("request.json")
+		script := stub(`
+head -n 1 > KEPT
+printf '%s\n' 'TERMINAL'
+`, "KEPT", kept, "TERMINAL", twoModels)
+
+		By("when the system prompt is composed")
+		turn, err := adapter(script).Start(lifetime, session, harness.Prompt{Text: "implement"}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = turn.Wait(lifetime)
+		Expect(err).NotTo(HaveOccurred())
+		composed := readRequest(kept).GetStart().GetSystemPrompt()
+
+		By("then it states that all outbound connections use the proxy in the environment")
+		Expect(composed).To(ContainSubstring("Every outbound connection goes through the forward proxy named by HTTPS_PROXY and HTTP_PROXY in the environment (http://10.99.255.1:3128)"))
+		Expect(composed).To(ContainSubstring("times out by design"))
+		Expect(composed).To(ContainSubstring("The model is reached through the gateway named by ANTHROPIC_BASE_URL (http://10.99.255.1:8080)"))
+		Expect(composed).NotTo(ContainSubstring(session.Workspace.Token), "the bearer is named by its variable, never its value")
+
+		By("and a resume carries the same paragraph")
+		turn, err = adapter(script).Resume(lifetime, session, harness.Prompt{Text: "revise"}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = turn.Wait(lifetime)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(readRequest(kept).GetResume().GetSystemPrompt()).To(Equal(composed))
+	})
+
+	It("composes no system prompt for a workspace that decided no egress", func() {
+		By("given the local backend, which decides neither a proxy nor a gateway")
+		session.Workspace.Env = workspace.Egress{}.Environment(session.Workspace.Token)
+		kept := scratch("request.json")
+		script := stub(`
+head -n 1 > KEPT
+printf '%s\n' 'TERMINAL'
+`, "KEPT", kept, "TERMINAL", twoModels)
+
+		By("when the adapter starts the session")
+		turn, err := adapter(script).Start(lifetime, session, harness.Prompt{Text: "implement"}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = turn.Wait(lifetime)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("then the start request carries no system prompt and the harness's own stands")
+		Expect(readRequest(kept).GetStart().GetSystemPrompt()).To(BeEmpty())
+	})
+
 	It("carries the step's timeout to the sidecar as timeout_ms, on a start and on a resume", func() {
 		By("given a step with a 20m timeout and a stub sidecar that keeps its request")
 		kept := scratch("request.json")

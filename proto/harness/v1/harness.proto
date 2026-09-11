@@ -172,6 +172,14 @@ message Start {
   // adapter"). Required: a step without a budget is refused before the
   // session starts, by the adapter and by the sidecar alike.
   int32 timeout_ms = 8;
+  // What the session is told about where it is, appended to the harness's
+  // own system prompt: the mill's facts about the session's surroundings
+  // rather than the step's instructions, which are the prompt. Today that
+  // is the workspace's egress — that every outbound connection goes through
+  // the proxy named in the environment and the model through the gateway
+  // (docs/sandbox.md §Network). Empty when the workspace decided neither,
+  // and then nothing is appended.
+  string system_prompt = 9;
 }
 
 // Resume continues an existing session with a new prompt, so a `revise`
@@ -207,6 +215,14 @@ message Resume {
   // adapter"). Required: a step without a budget is refused before the
   // session starts, by the adapter and by the sidecar alike.
   int32 timeout_ms = 8;
+  // What the session is told about where it is, appended to the harness's
+  // own system prompt: the mill's facts about the session's surroundings
+  // rather than the step's instructions, which are the prompt. Today that
+  // is the workspace's egress — that every outbound connection goes through
+  // the proxy named in the environment and the model through the gateway
+  // (docs/sandbox.md §Network). Empty when the workspace decided neither,
+  // and then nothing is appended.
+  string system_prompt = 9;
 }
 
 // Cancel stops a running session: SIGTERM, a grace window, SIGKILL. The

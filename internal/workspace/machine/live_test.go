@@ -18,9 +18,13 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/gexec"
 
+	"github.com/ivy/mill/internal/skill"
+	"github.com/ivy/mill/internal/version"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/machine"
+	machineconfig "github.com/ivy/mill/internal/workspace/machine/config"
 	"github.com/ivy/mill/internal/workspace/machine/driver"
 	"github.com/ivy/mill/internal/workspace/machine/image"
 )
@@ -126,12 +130,12 @@ func (failingProbe) Exec(ctx context.Context, _ driver.ExecRequest) (*workspace.
 
 var _ = Describe("A machine on a real host", Label("live"), Serial, Ordered, func() {
 	var (
-		real   driver.Driver
-		base   image.Digest
-		skill  string
-		origin string
-		config machine.Config
-		nonce  string
+		real     driver.Driver
+		base     image.Digest
+		skillDir string
+		origin   string
+		config   machine.Config
+		nonce    string
 	)
 
 	BeforeAll(func(ctx context.Context) {
@@ -144,13 +148,11 @@ var _ = Describe("A machine on a real host", Label("live"), Serial, Ordered, fun
 		real = driver.NewSystemd(workspace.Spawner{}, driver.Commands{Sudo: "sudo"})
 
 		By("the host's prerequisites: the skill directory the helper's policy admits, and the run-state directory")
-		home, err := os.UserHomeDir()
-		Expect(err).NotTo(HaveOccurred())
-		skill = filepath.Join(home, ".local", "share", "mill", "skill")
-		Expect(os.MkdirAll(skill, 0o755)).To(Succeed())
-		if _, err := os.Stat(filepath.Join(skill, "SKILL.md")); err != nil {
-			Expect(os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte("# mill\n\nPlaceholder written by the live spec.\n"), 0o644)).To(Succeed()) //nolint:gosec // a placeholder skill
-		}
+		// The skill is the one the worker writes at its preflight, from
+		// its own embed and with its version beside it (internal/skill,
+		// internal/cli/run.go checkWorkspace).
+		skillDir = machine.Config{}.SkillDir()
+		Expect(skill.Materialise(skillDir, version.String())).To(Succeed())
 
 		By("building the base from images/base and exporting it where machines boot from")
 		images := image.New(real, image.Config{Root: liveRoot, Machines: liveMachines, BuildBudget: 15 * time.Minute})
@@ -169,7 +171,7 @@ var _ = Describe("A machine on a real host", Label("live"), Serial, Ordered, fun
 			Root:         liveRoot,
 			Machines:     liveMachines,
 			RunState:     liveRunState,
-			Skill:        skill,
+			Skill:        skillDir,
 			Images:       image.Config{Pin: string(base)},
 			CacheDriver:  driver.NewSystemd(workspace.Spawner{}, driver.Commands{}),
 			Limits:       machine.Limits{MemoryMax: "4G", CPUQuota: "400%", TasksMax: "4096"},
@@ -322,6 +324,46 @@ var _ = Describe("A machine on a real host", Label("live"), Serial, Ordered, fun
 			host("btrfs", "property", "set", "-ts", filepath.Join(liveRoot, name), "ro", "false")
 			host("btrfs", "subvolume", "delete", filepath.Join(liveRoot, name))
 		}
+	})
+
+	// Scenario: The skill is mounted read-only at the harness's path
+	It("The skill is mounted read-only at the harness's path", func(ctx context.Context) {
+		id := "acceptance-skill-" + nonce
+		DeferCleanup(func() { sweep(id) })
+		ws := machine.New(real, config)
+		_, err := ws.Create(ctx, workspace.Spec{RunID: id, NodeRef: "mill#65"})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func(ctx context.Context) { Expect(ws.Destroy(ctx)).To(Succeed()) })
+		name := "mill-" + id
+
+		By("when a session lists ~/.claude/skills/mill")
+		out, status := inMachine(name, "agent", "ls", machineconfig.SkillPath)
+		Expect(status).To(BeZero(), out)
+
+		By("then the skill is present and cannot be written")
+		Expect(strings.Fields(out)).To(ContainElements("SKILL.md", skill.VersionFile, "references"))
+		shipped, err := os.ReadFile(filepath.Join(repoRoot(), "plugin", "mill", "skills", "mill", "SKILL.md"))
+		Expect(err).NotTo(HaveOccurred())
+		out, status = inMachine(name, "agent", "cat", machineconfig.SkillPath+"/SKILL.md")
+		Expect(status).To(BeZero(), out)
+		Expect(out).To(Equal(string(shipped)), "the mounted skill is the plugin's, byte for byte")
+		out, status = inMachine(name, "agent", "sh", "-c", "echo scribble > "+machineconfig.SkillPath+"/scribble")
+		Expect(status).NotTo(BeZero())
+		Expect(out).To(ContainSubstring("Read-only file system"))
+
+		By("and the rest of ~/.claude can be")
+		out, status = inMachine(name, "agent", "sh", "-c",
+			`echo '{}' > /home/agent/.claude/settings.local.json && mkdir -p /home/agent/.claude/projects && cat /home/agent/.claude/settings.local.json`)
+		Expect(status).To(BeZero(), out)
+		Expect(strings.TrimSpace(out)).To(Equal("{}"))
+
+		By("and the breadcrumb beside SKILL.md is what mill version prints")
+		out, status = inMachine(name, "agent", "cat", machineconfig.SkillPath+"/"+skill.VersionFile)
+		Expect(status).To(BeZero(), out)
+		binary, err := gexec.Build("github.com/ivy/mill/cmd/mill")
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(gexec.CleanupBuildArtifacts)
+		Expect(strings.TrimSpace(must(binary, "version"))).To(Equal("mill version " + strings.TrimSpace(out)))
 	})
 
 	// Scenario: Stdout, stderr and the exit code come back intact and streamed

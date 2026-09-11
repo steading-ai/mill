@@ -148,6 +148,7 @@ func (a *Adapter) Start(ctx context.Context, session harness.Session, prompt har
 		OutputSchema: prompt.OutputSchema,
 		Cwd:          session.Cwd,
 		TimeoutMs:    timeout,
+		SystemPrompt: systemPrompt(session),
 	}}})
 }
 
@@ -170,6 +171,7 @@ func (a *Adapter) Resume(ctx context.Context, session harness.Session, prompt ha
 		OutputSchema: prompt.OutputSchema,
 		Cwd:          session.Cwd,
 		TimeoutMs:    timeout,
+		SystemPrompt: systemPrompt(session),
 	}}})
 }
 
