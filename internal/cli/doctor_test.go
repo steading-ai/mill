@@ -2,9 +2,12 @@ package cli_test
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -47,7 +50,7 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 			"--project", "", "--vcs-url", "")
 		Expect(err).To(HaveOccurred(), "a failed probe is a non-zero exit")
 
-		for _, name := range []string{"socket", "schema", "dagger", "sidecar", "signing", "forge", "notify", "workspace"} {
+		for _, name := range []string{"socket", "schema", "dagger", "sidecar", "signing", "forge", "notify", "workspace", "gateway"} {
 			verdict, reason := probe(out, name)
 			Expect(verdict).To(BeElementOf("pass", "fail"), "probe %s: %s", name, out)
 			Expect(reason).NotTo(BeEmpty(), "probe %s carries no reason", name)
@@ -157,6 +160,94 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 		Expect(reason).To(HavePrefix("machine: sandbox root " + root + " is "))
 	})
 
+	Describe("the gateway probe", func() {
+		// One cheap request through the credential gateway a run would put
+		// its sessions behind: a token count, which bills nothing. The
+		// upstream is a stand-in here; on a deployment it is the API.
+		doctorWith := func(args ...string) string {
+			GinkgoHelper()
+			m := serving(ctx)
+			out, _ := runCLI(ctx, m.socket, append([]string{"doctor",
+				"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
+				"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
+				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
+				"--project", "", "--vcs-url", ""}, args...)...)
+			return out
+		}
+		credentialFile := func(value string) string {
+			GinkgoHelper()
+			path := filepath.Join(GinkgoT().TempDir(), "claude-oauth")
+			Expect(os.WriteFile(path, []byte(value+"\n"), 0o600)).To(Succeed())
+			return path
+		}
+		noConfig := func() string { return filepath.Join(GinkgoT().TempDir(), "no-config.yaml") }
+
+		It("passes and says so when no gateway is configured", func() {
+			out := doctorWith("--config", noConfig())
+			verdict, reason := probe(out, "gateway")
+			Expect(verdict).To(Equal("pass"))
+			Expect(reason).To(ContainSubstring("no gateway is configured"))
+		})
+
+		It("fails the probe when the credential file is absent", func() {
+			out := doctorWith("--config", noConfig(), "--gateway",
+				"--model-credential-file", filepath.Join(GinkgoT().TempDir(), "claude-oauth"))
+			verdict, reason := probe(out, "gateway")
+			Expect(verdict).To(Equal("fail"))
+			Expect(reason).To(ContainSubstring("no upstream credential"))
+			Expect(reason).To(ContainSubstring("claude-oauth"))
+		})
+
+		It("passes when the upstream answers, and never prints the credential", func() {
+			const credential = "sk-ant-oat01-doctor-spec-credential"
+			var saw string
+			upstream := countTokensUpstream(func(authorization string) { saw = authorization })
+			out := doctorWith("--config", noConfig(), "--gateway",
+				"--gateway-upstream", upstream, "--model-credential-file", credentialFile(credential))
+			verdict, reason := probe(out, "gateway")
+			// The upstream answered, so the probe passed; with no minted
+			// date to age the credential from it says so, as a warning
+			// rather than a failure.
+			Expect(verdict).To(Equal("warn"), out)
+			Expect(reason).To(ContainSubstring("answers a token count through the gateway"))
+			Expect(reason).To(ContainSubstring("model_credential_minted is not set"))
+			Expect(saw).To(Equal("Bearer " + credential))
+			Expect(out).NotTo(ContainSubstring(credential))
+		})
+
+		It("fails when the upstream refuses the credential", func() {
+			upstream := refusingUpstream()
+			out := doctorWith("--config", noConfig(), "--gateway",
+				"--gateway-upstream", upstream, "--model-credential-file", credentialFile("stale"))
+			verdict, reason := probe(out, "gateway")
+			Expect(verdict).To(Equal("fail"))
+			Expect(reason).To(ContainSubstring("answered 401"))
+		})
+
+		It("warns at eleven months from model_credential_minted, read from the configuration file", func() {
+			upstream := countTokensUpstream(func(string) {})
+			config := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+			minted := time.Now().AddDate(0, -11, -1).Format(time.DateOnly)
+			Expect(os.WriteFile(config, []byte("gateway: true\ngateway-upstream: "+upstream+
+				"\nmodel-credential-file: "+credentialFile("sk-ant-oat01-old")+
+				"\nmodel_credential_minted: "+minted+"\n"), 0o600)).To(Succeed())
+
+			out := doctorWith("--config", config)
+			verdict, reason := probe(out, "gateway")
+			Expect(verdict).To(Equal("warn"), out)
+			Expect(reason).To(ContainSubstring("minted " + minted))
+			Expect(reason).To(ContainSubstring("more than 11 months ago"))
+
+			By("and does not warn on a credential minted this month")
+			Expect(os.WriteFile(config, []byte("gateway: true\ngateway-upstream: "+upstream+
+				"\nmodel-credential-file: "+credentialFile("sk-ant-oat01-fresh")+
+				"\nmodel_credential_minted: "+time.Now().Format(time.DateOnly)+"\n"), 0o600)).To(Succeed())
+			out = doctorWith("--config", config)
+			verdict, _ = probe(out, "gateway")
+			Expect(verdict).To(Equal("pass"), out)
+		})
+	})
+
 	It("reports the environment mode a run would spawn the sidecar under", func() {
 		m := serving(ctx)
 
@@ -215,3 +306,27 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 		Expect(reason).To(ContainSubstring("this account is a principal on " + daggerProject))
 	})
 })
+
+// countTokensUpstream is a stand-in for the API that answers a token count,
+// reporting the bearer it was handed.
+func countTokensUpstream(saw func(authorization string)) string {
+	GinkgoHelper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		saw(r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"input_tokens":8}`))
+	}))
+	DeferCleanup(server.Close)
+	return server.URL
+}
+
+// refusingUpstream is a stand-in that refuses every bearer.
+func refusingUpstream() string {
+	GinkgoHelper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"authentication_error","message":"invalid bearer token"}}`))
+	}))
+	DeferCleanup(server.Close)
+	return server.URL
+}

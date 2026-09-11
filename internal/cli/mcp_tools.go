@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	millv1 "github.com/ivy/mill/gen/mill/v1"
+	"github.com/ivy/mill/internal/gateway"
 	"github.com/ivy/mill/internal/run"
 	"github.com/ivy/mill/internal/server/interceptor"
 	"github.com/ivy/mill/internal/workspace/local"
@@ -631,7 +632,23 @@ func (s *mcpServer) doctorOptions() doctorOptions {
 		identity:      defaultIdentity(),
 		name:          defaultForgeUser,
 		notifyCommand: config.NotifyCommand,
+		gateway: gatewayOptions{
+			enabled:        config.Gateway,
+			listen:         orDefault(config.GatewayListen, gateway.DefaultListen),
+			upstream:       orDefault(config.GatewayUpstream, gateway.DefaultUpstream),
+			credentialFile: orDefault(config.ModelCredentialFile, gateway.DefaultCredentialPath()),
+		},
+		credentialMinted: config.ModelCredentialMinted,
 	}
+}
+
+// orDefault is a configured value, or the default when the file says
+// nothing.
+func orDefault(value, fallback string) string {
+	if value != "" {
+		return value
+	}
+	return fallback
 }
 
 // summaryFields is one run as status renders it, sized by view.

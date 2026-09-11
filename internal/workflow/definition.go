@@ -53,6 +53,8 @@ type stepYAML struct {
 	Retries      int32                     `yaml:"retries,omitempty"`
 	Timeout      string                    `yaml:"timeout,omitempty"`
 	OutputSchema string                    `yaml:"output_schema,omitempty"`
+	TokenBudget  int64                     `yaml:"token_budget,omitempty"`
+	Models       []string                  `yaml:"models,omitempty"`
 }
 
 // artifactYAML says where an `artifact` step's evidence is read from. A step
@@ -254,9 +256,19 @@ func (s stepYAML) toProto() (*millv1.Step, error) {
 		Evidence:     evidence,
 		Retries:      s.Retries,
 		OutputSchema: s.OutputSchema,
+		TokenBudget:  s.TokenBudget,
+		Models:       s.Models,
 	}
 	if step.GetRetries() == 0 {
 		step.Retries = defaultRetries
+	}
+	if s.TokenBudget < 0 {
+		return fail(fmt.Errorf("token_budget: %d is not a count of tokens", s.TokenBudget))
+	}
+	for _, model := range s.Models {
+		if strings.TrimSpace(model) == "" {
+			return fail(fmt.Errorf("models: an entry is empty; name the model, such as sonnet or claude-haiku-4-5"))
+		}
 	}
 	for _, c := range s.Capabilities {
 		capability, err := parseEnum[millv1.Capability](c, "capability")
@@ -358,6 +370,8 @@ func toDocument(w *millv1.Workflow) document {
 			Retries:      step.GetRetries(),
 			OutputSchema: step.GetOutputSchema(),
 			OnFailure:    onFailureText(step.GetOnFailure()),
+			TokenBudget:  step.GetTokenBudget(),
+			Models:       step.GetModels(),
 		}
 		for _, capability := range step.GetCapabilities() {
 			s.Capabilities = append(s.Capabilities, enumText(capability))

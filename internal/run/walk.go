@@ -10,6 +10,7 @@ import (
 
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/evidence"
+	"github.com/ivy/mill/internal/gateway"
 	"github.com/ivy/mill/internal/workspace"
 )
 
@@ -152,9 +153,21 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 	if err := s.workspace.Rotate(ctx, workspace.TokenFromProto(token.GetStepToken())); err != nil {
 		return outcome{}, fmt.Errorf("run %s: rotate the workspace token: %w", s.run.GetId(), err)
 	}
+	r.rotateGateway(s, step, sr, token.GetStepToken())
 
 	s.token = token.GetStepToken().GetId()
 	result, execErr := r.execute(ctx, s, step, sr, detail, token.GetStepToken(), feedback)
+
+	// What the gateway refused the attempt for is the attempt's failure,
+	// whatever the session made of being refused: a step that spent its
+	// budget is over, and the budget is the reason the ledger records
+	// (docs/sandbox.md §Credentials).
+	if over := r.gatewayRefusal(s, sr); over != nil {
+		execErr = errors.Join(execErr, over)
+		if result.feedback == "" {
+			result.feedback = over.Error()
+		}
+	}
 
 	// A gate step that filed its gate has ended the run's turn: the lease is
 	// released and this attempt is deliberately left open, so that the
@@ -240,6 +253,41 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 	default:
 		return r.failStep(ctx, s, step, sr, detail, result, errors.Join(execErr, verifyErr))
 	}
+}
+
+// rotateGateway installs the attempt in the credential gateway beside the
+// workspace's own rotation: the token the gateway authenticates from now
+// on, the budget and the pin the workflow declared, and the ledger write
+// each response's usage becomes.
+func (r *Runner) rotateGateway(s *state, step *millv1.Step, sr *millv1.StepRun, token *millv1.StepToken) {
+	if r.options.Gateway == nil {
+		return
+	}
+	// The recorder runs on the gateway's goroutines, so it carries the
+	// lease it was installed under rather than reading the run's state.
+	lease := s.lease
+	r.options.Gateway.Rotate(s.run.GetId(), gateway.Step{
+		StepRunID: sr.GetId(),
+		StepName:  step.GetName(),
+		Token:     workspace.TokenFromProto(token),
+		Budget:    step.GetTokenBudget(),
+		Models:    step.GetModels(),
+		Record: func(ctx context.Context, usage gateway.Usage) error {
+			return r.recordGatewayUsage(ctx, lease, sr, usage)
+		},
+	})
+}
+
+// gatewayRefusal reads the budget refusal an attempt earned, if any, and
+// takes the attempt out of the gateway: its token is revoked in the store
+// next, and the gateway refuses it from here.
+func (r *Runner) gatewayRefusal(s *state, sr *millv1.StepRun) *gateway.BudgetError {
+	if r.options.Gateway == nil {
+		return nil
+	}
+	over := r.options.Gateway.Exceeded(sr.GetId())
+	r.options.Gateway.Revoke(s.run.GetId())
+	return over
 }
 
 // closeStep records the evidence that closes an attempt.

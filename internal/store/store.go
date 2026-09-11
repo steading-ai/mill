@@ -1391,6 +1391,7 @@ func (s *Store) RecordUsage(ctx context.Context, leaseID, stepRunID string, usag
 				OutputTokens:     turn.GetOutputTokens(),
 				CacheReadTokens:  turn.GetCacheReadTokens(),
 				CacheWriteTokens: turn.GetCacheWriteTokens(),
+				Source:           usageSourceText(turn.GetSource()),
 			})
 			if err != nil {
 				return fmt.Errorf("record usage for step run %s: %w", stepRunID, err)
@@ -1839,9 +1840,15 @@ func summarize(ctx context.Context, q *Queries, row Run) (*millv1.RunSummary, er
 		Totals:         make([]*millv1.ModelTotals, 0, len(totals)),
 		Leases:         leases,
 	}
+	// The run's cost is what its sessions reported. The gateway's count is
+	// read per attempt, beside the adapter's, and never summed into it.
 	for _, total := range totals {
+		if total.Source == usageSourceGateway {
+			continue
+		}
 		summary.Totals = append(summary.Totals, &millv1.ModelTotals{
 			Model:            total.Model,
+			Source:           usageSourceProto(total.Source),
 			InputTokens:      total.InputTokens,
 			OutputTokens:     total.OutputTokens,
 			CacheReadTokens:  total.CacheReadTokens,
@@ -1961,13 +1968,21 @@ func (s *Store) Inspect(ctx context.Context, p InspectParams) (*RunDetail, error
 		}
 		step.Totals = make([]*millv1.ModelTotals, 0, len(totals))
 		for _, total := range totals {
-			step.Totals = append(step.Totals, &millv1.ModelTotals{
+			counts := &millv1.ModelTotals{
 				Model:            total.Model,
+				Source:           usageSourceProto(total.Source),
 				InputTokens:      total.InputTokens,
 				OutputTokens:     total.OutputTokens,
 				CacheReadTokens:  total.CacheReadTokens,
 				CacheWriteTokens: total.CacheWriteTokens,
-			})
+			}
+			// The adapter's rows are the attempt's cost; the gateway's are
+			// the count taken outside the session, kept beside it.
+			if total.Source == usageSourceGateway {
+				step.GatewayTotals = append(step.GatewayTotals, counts)
+				continue
+			}
+			step.Totals = append(step.Totals, counts)
 		}
 		detail.Steps = append(detail.Steps, step)
 	}
@@ -2053,6 +2068,7 @@ func (s *Store) Cost(ctx context.Context, p CostParams) (*Cost, error) {
 	for _, row := range rows {
 		counts := &millv1.ModelTotals{
 			Model:            row.Model,
+			Source:           usageSourceProto(row.Source),
 			InputTokens:      row.InputTokens,
 			OutputTokens:     row.OutputTokens,
 			CacheReadTokens:  row.CacheReadTokens,
@@ -2106,10 +2122,13 @@ func (r *rollup) add(key string, counts *millv1.ModelTotals) {
 		r.totals[key] = byModel
 		r.order = append(r.order, key)
 	}
-	total, seen := byModel[counts.GetModel()]
+	// One total per model and per who counted it, so the gateway's count
+	// sits beside the adapter's rather than inside it.
+	counted := counts.GetModel() + "\x00" + counts.GetSource().String()
+	total, seen := byModel[counted]
 	if !seen {
-		total = &millv1.ModelTotals{Model: counts.GetModel()}
-		byModel[counts.GetModel()] = total
+		total = &millv1.ModelTotals{Model: counts.GetModel(), Source: counts.GetSource()}
+		byModel[counted] = total
 	}
 	total.InputTokens += counts.GetInputTokens()
 	total.OutputTokens += counts.GetOutputTokens()
@@ -2131,6 +2150,12 @@ func (r *rollup) buckets() []*millv1.CostBucket {
 		for _, model := range models {
 			bucket.Totals = append(bucket.Totals, byModel[model])
 		}
+		sort.SliceStable(bucket.Totals, func(i, j int) bool {
+			if bucket.Totals[i].GetModel() != bucket.Totals[j].GetModel() {
+				return bucket.Totals[i].GetModel() < bucket.Totals[j].GetModel()
+			}
+			return bucket.Totals[i].GetSource() < bucket.Totals[j].GetSource()
+		})
 		out = append(out, bucket)
 	}
 	return out

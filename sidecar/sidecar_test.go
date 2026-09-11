@@ -276,6 +276,7 @@ var _ = Describe("The sidecar", Label("unit"), func() {
 		"NO_PROXY":             "10.99.14.1",
 		"ANTHROPIC_BASE_URL":   "http://10.99.14.1:8081",
 		"ANTHROPIC_AUTH_TOKEN": "step-token-01JB",
+		"ENABLE_TOOL_SEARCH":   "true",
 	}
 
 	// probed is what a session's `env` printed, through the fake harness's
@@ -311,7 +312,7 @@ var _ = Describe("The sidecar", Label("unit"), func() {
 		By("when the session runs `env` through its exec tool")
 		printed := probed(decided)
 
-		By("then HTTPS_PROXY, HTTP_PROXY, NO_PROXY, ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN are present")
+		By("then HTTPS_PROXY, HTTP_PROXY, NO_PROXY, ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN are present, and ENABLE_TOOL_SEARCH beside the gateway")
 		for name, value := range decided {
 			Expect(printed).To(ContainSubstring(name + "=" + value + "\n"))
 		}

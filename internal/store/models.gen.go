@@ -111,6 +111,7 @@ type Usage struct {
 	CacheWriteTokens int64
 	RecordedAt       time.Time
 	PostedAt         *time.Time
+	Source           string
 }
 
 type Workflow struct {

@@ -95,6 +95,11 @@ implement       1        running        unspecified  -
 gate node's id — and not a description of it. `select` is the ledger's record
 of which workflow was chosen and why; no workflow declares it.
 
+`--view full` adds each attempt's kind, session and `TOKENS`: the adapter's report
+as `status` shows it, and, for an attempt whose session ran behind the
+credential gateway, the gateway's own count beside it as `gateway:in/out`
+(§cost, `docs/sandbox.md` §Credentials).
+
 A step that closed on a verdict shows the decision, and any blocking finding
 inline as `criterion: summary` — a blocking finding is what the reviewer held
 against the work, and reading it should not cost a second command. Notes are
@@ -223,22 +228,36 @@ window such as `24h` or `7d`.
 
 ```
 $ mill cost --since 7d
-RUN        INPUT   OUTPUT  CACHE READ  CACHE WRITE
-millcli#1  184213  9820    1204331     0
+RUN        SOURCE   INPUT   OUTPUT  CACHE READ  CACHE WRITE
+millcli#1  sdk      184213  9820    1204331     0
+millcli#1  gateway  184301  9820    1204331     0
 
-WORKFLOW                INPUT   OUTPUT  CACHE READ  CACHE WRITE
-quick-fix@fb2764fd70fd  184213  9820    1204331     0
+WORKFLOW                SOURCE   INPUT   OUTPUT  CACHE READ  CACHE WRITE
+quick-fix@fb2764fd70fd  sdk      184213  9820    1204331     0
+quick-fix@fb2764fd70fd  gateway  184301  9820    1204331     0
 
-STEP       INPUT   OUTPUT  CACHE READ  CACHE WRITE
-implement  184213  9820    1204331     0
+STEP       SOURCE   INPUT   OUTPUT  CACHE READ  CACHE WRITE
+implement  sdk      184213  9820    1204331     0
+implement  gateway  184301  9820    1204331     0
 
-MODEL              INPUT   OUTPUT  CACHE READ  CACHE WRITE
-claude-sonnet-4-5  184213  9820    1204331     0
+MODEL                       SOURCE   INPUT   OUTPUT  CACHE READ  CACHE WRITE
+claude-sonnet-4-5           sdk      184213  9820    1204331     0
+claude-sonnet-4-5-20250929  gateway  184301  9820    1204331     0
 ```
 
+SOURCE is who counted: `sdk` is the adapter's report of what the harness
+billed, and `gateway` is the credential gateway's own count of the upstream's
+`usage` block on every response it forwarded, taken from outside the session
+(`docs/sandbox.md` §Credentials). A run with no gateway in front of it has
+`sdk` rows alone. The two are listed beside each other and never summed into
+one: the adapter's rows are what `status` and `inspect` call the cost and
+what is posted to dagger, and the gateway's are the check on them — the
+gateway sees the CLI's side requests the SDK does not report, and names the
+model by its resolved id.
+
 The MODEL table is summed from the rows the STEP table renders — every step's
-bucket carries its own totals per model — so the two tables agree by
-construction and one of them cannot come back empty under the other.
+bucket carries its own totals per model and per source — so the two tables
+agree by construction and one of them cannot come back empty under the other.
 
 ## workflow show
 
@@ -313,19 +332,21 @@ unchanged`.
 
 ## doctor
 
-Eight probes, one line of reason each. Every probe is reported; the command
-exits non-zero when any of them failed.
+Nine probes, one line of reason each. Every probe is reported; the command
+exits non-zero when any of them failed. A probe that passed with something
+still worth looking at is marked `warn` and does not fail the command.
 
 ```
 $ mill doctor
 pass  socket     /run/user/1000/mill/mill.sock answers; mill 0.0.0-dev
-pass  schema     migration 14, current
+pass  schema     migration 18, current
 pass  dagger     /run/dagger/dg.sock answers; this account is a principal on mill, 1 node(s) ready for an agent
 fail  sidecar    sidecar/dist/main.js did not answer: claude: the sidecar answered nothing before it exited
 fail  signing    no signing key under ~/.local/state/mill/workspaces/signing
 fail  forge      no repository to probe: pass --vcs-url or set MILL_VCS_URL
 pass  notify     contrib/notify/thicket-send.sh accepts a probe notice
 pass  workspace  local: a clone under the mill's account
+warn  gateway    https://api.anthropic.com answers a token count through the gateway with credential:774fdbe2; the credential was minted 2025-09-30, more than 11 months ago; a setup-token lasts a year — mint a new one
 ```
 
 | Probe | What it checks |
@@ -338,6 +359,7 @@ pass  workspace  local: a clone under the mill's account
 | `forge` | The forge accepts the credential |
 | `notify` | The configured notify command runs and accepts a probe notice |
 | `workspace` | Which workspace backend a run works in, and for `machine` whether the sandbox root is btrfs |
+| `gateway` | The credential gateway's upstream answers one token count through it with the configured credential, and the credential's age against `model_credential_minted` |
 
 The sidecar probe sends a `cancel` request on stdin. Cancellation reaches a
 running sidecar as SIGTERM, so a cancel on stdin is a frame the sidecar
@@ -369,6 +391,32 @@ fail  workspace  machine: sandbox root /var/lib/mill is xfs, not btrfs (docs/san
 That is the whole of the probe for now; what else a machine needs of the
 host — the template unit, its polkit rule, the image subvolumes — is probed
 as the backend that needs it lands.
+
+The gateway probe is the credential gateway of `docs/sandbox.md`
+§Credentials, asked the way a session would ask it. When `gateway: true` is
+configured — the flag, else the file — the doctor loads the upstream
+credential from `--model-credential-file` (the file's `model-credential-file`,
+else `$CREDENTIALS_DIRECTORY/claude-oauth`; never the environment), builds
+the gateway in process, mints a step token for the probe alone, and sends one
+`POST /v1/messages/count_tokens` through it to `--gateway-upstream`. A token
+count is answered without billing, so the probe costs nothing and proves the
+whole path: the file is there, the gateway accepts a step token, the upstream
+accepts the swapped credential. It fails naming the file when the credential
+is absent, and naming the upstream's status when it refuses:
+
+```
+fail  gateway    gateway: no upstream credential: /run/credentials/mill.service/claude-oauth: open …: no such file or directory
+fail  gateway    gateway: api.anthropic.com answered 401 to the probe: {"type":"error","error":{"type":"authentication_error",…
+```
+
+The credential is a `claude setup-token`, which lasts a year, and the CLI's
+own three-day expiry warning applies only to `/login` credentials, so the
+doctor is where the age is watched: `model_credential_minted: YYYY-MM-DD` in
+the configuration file records when it was minted, and the probe warns from
+eleven months on — and warns that it cannot check when the date is not
+written down. The probe never prints the credential; the line names it by a
+fingerprint of its hash, as the gateway's log does. A host with no gateway
+configured passes and says so: its sessions run on the account's login.
 
 **What the dagger probe cannot check.** Dagger's API exposes no whoami and its
 principals carry no name ([dagger's domain model](https://github.com/ivy/dagger)

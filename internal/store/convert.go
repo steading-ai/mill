@@ -250,7 +250,31 @@ func usageProto(row Usage) *millv1.Usage {
 		CacheWriteTokens: row.CacheWriteTokens,
 		RecordedAt:       timestamppb.New(row.RecordedAt),
 		PostedAt:         stamp(row.PostedAt),
+		Source:           usageSourceProto(row.Source),
 	}
+}
+
+// The ledger's text for who counted a usage row (migration 00018).
+const (
+	usageSourceSDK     = "sdk"
+	usageSourceGateway = "gateway"
+)
+
+// usageSourceText is a source as the ledger spells it. Unspecified is the
+// adapter's: every row written before the gateway existed was its report.
+func usageSourceText(source millv1.UsageSource) string {
+	if source == millv1.UsageSource_USAGE_SOURCE_GATEWAY {
+		return usageSourceGateway
+	}
+	return usageSourceSDK
+}
+
+// usageSourceProto is the ledger's text as the wire spells it.
+func usageSourceProto(text string) millv1.UsageSource {
+	if text == usageSourceGateway {
+		return millv1.UsageSource_USAGE_SOURCE_GATEWAY
+	}
+	return millv1.UsageSource_USAGE_SOURCE_SDK
 }
 
 // sessionProto builds the wire form of a session row.

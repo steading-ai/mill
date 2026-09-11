@@ -237,6 +237,69 @@ var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 		})
 	})
 
+	Describe("the gateway's count beside the adapter's", func() {
+		// The credential gateway sees every response and counts what the
+		// model billed from outside the session; the adapter reports what
+		// the SDK told it. Both are ledger rows, each saying who counted
+		// it, and `mill cost` lists them beside each other
+		// (docs/sandbox.md §Credentials).
+		It("Usage is recorded from outside the session", func() {
+			By("given step 3 of a run, whose session the adapter reported on")
+			r := openRun(ctx, "millcli#57", nodeID(57))
+			sr := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+			_, err := r.store.RecordUsage(ctx, connect.NewRequest(&millv1.RecordUsageRequest{
+				LeaseId: r.lease, StepRunId: sr.GetId(),
+				Usage: []*millv1.Usage{{
+					StepRunId: sr.GetId(), Model: "claude-sonnet-4-5", Source: millv1.UsageSource_USAGE_SOURCE_SDK,
+					InputTokens: 100, OutputTokens: 20, CacheReadTokens: 1000,
+				}},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+
+			By("when a response passes through the gateway for step 3 with model M")
+			_, err = r.store.RecordUsage(ctx, connect.NewRequest(&millv1.RecordUsageRequest{
+				LeaseId: r.lease, StepRunId: sr.GetId(),
+				Usage: []*millv1.Usage{{
+					StepRunId: sr.GetId(), Model: "claude-sonnet-4-5-20250929", Source: millv1.UsageSource_USAGE_SOURCE_GATEWAY,
+					InputTokens: 102, OutputTokens: 20, CacheReadTokens: 1000,
+				}},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+
+			By("then the ledger holds a usage row for step 3 and M from the gateway, distinct from the SDK-reported row")
+			detail, err := r.store.Inspect(ctx, connect.NewRequest(&millv1.InspectRequest{Id: r.run.GetId()}))
+			Expect(err).NotTo(HaveOccurred())
+			var step *millv1.StepRunDetail
+			for _, d := range detail.Msg.GetSteps() {
+				if d.GetStepRun().GetId() == sr.GetId() {
+					step = d
+				}
+			}
+			Expect(step).NotTo(BeNil())
+			Expect(step.GetTotals()).To(HaveLen(1), "the adapter's row is the attempt's cost")
+			Expect(step.GetTotals()[0].GetModel()).To(Equal("claude-sonnet-4-5"))
+			Expect(step.GetTotals()[0].GetInputTokens()).To(Equal(int64(100)))
+			Expect(step.GetGatewayTotals()).To(HaveLen(1), "the gateway's row sits beside it")
+			Expect(step.GetGatewayTotals()[0].GetModel()).To(Equal("claude-sonnet-4-5-20250929"))
+			Expect(step.GetGatewayTotals()[0].GetSource()).To(Equal(millv1.UsageSource_USAGE_SOURCE_GATEWAY))
+			Expect(step.GetGatewayTotals()[0].GetInputTokens()).To(Equal(int64(102)))
+
+			By("and mill cost lists it beside the SDK's row for the same turn")
+			out := r.cli(ctx, "cost")
+			steps := section(out, "STEP")
+			Expect(lines(steps)).To(HaveLen(2), out)
+			Expect(lines(steps)[0]).To(MatchRegexp(`implement\s+sdk\s+100\s+20\s+1000`))
+			Expect(lines(steps)[1]).To(MatchRegexp(`implement\s+gateway\s+102\s+20\s+1000`))
+			models := section(out, "MODEL")
+			Expect(rowFor(models, "claude-sonnet-4-5")).To(ContainSubstring("sdk"))
+			Expect(rowFor(models, "claude-sonnet-4-5-20250929")).To(ContainSubstring("gateway"))
+
+			By("and status counts the adapter's rows alone")
+			status := r.cli(ctx, "status")
+			Expect(rowFor(status, "millcli#57")).To(ContainSubstring("100/20"))
+		})
+	})
+
 	Describe("mill workflow show", func() {
 		It("prints the definition's steps, what closes each, and what a failure does", func() {
 			r := openRun(ctx, "millcli#6", nodeID(6))
@@ -301,8 +364,8 @@ func inputTotal(rows string) int64 {
 	var total int64
 	for _, line := range lines(rows) {
 		fields := strings.Fields(line)
-		Expect(len(fields)).To(BeNumerically(">=", 2), line)
-		count, err := strconv.ParseInt(fields[1], 10, 64)
+		Expect(len(fields)).To(BeNumerically(">=", 3), line)
+		count, err := strconv.ParseInt(fields[2], 10, 64)
 		Expect(err).NotTo(HaveOccurred(), line)
 		total += count
 	}

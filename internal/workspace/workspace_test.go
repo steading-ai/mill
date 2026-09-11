@@ -30,6 +30,7 @@ var _ = Describe("The workspace's vocabulary", Label("unit"), func() {
 				"NO_PROXY":             "10.99.14.1",
 				"ANTHROPIC_BASE_URL":   "http://10.99.14.1:8081",
 				"ANTHROPIC_AUTH_TOKEN": "step-token-a",
+				"ENABLE_TOOL_SEARCH":   "true",
 			}))
 		})
 
@@ -43,6 +44,7 @@ var _ = Describe("The workspace's vocabulary", Label("unit"), func() {
 			Expect(workspace.Egress{Gateway: "http://gateway:8081"}.Environment("t")).To(Equal(map[string]string{
 				"ANTHROPIC_BASE_URL":   "http://gateway:8081",
 				"ANTHROPIC_AUTH_TOKEN": "t",
+				"ENABLE_TOOL_SEARCH":   "true",
 			}))
 		})
 	})

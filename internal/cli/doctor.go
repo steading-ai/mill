@@ -17,6 +17,7 @@ import (
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/dagger"
 	"github.com/ivy/mill/internal/forge"
+	"github.com/ivy/mill/internal/gateway"
 	"github.com/ivy/mill/internal/harness/claude"
 	"github.com/ivy/mill/internal/notify"
 	"github.com/ivy/mill/internal/workspace"
@@ -45,6 +46,9 @@ type probe struct {
 	OK bool `json:"ok"`
 	// Reason is the one line a human reads: what answered, or what did not.
 	Reason string `json:"reason"`
+	// Warning is what a passing probe still wants looked at: the gateway's
+	// credential nearing its year. It never fails the command.
+	Warning string `json:"warning,omitempty"`
 }
 
 // pass and fail build a probe's result.
@@ -70,6 +74,10 @@ type doctorOptions struct {
 	name          string
 	config        string
 	notifyCommand string
+	gateway       gatewayOptions
+	// credentialMinted is the configuration file's model_credential_minted,
+	// which has no flag: it is a fact about a deployment's credential.
+	credentialMinted string
 }
 
 func newDoctorCommand() *cobra.Command {
@@ -89,9 +97,12 @@ func newDoctorCommand() *cobra.Command {
   notify    the configured notify command runs and accepts a probe notice
   workspace the workspace kind in effect and, for machine, whether the
             sandbox root is btrfs
+  gateway   the credential gateway's upstream answers one token count
+            through it, and a warning once the credential is eleven
+            months old
 
 Every probe is reported. The command exits non-zero when any of them
-failed.`,
+failed; a warning does not fail it.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runDoctor(cmd, opts)
@@ -111,6 +122,7 @@ failed.`,
 	f.StringVar(&opts.name, "name", defaultForgeUser, "name on the mill's commits")
 	f.StringVar(&opts.config, "config", defaultConfigPath(), "path of the configuration file the notify command and the workspace kind are read from when no flag names them")
 	f.StringVar(&opts.notifyCommand, "notify-command", "", notifyCommandUsage)
+	bindGatewayFlags(cmd, &opts.gateway)
 	return cmd
 }
 
@@ -139,15 +151,20 @@ func runDoctor(cmd *cobra.Command, opts doctorOptions) error {
 	if config.SandboxRoot != "" && unset(cmd, "sandbox-root") {
 		opts.sandboxRoot = config.SandboxRoot
 	}
+	applyGatewayConfig(cmd, config, &opts.gateway)
+	opts.credentialMinted = config.ModelCredentialMinted
 	probes := doctor(cmd.Context(), opts)
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	healthy := true
 	for _, result := range probes {
-		mark := "pass"
-		if !result.OK {
+		mark, reason := "pass", result.Reason
+		switch {
+		case !result.OK:
 			mark, healthy = "fail", false
+		case result.Warning != "":
+			mark, reason = "warn", result.Reason+"; "+result.Warning
 		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", mark, result.Name, result.Reason)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", mark, result.Name, reason)
 	}
 	if err := w.Flush(); err != nil {
 		return err
@@ -160,7 +177,7 @@ func runDoctor(cmd *cobra.Command, opts doctorOptions) error {
 
 // doctor runs every probe in order and returns what each found. It is the
 // value `mill mcp` renders too, so an agent asked to look at a sick host is
-// told the same eight things.
+// told the same nine things.
 func doctor(ctx context.Context, opts doctorOptions) []probe {
 	socket, schema := probeService(ctx, opts)
 	return []probe{
@@ -172,7 +189,42 @@ func doctor(ctx context.Context, opts doctorOptions) []probe {
 		probeForge(ctx, opts),
 		probeNotify(ctx, opts),
 		probeWorkspace(opts, machine.NewSystemd(workspace.Spawner{}, machine.Commands{})),
+		probeGateway(ctx, opts, time.Now()),
 	}
+}
+
+// probeGateway makes one cheap request through the credential gateway a run
+// would put its sessions behind: a token count, which the upstream answers
+// without billing. What it proves is the whole of the path a session's
+// request takes — the credential file is there, the gateway accepts a step
+// token, the upstream accepts the swapped credential. What it adds is the
+// one warning a setup-token gets: the CLI's own expiry warning is for
+// `/login` credentials, so the age is read off the configuration file's
+// model_credential_minted and reported at eleven months
+// (docs/sandbox.md §Credentials).
+//
+// A host with no gateway configured passes: its sessions run on the
+// account's login, which is what a run on it does.
+func probeGateway(ctx context.Context, opts doctorOptions, now time.Time) probe {
+	if !opts.gateway.enabled {
+		return pass("gateway", "no gateway is configured; sessions reach the model on the account's login")
+	}
+	credential, err := gateway.LoadCredential(opts.gateway.credentialFile)
+	if err != nil {
+		return fail("gateway", "%v", err)
+	}
+	g, err := gateway.New(gateway.Config{Upstream: opts.gateway.upstream, Credential: credential})
+	if err != nil {
+		return fail("gateway", "%v", err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	if err := g.Probe(ctx); err != nil {
+		return fail("gateway", "%v", err)
+	}
+	result := pass("gateway", "%s answers a token count through the gateway with %s", opts.gateway.upstream, credential)
+	result.Warning = credentialWarning(opts.credentialMinted, now)
+	return result
 }
 
 // probeService asks the service about itself: one call answers both whether

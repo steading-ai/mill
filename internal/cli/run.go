@@ -22,6 +22,7 @@ import (
 	"github.com/ivy/mill/internal/dagger"
 	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/forge/gitlab"
+	"github.com/ivy/mill/internal/gateway"
 	"github.com/ivy/mill/internal/harness"
 	"github.com/ivy/mill/internal/harness/claude"
 	"github.com/ivy/mill/internal/notify"
@@ -156,6 +157,7 @@ type runOptions struct {
 	envMode       string
 	notifyCommand string
 	skillOverride map[string]string
+	gateway       gatewayOptions
 	ttl           time.Duration
 	interval      time.Duration
 	dryRun        bool
@@ -221,6 +223,7 @@ between.`,
 	f.StringToStringVar(&opts.skillOverride, "skill-override", nil, skillOverrideUsage)
 	f.StringVar(&opts.notifyCommand, "notify-command", "", notifyCommandUsage)
 	f.BoolVar(&opts.noAsk, "no-ask", false, "leave a filed gate for a human elsewhere instead of asking on this terminal")
+	bindGatewayFlags(cmd, &opts.gateway)
 	return cmd
 }
 
@@ -327,7 +330,14 @@ func execute(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 		answers = NewTerminalAnswerer(cmd.InOrStdin(), cmd.OutOrStdout())
 	}
 
-	runner, err := newRunner(cmd, opts, opts.project, nodeRef, answers)
+	gw, err := startGateway(cmd, opts.gateway)
+	if err != nil {
+		return err
+	}
+	if gw != nil {
+		defer func() { _ = gw.Close() }()
+	}
+	runner, err := newRunner(cmd, opts, opts.project, nodeRef, answers, gw)
 	if err != nil {
 		return err
 	}
@@ -343,7 +353,10 @@ func execute(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 // sessionRef is what dagger records on the lease as the harness session.
 // `mill run` names the node it was given; a worker has none to name, because
 // the node is not known until the claim it is an argument to has returned.
-func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, answers run.Answerer) (*run.Runner, error) {
+//
+// gw is the process's credential gateway, started once by the caller and
+// shared by every runner, or nil when none is configured.
+func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, answers run.Answerer, gw *gateway.Server) (*run.Runner, error) {
 	// The first thing, because it is the cheapest thing that can be wrong
 	// and the most expensive to find out late: a backend that cannot serve
 	// a run on this host fails after the node has been claimed and cloned
@@ -412,7 +425,7 @@ func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, 
 	// object (docs/architecture.md §Observability).
 	redactor := redact.New()
 
-	return run.New(run.Options{
+	options := run.Options{
 		Store:          storeClient(opts.socket),
 		Notifier:       notifier(opts.notifyCommand),
 		Dagger:         client,
@@ -433,7 +446,9 @@ func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, 
 		Redactor:       redactor,
 		SkillOverrides: overrides,
 		Log:            slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: slog.LevelInfo})),
-	}), nil
+	}
+	gatewayRunOptions(gw, &options)
+	return run.New(options), nil
 }
 
 // notifier is the deployment's notify command, or nothing at all. It is a

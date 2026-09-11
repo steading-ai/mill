@@ -13,6 +13,7 @@ import (
 	harnessv1 "github.com/ivy/mill/gen/harness/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/dagger"
+	"github.com/ivy/mill/internal/gateway"
 	"github.com/ivy/mill/internal/harness"
 )
 
@@ -34,6 +35,7 @@ func (r *Runner) recordUsage(ctx context.Context, s *state, sr *millv1.StepRun, 
 			CacheReadTokens:  counts.CacheRead,
 			CacheWriteTokens: counts.CacheWrite,
 			RecordedAt:       timestamppb.New(r.options.Now()),
+			Source:           millv1.UsageSource_USAGE_SOURCE_SDK,
 		})
 	}
 	_, err := call(ctx, r.options.Store.RecordUsage, &millv1.RecordUsageRequest{
@@ -44,8 +46,32 @@ func (r *Runner) recordUsage(ctx context.Context, s *state, sr *millv1.StepRun, 
 	return err
 }
 
+// recordGatewayUsage appends what the credential gateway counted on one
+// response, as its own row with source `gateway`: the same shape as the
+// adapter's report, distinct from it, so the two can be read beside each
+// other (docs/sandbox.md §Credentials). It is never posted to dagger; the
+// adapter's rows are the step's cost there.
+func (r *Runner) recordGatewayUsage(ctx context.Context, lease string, sr *millv1.StepRun, usage gateway.Usage) error {
+	_, err := call(ctx, r.options.Store.RecordUsage, &millv1.RecordUsageRequest{
+		LeaseId:   lease,
+		StepRunId: sr.GetId(),
+		Usage: []*millv1.Usage{{
+			StepRunId:        sr.GetId(),
+			Model:            usage.Model,
+			InputTokens:      usage.Input,
+			OutputTokens:     usage.Output,
+			CacheReadTokens:  usage.CacheRead,
+			CacheWriteTokens: usage.CacheWrite,
+			RecordedAt:       timestamppb.New(r.options.Now()),
+			Source:           millv1.UsageSource_USAGE_SOURCE_GATEWAY,
+		}},
+	})
+	return err
+}
+
 // postUsage sends an attempt's totals to dagger, one record per model, and
-// marks the rows posted.
+// marks the rows posted. The totals are the adapter's rows alone: the
+// store keeps the gateway's count out of them (mill.v1.StepRunDetail).
 //
 // It runs whether the attempt closed or failed, and always before anything
 // that releases the lease — a release ends the lease ReportUsage needs, and

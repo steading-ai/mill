@@ -264,13 +264,20 @@ const (
 	NoProxyVar           = "NO_PROXY"
 	ModelGatewayVar      = "ANTHROPIC_BASE_URL"
 	ModelGatewayTokenVar = "ANTHROPIC_AUTH_TOKEN"
+	// ToolSearchVar is set beside the gateway because the CLI turns its
+	// MCP tool search off when ANTHROPIC_BASE_URL is not a first-party
+	// host, and the gateway forwards bodies unchanged so nothing is lost
+	// by turning it back on (docs/spikes/nspawn-per-run-sandbox.md §E14).
+	ToolSearchVar = "ENABLE_TOOL_SEARCH"
 )
 
 // Environment is the decisions as the variables a process is given, with
 // token as the step token it presents to the gateway. A decision that was
 // not made sets nothing: under `--env-mode inherit` that is what lets the
 // host's own proxy reach a session, and under `strict` it is what leaves the
-// session with the SDK's login rather than an empty bearer.
+// session with the SDK's login rather than an empty bearer. A gateway brings
+// [ToolSearchVar] with it, so a session behind one keeps the tool search it
+// would have had against the first-party host.
 func (n Egress) Environment(token string) map[string]string {
 	env := map[string]string{}
 	if n.Proxy != "" {
@@ -281,6 +288,7 @@ func (n Egress) Environment(token string) map[string]string {
 	if n.Gateway != "" {
 		env[ModelGatewayVar] = n.Gateway
 		env[ModelGatewayTokenVar] = token
+		env[ToolSearchVar] = "true"
 	}
 	return env
 }

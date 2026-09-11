@@ -289,6 +289,21 @@ enum WorkspaceState {
   WORKSPACE_STATE_DESTROYED = 3;
 }
 
+// UsageSource is who counted a usage row: the harness adapter, reporting
+// what the SDK told it, or the credential gateway, counting the model's own
+// `usage` block on every response it forwarded. The two are kept as separate
+// rows so that what a session reported and what the model billed can be
+// read beside each other (docs/sandbox.md §Credentials).
+enum UsageSource {
+  // USAGE_SOURCE_UNSPECIFIED is the zero value and reads as the adapter's.
+  USAGE_SOURCE_UNSPECIFIED = 0;
+  // USAGE_SOURCE_SDK is the adapter's report of what the harness billed.
+  USAGE_SOURCE_SDK = 1;
+  // USAGE_SOURCE_GATEWAY is the credential gateway's count, taken from the
+  // upstream's response outside the session.
+  USAGE_SOURCE_GATEWAY = 2;
+}
+
 // Run is one node, worked through one workflow, by this mill: the unit a
 // worker takes and the unit a workspace belongs to.
 message Run {
@@ -652,6 +667,15 @@ message Step {
   // Where an `artifact` step's evidence is read from, when it is not the
   // session's final message.
   ArtifactSource artifact = 14;
+  // How many tokens one attempt of this step may bill through the
+  // credential gateway — input, output, cache read and cache write summed —
+  // before the gateway refuses its requests and the attempt fails
+  // (docs/sandbox.md §Credentials). Zero declares no budget.
+  int64 token_budget = 15;
+  // The models this step's sessions may reach through the gateway. An entry
+  // matches a requested model id it equals or that contains it, so `sonnet`
+  // pins every Sonnet. Empty pins nothing and admits every model.
+  repeated string models = 16;
 }
 
 // ArtifactSource says where a step's artifact evidence comes from. A step
@@ -762,6 +786,8 @@ message Usage {
   google.protobuf.Timestamp recorded_at = 7;
   // When this row's step totals were posted to dagger; unset until then.
   google.protobuf.Timestamp posted_at = 8;
+  // Who counted it. Unset reads as the adapter's report.
+  UsageSource source = 9;
 }
 
 // Workspace is what a step receives instead of a path and a keychain: a unix
@@ -807,6 +833,8 @@ message ModelTotals {
   int64 cache_read_tokens = 4;
   // Tokens written to the model's prompt cache.
   int64 cache_write_tokens = 5;
+  // Who counted the rows summed here. Unset reads as the adapter's report.
+  UsageSource source = 6;
 }
 
 // RunSummary is a run with the things the ledger derives rather than stores,
@@ -835,13 +863,19 @@ message StepRunDetail {
   Evidence evidence = 2;
   // The session it ran in, for a skill step.
   Session session = 3;
-  // What it cost, by model.
+  // What it cost, by model, as the adapter reported it: the rows posted to
+  // dagger.
   repeated ModelTotals totals = 4;
   // How many times the harness asked this attempt's session about a
   // background task that had gone silent. A stalled attempt is one whose
   // heartbeats ran out, so the count is what says how the exit was reached
   // (docs/domain-model.md §Session).
   int64 heartbeats = 5;
+  // What the credential gateway counted for the attempt, by model, from the
+  // upstream's responses outside the session. Empty when no gateway sat in
+  // front of it. Never posted to dagger: it is the check on `totals`, read
+  // beside it (docs/sandbox.md §Credentials).
+  repeated ModelTotals gateway_totals = 6;
 }
 
 // Event is one row of the ledger's audit trail: what changed about a run,

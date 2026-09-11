@@ -110,6 +110,11 @@ env_mode: strict
 notify_command: /usr/local/bin/thicket-send.sh
 workspace: machine
 sandbox-root: /srv/mill
+gateway: true
+gateway-listen: 10.99.255.1:8081
+gateway-upstream: https://api.example.test
+model-credential-file: /run/credentials/mill.service/claude-oauth
+model_credential_minted: 2026-09-01
 `), 0o600)).To(Succeed())
 	})
 
@@ -142,13 +147,23 @@ sandbox-root: /srv/mill
 		// local to machine is this line (docs/sandbox.md §Self-hosting).
 		Expect(opts.run.workspace).To(Equal("machine"))
 		Expect(opts.run.sandboxRoot).To(Equal("/srv/mill"))
+		// The credential gateway is the deployment's as well: on, where it
+		// listens, what it forwards to, and the file its credential is in
+		// (docs/sandbox.md §Credentials).
+		Expect(opts.run.gateway.enabled).To(BeTrue())
+		Expect(opts.run.gateway.listen).To(Equal("10.99.255.1:8081"))
+		Expect(opts.run.gateway.upstream).To(Equal("https://api.example.test"))
+		Expect(opts.run.gateway.credentialFile).To(Equal("/run/credentials/mill.service/claude-oauth"))
 	})
 
-	It("defaults the workspace to local when the file says nothing", func() {
+	It("defaults the workspace to local and the gateway to off when the file says nothing", func() {
 		Expect(os.WriteFile(path, []byte("concurrency: 1\n"), 0o600)).To(Succeed())
 		opts := parse()
 		Expect(opts.run.workspace).To(Equal("local"))
 		Expect(opts.run.sandboxRoot).To(Equal("/var/lib/mill"))
+		Expect(opts.run.gateway.enabled).To(BeFalse())
+		Expect(opts.run.gateway.listen).To(Equal("10.99.255.1:8080"))
+		Expect(opts.run.gateway.upstream).To(Equal("https://api.anthropic.com"))
 	})
 
 	It("leaves a flag the command line set alone", func() {

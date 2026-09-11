@@ -55,6 +55,17 @@ type Config struct {
 	// deployment sets it, and a deployment spells it with an underscore.
 	NotifyCommand string `yaml:"notify_command"`
 	Work          bool   `yaml:"work"`
+	// The credential gateway (docs/sandbox.md §Credentials). Gateway turns
+	// it on; the rest name where it listens, what it forwards to, and the
+	// file holding the credential it presents upstream.
+	Gateway             bool   `yaml:"gateway"`
+	GatewayListen       string `yaml:"gateway-listen"`
+	GatewayUpstream     string `yaml:"gateway-upstream"`
+	ModelCredentialFile string `yaml:"model-credential-file"`
+	// ModelCredentialMinted is the date, YYYY-MM-DD, the subscription
+	// credential was minted, which `mill doctor` warns from at eleven
+	// months. Spelled the way env_mode is: a deployment writes it.
+	ModelCredentialMinted string `yaml:"model_credential_minted"`
 }
 
 // defaultConfigPath is where the file lives when nothing names one.

@@ -86,6 +86,7 @@ func bindWorkFlags(cmd *cobra.Command, opts *workOptions) {
 	f.StringVar(&opts.run.name, "name", defaultForgeUser, "name on the mill's commits")
 	f.DurationVar(&opts.run.ttl, "ttl", run.DefaultTTL, "lease TTL to ask dagger for")
 	f.DurationVar(&opts.run.interval, "heartbeat", 0, "how often to renew the lease (default: a third of the TTL)")
+	bindGatewayFlags(cmd, &opts.run.gateway)
 }
 
 // applyConfig fills in every worker flag the command line left alone. The
@@ -108,6 +109,8 @@ func applyConfig(cmd *cobra.Command, opts *workOptions, socket *string) error {
 		"workspace-dir": &opts.run.workspaceDir, "log-dir": &opts.run.logDir,
 		"workspace": &opts.run.workspace, "sandbox-root": &opts.run.sandboxRoot,
 		"env-mode": &opts.run.envMode, "notify-command": &opts.run.notifyCommand,
+		"gateway-listen": &opts.run.gateway.listen, "gateway-upstream": &opts.run.gateway.upstream,
+		"model-credential-file": &opts.run.gateway.credentialFile,
 	}
 	values := map[string]string{
 		"socket": config.Socket, "dagger-socket": config.DaggerSocket,
@@ -118,6 +121,8 @@ func applyConfig(cmd *cobra.Command, opts *workOptions, socket *string) error {
 		"workspace-dir": config.WorkspaceDir, "log-dir": config.LogDir,
 		"workspace": config.Workspace, "sandbox-root": config.SandboxRoot,
 		"env-mode": config.EnvMode, "notify-command": config.NotifyCommand,
+		"gateway-listen": config.GatewayListen, "gateway-upstream": config.GatewayUpstream,
+		"model-credential-file": config.ModelCredentialFile,
 	}
 	for name, target := range targets {
 		if value := values[name]; value != "" && unset(cmd, name) {
@@ -132,6 +137,9 @@ func applyConfig(cmd *cobra.Command, opts *workOptions, socket *string) error {
 	}
 	if config.Concurrency > 0 && unset(cmd, "concurrency") {
 		opts.concurrency = config.Concurrency
+	}
+	if config.Gateway && unset(cmd, "gateway") {
+		opts.run.gateway.enabled = true
 	}
 	return nil
 }
@@ -178,12 +186,18 @@ func newWorker(cmd *cobra.Command, opts *workOptions) (*run.Worker, error) {
 		opts.run.socket = defaultSocketPath()
 	}
 
+	// One gateway for the process, in front of every project's runs. It
+	// outlives the worker: the listener is the process's, closed with it.
+	gw, err := startGateway(cmd, opts.run.gateway)
+	if err != nil {
+		return nil, err
+	}
 	runners := make([]*run.Runner, 0, len(projects))
 	for _, project := range projects {
 		// No answerer: a worker has nobody at its terminal, so a gate is
 		// filed and the lease released, and whoever answers does it in
 		// dagger (docs/architecture.md §"Gate steps").
-		runner, err := newRunner(cmd, opts.run, project, "", nil)
+		runner, err := newRunner(cmd, opts.run, project, "", nil, gw)
 		if err != nil {
 			return nil, err
 		}

@@ -163,6 +163,8 @@ One unit of a workflow. Three kinds.
 | `harness` | Per-harness **options documents**, keyed by harness name. The adapter reads its own entry and mill reads none of them |
 | `on_failure` | What happens once `retries` are spent: `revise <step>` returns to a named earlier step in its session with the failure as the next prompt; `park` trips the breaker. Default `park`. See [Revise](#revise) |
 | `retries` | How many times *this* step may fail and be tried again before `on_failure` is consulted. Counted on this step's own attempts. Default 3 |
+| `token_budget` | How many tokens one attempt may bill through the credential gateway — input, output, cache read and cache write summed — before the gateway refuses its requests and the attempt fails on the budget. Zero declares none. `docs/sandbox.md` §Credentials |
+| `models` | The models the step's sessions may reach through the gateway; an entry matches a model id it equals or that contains it, so `sonnet` pins every Sonnet. Empty admits every model. Mill's field, not the harness's: the harness's `model` is what the session asks for, this is what the gateway lets through |
 | `timeout` | Wall clock for the step, enforced by the worker. Independent of the dagger lease, which the worker heartbeats for the step's whole duration; a step may run longer than a lease TTL |
 
 Harness settings live on the **step**, not on the skill record. A skill is shared across workflows, so it cannot hold a setting that differs between them: the same reviewer is worth a cheaper model in a `docs` workflow than in `feature`. `mill.v1.HarnessSettings` and `harness.v1.Settings` carry the decision in the proto.

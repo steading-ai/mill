@@ -142,10 +142,11 @@ The workspace validates a presented bearer by hash and by `revoked_at IS NULL`. 
 | `step_run_id` | |
 | `model` | Free string |
 | `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens` | Counts, never currency |
+| `source` | Who counted: `sdk`, the adapter's report of what the harness billed, or `gateway`, the credential gateway's count of the upstream's `usage` block on a response it forwarded |
 | `recorded_at` | |
 | `posted_at` | When this row's step totals were posted to dagger; null until then |
 
-One row per turn, per model, as the adapter reports — a turn that bills two models writes two rows. Cost is a rate table applied at query time. The step's totals are posted to dagger through `ReportUsage` as one record per `(lease, model)` **when the step run closes or fails**, and the rows are marked `posted_at`. Dagger sums records per attempt and each report renews the lease, so per-step posting is both the contract's intended shape and a heartbeat. A worker that dies mid-step loses only that step's usage from dagger's view; the ledger keeps it. There is no reconciliation job: dagger's per-lease total for an abandoned attempt is allowed to be short by one step, and the ledger is the complete record.
+One row per turn, per model, as the adapter reports — a turn that bills two models writes two rows — and, where the credential gateway sits in front of the session, one more per response it forwarded, with source `gateway` (`docs/sandbox.md` §Credentials). The adapter's rows are the step's cost: they are what `status` and `inspect` sum and what is posted to dagger. The gateway's are the count taken outside the session, carried beside them as the attempt's `gateway_totals` and listed by `cost` under their own source; they are never posted. Cost is a rate table applied at query time. The step's totals are posted to dagger through `ReportUsage` as one record per `(lease, model)` **when the step run closes or fails**, and the rows are marked `posted_at`. Dagger sums records per attempt and each report renews the lease, so per-step posting is both the contract's intended shape and a heartbeat. A worker that dies mid-step loses only that step's usage from dagger's view; the ledger keeps it. There is no reconciliation job: dagger's per-lease total for an abandoned attempt is allowed to be short by one step, and the ledger is the complete record.
 
 ### `workspaces`
 

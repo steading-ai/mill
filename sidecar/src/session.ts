@@ -100,12 +100,16 @@ const WORKSPACE_GIT_ENVIRONMENT = [
 // not choose its own way out. The bearer is the step's, not the session's:
 // each sidecar is spawned for one step with the token that step was issued,
 // so what is copied here is the token the gateway is checking against.
+// ENABLE_TOOL_SEARCH travels with the gateway: the CLI turns tool search off
+// when ANTHROPIC_BASE_URL is not a first-party host, and the workspace turns
+// it back on because the gateway forwards bodies unchanged.
 const WORKSPACE_EGRESS_ENVIRONMENT = [
   "HTTPS_PROXY",
   "HTTP_PROXY",
   "NO_PROXY",
   "ANTHROPIC_BASE_URL",
   "ANTHROPIC_AUTH_TOKEN",
+  "ENABLE_TOOL_SEARCH",
 ];
 
 // WORKSPACE_SOCKET_VAR and STEP_TOKEN_VAR are the names a session finds its

@@ -36,6 +36,7 @@ import (
 	"github.com/ivy/mill/gen/mill/v1/millv1connect"
 	"github.com/ivy/mill/internal/dagger"
 	"github.com/ivy/mill/internal/forge"
+	"github.com/ivy/mill/internal/gateway"
 	"github.com/ivy/mill/internal/harness"
 	"github.com/ivy/mill/internal/notify"
 	"github.com/ivy/mill/internal/workspace"
@@ -164,6 +165,30 @@ type Options struct {
 	// against. It is the project default's tier until an assessment step
 	// exists to name one (docs/domain-model.md §"Workflow selection").
 	Tier millv1.Tier
+	// Egress is what every workspace this runner makes decides about the
+	// way out: the proxy and the model gateway its sessions are pointed
+	// at, or neither (workspace.Egress). The zero value is today's local
+	// run — the host's own route and the account's login.
+	Egress workspace.Egress
+	// Gateway is the credential gateway the sessions' model requests go
+	// through, when Egress names one: the loop installs each attempt's
+	// token, budget and model pin in it beside the workspace's own
+	// rotation, and reads a budget refusal off it when the session ends.
+	// Nil means no gateway sits in front of the sessions.
+	Gateway Gateway
+}
+
+// Gateway is the run loop's view of the credential gateway
+// (internal/gateway): what it installs per attempt and what it reads back.
+type Gateway interface {
+	// Rotate installs the attempt whose token the run's requests carry
+	// from now on; the one before it is refused at once.
+	Rotate(runID string, step gateway.Step)
+	// Revoke removes the run's attempt, so its token is refused.
+	Revoke(runID string)
+	// Exceeded is the refusal an attempt earned by spending its budget,
+	// or nil.
+	Exceeded(stepRunID string) *gateway.BudgetError
 }
 
 // Answerer is a person at a terminal, asked a gate's question. It is the
@@ -496,6 +521,7 @@ func (r *Runner) openWorkspace(ctx context.Context, s *state) error {
 		NodeRef: s.run.GetNodeRef(),
 		Origin:  r.options.Origin,
 		Ref:     ref,
+		Egress:  r.options.Egress,
 	})
 	if err != nil {
 		return fmt.Errorf("run %s: workspace: %w", s.run.GetId(), err)
@@ -518,6 +544,11 @@ func (r *Runner) runByNode(ctx context.Context, nodeID string) (*millv1.Run, err
 // worker that fenced it out. Every other failure gives the lease back so the
 // node is claimable again rather than waiting out its TTL.
 func (r *Runner) stop(ctx context.Context, s *state, err error) error {
+	if r.options.Gateway != nil && s.run != nil {
+		// Whatever the run had installed in the gateway dies with the
+		// run's turn on this worker, however the turn ended.
+		r.options.Gateway.Revoke(s.run.GetId())
+	}
 	if s.beat != nil {
 		s.beat.stop()
 		if beatErr := s.beat.err(); beatErr != nil && err == nil {

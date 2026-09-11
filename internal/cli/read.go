@@ -296,7 +296,7 @@ func renderInspect(cmd *cobra.Command, detail *millv1.InspectResponse, v view) e
 				sr.GetStepName(), fmt.Sprint(sr.GetAttempt()), stepKindName(sr.GetKind()),
 				stepRunStatusName(sr.GetStatus()), exitText(sr.GetExit()),
 				evidenceKindName(step.GetEvidence().GetKind()), stepValue(sr, step.GetEvidence()),
-				dash(sr.GetSessionId()), tokenText(step.GetTotals()),
+				dash(sr.GetSessionId()), tokensCounted(step),
 			}
 		}
 		_, _ = fmt.Fprintln(w, strings.Join(row, "\t"))
@@ -630,10 +630,15 @@ func runCost(cmd *cobra.Command, opts readOptions) error {
 		// One writer per section: a shared one would align four unrelated
 		// tables to each other's widest key.
 		w := table(cmd)
-		_, _ = fmt.Fprintf(w, "%s\tINPUT\tOUTPUT\tCACHE READ\tCACHE WRITE\n", section.title)
+		_, _ = fmt.Fprintf(w, "%s\tSOURCE\tINPUT\tOUTPUT\tCACHE READ\tCACHE WRITE\n", section.title)
 		for _, bucket := range section.buckets {
-			in, outTokens, read, write := sum(bucket.GetTotals())
-			_, _ = fmt.Fprintf(w, "%s\t%d\t%d\t%d\t%d\n", bucket.GetKey(), in, outTokens, read, write)
+			// One row per who counted: the adapter's report and, where a
+			// gateway sat in front of the session, its own count beside
+			// it (docs/sandbox.md §Credentials).
+			for _, source := range sourcesOf(bucket.GetTotals()) {
+				in, outTokens, read, write := sum(bySource(bucket.GetTotals(), source))
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\n", bucket.GetKey(), sourceName(source), in, outTokens, read, write)
+			}
 		}
 		if err := w.Flush(); err != nil {
 			return err
@@ -642,27 +647,64 @@ func runCost(cmd *cobra.Command, opts readOptions) error {
 	return nil
 }
 
+// sourcesOf is who counted a bucket's rows, the adapter first.
+func sourcesOf(totals []*millv1.ModelTotals) []millv1.UsageSource {
+	var sources []millv1.UsageSource
+	for _, total := range totals {
+		if !slices.Contains(sources, total.GetSource()) {
+			sources = append(sources, total.GetSource())
+		}
+	}
+	slices.Sort(sources)
+	return sources
+}
+
+// bySource is the rows one source counted.
+func bySource(totals []*millv1.ModelTotals, source millv1.UsageSource) []*millv1.ModelTotals {
+	var out []*millv1.ModelTotals
+	for _, total := range totals {
+		if total.GetSource() == source {
+			out = append(out, total)
+		}
+	}
+	return out
+}
+
+// sourceName is a source as the table prints it. Unspecified is the
+// adapter's: every row written before the gateway existed was its report.
+func sourceName(source millv1.UsageSource) string {
+	if source == millv1.UsageSource_USAGE_SOURCE_GATEWAY {
+		return "gateway"
+	}
+	return "sdk"
+}
+
 // fillByModel derives the MODEL section from the rows the STEP section
 // renders, and returns the response for chaining.
 //
 // The four sections are one pass over the same usage rows, so every model
 // that billed anything billed it under some step, and each step's bucket
-// already carries its totals per model. Summing them here is what makes the
-// two tables agree by construction: a MODEL section with headers and no rows
-// under a STEP section with rows is a contradiction an operator has to spend
-// a command discovering, and there is nothing the by-model rollup knows that
-// the by-step one does not.
+// already carries its totals per model and per who counted them. Summing
+// them here is what makes the two tables agree by construction: a MODEL
+// section with headers and no rows under a STEP section with rows is a
+// contradiction an operator has to spend a command discovering, and there
+// is nothing the by-model rollup knows that the by-step one does not.
 func fillByModel(cost *millv1.CostResponse) *millv1.CostResponse {
 	if cost == nil {
 		return cost
 	}
-	totals := map[string]*millv1.ModelTotals{}
+	totals := map[string]map[millv1.UsageSource]*millv1.ModelTotals{}
 	for _, bucket := range cost.GetByStep() {
 		for _, model := range bucket.GetTotals() {
-			running, seen := totals[model.GetModel()]
+			counted, seen := totals[model.GetModel()]
 			if !seen {
-				running = &millv1.ModelTotals{Model: model.GetModel()}
-				totals[model.GetModel()] = running
+				counted = map[millv1.UsageSource]*millv1.ModelTotals{}
+				totals[model.GetModel()] = counted
+			}
+			running, seen := counted[model.GetSource()]
+			if !seen {
+				running = &millv1.ModelTotals{Model: model.GetModel(), Source: model.GetSource()}
+				counted[model.GetSource()] = running
 			}
 			running.InputTokens += model.GetInputTokens()
 			running.OutputTokens += model.GetOutputTokens()
@@ -672,10 +714,11 @@ func fillByModel(cost *millv1.CostResponse) *millv1.CostResponse {
 	}
 	cost.ByModel = make([]*millv1.CostBucket, 0, len(totals))
 	for _, model := range slices.Sorted(maps.Keys(totals)) {
-		cost.ByModel = append(cost.ByModel, &millv1.CostBucket{
-			Key:    model,
-			Totals: []*millv1.ModelTotals{totals[model]},
-		})
+		bucket := &millv1.CostBucket{Key: model}
+		for _, source := range slices.Sorted(maps.Keys(totals[model])) {
+			bucket.Totals = append(bucket.Totals, totals[model][source])
+		}
+		cost.ByModel = append(cost.ByModel, bucket)
 	}
 	return cost
 }
@@ -739,6 +782,17 @@ func elapsed(run *millv1.Run) string {
 		end = run.GetEndedAt().AsTime()
 	}
 	return end.Sub(run.GetCreatedAt().AsTime()).Round(time.Second).String()
+}
+
+// tokensCounted is an attempt's TOKENS cell: the adapter's report, and
+// beside it what the credential gateway counted when one sat in front of
+// the session, marked as the gateway's (docs/sandbox.md §Credentials).
+func tokensCounted(step *millv1.StepRunDetail) string {
+	text := tokenText(step.GetTotals())
+	if len(step.GetGatewayTotals()) > 0 {
+		text += " gateway:" + tokenText(step.GetGatewayTotals())
+	}
+	return text
 }
 
 // tokenText is a usage rollup as one cell: input and output, summed.

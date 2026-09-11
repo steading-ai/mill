@@ -78,9 +78,9 @@ steps:
     session: implement
     skill: implement
     evidence: artifact
-    models: opus
+    flavour: opus
 `, map[string]string{"implement": "Make the change."}))
-		Expect(err).To(MatchError(ContainSubstring("models")))
+		Expect(err).To(MatchError(ContainSubstring("flavour")))
 	})
 
 	It("carries a step's harness options to the store as the yaml wrote them", func() {
@@ -106,6 +106,45 @@ steps:
 			"effort": "medium",
 			"tools":  map[string]any{"allow": []any{"Glob"}},
 		}))
+	})
+
+	It("reads a step's token budget and model pin, and writes them back", func() {
+		// The two are mill's, not the harness's: the credential gateway
+		// applies them from outside the session (docs/sandbox.md
+		// §Credentials), so they are fields of the step and not keys of
+		// the options document.
+		loaded, skills, err := workflow.Load(dir(`
+name: tiny
+steps:
+  - name: implement
+    kind: skill
+    session: implement
+    skill: implement
+    evidence: artifact
+    token_budget: 2000000
+    models: [sonnet, claude-haiku-4-5]
+`, map[string]string{"implement": "Make the change."}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(step(loaded, "implement").GetTokenBudget()).To(Equal(int64(2000000)))
+		Expect(step(loaded, "implement").GetModels()).To(Equal([]string{"sonnet", "claude-haiku-4-5"}))
+
+		out := GinkgoT().TempDir()
+		Expect(workflow.Write(out, loaded, skills)).To(Succeed())
+		again, _, err := workflow.Load(out)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(again.GetVersion()).To(Equal(loaded.GetVersion()), "a pulled definition re-loads to the version it was pulled at")
+
+		_, _, err = workflow.Load(dir(`
+name: tiny
+steps:
+  - name: implement
+    kind: skill
+    session: implement
+    skill: implement
+    evidence: artifact
+    token_budget: -1
+`, map[string]string{"implement": "Make the change."}))
+		Expect(err).To(MatchError(ContainSubstring("token_budget")))
 	})
 
 	It("accepts an option it has never heard of, because the harness owns the schema", func() {

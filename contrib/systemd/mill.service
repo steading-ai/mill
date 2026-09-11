@@ -26,6 +26,12 @@ After=network.target dagger.service
 Type=notify
 NotifyAccess=main
 EnvironmentFile=-%E/mill/env
+# The credential gateway's upstream credential, when `gateway: true` is in
+# the configuration file: a `claude setup-token`, delivered as a file under
+# $CREDENTIALS_DIRECTORY and read from nowhere else — never the environment
+# file above (docs/sandbox.md §Credentials). Uncomment once the file exists;
+# a LoadCredential= that names a missing file fails the unit's start.
+#LoadCredential=claude-oauth:%E/mill/claude-oauth
 RuntimeDirectory=mill
 RuntimeDirectoryMode=0750
 # Other accounts reach the store only if a role map names them; add

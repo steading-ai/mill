@@ -232,6 +232,60 @@ var _ = Describe("mill run", func() {
 		})
 	})
 
+	// The credential gateway is configuration: on, a run's sessions are
+	// pointed at it and it must hold the upstream credential before a node
+	// is claimed; off, a run behaves as it always has.
+	Describe("--gateway", Label("unit"), func() {
+		var stdout, stderr bytes.Buffer
+
+		BeforeEach(func() {
+			stdout.Reset()
+			stderr.Reset()
+		})
+
+		It("refuses to start without the upstream credential, before claiming", func() {
+			By("given gateway: true in the file and no credential file on the host")
+			path := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+			missing := filepath.Join(GinkgoT().TempDir(), "claude-oauth")
+			Expect(os.WriteFile(path, []byte("gateway: true\nmodel-credential-file: "+missing+"\n"), 0o600)).To(Succeed())
+
+			By("when a worker is started")
+			exit := cli.Run([]string{
+				"work",
+				"--config", path,
+				"--project", "millspec",
+				"--vcs-url", "https://gitlab.example.test/group/thing.git",
+				"--dagger-socket", "/nonexistent/dg.sock",
+			}, strings.NewReader(""), &stdout, &stderr)
+
+			By("then it fails naming the credential file, and nothing was claimed")
+			Expect(exit).NotTo(BeZero())
+			Expect(stderr.String()).NotTo(ContainSubstring("nonexistent"))
+			Expect(stderr.String()).To(ContainSubstring("--gateway"))
+			Expect(stderr.String()).To(ContainSubstring("no upstream credential"))
+			Expect(stderr.String()).To(ContainSubstring(missing))
+		})
+
+		It("never reads the credential from the environment", func() {
+			// A variable is inherited by every child; the one process that
+			// may hold the credential is the gateway's, from a file.
+			GinkgoT().Setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-from-the-environment")
+			GinkgoT().Setenv("CREDENTIALS_DIRECTORY", "")
+			exit := cli.Run([]string{
+				"run", "millspec#1",
+				"--gateway",
+				"--project", "millspec",
+				"--vcs-url", "https://gitlab.example.test/group/thing.git",
+				"--socket", "/nonexistent/mill.sock",
+				"--dagger-socket", "/nonexistent/dg.sock",
+			}, strings.NewReader(""), &stdout, &stderr)
+			Expect(exit).NotTo(BeZero())
+			Expect(stderr.String()).To(ContainSubstring("no upstream credential"))
+			Expect(stderr.String()).To(ContainSubstring("CREDENTIALS_DIRECTORY"))
+			Expect(stderr.String()).NotTo(ContainSubstring("from-the-environment"))
+		})
+	})
+
 	// Scenario: The machine backend is chosen and honest about what it cannot do yet
 	//   Given workspace: machine
 	//   When a run is started
