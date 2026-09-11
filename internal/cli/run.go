@@ -29,6 +29,7 @@ import (
 	"github.com/ivy/mill/internal/workflow"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/local"
+	"github.com/ivy/mill/internal/workspace/machine"
 	"github.com/ivy/mill/internal/workspace/redact"
 )
 
@@ -71,6 +72,16 @@ const sidecarEnv = "MILL_SIDECAR"
 // it. The modes themselves are internal/harness/claude/environment.go.
 const envModeUsage = "environment a session's sidecar is spawned with: " +
 	"inherit (the mill's own, minus the deny list) or strict (a floor plus what a step names)"
+
+// workspaceUsage is what --workspace says for itself on every command that
+// has it. The kinds are internal/workspace's, and the table is
+// docs/architecture.md §"The workspace".
+const workspaceUsage = "workspace a run works in: " +
+	"local (a clone under the mill's account) or machine (a systemd-nspawn machine per run; docs/sandbox.md)"
+
+// sandboxRootUsage is what --sandbox-root says for itself.
+const sandboxRootUsage = "the machine workspace's sandbox root, a btrfs volume holding runs, caches and images; " +
+	"read only under --workspace machine"
 
 // The scripted-implementer seam. `--skill-override <step>=<dir>` runs a step
 // on a skill read from a directory instead of the one the workflow pinned in
@@ -139,6 +150,8 @@ type runOptions struct {
 	identity      string
 	name          string
 	workspaceDir  string
+	workspace     string
+	sandboxRoot   string
 	logDir        string
 	envMode       string
 	notifyCommand string
@@ -196,6 +209,8 @@ between.`,
 	f.StringVar(&opts.origin, "origin", "", "repository a new workspace clones (default: the --vcs-url repository)")
 	f.StringVar(&opts.ref, "ref", "", "ref a new workspace checks out (default: the repository's own HEAD)")
 	f.StringVar(&opts.workspaceDir, "workspace-dir", defaultWorkspaceDir(), "directory run workspaces are made under")
+	f.StringVar(&opts.workspace, "workspace", string(workspace.KindLocal), workspaceUsage)
+	f.StringVar(&opts.sandboxRoot, "sandbox-root", machine.DefaultRoot, sandboxRootUsage)
 	f.StringVar(&opts.logDir, "log-dir", defaultLogDir(), "directory step logs are written under, one file per attempt")
 	f.StringVar(&opts.envMode, "env-mode", string(claude.DefaultEnvMode), envModeUsage)
 	f.DurationVar(&opts.ttl, "ttl", run.DefaultTTL, "lease TTL to ask dagger for")
@@ -330,11 +345,15 @@ func execute(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 // the node is not known until the claim it is an argument to has returned.
 func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, answers run.Answerer) (*run.Runner, error) {
 	// The first thing, because it is the cheapest thing that can be wrong
-	// and the most expensive to find out late: a workspace directory whose
-	// run socket the kernel cannot bind fails on the bind, after the node
-	// has been claimed and cloned (internal/workspace/socket/path.go).
-	if err := local.CheckRoot(opts.workspaceDir); err != nil {
-		return nil, fmt.Errorf("mill run: --workspace-dir: %w", err)
+	// and the most expensive to find out late: a backend that cannot serve
+	// a run on this host fails after the node has been claimed and cloned
+	// unless it is asked first.
+	kind, err := workspace.ParseKind(opts.workspace)
+	if err != nil {
+		return nil, fmt.Errorf("mill run: --workspace: %w", err)
+	}
+	if err := checkWorkspace(kind, opts); err != nil {
+		return nil, err
 	}
 	worker, err := workerRef()
 	if err != nil {
@@ -397,7 +416,7 @@ func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, 
 		Store:          storeClient(opts.socket),
 		Notifier:       notifier(opts.notifyCommand),
 		Dagger:         client,
-		Workspaces:     localWorkspaces(opts, f, redactor),
+		Workspaces:     workspacesFor(kind, opts, f, redactor),
 		Forges:         func(context.Context) (forge.Forge, error) { return f, nil },
 		Harnesses:      harnesses,
 		WorkerRef:      worker,
@@ -443,6 +462,36 @@ func tierNamed(name string) (millv1.Tier, error) {
 	return tier, nil
 }
 
+// checkWorkspace is the backend's own preflight, asked before a node is
+// claimed. For the local backend it is the socket path: a workspace
+// directory whose run socket the kernel cannot bind fails on the bind, after
+// the node has been claimed and cloned (internal/workspace/socket/path.go).
+// For the machine backend it is whether this host can run one at all.
+func checkWorkspace(kind workspace.Kind, opts runOptions) error {
+	if kind == workspace.KindMachine {
+		if err := machine.Check(machineConfig(opts, nil, nil)); err != nil {
+			return fmt.Errorf("mill run: --workspace machine: %w", err)
+		}
+		return nil
+	}
+	if err := local.CheckRoot(opts.workspaceDir); err != nil {
+		return fmt.Errorf("mill run: --workspace-dir: %w", err)
+	}
+	return nil
+}
+
+// workspacesFor is the selector: the backend the configuration named, as
+// the function the run loop makes its workspace through. Local is what
+// exists today and the default; machine is docs/sandbox.md's, chosen here
+// and nowhere else, so that moving a worker from one to the other is the
+// configuration change docs/sandbox.md §Self-hosting says it is.
+func workspacesFor(kind workspace.Kind, opts runOptions, f forge.Forge, redactor *redact.Redactor) run.Workspaces {
+	if kind == workspace.KindMachine {
+		return machineWorkspaces(opts, f, redactor)
+	}
+	return localWorkspaces(opts, f, redactor)
+}
+
 // localWorkspaces makes a workspace under the worker's own account,
 // reattaching one this worker left behind before cloning a new one. The
 // forge goes in with it, because the `push` and `pr` verbs a session reaches
@@ -464,6 +513,36 @@ func localWorkspaces(opts runOptions, f forge.Forge, redactor *redact.Redactor) 
 			return nil, err
 		}
 		return ws, nil
+	}
+}
+
+// machineWorkspaces makes a workspace in a machine of the run's own,
+// reattaching the machine this worker left behind before booting a new one.
+// The host is reached through the systemd driver, spawned through the same
+// chokepoint every other process is.
+func machineWorkspaces(opts runOptions, f forge.Forge, redactor *redact.Redactor) run.Workspaces {
+	return func(ctx context.Context, spec workspace.Spec) (run.Workspace, error) {
+		ws := machine.New(machine.NewSystemd(workspace.Spawner{}, machine.Commands{}), machineConfig(opts, f, redactor))
+		if _, err := ws.Attach(ctx, spec); err == nil {
+			return ws, nil
+		}
+		if _, err := ws.Create(ctx, spec); err != nil {
+			return nil, err
+		}
+		return ws, nil
+	}
+}
+
+// machineConfig is the machine backend's configuration as the flags spell
+// it.
+func machineConfig(opts runOptions, f forge.Forge, redactor *redact.Redactor) machine.Config {
+	return machine.Config{
+		Root:     opts.sandboxRoot,
+		Origin:   opts.origin,
+		Forge:    f,
+		Name:     opts.name,
+		Identity: opts.identity,
+		Redactor: redactor,
 	}
 }
 

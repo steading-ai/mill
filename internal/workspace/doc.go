@@ -18,11 +18,15 @@
 //   - workspace — this package: the interface and its types
 //   - workspace/local — the MVP implementation: a clone per run under the
 //     mill's account, on a branch derived from the node
+//   - workspace/machine — the backend of docs/sandbox.md: a machine per
+//     run, reached through a driver over the host's systemd and btrfs
+//     commands. Being built.
 //   - workspace/socket — the verbs over a unix socket, gated by the token
 //   - workspace/redact — the log redactor the socket writes through
 //   - workspace/signing — the SSH key every commit is signed with
 //
-// The container and remote workspaces implement [Workspace] with a real
+// The machine and remote workspaces implement [Workspace] with a real
 // isolation boundary. Nothing in a workflow definition changes across them;
-// if it has to, the seam leaked.
+// if it has to, the seam leaked. Which one a worker uses is configuration
+// (docs/architecture.md §"The workspace").
 package workspace

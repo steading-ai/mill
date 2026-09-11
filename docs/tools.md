@@ -313,18 +313,19 @@ unchanged`.
 
 ## doctor
 
-Seven probes, one line of reason each. Every probe is reported; the command
+Eight probes, one line of reason each. Every probe is reported; the command
 exits non-zero when any of them failed.
 
 ```
 $ mill doctor
-pass  socket   /run/user/1000/mill/mill.sock answers; mill 0.0.0-dev
-pass  schema   migration 14, current
-pass  dagger   /run/dagger/dg.sock answers; this account is a principal on mill, 1 node(s) ready for an agent
-fail  sidecar  sidecar/dist/main.js did not answer: claude: the sidecar answered nothing before it exited
-fail  signing  no signing key under ~/.local/state/mill/workspaces/signing
-fail  forge    no repository to probe: pass --vcs-url or set MILL_VCS_URL
-pass  notify   contrib/notify/thicket-send.sh accepts a probe notice
+pass  socket     /run/user/1000/mill/mill.sock answers; mill 0.0.0-dev
+pass  schema     migration 14, current
+pass  dagger     /run/dagger/dg.sock answers; this account is a principal on mill, 1 node(s) ready for an agent
+fail  sidecar    sidecar/dist/main.js did not answer: claude: the sidecar answered nothing before it exited
+fail  signing    no signing key under ~/.local/state/mill/workspaces/signing
+fail  forge      no repository to probe: pass --vcs-url or set MILL_VCS_URL
+pass  notify     contrib/notify/thicket-send.sh accepts a probe notice
+pass  workspace  local: a clone under the mill's account
 ```
 
 | Probe | What it checks |
@@ -336,6 +337,7 @@ pass  notify   contrib/notify/thicket-send.sh accepts a probe notice
 | `signing` | The commit signing key exists and some project's `allowed_signers` names it |
 | `forge` | The forge accepts the credential |
 | `notify` | The configured notify command runs and accepts a probe notice |
+| `workspace` | Which workspace backend a run works in, and for `machine` whether the sandbox root is btrfs |
 
 The sidecar probe sends a `cancel` request on stdin. Cancellation reaches a
 running sidecar as SIGTERM, so a cancel on stdin is a frame the sidecar
@@ -350,6 +352,23 @@ quiet, and the shipped example does. A host with no notify command configured
 passes and says so: filing a gate that reaches nobody is a supported choice,
 because the answer is written in dagger either way (docs/architecture.md
 §"Gate steps").
+
+The workspace probe reports the kind in effect — `--workspace`, else the
+file's `workspace`, else `local` — the same way a run chooses it
+(docs/architecture.md §"The workspace"). Under `local` there is nothing to
+probe beyond naming it. Under `machine` it asks what filesystem the sandbox
+root is on — `--sandbox-root`, else the file's `sandbox-root`, else
+`/var/lib/mill` — and fails naming the filesystem it found when that is not
+btrfs, because ephemeral roots, cache lineages and eviction are all subvolume
+operations (docs/sandbox.md §Storage):
+
+```
+fail  workspace  machine: sandbox root /var/lib/mill is xfs, not btrfs (docs/sandbox.md §Storage)
+```
+
+That is the whole of the probe for now; what else a machine needs of the
+host — the template unit, its polkit rule, the image subvolumes — is probed
+as the backend that needs it lands.
 
 **What the dagger probe cannot check.** Dagger's API exposes no whoami and its
 principals carry no name ([dagger's domain model](https://github.com/ivy/dagger)

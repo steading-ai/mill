@@ -48,6 +48,16 @@ var _ = Describe("The command tree", Label("unit"), func() {
 		Expect(stdout.String()).To(ContainSubstring("--concurrency"))
 	})
 
+	It("serve, work and run each take --workspace, which chooses the backend", func() {
+		for _, face := range []string{"serve", "work", "run"} {
+			stdout.Reset()
+			Expect(run(face, "--help")).To(BeZero(), stderr.String())
+			Expect(stdout.String()).To(ContainSubstring("--workspace string"), face)
+			Expect(stdout.String()).To(ContainSubstring("local (a clone under the mill's account) or machine"), face)
+			Expect(stdout.String()).To(ContainSubstring(`(default "local")`), face)
+		}
+	})
+
 	It("restart is wired into the tree and takes the node it restarts", func() {
 		Expect(run("restart", "--help")).To(BeZero(), stderr.String())
 		Expect(stdout.String()).To(ContainSubstring("--project"))

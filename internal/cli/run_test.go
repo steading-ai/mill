@@ -3,6 +3,7 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -228,6 +229,63 @@ var _ = Describe("mill run", func() {
 
 			Expect(exit).NotTo(BeZero())
 			Expect(stderr.String()).NotTo(ContainSubstring("bytes long"))
+		})
+	})
+
+	// Scenario: The machine backend is chosen and honest about what it cannot do yet
+	//   Given workspace: machine
+	//   When a run is started
+	//   Then it fails before claiming with an error naming the node that builds the backend
+	Describe("--workspace", Label("unit"), func() {
+		var stdout, stderr bytes.Buffer
+
+		BeforeEach(func() {
+			stdout.Reset()
+			stderr.Reset()
+		})
+
+		It("The machine backend is chosen and honest about what it cannot do yet", func() {
+			By("given workspace: machine")
+			path := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+			Expect(os.WriteFile(path, []byte("workspace: machine\n"), 0o600)).To(Succeed())
+			GinkgoT().Setenv("MILL_CONFIG", path)
+
+			By("when a run is started")
+			// Every socket named here is a path nothing listens on, so a
+			// command that reached the store, dagger or a lease would fail
+			// on one of them and say so.
+			exit := cli.Run([]string{
+				"run", "millspec#1",
+				"--project", "millspec",
+				"--workspace", "machine",
+				"--vcs-url", "https://gitlab.example.test/group/thing.git",
+				"--socket", "/nonexistent/mill.sock",
+				"--dagger-socket", "/nonexistent/dg.sock",
+			}, strings.NewReader(""), &stdout, &stderr)
+
+			By("then it fails before claiming with an error naming the node that builds the backend")
+			Expect(exit).NotTo(BeZero())
+			Expect(stderr.String()).NotTo(ContainSubstring("nonexistent"),
+				"the refusal came before anything was read, claimed or leased")
+			Expect(stderr.String()).To(ContainSubstring("--workspace machine"))
+			Expect(stderr.String()).To(ContainSubstring("not built"))
+			Expect(stderr.String()).To(ContainSubstring("machine-lifecycle"))
+			Expect(stderr.String()).To(ContainSubstring("mill#61"))
+		})
+
+		It("refuses a kind it does not know before claiming", func() {
+			exit := cli.Run([]string{
+				"run", "millspec#1",
+				"--project", "millspec",
+				"--workspace", "podman",
+				"--socket", "/nonexistent/mill.sock",
+				"--dagger-socket", "/nonexistent/dg.sock",
+			}, strings.NewReader(""), &stdout, &stderr)
+
+			Expect(exit).NotTo(BeZero())
+			Expect(stderr.String()).NotTo(ContainSubstring("nonexistent"))
+			Expect(stderr.String()).To(ContainSubstring("--workspace"))
+			Expect(stderr.String()).To(ContainSubstring("podman"))
 		})
 	})
 

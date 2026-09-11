@@ -15,16 +15,39 @@ import (
 
 // Kind is which implementation is behind a workspace. The interface does not
 // change across them; docs/architecture.md §"The workspace" is the table.
+// Which one a worker uses is configuration: `--workspace` on `serve`, `work`
+// and `run`, or `workspace` in the file, read by [ParseKind].
 type Kind string
 
 const (
-	// KindLocal is a clone under the mill's own account. The MVP.
+	// KindLocal is a clone under the mill's own account. The MVP, and the
+	// default.
 	KindLocal Kind = "local"
-	// KindContainer is a clone in a rootless container. Not built.
-	KindContainer Kind = "container"
+	// KindMachine is a clone on the host bind-mounted into a systemd-nspawn
+	// machine booted per run from an ephemeral snapshot of an image
+	// subvolume, registered with systemd-machined under the run's name
+	// (docs/sandbox.md §Terms). Being built: internal/workspace/machine.
+	KindMachine Kind = "machine"
 	// KindRemote is a clone on another host. Not built.
 	KindRemote Kind = "remote"
 )
+
+// ParseKind reads a kind as configuration spells it. Empty is the default,
+// local. A kind the tree names but has not built is refused by name, so an
+// operator who asked for it is told that rather than shown a run that fails
+// later for a reason that looks like something else.
+func ParseKind(name string) (Kind, error) {
+	switch Kind(strings.TrimSpace(name)) {
+	case "", KindLocal:
+		return KindLocal, nil
+	case KindMachine:
+		return KindMachine, nil
+	case KindRemote:
+		return "", fmt.Errorf("workspace: the %s workspace is not built; choose %s or %s", KindRemote, KindLocal, KindMachine)
+	default:
+		return "", fmt.Errorf("workspace: %q is not a workspace kind: %s or %s", name, KindLocal, KindMachine)
+	}
+}
 
 // Capability is one thing a step may do through its workspace. The strings
 // are the ledger's own text for millv1.Capability, so a capability reads the
@@ -180,6 +203,34 @@ type Spec struct {
 	// workspace: a proxy for the world and a gateway for the model, or
 	// neither.
 	Egress Egress
+	// Image is the digest of the derived image the run's machine boots from
+	// (docs/sandbox.md §Images): the image subvolume is named by it. The
+	// local backend has no image and ignores it.
+	Image string
+	// Caches are the lineages restored into the run, each bound into the
+	// machine at its path (docs/sandbox.md §Caching). The local backend
+	// restores nothing and ignores them.
+	Caches []CacheBind
+	// Nested grants the machine what a run that boots machines of its own
+	// needs — the wider uid range, sudo for the agent, the host's image
+	// subvolumes read-only (docs/sandbox.md §Provision, §Self-hosting). The
+	// local backend ignores it.
+	Nested bool
+}
+
+// CacheBind is one lineage as a run sees it: the name that identifies it on
+// the host and the path it is mounted at inside the machine. The host-side
+// source — the run's writable snapshot of the lineage's latest generation —
+// is the backend's to derive from the run id (docs/sandbox.md §Naming), so
+// a spec never names a host path.
+type CacheBind struct {
+	// Name is the lineage's name, such as `go-mod` or `node_modules`.
+	Name string
+	// Path is where the machine sees it, such as `/work/node_modules`.
+	Path string
+	// Global marks a lineage shared by every run on the worker rather than
+	// scoped to the repository (docs/sandbox.md §"Kinds and scope").
+	Global bool
 }
 
 // Egress is what the workspace decided about how a session's processes

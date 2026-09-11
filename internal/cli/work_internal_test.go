@@ -108,6 +108,8 @@ workflow: feature
 dagger-socket: /run/dagger/other.sock
 env_mode: strict
 notify_command: /usr/local/bin/thicket-send.sh
+workspace: machine
+sandbox-root: /srv/mill
 `), 0o600)).To(Succeed())
 	})
 
@@ -136,11 +138,23 @@ notify_command: /usr/local/bin/thicket-send.sh
 		// The notify command is the deployment's, spelled the way env_mode
 		// is: a filed gate reaches a person through it.
 		Expect(opts.run.notifyCommand).To(Equal("/usr/local/bin/thicket-send.sh"))
+		// The workspace kind is the deployment's too: moving a worker from
+		// local to machine is this line (docs/sandbox.md §Self-hosting).
+		Expect(opts.run.workspace).To(Equal("machine"))
+		Expect(opts.run.sandboxRoot).To(Equal("/srv/mill"))
+	})
+
+	It("defaults the workspace to local when the file says nothing", func() {
+		Expect(os.WriteFile(path, []byte("concurrency: 1\n"), 0o600)).To(Succeed())
+		opts := parse()
+		Expect(opts.run.workspace).To(Equal("local"))
+		Expect(opts.run.sandboxRoot).To(Equal("/var/lib/mill"))
 	})
 
 	It("leaves a flag the command line set alone", func() {
 		opts := parse("--concurrency", "2", "--project", "just-this-one", "--env-mode", "inherit",
-			"--notify-command", "/opt/notify")
+			"--notify-command", "/opt/notify", "--workspace", "local")
+		Expect(opts.run.workspace).To(Equal("local"))
 		Expect(opts.run.notifyCommand).To(Equal("/opt/notify"))
 		Expect(opts.run.envMode).To(Equal("inherit"))
 		Expect(opts.concurrency).To(Equal(2))

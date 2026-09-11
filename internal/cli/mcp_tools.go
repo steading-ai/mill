@@ -618,16 +618,19 @@ func workspaceFields(row *millv1.Run, info *local.Info) map[string]any {
 
 // doctorOptions is what the server's flags mean to the doctor tool.
 func (s *mcpServer) doctorOptions() doctorOptions {
+	config := deploymentConfig()
 	return doctorOptions{
 		socket:        s.opts.socket,
 		daggerSocket:  s.opts.daggerSocket,
 		project:       s.opts.project,
 		sidecar:       envOr(sidecarEnv, "sidecar/dist/main.js"),
 		workspaceDir:  defaultWorkspaceDir(),
+		workspace:     config.Workspace,
+		sandboxRoot:   config.SandboxRoot,
 		vcsURL:        os.Getenv(vcsURLEnv),
 		identity:      defaultIdentity(),
 		name:          defaultForgeUser,
-		notifyCommand: configuredNotifyCommand(),
+		notifyCommand: config.NotifyCommand,
 	}
 }
 

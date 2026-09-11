@@ -66,9 +66,10 @@ type Execer interface {
 }
 
 // Spawner runs processes as the mill's own account, which is what the local
-// workspace does. The container and remote workspaces implement the same
-// interface with a boundary of their own; see docs/architecture.md §"The
-// workspace".
+// workspace does. The machine workspace reaches its machine through the same
+// spawner — its driver runs the host's systemd and btrfs commands through
+// nothing else — and the remote workspace implements [Execer] with a
+// boundary of its own; see docs/architecture.md §"The workspace".
 type Spawner struct {
 	// Floor is the environment every child inherits before the command's own
 	// variables are added. Nil means the mill's own environment.

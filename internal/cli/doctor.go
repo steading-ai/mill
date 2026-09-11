@@ -19,6 +19,8 @@ import (
 	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/harness/claude"
 	"github.com/ivy/mill/internal/notify"
+	"github.com/ivy/mill/internal/workspace"
+	"github.com/ivy/mill/internal/workspace/machine"
 	"github.com/ivy/mill/internal/workspace/signing"
 )
 
@@ -61,6 +63,8 @@ type doctorOptions struct {
 	sidecar       string
 	envMode       string
 	workspaceDir  string
+	workspace     string
+	sandboxRoot   string
 	vcsURL        string
 	identity      string
 	name          string
@@ -83,6 +87,8 @@ func newDoctorCommand() *cobra.Command {
   signing   the commit signing key exists and some project trusts it
   forge     the forge credential is accepted
   notify    the configured notify command runs and accepts a probe notice
+  workspace the workspace kind in effect and, for machine, whether the
+            sandbox root is btrfs
 
 Every probe is reported. The command exits non-zero when any of them
 failed.`,
@@ -98,10 +104,12 @@ failed.`,
 	f.StringVar(&opts.sidecar, "sidecar", envOr(sidecarEnv, claude.DefaultEntrypoint), "path of the harness sidecar's entrypoint (default: $"+sidecarEnv+")")
 	f.StringVar(&opts.envMode, "env-mode", string(claude.DefaultEnvMode), envModeUsage)
 	f.StringVar(&opts.workspaceDir, "workspace-dir", defaultWorkspaceDir(), "directory run workspaces and the signing key live under")
+	f.StringVar(&opts.workspace, "workspace", string(workspace.KindLocal), workspaceUsage)
+	f.StringVar(&opts.sandboxRoot, "sandbox-root", machine.DefaultRoot, sandboxRootUsage)
 	f.StringVar(&opts.vcsURL, "vcs-url", os.Getenv(vcsURLEnv), "repository the forge credential is probed against (default: $"+vcsURLEnv+")")
 	f.StringVar(&opts.identity, "identity", "", "address the mill commits under (default: mill@<host>)")
 	f.StringVar(&opts.name, "name", defaultForgeUser, "name on the mill's commits")
-	f.StringVar(&opts.config, "config", defaultConfigPath(), "path of the configuration file the notify command is read from when no flag names one")
+	f.StringVar(&opts.config, "config", defaultConfigPath(), "path of the configuration file the notify command and the workspace kind are read from when no flag names them")
 	f.StringVar(&opts.notifyCommand, "notify-command", "", notifyCommandUsage)
 	return cmd
 }
@@ -114,15 +122,22 @@ func runDoctor(cmd *cobra.Command, opts doctorOptions) error {
 	if opts.identity == "" {
 		opts.identity = defaultIdentity()
 	}
-	// The notify command is a deployment's setting and lives in its
-	// configuration file; a doctor that probed only what the command line
-	// repeated would report on a notifier no run uses.
+	// The notify command and the workspace kind are a deployment's settings
+	// and live in its configuration file; a doctor that probed only what
+	// the command line repeated would report on a notifier no run uses and
+	// a workspace no run works in.
+	config, err := LoadConfig(opts.config)
+	if err != nil {
+		return err
+	}
 	if opts.notifyCommand == "" && unset(cmd, "notify-command") {
-		config, err := LoadConfig(opts.config)
-		if err != nil {
-			return err
-		}
 		opts.notifyCommand = config.NotifyCommand
+	}
+	if config.Workspace != "" && unset(cmd, "workspace") {
+		opts.workspace = config.Workspace
+	}
+	if config.SandboxRoot != "" && unset(cmd, "sandbox-root") {
+		opts.sandboxRoot = config.SandboxRoot
 	}
 	probes := doctor(cmd.Context(), opts)
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
@@ -145,7 +160,7 @@ func runDoctor(cmd *cobra.Command, opts doctorOptions) error {
 
 // doctor runs every probe in order and returns what each found. It is the
 // value `mill mcp` renders too, so an agent asked to look at a sick host is
-// told the same seven things.
+// told the same eight things.
 func doctor(ctx context.Context, opts doctorOptions) []probe {
 	socket, schema := probeService(ctx, opts)
 	return []probe{
@@ -156,6 +171,7 @@ func doctor(ctx context.Context, opts doctorOptions) []probe {
 		probeSigning(opts),
 		probeForge(ctx, opts),
 		probeNotify(ctx, opts),
+		probeWorkspace(opts, machine.NewSystemd(workspace.Spawner{}, machine.Commands{})),
 	}
 }
 
@@ -342,6 +358,33 @@ func probeNotify(ctx context.Context, opts doctorOptions) probe {
 		return fail("notify", "%s refused the probe notice: %s", opts.notifyCommand, result)
 	}
 	return pass("notify", "%s accepts a probe notice", opts.notifyCommand)
+}
+
+// probeWorkspace says which workspace backend a run on this host works in,
+// and for the machine backend whether the sandbox root is on btrfs — the
+// one fact the backend cannot do without, because ephemeral roots, cache
+// lineages and eviction are all subvolume operations (docs/sandbox.md
+// §Storage). The local backend has nothing to probe beyond naming itself.
+//
+// The driver is the seam the backend reaches the host through, so what the
+// probe asks is what a run would ask.
+func probeWorkspace(opts doctorOptions, driver machine.Driver) probe {
+	kind, err := workspace.ParseKind(opts.workspace)
+	if err != nil {
+		return fail("workspace", "%v", err)
+	}
+	if kind != workspace.KindMachine {
+		return pass("workspace", "%s: a clone under the mill's account", kind)
+	}
+	fs, err := driver.Statfs(opts.sandboxRoot)
+	if err != nil {
+		return fail("workspace", "%s: sandbox root %s: %v", kind, opts.sandboxRoot, err)
+	}
+	if !fs.Btrfs() {
+		return fail("workspace", "%s: sandbox root %s is %s, not %s (docs/sandbox.md §Storage)",
+			kind, opts.sandboxRoot, fs.Type, machine.TypeBtrfs)
+	}
+	return pass("workspace", "%s: sandbox root %s is %s", kind, opts.sandboxRoot, fs.Type)
 }
 
 // firstLine is a message trimmed to one line, for a probe's reason.

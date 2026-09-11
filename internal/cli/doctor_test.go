@@ -47,7 +47,7 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 			"--project", "", "--vcs-url", "")
 		Expect(err).To(HaveOccurred(), "a failed probe is a non-zero exit")
 
-		for _, name := range []string{"socket", "schema", "dagger", "sidecar", "signing", "forge", "notify"} {
+		for _, name := range []string{"socket", "schema", "dagger", "sidecar", "signing", "forge", "notify", "workspace"} {
 			verdict, reason := probe(out, name)
 			Expect(verdict).To(BeElementOf("pass", "fail"), "probe %s: %s", name, out)
 			Expect(reason).NotTo(BeEmpty(), "probe %s carries no reason", name)
@@ -130,6 +130,31 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 			Expect(verdict).To(Equal("pass"), out)
 			Expect(reason).To(ContainSubstring("no notify command is configured"))
 		})
+	})
+
+	It("reports the workspace kind in effect: local by default, machine when configured, with its sandbox root", func() {
+		m := serving(ctx)
+
+		out, _ := runCLI(ctx, m.socket, "doctor", "--project", "", "--vcs-url", "",
+			"--config", filepath.Join(GinkgoT().TempDir(), "no-config.yaml"))
+		verdict, reason := probe(out, "workspace")
+		Expect(verdict).To(Equal("pass"))
+		Expect(reason).To(HavePrefix("local:"))
+
+		root := GinkgoT().TempDir()
+		out, _ = runCLI(ctx, m.socket, "doctor", "--project", "", "--vcs-url", "",
+			"--config", filepath.Join(GinkgoT().TempDir(), "no-config.yaml"),
+			"--workspace", "machine", "--sandbox-root", root)
+		_, reason = probe(out, "workspace")
+		Expect(reason).To(HavePrefix("machine: sandbox root " + root + " is "))
+
+		// The file is where a deployment says which backend it runs, so
+		// the doctor reads it there too.
+		path := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+		Expect(os.WriteFile(path, []byte("workspace: machine\nsandbox-root: "+root+"\n"), 0o600)).To(Succeed())
+		out, _ = runCLI(ctx, m.socket, "doctor", "--project", "", "--vcs-url", "", "--config", path)
+		_, reason = probe(out, "workspace")
+		Expect(reason).To(HavePrefix("machine: sandbox root " + root + " is "))
 	})
 
 	It("reports the environment mode a run would spawn the sidecar under", func() {

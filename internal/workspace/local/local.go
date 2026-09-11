@@ -3,7 +3,7 @@
 // the node, reached over a unix socket.
 //
 // Isolation here is the account and the tool policy, and nothing more. The
-// container and remote workspaces implement the same interface with a real
+// machine and remote workspaces implement the same interface with a real
 // boundary; nothing in a workflow definition changes across them, which is
 // the point of the interface being where it is.
 //
