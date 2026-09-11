@@ -15,7 +15,10 @@ and run with `MILL_SANDBOX_HOST=1 ginkgo ./spikes/nspawn` on a host with root,
 nspawn and the image; the E0 scenario fails there at its exec assertion, which
 is E0's result. E14, the credential gateway, is the last section: a session
 in a machine with an empty `~/.claude` answers through
-`spikes/nspawn/gateway.py` on the host.
+`spikes/nspawn/gateway.py` on the host. E5, E6, E11 and E12 follow it:
+egress through squid behind an nftables table (`spikes/nspawn/squid.conf`,
+`spikes/nspawn/egress.nft`), the db suite inside a machine, pulls through
+Harbor's proxy cache, and the `dnf` shim (`spikes/nspawn/dnf`).
 
 ## What was under test
 
@@ -56,6 +59,10 @@ Summary of verdicts, one line each; the detail is in the sections.
 | E3 | pass with `--cgroups=split` | without it the container lands under `user@1000.service` and survives the slice stop; with it and `Delegate=yes` on the exec unit everything sits under the step slice and is dead in the next step |
 | E4 | pass with `:idmap` on the bind | `--private-users-ownership=auto` idmaps the root tree only; `/work` was uid 65534 inside until the bind carried `:idmap`, then the same SHA both sides and owner `1000` on the host |
 | E14 | pass | `"result":"ok"` through the gateway with no `.credentials.json` in the machine; the upstream took the swapped bearer with the CLI's own headers and nothing added; tool search is off by default behind a non-Anthropic base URL |
+| E5 | pass | `200` through squid with `CN=example.com`, `rc=28` without it; the table needs a DNS masquerade and the veth admitted to firewalld's `trusted` zone |
+| E6 | pass | 231 db specs pass inside on `/run/user/1000/podman/podman.sock`, ryuk on; 43.9 s cold / 20.5 s warm against 19.2 s on the host; the proxy must reach `agent`'s user manager or podman cannot pull |
+| E11 | pass | every `CONNECT` of a pull is to Harbor, none to an upstream registry; 2.4 s from a fresh machine; `RepoDigests` keeps the `docker.io` name by podman's design |
+| E12 | pass | `dnf install -y vips-devel` as `agent` ends in the three-line hint; `sudo dnf remove` is `a password is required`; `--setopt=proxy=` goes after `install` for the sudoers pattern |
 
 ---
 
@@ -2043,3 +2050,778 @@ are not the spike's and were left alone.
   image when bound in; installing it into the image at build time is the
   cleaner shape. The image's port for the gateway must be chosen against what
   the host already listens on: rootless podman's `pasta` held 8080 here.
+
+---
+
+## E5 — Egress is host-enforced
+
+Run 2026-09-11 02:50 – 02:56 PDT on the same host as E0–E14. `squid-7.6-1.fc44`
+was already installed from the first attempt at this node; `/etc/squid/squid.conf`
+is `spikes/nspawn/squid.conf` byte for byte (Fedora's default minus the
+`localnet` ACLs, `http_port 10.99.14.1:3128`, `cache deny all`), and the
+nftables table is `spikes/nspawn/egress.nft`. The machine boots as E1 did,
+through `/tmp/spike-out/boot.sh`, which runs exactly this and then the E2
+`/proc` recipe and the veth addressing E14 settled on (`10.99.14.1` host side,
+`10.99.14.2` inside, `DNS=1.1.1.1` in the machine's `.network`):
+
+```
+sudo systemd-run --unit=mill-run-$name --collect -p KillMode=mixed systemd-nspawn --boot --quiet --machine=mill-$name --directory=/var/lib/machines/mill-image-spike --ephemeral --private-users=pick --private-users-ownership=auto --network-veth --settings=false "$@"
+```
+
+The image subvolume from the boot spike was still on the host (`ID 298 …
+mill-image-spike`), so no rebuild. Homestead's `/etc/systemd/system/mill-machine@.service`
+(1640 bytes, `Sep 11 01:03`) was left untouched.
+
+### The table, and squid's one ordering constraint
+
+```
+$ sudo nft -f spikes/nspawn/egress.nft && sudo nft list table inet mill
+table inet mill {
+	chain forward {
+		type filter hook forward priority filter; policy accept;
+		iifname "ve-mill*" udp dport 53 accept
+		iifname "ve-mill*" tcp dport 53 accept
+		iifname "ve-mill*" ct state established,related accept
+		iifname "ve-mill*" drop
+	}
+
+	chain input {
+		type filter hook input priority filter; policy accept;
+		iifname "ve-mill*" tcp dport 3128 accept
+		iifname "ve-mill*" udp dport 53 accept
+		iifname "ve-mill*" ct state established,related accept
+		iifname "ve-mill*" drop
+	}
+
+	chain postrouting {
+		type nat hook postrouting priority srcnat; policy accept;
+		iifname "ve-mill*" oifname != "ve-mill*" masquerade
+	}
+}
+$ sudo systemctl start squid; systemctl is-active squid; sudo ss -ltnp | grep 3128
+Job for squid.service failed because the control process exited with error code.
+See "systemctl status squid.service" and "journalctl -xeu squid.service" for details.
+failed
+$ sudo tail /var/log/squid/cache.log
+2026/09/11 02:50:39 kid1| ERROR: commBind Cannot bind socket FD 10 to 10.99.14.1:3128: (99) Cannot assign requested address
+2026/09/11 02:50:39 kid1| FATAL: Unable to open HTTP Socket
+```
+
+The table is the work order's plus one `nat postrouting` chain: DNS is the
+one thing forwarded, and `10.99.0.0/16` is private, so the query needs a
+source rewrite to be answered. `ip_forward` was already `1` on the host
+(libvirt). Squid binds its address at start and the veth does not exist until
+a machine does, so the proxy cannot start before the first machine on this
+configuration — `homestead#34` either binds a host address that always exists
+(a dummy link, or `0.0.0.0:3128` with the `machines` ACL doing the work) or
+orders the unit after the link. Booted, addressed, then squid:
+
+```
+$ /tmp/spike-out/boot.sh e1 14 --bind=$PWD:/work:idmap --bind-ro=/home/ivy/src/github.com/ivy/dagger:/opt/dagger:idmap --bind-ro=/tmp/spike-out/50-mill-proxy.conf:/etc/environment.d/50-mill-proxy.conf
+Running as unit: mill-run-e1.service; invocation ID: 61017e58290843a48c5486845f55ae78
+running
+                       State: routable (configured)
+                     Address: 10.99.14.2
+$ ip -4 addr show ve-mill-e1
+61: ve-mill-e1@if2: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000 link-netnsid 0
+    inet 10.99.14.1/24 scope global ve-mill-e1
+       valid_lft forever preferred_lft forever
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -- networkctl status host0 --no-pager | grep -E "Address|Gateway|DNS"
+                     Address: 10.99.14.2
+                     Gateway: 10.99.14.1
+                         DNS: 1.1.1.1
+$ sudo systemctl start squid; systemctl is-active squid; sudo ss -ltnp | grep 3128
+active
+LISTEN 0      4096                    10.99.14.1:3128       0.0.0.0:*    users:(("squid",pid=366853,fd=10))
+```
+
+(The two extra binds are E6's: the checkout and the dagger checkout. The
+`environment.d` file is E6's too — see there.) No capability was needed on
+the nspawn invocation for the veth: `--network-veth` under `sudo` brings the
+link up as it did in E1 and E14.
+
+### firewalld sits in front of the table
+
+The host's default zone is `drop`. With the veth in no zone, DNS through the
+forward path answered but TCP to the host's own 3128 did not:
+
+```
+$ sudo firewall-cmd --get-zone-of-interface=ve-mill-e1
+no zone
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -- sh -c 'getent hosts example.com; echo "rc=$?"'
+2606:4700:10::ac42:93f3 example.com
+2606:4700:10::6814:179a example.com
+rc=0
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p Environment=HTTPS_PROXY=http://10.99.14.1:3128 -- curl -sS --max-time 5 -o /dev/null -w '%{http_code}\n' https://example.com/; echo "rc=$?"
+curl: (28) Connection timed out after 5002 milliseconds
+000
+rc=28
+$ sudo firewall-cmd --zone=trusted --add-interface='ve-mill+'
+success
+```
+
+An accept in `inet mill`'s input chain does not skip `inet firewalld`'s input
+hook, so the link must be admitted there as well; the enforcement stays in
+`inet mill`. `ve-mill+` is firewalld's glob form and covers every machine.
+Runtime only, not `--permanent`.
+
+### The three probes
+
+```
+$ P=http://10.99.14.1:3128
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p Environment=HTTPS_PROXY=$P -- curl -sS -o /dev/null -w '%{http_code}\n' https://example.com/
+200
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p Environment=HTTPS_PROXY=$P -- sh -c 'curl -sSv https://example.com/ 2>&1 >/dev/null | grep -E "issuer|subject"'
+*   subject: CN=example.com
+*   issuer: C=US; O=SSL Corporation; CN=Cloudflare TLS Issuing ECC CA 3
+*   subjectAltName: "example.com" matches cert's "example.com"
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -- curl -sS --max-time 5 -o /dev/null https://example.com/; echo "rc=$?"
+curl: (28) Connection timed out after 5002 milliseconds
+rc=28
+$ sudo cat /var/log/squid/access.log
+1789120291.505     81 10.99.14.2 TCP_TUNNEL/200 6450 CONNECT example.com:443 - HIER_DIRECT/172.66.147.243 -
+1789120291.554     21 10.99.14.2 TCP_TUNNEL/200 6449 CONNECT example.com:443 - HIER_DIRECT/172.66.147.243 -
+```
+
+`200`; the certificate is the origin's (`CN=example.com`, issued by
+Cloudflare — squid did not intercept); without the variable the connect
+hangs to the `--max-time` and `rc=28`. Each access-log line has the client
+address, `CONNECT host:port`, the verdict and the bytes — a per-workflow
+allowlist is an `acl … dstdomain` against exactly the field `example.com:443`
+sits in.
+
+### The shape of the drop
+
+What else a machine can and cannot reach, to know what the table gives:
+
+```
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -- curl -sS --max-time 3 -o /dev/null http://192.168.50.1/; echo "rc=$?"    # the LAN, direct
+curl: (28) Connection timed out after 3002 milliseconds
+rc=28
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -- curl -sS --max-time 3 -o /dev/null http://10.99.14.1:8080/; echo "rc=$?"    # the host, a port other than 3128
+curl: (28) Connection timed out after 3002 milliseconds
+rc=28
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p Environment=HTTPS_PROXY=$P -- curl -sS --max-time 5 -o /dev/null -w '%{http_code}\n' https://192.168.50.1/; echo rc=$?    # the LAN, through the proxy
+curl: (56) CONNECT tunnel failed, response 503
+000
+rc=56
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p Environment=HTTP_PROXY=$P -- curl -sS --max-time 40 -o /dev/null -w '%{http_code} %{time_total}\n' http://example.com/
+curl: (28) Connection timed out after 40002 milliseconds
+000 40.002459
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p Environment=http_proxy=$P -- curl -sS --max-time 5 -o /dev/null -w '%{http_code}\n' http://example.com/
+200
+$ sudo tail -2 /var/log/squid/access.log
+1789120319.622      0 10.99.14.2 TCP_TUNNEL/503 0 CONNECT 192.168.50.1:443 - HIER_DIRECT/192.168.50.1 -
+1789120387.454     35 10.99.14.2 TCP_MISS/200 936 GET http://example.com/ - HIER_DIRECT/104.20.23.154 text/html
+```
+
+The LAN and the host's other ports drop as the table says. The LAN *through*
+the proxy is a squid `503`: the router refused squid's connect, not the
+table — `squid.conf` has no rule against RFC 1918 destinations, and
+`homestead#34` should add one, because the table cannot see what squid
+connects to on the machine's behalf. (The committed `spikes/nspawn/squid.conf`
+carries that rule — `acl lan dst 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16` and
+`http_access deny lan` — added after this run and checked with
+`squid -k parse` only; what ran is the file without those two lines.) And
+`curl` ignores an uppercase
+`HTTP_PROXY` (the httpoxy mitigation; only `http_proxy` is read for plain
+`http://`) — the 40 s hang never reached squid — so §Network's "the variables
+are set in every exec's environment" means both cases of all three names.
+`HTTPS_PROXY` in either case works.
+
+**Verdict: E5 passes. `200` through the proxy with the origin's certificate; `rc=28` without it. The table egress needs is the work order's plus a `nat postrouting` masquerade for the forwarded DNS, and the `ve-mill*` links admitted to firewalld's `trusted` zone — firewalld's `drop` default zone otherwise stops the proxy port before `inet mill` is consulted. Squid must start after the address it binds exists. Both cases of the proxy variables go in the environment.**
+
+---
+
+## E6 — The real test suite, inside
+
+Same machine as E5, booted with the checkout at `/work` and the dagger
+checkout at `/opt/dagger`, both `:idmap` (E4). The fixture in
+`internal/testsupport/dagger.go` finds dagger's migrations and `dg` through
+`MILL_DAGGER_REPO`, so that is set on the exec; `docs/sandbox.md` §Testing
+already says the mill repo's machine gets the dagger checkout bound
+read-only.
+
+### The checkout is writable as `agent`
+
+The work order's fallback (a copy owned by uid 1000) was not needed: the
+operator is uid 1000 and `:idmap` makes the bind uid 1000 inside.
+
+```
+$ ls -ld $PWD; id -u
+drwxr-xr-x. 17 ivy ivy 4096 Sep 11 02:53 /home/ivy/src/github.com/ivy/mill
+1000
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p WorkingDirectory=/work -- sh -c 'id; ls -ld /work /work/.git /opt/dagger; touch /work/.e6-probe && echo writable && rm /work/.e6-probe; ls -l /run/user/1000/podman/podman.sock /run/podman/podman.sock; cat /etc/environment.d/50-mill-proxy.conf'
+uid=1000(agent) gid=1000(agent) groups=1000(agent)
+drwxr-xr-x. 16 agent agent 4096 Sep  8 02:05 /opt/dagger
+drwxr-xr-x. 17 agent agent 4096 Sep 11 02:17 /work
+drwxr-xr-x.  8 agent agent 4096 Sep 11 02:48 /work/.git
+writable
+ls: cannot access '/run/podman/podman.sock': Permission denied
+srw-rw----. 1 agent agent 0 Sep 11 02:51 /run/user/1000/podman/podman.sock
+HTTPS_PROXY=http://10.99.14.1:3128
+HTTP_PROXY=http://10.99.14.1:3128
+https_proxy=http://10.99.14.1:3128
+http_proxy=http://10.99.14.1:3128
+NO_PROXY=localhost,127.0.0.1
+no_proxy=localhost,127.0.0.1
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -- ls -l /run/podman/podman.sock
+srw-rw----. 1 root root 0 Sep 11 02:51 /run/podman/podman.sock
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p Environment=XDG_RUNTIME_DIR=/run/user/1000 -- sh -c 'systemctl --user show-environment | grep -i proxy'
+HTTPS_PROXY=http://10.99.14.1:3128
+HTTP_PROXY=http://10.99.14.1:3128
+https_proxy=http://10.99.14.1:3128
+http_proxy=http://10.99.14.1:3128
+NO_PROXY=localhost,127.0.0.1
+no_proxy=localhost,127.0.0.1
+```
+
+Both podman sockets exist: the system one at `/run/podman/podman.sock` is
+`root:root 0660` and out of `agent`'s reach; `agent`'s own at
+`/run/user/1000/podman/podman.sock` is there because the image lingers
+`agent` and enables the user `podman.socket`. **That is the socket path**,
+and it is what `useRootlessPodmanSocket` in `internal/testsupport` picks by
+itself when `DOCKER_HOST` is unset.
+
+### Why the user manager carries the proxy
+
+The `environment.d` file bound in at boot is the first attempt's finding, and
+the reason its E6 failed three times. Testcontainers does not pull the image;
+it asks `podman.service` — `agent`'s user service, started by the user
+manager from `socket` activation — to create the container, and the service
+pulls with *its* environment, which has no proxy however many variables the
+exec carries. The first attempt's `make test-db` inside spent 123 s per suite
+on:
+
+```
+      6           msg: "start postgres container: create container: Error response from daemon: i/o timeout",
+      1 Ran 0 of 107 Specs in 123.392 seconds
+```
+
+Dropping `/etc/environment.d/50-mill-proxy.conf` into the running machine and
+restarting `user@1000.service` did not recover it (the restart failed in
+`pam_systemd`'s `CreateSession` against logind); booting with the file bound
+in did. §Network's "`HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY` are set in every
+exec's environment" is therefore not enough for podman: **the proxy has to be
+in the user manager's environment too** — `environment.d` in the image with
+the address filled at provision, or a drop-in on the user `podman.service`.
+`NO_PROXY=localhost,127.0.0.1` is there so the published ports testcontainers
+dials on the machine's loopback are not sent to squid.
+
+### `mise install`, cold, through the proxy
+
+```
+$ P=http://10.99.14.1:3128
+$ time sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p WorkingDirectory=/work -p Environment=HTTPS_PROXY=$P -p Environment=HTTP_PROXY=$P -- mise install 2>&1 | tail -15
+mise ginkgo@2.32.1 go: downloading github.com/Masterminds/semver/v3 v3.4.0
+mise ginkgo@2.32.1 go: downloading golang.org/x/sync v0.20.0
+mise ginkgo@2.32.1 go: downloading golang.org/x/mod v0.35.0
+mise python@3.14.7 Python 3.14.7
+mise ✓ python@3.14.7              3.1s  cpython-3.14.7+20260901-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz
+mise ✓ golangci-lint@2.13.2       3.8s  golangci-lint-2.13.2-linux-amd64.tar.gz
+mise ✓ pnpm@10.20.0               4.0s  pnpm-linux-x64
+mise ✓ hk@1.57.0                  2.9s  hk-x86_64-unknown-linux-gnu.tar.gz
+mise █████████████░░░ 8/10 · 6.0s
+  buf@1.72.0                 downloading  4.3s
+  ginkgo@2.32.1              installing   2.1s
+mise ✓ buf@1.72.0                 5.0s  buf-Linux-x86_64.tar.gz
+mise ✓ ginkgo@2.32.1              4.8s
+mise ████████████████ 10/10 · installed 10 tools in 8.7s
+sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p   0.00s user 0.01s system 0% cpu 8.750 total
+rc=0
+```
+
+Ten tools, 8.7 s, every fetch a `CONNECT` in squid's log (`github.com`,
+`dl.google.com`, `nodejs.org`, `mise-versions.jdx.dev`,
+`release-assets.githubusercontent.com`, `downloads.sqlc.dev`,
+`storage.googleapis.com`, `tuf-repo-cdn.sigstore.dev` — the list an allowlist
+for a toolchain step would start from).
+
+### `make test-db`, as written, then through `mise exec`
+
+```
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p WorkingDirectory=/work -p Environment=HTTPS_PROXY=$P -p Environment=HTTP_PROXY=$P -p Environment=DOCKER_HOST=unix:///run/user/1000/podman/podman.sock -- make test-db 2>&1 | head -5; echo rc=$?
+ginkgo -r -p --randomize-all --fail-on-pending --keep-going --label-filter='db' ./...
+make: ginkgo: No such file or directory
+make: *** [Makefile:48: test-db] Error 127
+rc=2
+```
+
+An exec is not a login shell, so nothing activates mise and the installed
+tools are not on `PATH`. `mise exec --` in front of the command is the
+answer; a preparatory step or the session's shell would have it from
+`mise activate`. Cold — the machine's Go module cache, build cache and
+container store are all empty:
+
+```
+$ date +%T; time sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p WorkingDirectory=/work -p Environment=HTTPS_PROXY=$P -p Environment=HTTP_PROXY=$P -p Environment=DOCKER_HOST=unix:///run/user/1000/podman/podman.sock -p Environment=MILL_DAGGER_REPO=/opt/dagger -- mise exec -- make test-db > /tmp/spike-out/e6-cold.log 2>&1; echo rc=$?; date +%T
+02:54:00
+sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p   0.01s user 0.00s system 0% cpu 43.875 total
+rc=0
+02:54:44
+$ sed 's/\x1b\[[0-9;]*m//g' /tmp/spike-out/e6-cold.log | grep -E 'specs - 15 procs' | grep -v ' 0/'
+[1789120440] cli - 65/107 specs - 15 procs … SUCCESS! 6.449760811s
+[1789120440] dagger - 12/12 specs - 15 procs … SUCCESS! 2.656700233s
+[1789120440] run - 73/84 specs - 15 procs … SUCCESS! 8.622844905s
+[1789120440] server - 36/63 specs - 15 procs … SUCCESS! 1.896098607s
+[1789120440] store - 41/53 specs - 15 procs … SUCCESS! 2.448982571s
+[1789120440] testsupport - 4/4 specs - 15 procs … SUCCESS! 1.381165896s
+$ tail -3 /tmp/spike-out/e6-cold.log
+Ginkgo ran 29 suites in 43.779736194s
+Test Suite Passed
+$ grep -c 'go: downloading' /tmp/spike-out/e6-cold.log
+259
+```
+
+(The 23 suites with no `db` spec ran and skipped; the per-suite lines are
+elided to the six that carry the label. The `•`/`S` progress runs are cut
+from the lines above.) Then the same command again on the same machine —
+module cache, build cache and image store now warm — and the host, for the
+comparison:
+
+```
+$ date +%T; time sudo systemd-run -M mill-e1 … -- mise exec -- make test-db > /tmp/spike-out/e6-warm.log 2>&1; echo rc=$?; date +%T
+02:55:12
+sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p   0.01s user 0.01s system 0% cpu 20.500 total
+rc=0
+02:55:32
+$ tail -2 /tmp/spike-out/e6-warm.log
+Ginkgo ran 29 suites in 20.366331241s
+Test Suite Passed
+$ time make test-db  # on the host, warm
+Ginkgo ran 29 suites in 19.07033682s
+Test Suite Passed
+make test-db  35.57s user 15.08s system 264% cpu 19.164 total
+```
+
+| | wall clock | ginkgo's own |
+|---|---|---|
+| inside, cold | 43.9 s | 43.8 s |
+| inside, warm | 20.5 s | 20.4 s |
+| host, warm | 19.2 s | 19.1 s |
+
+Inside is within 7 % of the host once warm. The cold run is 2.3× the host,
+and the difference is the empty caches: 259 `go: downloading` lines through
+the proxy (32 `CONNECT proxy.golang.org`), two image pulls through Harbor
+(`postgres:18` for the fixture and `testcontainers/ryuk`), and a full Go
+build with no cache. A Go module cache under §Caching would take the first
+of those away.
+
+### Ryuk, and what is left in the store
+
+```
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p Environment=XDG_RUNTIME_DIR=/run/user/1000 -- sh -c 'podman ps -a; podman images'    # 32 s after the cold run
+CONTAINER ID  IMAGE                                 COMMAND     CREATED         STATUS         PORTS                    NAMES
+fabda3952b31  docker.io/testcontainers/ryuk:0.14.0  /bin/ryuk   32 seconds ago  Up 32 seconds  0.0.0.0:38113->8080/tcp  reaper_08506bc46bac892faaf0163c9748377af9b1332e6bb220ca898951d2d9e02043
+REPOSITORY                     TAG         IMAGE ID      CREATED        SIZE
+docker.io/library/postgres     <none>      a6638641707c  2 weeks ago    464 MB
+docker.io/testcontainers/ryuk  0.14.0      9a5f93e8f930  11 months ago  2.41 MB
+$ until [ "$(sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p Environment=XDG_RUNTIME_DIR=/run/user/1000 -- podman ps -aq | wc -l)" = 0 ]; do sleep 10; done; date +%T
+03:00:37
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p Environment=XDG_RUNTIME_DIR=/run/user/1000 -- podman ps -a
+CONTAINER ID  IMAGE       COMMAND     CREATED     STATUS      PORTS       NAMES
+```
+
+**Ryuk was not disabled.** `TESTCONTAINERS_RYUK_DISABLED` was never set;
+`internal/testsupport` defaults `TESTCONTAINERS_RYUK_CONTAINER_PRIVILEGED=true`
+and `RYUK_RECONNECTION_TIMEOUT=5m`, and a privileged container under rootless
+podman under nspawn ran and reaped. The postgres containers were gone when the
+suite ended; the reaper itself stays for the fixture's five-minute window
+(`patientReaper`, so a spec sleeping past a TTL does not lose its database)
+and `podman ps -a` was empty at 03:00:37, five minutes after the warm run's
+last connection. A machine is destroyed at the end of its run, so the window
+costs nothing there; a check step that counted containers right after the
+suite would see the reaper and should not.
+
+**Verdict: E6 passes. 231 db-labelled specs across six suites pass inside the machine; testcontainers starts PostgreSQL through `agent`'s `/run/user/1000/podman/podman.sock` and ryuk reaps it, undisabled; `podman ps -a` is empty once ryuk's window closes. Wall clock 43.9 s cold / 20.5 s warm against the host's 19.2 s; the cold gap is the empty module and build caches. Two things the design has to add: the proxy in `agent`'s user-manager environment (podman's service pulls, not the exec), and `mise exec` or an activated shell in front of any command that wants the toolchain.**
+
+---
+
+## E11 — Harbor proxy: image pulls inside the machine
+
+Harbor answered this time (`/api/v2.0/health` → `200` at the start of the
+session, against `502` for the whole of the boot spike). The image's
+`registries.conf.d/harbor.conf` is the one `Containerfile.spike` writes and
+needed no change:
+
+```
+[[registry]]
+prefix = "docker.io"
+location = "harbor.tailcbcc0e.ts.net/dockerhub-cache"
+
+[[registry]]
+prefix = "quay.io"
+location = "harbor.tailcbcc0e.ts.net/quay-cache"
+```
+
+### First pull, on mill-e1
+
+```
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p Environment=HTTPS_PROXY=$P -- sh -c 'time podman pull docker.io/library/postgres:16; podman image inspect --format "{{.RepoDigests}}" docker.io/library/postgres:16'
+Trying to pull docker.io/library/postgres:16...
+Getting image source signatures
+Copying config sha256:80f4c7a5e91618546dce5b4fe60cf03b14c0f9efa7e40157278d122772ced8d2
+Writing manifest to image destination
+80f4c7a5e91618546dce5b4fe60cf03b14c0f9efa7e40157278d122772ced8d2
+
+real	0m2.842s
+user	0m2.854s
+sys	0m0.568s
+[docker.io/library/postgres@sha256:485935f94cc7165afa896978809c37b592dc07f0a37d2c8f645f12412d0212c8 docker.io/library/postgres@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94]
+$ sudo tail -n +62 /var/log/squid/access.log    # the lines this pull added
+1789120848.603     31 10.99.14.2 TCP_TUNNEL/200 5430 CONNECT harbor.tailcbcc0e.ts.net:443 - HIER_DIRECT/100.114.13.91 -
+1789120849.395    114 10.99.14.2 TCP_TUNNEL/200 1276778 CONNECT harbor.tailcbcc0e.ts.net:443 - HIER_DIRECT/100.114.13.91 -
+1789120849.395    114 10.99.14.2 TCP_TUNNEL/200 6483138 CONNECT harbor.tailcbcc0e.ts.net:443 - HIER_DIRECT/100.114.13.91 -
+1789120849.584    303 10.99.14.2 TCP_TUNNEL/200 8253509 CONNECT harbor.tailcbcc0e.ts.net:443 - HIER_DIRECT/100.114.13.91 -
+1789120850.426   1823 10.99.14.2 TCP_TUNNEL/200 115166742 CONNECT harbor.tailcbcc0e.ts.net:443 - HIER_DIRECT/100.114.13.91 -
+1789120851.349   2068 10.99.14.2 TCP_TUNNEL/200 21313 CONNECT harbor.tailcbcc0e.ts.net:443 - HIER_DIRECT/100.114.13.91 -
+1789120851.349   2068 10.99.14.2 TCP_TUNNEL/200 7685 CONNECT harbor.tailcbcc0e.ts.net:443 - HIER_DIRECT/100.114.13.91 -
+```
+
+Two things the work order's pass line did not anticipate.
+
+**The digest names `docker.io`, and that is podman, not a miss.** A
+`[[registry]] location` rewrite is transparent by design: the image is stored
+under the name that was asked for, and `RepoDigests` carries it. Where the
+bytes came from is in podman's own resolution and in squid's log — every
+`CONNECT` of the pull is to `harbor.tailcbcc0e.ts.net:443`, and the whole
+session's log has no line naming an upstream registry:
+
+```
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p Environment=HTTPS_PROXY=$P -- sh -c 'podman pull --log-level=debug docker.io/library/postgres:16 2>&1 | grep -iE "harbor|registry-1" | head -4'
+time="2026-09-11T03:01:16-07:00" level=debug msg="Loading registries configuration \"/etc/containers/registries.conf.d/harbor.conf\""
+time="2026-09-11T03:01:16-07:00" level=debug msg="Trying to access \"harbor.tailcbcc0e.ts.net/dockerhub-cache/library/postgres:16\""
+time="2026-09-11T03:01:16-07:00" level=debug msg="No credentials matching harbor.tailcbcc0e.ts.net/dockerhub-cache/library/postgres found in /run/user/1000/containers/auth.json"
+time="2026-09-11T03:01:16-07:00" level=debug msg="No credentials matching harbor.tailcbcc0e.ts.net/dockerhub-cache/library/postgres found in /home/agent/.config/containers/auth.json"
+$ sudo grep -cE 'docker.io|registry-1' /var/log/squid/access.log    # end of session
+0
+```
+
+A check that wants "came through Harbor" reads squid's log or podman's debug
+line, not `RepoDigests`; the design's sentence "the digest names Harbor" in
+the work order should not become an assertion in a spec.
+
+**This machine-cold pull was Harbor-warm.** Harbor's API gives the artifact's
+`push_time` as 02:47 PDT — the first attempt at this node pulled it, minutes
+before this session started — so the 115 MB layer in 1.8 s above is the LAN
+figure, not the Docker Hub one. For a Harbor-cold number, a tag Harbor did not
+hold:
+
+```
+$ curl -s -o /dev/null -w "%{http_code}\n" "https://harbor.tailcbcc0e.ts.net/api/v2.0/projects/dockerhub-cache/repositories/library%252Fpostgres/artifacts/16.3"
+404
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p Environment=HTTPS_PROXY=$P -- sh -c 'time podman pull docker.io/library/postgres:16.3' 2>&1 | grep -v 'Copying blob'
+Trying to pull docker.io/library/postgres:16.3...
+Getting image source signatures
+Copying config sha256:07a4ee949b9e7851d9ef860fd36f486aa821f23e1c17939244155fe825eaf79a
+Writing manifest to image destination
+07a4ee949b9e7851d9ef860fd36f486aa821f23e1c17939244155fe825eaf79a
+
+real	0m5.807s
+user	0m3.623s
+sys	0m0.807s
+$ squid access.log, this pull
+1789120920.759     16 10.99.14.2 TCP_TUNNEL/200 5431 CONNECT harbor.tailcbcc0e.ts.net:443 - HIER_DIRECT/100.114.13.91 -
+1789120923.841   3081 10.99.14.2 TCP_TUNNEL/200 1256123 CONNECT harbor.tailcbcc0e.ts.net:443 - HIER_DIRECT/100.114.13.91 -
+1789120923.954   1611 10.99.14.2 TCP_TUNNEL/200 1469124 CONNECT harbor.tailcbcc0e.ts.net:443 - HIER_DIRECT/100.114.13.91 -
+1789120923.960   1617 10.99.14.2 TCP_TUNNEL/200 4593929 CONNECT harbor.tailcbcc0e.ts.net:443 - HIER_DIRECT/100.114.13.91 -
+1789120925.602   3259 10.99.14.2 TCP_TUNNEL/200 110296823 CONNECT harbor.tailcbcc0e.ts.net:443 - HIER_DIRECT/100.114.13.91 -
+1789120926.492   4150 10.99.14.2 TCP_TUNNEL/200 29474652 CONNECT harbor.tailcbcc0e.ts.net:443 - HIER_DIRECT/100.114.13.91 -
+1789120926.492   4150 10.99.14.2 TCP_TUNNEL/200 8141008 CONNECT harbor.tailcbcc0e.ts.net:443 - HIER_DIRECT/100.114.13.91 -
+```
+
+5.8 s with Harbor fetching from Docker Hub on the machine's behalf; still only
+Harbor in the log.
+
+### Second pull, from a fresh machine
+
+`mill-e1` stopped, `mill-e11` booted from the image with an empty store, on
+the same veth address (squid kept its bound socket across the link's
+recreation and answered without a restart):
+
+```
+$ sudo systemctl stop mill-run-e1; sudo machinectl list --no-legend
+qemu-1-omarchy vm libvirt-qemu - - -
+$ /tmp/spike-out/boot.sh e11 14
+Running as unit: mill-run-e11.service; invocation ID: 321f04ffcb5d4f9a8c8d4d3d707337f0
+running
+                       State: routable (configured)
+                     Address: 10.99.14.2
+$ systemctl is-active squid; sudo ss -ltn | grep 3128
+active
+LISTEN 0      4096                    10.99.14.1:3128       0.0.0.0:*
+$ sudo systemd-run -M mill-e11 --pipe --wait --quiet --collect -p User=agent -- podman images
+REPOSITORY  TAG         IMAGE ID    CREATED     SIZE
+$ sudo systemd-run -M mill-e11 --pipe --wait --quiet --collect -p User=agent -p Environment=HTTPS_PROXY=$P -- sh -c 'time podman pull docker.io/library/postgres:16; podman image inspect --format "{{.RepoDigests}}" docker.io/library/postgres:16'
+Trying to pull docker.io/library/postgres:16...
+Getting image source signatures
+Copying config sha256:80f4c7a5e91618546dce5b4fe60cf03b14c0f9efa7e40157278d122772ced8d2
+Writing manifest to image destination
+80f4c7a5e91618546dce5b4fe60cf03b14c0f9efa7e40157278d122772ced8d2
+
+real	0m2.444s
+user	0m3.538s
+sys	0m0.666s
+[docker.io/library/postgres@sha256:485935f94cc7165afa896978809c37b592dc07f0a37d2c8f645f12412d0212c8 docker.io/library/postgres@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94]
+$ squid access.log, this pull
+1789120953.358     24 10.99.14.2 TCP_TUNNEL/200 5430 CONNECT harbor.tailcbcc0e.ts.net:443 - HIER_DIRECT/100.114.13.91 -
+1789120953.780    100 10.99.14.2 TCP_TUNNEL/200 1284652 CONNECT harbor.tailcbcc0e.ts.net:443 - HIER_DIRECT/100.114.13.91 -
+1789120953.809    129 10.99.14.2 TCP_TUNNEL/200 6484953 CONNECT harbor.tailcbcc0e.ts.net:443 - HIER_DIRECT/100.114.13.91 -
+1789120953.982    302 10.99.14.2 TCP_TUNNEL/200 8253575 CONNECT harbor.tailcbcc0e.ts.net:443 - HIER_DIRECT/100.114.13.91 -
+1789120954.033    352 10.99.14.2 TCP_TUNNEL/200 29957859 CONNECT harbor.tailcbcc0e.ts.net:443 - HIER_DIRECT/100.114.13.91 -
+1789120954.815   1457 10.99.14.2 TCP_TUNNEL/200 115167223 CONNECT harbor.tailcbcc0e.ts.net:443 - HIER_DIRECT/100.114.13.91 -
+1789120955.744   1954 10.99.14.2 TCP_TUNNEL/200 4911 CONNECT harbor.tailcbcc0e.ts.net:443 - HIER_DIRECT/100.114.13.91 -
+1789120955.745   2064 10.99.14.2 TCP_TUNNEL/200 13651 CONNECT harbor.tailcbcc0e.ts.net:443 - HIER_DIRECT/100.114.13.91 -
+```
+
+| | `podman pull` |
+|---|---|
+| Harbor-cold, machine-cold (`postgres:16.3`) | 5.8 s |
+| Harbor-warm, machine-cold (`postgres:16`, mill-e1) | 2.8 s |
+| Harbor-warm, fresh machine (`postgres:16`, mill-e11) | 2.4 s |
+
+**Verdict: E11 passes. Every pull resolved to `harbor.tailcbcc0e.ts.net/dockerhub-cache/library/postgres` (podman's debug line) and squid logged `CONNECT`s to Harbor only, none to `docker.io` or `registry-1.docker.io` across the whole session; the pull from a fresh machine is 2.4 s for a 464 MB image, a LAN fetch. The `registries.conf.d` file in the image is right as written. `RepoDigests` keeps the `docker.io` name under a `location` rewrite, so the proof of provenance is the proxy log, not the digest.**
+
+---
+
+## E12 — The dnf shim
+
+The shim is `spikes/nspawn/dnf`, written into the running `mill-e11`'s
+`/usr/local/bin/dnf` rather than a rebuilt image (the image is untouched; the
+Containerfile does not carry it yet — that is `mill#59`'s). The sudoers line
+was already in the image from the boot spike. `agent`'s `PATH` puts
+`/usr/local/bin` first:
+
+```
+$ sudo systemd-run -M mill-e11 --pipe --wait --quiet --collect -- sh -c 'cat > /usr/local/bin/dnf && chmod 0755 /usr/local/bin/dnf && ls -l /usr/local/bin/dnf && cat /etc/sudoers.d/agent-dnf' < spikes/nspawn/dnf
+-rwxr-xr-x. 1 root root 1006 Sep 11 03:03 /usr/local/bin/dnf
+agent ALL=(root) NOPASSWD: /usr/bin/dnf install *
+$ sudo systemd-run -M mill-e11 --pipe --wait --quiet --collect -p User=agent -- sh -lc 'echo $PATH; command -v dnf'
+/usr/local/bin:/usr/bin
+/usr/local/bin/dnf
+```
+
+### First attempt: the proxy option in the wrong place
+
+`sudo` resets the environment, so `HTTPS_PROXY` on the exec never reaches
+`/usr/bin/dnf`; the shim has to pass it as `--setopt=proxy=`. The first
+version put that option before the subcommand, and the sudoers rule is
+`/usr/bin/dnf install *` — the `install` must be the first argument:
+
+```
+$ sudo systemd-run -M mill-e11 --pipe --wait --quiet --collect -p User=agent -p Environment=HTTPS_PROXY=$P -- dnf install -y vips-devel 2>&1 | tail -3
+sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper
+sudo: a password is required
+rc=1
+```
+
+`sudo /usr/bin/dnf install --setopt=proxy=… <packages>` matches the rule.
+That is the shim as committed.
+
+### The install as `agent`, and the removal
+
+```
+$ sudo systemd-run -M mill-e11 --pipe --wait --quiet --collect -p User=agent -p Environment=HTTPS_PROXY=$P -- dnf install -y vips-devel 2>&1 | tail -3
+mill: installed vips-devel into an ephemeral machine; the next run's image will not have it.
+mill: declare it in mill.toml so the image does. Under [image], add:
+mill:   packages = ["vips-devel"]
+$ head -5 /tmp/spike-out/e12-install.log; sed -n '/Transaction Summary/,/^$/p' /tmp/spike-out/e12-install.log; tail -6 /tmp/spike-out/e12-install.log    # the whole output, 841 lines, went to a file
+Updating and loading repositories:
+ Fedora 44 openh264 (From Cisco) - x86_ 100% |   5.4 KiB/s |   5.3 KiB |  00m01s
+ Fedora 44 - x86_64 - Updates           100% |  11.5 MiB/s |  11.7 MiB |  00m01s
+ Fedora 44 - x86_64                     100% |  27.7 MiB/s |  38.3 MiB |  00m01s
+Repositories loaded.
+Transaction Summary:
+ Installing:       273 packages
+
+[274/275] Installing open-sans-fonts-0: 100% | 417.4 MiB/s |   2.1 MiB |  00m00s
+[275/275] Installing python3-pip-0:26.0 100% |  15.7 MiB/s |  11.7 MiB |  00m01s
+Complete!
+mill: installed vips-devel into an ephemeral machine; the next run's image will not have it.
+mill: declare it in mill.toml so the image does. Under [image], add:
+mill:   packages = ["vips-devel"]
+$ sudo systemd-run -M mill-e11 --pipe --wait --quiet --collect -p User=agent -- sh -c 'rpm -q vips-devel; pkg-config --modversion vips'
+vips-devel-8.18.3-2.fc44.x86_64
+8.18.3
+$ sudo systemd-run -M mill-e11 --pipe --wait --quiet --collect -p User=agent -- sudo /usr/bin/dnf remove -y vips-devel; echo "rc=$?"
+sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper
+sudo: a password is required
+rc=1
+$ sudo systemd-run -M mill-e11 --pipe --wait --quiet --collect -p User=agent -- sudo -n /usr/bin/dnf remove -y vips-devel; echo rc=$?
+sudo: a password is required
+rc=1
+$ sudo systemd-run -M mill-e11 --pipe --wait --quiet --collect -p User=agent -- dnf remove -y vips-devel; echo rc=$?   # through the shim
+The requested operation requires superuser privileges. Please log in as a user with elevated rights, or use the "--assumeno" or "--downloadonly" options to run the command without modifying the system state.
+rc=1
+$ sudo systemd-run -M mill-e11 --pipe --wait --quiet --collect -p User=agent -- sudo -l
+User agent may run the following commands on mill-e11:
+    (root) NOPASSWD: /usr/bin/dnf install *
+```
+
+273 packages (vips pulls ImageMagick, fonts, a pip) in 16.9 s wall through
+the proxy, the mirrors at 27 MiB/s. The last three lines of the output are
+the hint; `sudo … remove` is refused by sudoers for want of a password
+`agent` does not have, and `remove` through the shim is dnf's own refusal as
+an unprivileged user.
+
+**The hint text**, three lines, package list in TOML form so it can be pasted:
+
+```
+mill: installed vips-devel into an ephemeral machine; the next run's image will not have it.
+mill: declare it in mill.toml so the image does. Under [image], add:
+mill:   packages = ["vips-devel"]
+```
+
+### The report to a host socket
+
+`docs/sandbox.md` §The dnf shim has the shim report the install over the
+workspace socket. A listener on the host and `curl --unix-socket` from inside
+is enough to show the path exists; the shim posts to
+`/run/mill/report.sock` if it is there. First, into the running machine:
+
+```
+$ sudo machinectl bind --mkdir mill-e11 /tmp/spike-out/report.sock /run/mill/report.sock; echo rc=$?
+Failed to bind mount: Can't bind mount on container with user namespacing applied.
+rc=1
+```
+
+`machinectl bind` refuses under `--private-users`: **every bind is decided at
+boot**, the socket directory included, which §Provision already implies but
+§Filesystem should say. So a third machine, with the directory holding the
+socket bound at boot with `:idmap`, and a 12-line `http.server` on the host
+end:
+
+```
+$ (setsid nohup python3 /tmp/spike-out/report-sock.py /tmp/spike-out/millrun/report.sock > /tmp/spike-out/report.log 2>&1 &); ls -l /tmp/spike-out/millrun/
+srw-rw-rw-. 1 ivy ivy 0 Sep 11 03:04 report.sock
+$ /tmp/spike-out/boot.sh e12 15 --bind=/tmp/spike-out/millrun:/run/mill:idmap
+Running as unit: mill-run-e12.service; invocation ID: 13593cacb8654daea74d9f14c3278b06
+running
+$ sudo systemd-run -M mill-e12 --pipe --wait --quiet --collect -p User=agent -- sh -c 'ls -l /run/mill/report.sock; curl -sS --unix-socket /run/mill/report.sock -o /dev/null -w "%{http_code}\n" -X POST --data "installed \"vips-devel\"" http://mill/dnf'
+srw-rw-rw-. 1 agent agent 0 Sep 11 03:04 /run/mill/report.sock
+204
+$ cat /tmp/spike-out/report.log   # on the host
+report /dnf 'installed "vips-devel"'
+```
+
+The socket is `agent`'s inside (the `:idmap` again), the POST lands on the
+host with its body, `204` back. The report is feasible with nothing beyond
+`curl` in the image; the workspace socket's protocol is `mill#64`'s.
+
+**Verdict: E12 passes. `dnf install -y vips-devel` succeeds as `agent` through the shim and the sudoers rule, its last three lines are the hint above, and `sudo /usr/bin/dnf remove` is refused (`a password is required`, `rc=1`). The shim must put `--setopt=proxy=` after `install` or the sudoers pattern does not match. A report to a host socket works over a directory bound at boot — `machinectl bind` cannot add one to a running user-namespaced machine.**
+
+### The executable form
+
+The four scenarios are `spikes/nspawn/egress_test.go`, `Label("live")`, in the
+same suite as E0–E4 and E14: each boots its machine, addresses the veth,
+loads `egress.nft`, copies `squid.conf` into place and starts squid, and takes
+all of it down with the spec. Run after the sections above, with the host
+torn down between:
+
+```
+$ MILL_SANDBOX_HOST=1 ginkgo --label-filter=live --focus-file egress_test.go --timeout=30m ./spikes/nspawn
+Will run 4 of 11 specs
+••
+• [FAILED] [40.819 seconds]
+Egress, the db suite, Harbor and the shim on a real machine [It] Pulls resolve through Harbor [live, Serial]
+  [FAILED] Expected
+      <string>: 
+  to contain substring
+      <string>: harbor.tailcbcc0e.ts.net/dockerhub-cache/library/postgres:16
+•SSSSSSS
+Ran 4 of 11 Specs in 512.433 seconds
+FAIL! -- 3 Passed | 1 Failed | 0 Pending | 7 Skipped
+$ MILL_SANDBOX_HOST=1 ginkgo --label-filter=live --focus 'Pulls resolve through Harbor' --timeout=10m ./spikes/nspawn    # the grep for podman's debug line fixed
+Will run 1 of 11 specs
+SSSSSSSSS•S
+Ran 1 of 11 Specs in 40.967 seconds
+SUCCESS! -- 1 Passed | 0 Failed | 0 Pending | 10 Skipped
+```
+
+The first run's failure was the spec's own `grep` against podman's debug
+output (the quotes in `Trying to access \"…\"` are escaped in the log line),
+not the machine's; fixed, the scenario passes. The 512 s is mostly the db
+scenario waiting out ryuk's five-minute window to assert that no container
+remains. `make test` runs the suite and every live spec skips.
+
+---
+
+## Teardown (E5–E12)
+
+Only what this node created: the `mill-e*` machines and their `mill-run-e*`
+units, the table, and squid's process (the package stays for
+`homestead#34`). The firewalld admission was runtime-only and is removed
+too. The image subvolume stays.
+
+```
+$ sudo systemctl stop mill-run-e1 2>/dev/null; echo rc=$?
+rc=5
+$ sudo systemctl stop mill-run-e11 2>/dev/null; echo rc=$?
+rc=0
+$ sudo systemctl stop mill-run-e12 2>/dev/null; echo rc=$?
+rc=0
+$ sudo nft delete table inet mill; echo rc=$?
+rc=0
+$ sudo systemctl stop squid; systemctl is-active squid
+inactive
+$ sudo firewall-cmd --zone=trusted --remove-interface='ve-mill+'
+success
+$ sudo machinectl list --no-pager; sudo nft list table inet mill; systemctl list-units "mill-run-e*" --all --no-legend; sudo btrfs subvolume list /var/lib/machines; ls -l /etc/systemd/system/mill-machine@.service; rpm -q squid
+MACHINE        CLASS     SERVICE        OS     VERSION ADDRESSES
+mill-sel       container systemd-nspawn fedora 44      -
+qemu-1-omarchy vm        libvirt-qemu   -      -       -
+
+2 machines listed.
+Error: No such file or directory
+list table inet mill
+                ^^^^
+ID 256 gen 311 top level 5 path @mill
+ID 257 gen 322 top level 5 path @machines
+ID 298 gen 159 top level 257 path mill-image-spike
+ID 328 gen 322 top level 257 path .#machine.mill-image-spikedb1903a60fb916d5
+-rw-r--r--. 1 root root 1640 Sep 11 01:03 /etc/systemd/system/mill-machine@.service
+squid-7.6-1.fc44.x86_64
+$ sudo ausearch -m avc -ts 02:50:00
+<no matches>
+```
+
+`rc=5` on `mill-run-e1` is "no such unit": it was stopped in E11. `mill-sel`
+and the snapshot `.#machine.mill-image-spikedb1903a60fb916d5` are another
+node's machine on this host (the SELinux spike), running from the same image;
+not this node's, left alone. No `mill-e*` machine, no `inet mill` table, no
+AVC during the session.
+
+### What the design takes from E5–E12
+
+- **§Network.** The static table is the work order's four-rule pair plus a
+  `nat postrouting` masquerade for the forwarded DNS; `spikes/nspawn/egress.nft`
+  is that. The `ve-mill*` links must also be admitted to firewalld's
+  `trusted` zone (runtime `--add-interface='ve-mill+'`, or a permanent zone
+  binding in homestead), since `core`'s default zone is `drop` and an accept
+  in `inet mill` does not skip `inet firewalld`. Squid must bind an address
+  that exists before any machine does — a dummy link, or the wildcard with the
+  `machines` ACL — or be ordered after the first veth. Squid needs a rule
+  denying RFC 1918 destinations, because the table cannot see what the proxy
+  connects to. The proxy variables go into the environment in both cases
+  (`curl` reads only `http_proxy` for plain HTTP), and into `agent`'s user
+  manager (`environment.d` or a `podman.service` drop-in), because podman's
+  API service pulls with its own environment, not the exec's. DNS goes
+  straight to `1.1.1.1` through the forward here; a resolver on the host side
+  of the veth (or `systemd-resolved`'s stub on the machine's `host0`) would
+  let the forward chain drop DNS too.
+- **§Testing.** The db suite runs inside as it does on the host: `agent`'s
+  `/run/user/1000/podman/podman.sock`, ryuk on, 20 s warm. The command is
+  `mise exec -- make test-db` from an exec; a session's shell has
+  `mise activate`. A Go module cache under §Caching halves the cold run.
+- **§Filesystem.** Every bind is fixed at boot — `machinectl bind` refuses a
+  user-namespaced machine — so the socket directory, the skill and the caches
+  are all in the provision's nspawn line. The operator's checkout was writable
+  as `agent` with `:idmap` because the operator is uid 1000; a workspace mill
+  creates is uid 1000 by construction.
+- **§Images.** `registries.conf.d/harbor.conf` as the Containerfile writes it
+  is right; `RepoDigests` will name `docker.io`, and provenance is squid's
+  log. `mill#59` adds `spikes/nspawn/dnf` to the image at `/usr/local/bin/dnf`.
+- **§The dnf shim / `mill#64`.** The shim passes the proxy as
+  `--setopt=proxy=` after `install`; the hint is the three `mill:` lines
+  above; the report is a `curl --unix-socket` POST to a socket in a directory
+  bound at boot.

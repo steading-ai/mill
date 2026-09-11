@@ -1,0 +1,36 @@
+# The static egress table for mill's machines: docs/sandbox.md §Network.
+# Loaded once by a unit of its own (never `flush ruleset`: firewalld owns
+# `inet firewalld` on core). Every machine sits on a host-side veth named
+# ve-mill*; nothing leaves one except DNS, TCP to the proxy on the host, and
+# replies. The drop is what makes the proxy mandatory. homestead#34 takes it
+# from here.
+#
+# firewalld still sees these packets after this table accepts them — accept
+# in one base chain does not skip the next hook — so the ve-mill* links must
+# be admitted by firewalld too (`firewall-cmd --zone=trusted
+# --add-interface='ve-mill+'`, or its permanent form); core's default zone is
+# `drop`, and without the admission the proxy port times out before this
+# table is consulted. The enforcement is here, not there.
+table inet mill {
+  chain forward {
+    type filter hook forward priority 0; policy accept;
+    iifname "ve-mill*" udp dport 53 accept
+    iifname "ve-mill*" tcp dport 53 accept
+    iifname "ve-mill*" ct state established,related accept
+    iifname "ve-mill*" drop
+  }
+  chain input {
+    type filter hook input priority 0; policy accept;
+    iifname "ve-mill*" tcp dport 3128 accept
+    iifname "ve-mill*" udp dport 53 accept
+    iifname "ve-mill*" ct state established,related accept
+    iifname "ve-mill*" drop
+  }
+  # DNS is the one thing forwarded, and the machine subnets are private, so
+  # it needs a source rewrite on the way to the resolver. Nothing else is
+  # forwarded, so nothing else is masqueraded.
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+    iifname "ve-mill*" oifname != "ve-mill*" masquerade
+  }
+}

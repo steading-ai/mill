@@ -1,0 +1,30 @@
+#!/bin/sh
+# /usr/local/bin/dnf: the dnf shim, docs/sandbox.md §The dnf shim. `install`
+# runs privileged through the one sudoers rule; everything else is dnf as the
+# caller, so `search` and `info` still work and `remove` is refused where the
+# rule is. On success the hint is the last three lines, because that is where
+# an agent reads.
+set -u
+case "${1:-}" in
+  install) ;;
+  *) exec /usr/bin/dnf "$@" ;;
+esac
+shift
+# sudo resets the environment, so the proxy every exec carries has to be
+# handed to dnf as an option or the mirrors never answer; after `install`,
+# because the sudoers rule is `/usr/bin/dnf install *`.
+proxy="${HTTPS_PROXY:-${https_proxy:-}}"
+sudo /usr/bin/dnf install ${proxy:+--setopt=proxy="$proxy"} "$@" || exit $?
+packages=""
+for arg in "$@"; do
+  case "$arg" in
+    -*) ;;
+    *) packages="$packages${packages:+, }\"$arg\"" ;;
+  esac
+done
+if [ -S /run/mill/report.sock ]; then
+  curl -sS --unix-socket /run/mill/report.sock -X POST --data "installed $packages" http://mill/dnf >/dev/null 2>&1 || true
+fi
+printf 'mill: installed %s into an ephemeral machine; the next run'"'"'s image will not have it.\n' "$(echo "$packages" | tr -d '"')"
+printf 'mill: declare it in mill.toml so the image does. Under [image], add:\n'
+printf 'mill:   packages = [%s]\n' "$packages"
