@@ -410,3 +410,27 @@ func statusText(status millv1.RunStatus) string {
 		return status.String()
 	}
 }
+
+var _ = Describe("Reconciliations", Label(testsupport.DBLabel), func() {
+	It("records a pass with its findings, under no lease, and lists the newest first", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		started := time.Date(2026, 9, 11, 9, 0, 0, 0, time.UTC)
+
+		Expect(l.store.RecordReconciliation(ctx, "mill@core", started, []store.ReconciliationFinding{
+			{Kind: "orphan", Name: "mill-x", Action: "stopped; run directory removed", Detail: "unit mill-machine@x.service"},
+			{Kind: "swept", Name: "mill-acceptance-x-0badcafe", Action: "archived (dagger offers no project delete)"},
+		})).To(Succeed())
+		Expect(l.store.RecordReconciliation(ctx, "mill@core", started.Add(time.Hour), nil)).To(Succeed(),
+			"a pass that found nothing is still a record")
+
+		passes, err := l.store.Reconciliations(ctx, 10)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(passes).To(HaveLen(2))
+		Expect(passes[0].StartedAt).To(BeTemporally("==", started.Add(time.Hour)))
+		Expect(passes[0].Findings).To(BeEmpty())
+		Expect(passes[1].WorkerRef).To(Equal("mill@core"))
+		Expect(passes[1].Findings).To(HaveLen(2))
+		Expect(passes[1].Findings[0].Name).To(Equal("mill-x"))
+		Expect(passes[1].Findings[1].Action).To(ContainSubstring("archived"))
+	}, SpecTimeout(time.Minute))
+})

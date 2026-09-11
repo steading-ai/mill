@@ -224,17 +224,26 @@ resume turns on it: the next worker reads the ledger, not the release reason
 ## What it leaves behind
 
 Cleanup is registered before the thing that needs cleaning up exists, so a
-failed or interrupted scenario still tears down what it made.
+failed or interrupted scenario still tears down what it made. What a kill
+skips, the worker sweeps: everything a suite makes outside its own process
+is named `mill-acceptance-<scenario>-<nonce>`, and a machine worker's
+reconciliation pass at start takes what carries that name, is older than the
+suite's budget (90 minutes, the suite's own timeout; `scratch-budget` in the
+worker's configuration) and belongs to no live run
+([sandbox.md](sandbox.md) §"External state", §"Reconciliation on resume").
+The pass is recorded in the ledger's `reconciliations` table and printed as
+the worker starts.
 
 | Made | Cleaned up | How |
 |---|---|---|
-| Scratch GitLab project | Deleted | `DELETE /projects/:id` at the end of the scenario |
+| Scratch GitLab project | Deleted | `DELETE /projects/:id` at the end of the scenario; a stale one, by the worker's sweep of `scratch-namespace` through the forge adapter |
 | The suite's own dagger | Removed | `dg serve` killed, its database dropped and its socket's directory removed at the end of the suite; the PostgreSQL container terminated after them. Nothing of it is on the host afterwards. |
-| Scratch dagger project | Archived | `dg project archive` at the end of the scenario. In the suite's own dagger this is a courtesy, since the instance goes with the suite. Against an external dagger it is the only cleanup there is: dagger has no delete, and archiving — read-only, every node out of every ready set — is as gone as dagger goes. |
+| Scratch dagger project | Archived | `dg project archive` at the end of the scenario; a stale one, by the worker's sweep of the dagger it is configured for. In the suite's own dagger this is a courtesy, since the instance goes with the suite. Against an external dagger it is the only cleanup there is: dagger has no delete, and archiving — read-only, every node out of every ready set — is as gone as dagger goes. The sweep calls delete when the service offers it, archives when it does not, and its report says which. |
+| A live suite's machines | Stopped, run directory removed | The worker's reconciliation: a `mill-*` machine with no live run is an orphan, whatever made it |
 | Workspaces, clones, step logs, bare local origins, the built binary | Removed | Temporary directories the suite owns |
 | `mill serve` | Killed | Its process group, at the end of the suite |
 | Rows in `MILL_ACCEPTANCE_DATABASE_URL` | **Kept** | The ledger is the record of the run and is worth reading after a failure |
-| Workflow versions a scenario derived | **Kept**, at project scope | A workflow is immutable and `mill workflow` has no unpush, so a derived definition is pushed into the scenario's own dagger project — where the next suite run's assessment cannot see it |
+| Workflow versions a scenario derived | **Kept**, at project scope | A workflow is immutable and `mill workflow` has no unpush, so a derived definition is pushed into the scenario's own dagger project — where the next suite run's assessment cannot see it. The suite refuses to push one anywhere else: `stageWorkflow` fails the scenario that asks for org scope |
 
 A `SIGKILL` to the suite itself skips all of it, with one exception that
 is the point of the suite's own dagger: its scratch projects are in a
@@ -244,7 +253,8 @@ operator's dagger; `dg project list` there is what it was before the run.
 What a kill does leave on this host is two orphaned servers — the suite's
 `dg serve` and its `mill serve`, each in a process group of its own so that
 a scenario's kill of a `mill run` cannot reach them — and the temporary
-directories. To clean up by hand:
+directories. Scratch projects on the forge, and in an external dagger, wait
+for the next worker start; to clean up by hand before then:
 
 ```sh
 # Scratch projects on the forge.
@@ -272,13 +282,15 @@ collides with a later one — with one exception, which is workflows. They are
 not named with a nonce, because a scenario that derives one is deriving a
 definition a deployment could plausibly have, and the assessment picks
 between them *by name*. So a derived definition goes in at project scope,
-where only the scenario that pushed it can resolve it. An org-scope
-definition this tree's `workflows/` does not hold is a leftover, and there
-is no verb to remove it: the store is a deployment's, and dropping the row
-is the operator's own `DELETE FROM workflows WHERE name = … AND scope =
-'org'`. *A feature is delivered through the gate* asserts the org scope is
-clean before it spends a session, so the failure names the leftover rather
-than the wrong workflow it caused to be chosen.
+where only the scenario that pushed it can resolve it, and the suite fails
+any scenario that tries to push one at org scope (*A suite's attempt to push
+a workflow at org scope fails the scenario that attempted it*). An org-scope
+definition this tree's `workflows/` does not hold is a leftover from before
+that guard, and there is no verb to remove it: the store is a deployment's,
+and dropping the row is the operator's own `DELETE FROM workflows WHERE name
+= … AND scope = 'org'`. *A feature is delivered through the gate* asserts
+the org scope is clean before it spends a session, so the failure names the
+leftover rather than the wrong workflow it caused to be chosen.
 
 ## When it fails
 

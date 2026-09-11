@@ -87,6 +87,26 @@ func (s *Service) RecordNotice(ctx context.Context, leaseID, runID, stepRunID, k
 	return s.store.RecordNotice(ctx, leaseID, runID, stepRunID, kind, gateRef, exitCode, detail)
 }
 
+// ReconciliationFinding is one line of a reconciliation pass, and
+// Reconciliation one recorded pass, as the store keeps them; named here so
+// the service layer, which may not reach the store, can hand them over.
+type (
+	ReconciliationFinding = store.ReconciliationFinding
+	ReconciliationPass    = store.ReconciliationPass
+)
+
+// RecordReconciliation appends what a worker's reconciliation pass found and
+// did at start. There is no run to transition and no lease to fence: it is
+// a record of the host.
+func (s *Service) RecordReconciliation(ctx context.Context, workerRef string, startedAt time.Time, findings []ReconciliationFinding) error {
+	return s.store.RecordReconciliation(ctx, workerRef, startedAt, findings)
+}
+
+// Reconciliations is the newest recorded passes, newest first.
+func (s *Service) Reconciliations(ctx context.Context, limit int) ([]ReconciliationPass, error) {
+	return s.store.Reconciliations(ctx, limit)
+}
+
 // RecordHeartbeat appends one heartbeat the harness sent a quiet session.
 // There is no transition to check: it records what the wait cost, not a
 // change to the run.

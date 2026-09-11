@@ -26,9 +26,12 @@ var readOnlyRPCs = map[string]bool{
 // nothing itself, and the principal making it is the connection's own uid.
 // Rerun is the same kind of act on a run no worker holds: the person says
 // the work from a step is to be redone, and the ledger is what says so.
+// RecordReconciliation is about no run at all: it is the record of what a
+// worker found on its host before it claimed anything.
 var leaselessRPCs = map[string]bool{
-	"Cancel": true,
-	"Rerun":  true,
+	"Cancel":               true,
+	"Rerun":                true,
+	"RecordReconciliation": true,
 }
 
 // wantedRPCs is exactly the surface docs/ledger.md's resume algorithm calls,
@@ -39,7 +42,7 @@ var wantedRPCs = []string{
 	"GetRunByNode", "CreateRun", "SetLease",
 	"StartStepRun", "RecordStepEnvironment", "MarkSessionStarted", "CloseStepRun", "FailStepRun",
 	"AbortOpenStepRuns", "SupersedeSteps",
-	"MarkWaiting", "Park", "RecordNotice", "RecordHeartbeat", "SetCompleteRequestId", "Done", "Fail", "Resume", "Abandon", "Cancel", "Rerun",
+	"MarkWaiting", "Park", "RecordNotice", "RecordHeartbeat", "RecordReconciliation", "SetCompleteRequestId", "Done", "Fail", "Resume", "Abandon", "Cancel", "Rerun",
 	"IssueStepToken", "RevokeStepToken",
 	"RecordUsage", "MarkUsagePosted",
 	"GetWorkflow", "ListWorkflows", "PutWorkflow", "PutSkill", "GetSkill",
@@ -74,8 +77,13 @@ var _ = Describe("store.proto", func() {
 		for name := range leaselessRPCs {
 			_, ok := c.lookup(name+"Request", "lease_id")
 			Expect(ok).To(BeFalse(), "%sRequest carries a lease it cannot be fenced by", name)
-			Expect(c.field(name+"Request", "run_id").comment).To(
-				ContainSubstring("carries no lease"), name)
+			// The explanation sits on the run the request names, or on the
+			// request itself when it names no run.
+			if runID, ok := c.lookup(name+"Request", "run_id"); ok {
+				Expect(runID.comment).To(ContainSubstring("carries no lease"), name)
+				continue
+			}
+			Expect(c.messages[name+"Request"]).To(ContainSubstring("no lease"), name)
 		}
 	})
 

@@ -298,6 +298,36 @@ type Forge interface {
 	DeleteBranch(ctx context.Context, branch string) error
 }
 
+// Scratch is a forge's scratch namespace: the group a suite makes its
+// throwaway projects in, named `mill-acceptance-<scenario>-<nonce>`, and
+// the verbs the worker's reconciliation sweep needs to take them out again
+// by name (docs/sandbox.md §"External state"). It is separate from [Forge],
+// which serves one repository; this serves the namespace those
+// repositories are made in, and only that namespace.
+type Scratch interface {
+	// Namespace is the group's path, for the report.
+	Namespace() string
+	// ListProjects is every project in the namespace, matched or not; the
+	// sweep decides which are stale.
+	ListProjects(ctx context.Context) ([]ScratchProject, error)
+	// DeleteProject removes one. A project the forge no longer has is the
+	// state asked for, not an error.
+	DeleteProject(ctx context.Context, project ScratchProject) error
+}
+
+// ScratchProject is one project in a scratch namespace.
+type ScratchProject struct {
+	// ID is the forge's own identifier, which a delete is addressed by.
+	ID string
+	// Name is the project's name, the last element of its path: what the
+	// sweep's pattern is matched against.
+	Name string
+	// Path is the full path, `<namespace>/<name>`.
+	Path string
+	// CreatedAt is when the forge made it.
+	CreatedAt time.Time
+}
+
 // The failures a caller distinguishes.
 var (
 	// ErrNoPullRequest is a branch with no pull request on the forge.

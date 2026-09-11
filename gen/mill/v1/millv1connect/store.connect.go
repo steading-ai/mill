@@ -83,6 +83,9 @@ const (
 	// StoreServiceRecordHeartbeatProcedure is the fully-qualified name of the StoreService's
 	// RecordHeartbeat RPC.
 	StoreServiceRecordHeartbeatProcedure = "/mill.v1.StoreService/RecordHeartbeat"
+	// StoreServiceRecordReconciliationProcedure is the fully-qualified name of the StoreService's
+	// RecordReconciliation RPC.
+	StoreServiceRecordReconciliationProcedure = "/mill.v1.StoreService/RecordReconciliation"
 	// StoreServiceSetCompleteRequestIdProcedure is the fully-qualified name of the StoreService's
 	// SetCompleteRequestId RPC.
 	StoreServiceSetCompleteRequestIdProcedure = "/mill.v1.StoreService/SetCompleteRequestId"
@@ -191,6 +194,14 @@ type StoreServiceClient interface {
 	// no run state: the row of the audit trail is the whole record, and
 	// `mill inspect` counts the rows to say what an attempt's wait cost.
 	RecordHeartbeat(context.Context, *connect.Request[v1.RecordHeartbeatRequest]) (*connect.Response[v1.RecordHeartbeatResponse], error)
+	// RecordReconciliation appends what one reconciliation pass found and did
+	// at worker start: the machines it told from the ledger's live runs —
+	// orphans stopped, lost sandboxes noted, slices reaped for resume — the
+	// leftovers it removed, and the scratch projects it swept by name
+	// (docs/sandbox.md §Reconciliation, §"External state"). It is a record of
+	// the host, not of a run: no lease fences it, because the pass runs before
+	// the worker holds one.
+	RecordReconciliation(context.Context, *connect.Request[v1.RecordReconciliationRequest]) (*connect.Response[v1.RecordReconciliationResponse], error)
 	// SetCompleteRequestId mints and stores the idempotency key of the patch
 	// that completes the node, before that patch is sent. Minting is once per
 	// run: a second call returns the key already stored, so a worker resuming
@@ -369,6 +380,12 @@ func NewStoreServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(storeServiceMethods.ByName("RecordHeartbeat")),
 			connect.WithClientOptions(opts...),
 		),
+		recordReconciliation: connect.NewClient[v1.RecordReconciliationRequest, v1.RecordReconciliationResponse](
+			httpClient,
+			baseURL+StoreServiceRecordReconciliationProcedure,
+			connect.WithSchema(storeServiceMethods.ByName("RecordReconciliation")),
+			connect.WithClientOptions(opts...),
+		),
 		setCompleteRequestId: connect.NewClient[v1.SetCompleteRequestIdRequest, v1.SetCompleteRequestIdResponse](
 			httpClient,
 			baseURL+StoreServiceSetCompleteRequestIdProcedure,
@@ -520,6 +537,7 @@ type storeServiceClient struct {
 	park                  *connect.Client[v1.ParkRequest, v1.ParkResponse]
 	recordNotice          *connect.Client[v1.RecordNoticeRequest, v1.RecordNoticeResponse]
 	recordHeartbeat       *connect.Client[v1.RecordHeartbeatRequest, v1.RecordHeartbeatResponse]
+	recordReconciliation  *connect.Client[v1.RecordReconciliationRequest, v1.RecordReconciliationResponse]
 	setCompleteRequestId  *connect.Client[v1.SetCompleteRequestIdRequest, v1.SetCompleteRequestIdResponse]
 	done                  *connect.Client[v1.DoneRequest, v1.DoneResponse]
 	fail                  *connect.Client[v1.FailRequest, v1.FailResponse]
@@ -612,6 +630,11 @@ func (c *storeServiceClient) RecordNotice(ctx context.Context, req *connect.Requ
 // RecordHeartbeat calls mill.v1.StoreService.RecordHeartbeat.
 func (c *storeServiceClient) RecordHeartbeat(ctx context.Context, req *connect.Request[v1.RecordHeartbeatRequest]) (*connect.Response[v1.RecordHeartbeatResponse], error) {
 	return c.recordHeartbeat.CallUnary(ctx, req)
+}
+
+// RecordReconciliation calls mill.v1.StoreService.RecordReconciliation.
+func (c *storeServiceClient) RecordReconciliation(ctx context.Context, req *connect.Request[v1.RecordReconciliationRequest]) (*connect.Response[v1.RecordReconciliationResponse], error) {
+	return c.recordReconciliation.CallUnary(ctx, req)
 }
 
 // SetCompleteRequestId calls mill.v1.StoreService.SetCompleteRequestId.
@@ -778,6 +801,14 @@ type StoreServiceHandler interface {
 	// no run state: the row of the audit trail is the whole record, and
 	// `mill inspect` counts the rows to say what an attempt's wait cost.
 	RecordHeartbeat(context.Context, *connect.Request[v1.RecordHeartbeatRequest]) (*connect.Response[v1.RecordHeartbeatResponse], error)
+	// RecordReconciliation appends what one reconciliation pass found and did
+	// at worker start: the machines it told from the ledger's live runs —
+	// orphans stopped, lost sandboxes noted, slices reaped for resume — the
+	// leftovers it removed, and the scratch projects it swept by name
+	// (docs/sandbox.md §Reconciliation, §"External state"). It is a record of
+	// the host, not of a run: no lease fences it, because the pass runs before
+	// the worker holds one.
+	RecordReconciliation(context.Context, *connect.Request[v1.RecordReconciliationRequest]) (*connect.Response[v1.RecordReconciliationResponse], error)
 	// SetCompleteRequestId mints and stores the idempotency key of the patch
 	// that completes the node, before that patch is sent. Minting is once per
 	// run: a second call returns the key already stored, so a worker resuming
@@ -952,6 +983,12 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(storeServiceMethods.ByName("RecordHeartbeat")),
 		connect.WithHandlerOptions(opts...),
 	)
+	storeServiceRecordReconciliationHandler := connect.NewUnaryHandler(
+		StoreServiceRecordReconciliationProcedure,
+		svc.RecordReconciliation,
+		connect.WithSchema(storeServiceMethods.ByName("RecordReconciliation")),
+		connect.WithHandlerOptions(opts...),
+	)
 	storeServiceSetCompleteRequestIdHandler := connect.NewUnaryHandler(
 		StoreServiceSetCompleteRequestIdProcedure,
 		svc.SetCompleteRequestId,
@@ -1114,6 +1151,8 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 			storeServiceRecordNoticeHandler.ServeHTTP(w, r)
 		case StoreServiceRecordHeartbeatProcedure:
 			storeServiceRecordHeartbeatHandler.ServeHTTP(w, r)
+		case StoreServiceRecordReconciliationProcedure:
+			storeServiceRecordReconciliationHandler.ServeHTTP(w, r)
 		case StoreServiceSetCompleteRequestIdProcedure:
 			storeServiceSetCompleteRequestIdHandler.ServeHTTP(w, r)
 		case StoreServiceDoneProcedure:
@@ -1221,6 +1260,10 @@ func (UnimplementedStoreServiceHandler) RecordNotice(context.Context, *connect.R
 
 func (UnimplementedStoreServiceHandler) RecordHeartbeat(context.Context, *connect.Request[v1.RecordHeartbeatRequest]) (*connect.Response[v1.RecordHeartbeatResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.RecordHeartbeat is not implemented"))
+}
+
+func (UnimplementedStoreServiceHandler) RecordReconciliation(context.Context, *connect.Request[v1.RecordReconciliationRequest]) (*connect.Response[v1.RecordReconciliationResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.RecordReconciliation is not implemented"))
 }
 
 func (UnimplementedStoreServiceHandler) SetCompleteRequestId(context.Context, *connect.Request[v1.SetCompleteRequestIdRequest]) (*connect.Response[v1.SetCompleteRequestIdResponse], error) {

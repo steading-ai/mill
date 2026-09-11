@@ -27,6 +27,14 @@ type Evidence struct {
 	VerifiedAt time.Time
 }
 
+type Reconciliation struct {
+	ID         string
+	WorkerRef  string
+	StartedAt  time.Time
+	Findings   []byte
+	RecordedAt time.Time
+}
+
 type Run struct {
 	ID                string
 	NodeID            string

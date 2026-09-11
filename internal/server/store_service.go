@@ -171,6 +171,25 @@ func (s *StoreService) RecordNotice(ctx context.Context, req *connect.Request[mi
 	return connect.NewResponse(&millv1.RecordNoticeResponse{}), nil
 }
 
+// RecordReconciliation appends what a worker's reconciliation pass found
+// and did at start.
+func (s *StoreService) RecordReconciliation(ctx context.Context, req *connect.Request[millv1.RecordReconciliationRequest]) (*connect.Response[millv1.RecordReconciliationResponse], error) {
+	findings := make([]domain.ReconciliationFinding, 0, len(req.Msg.GetFindings()))
+	for _, finding := range req.Msg.GetFindings() {
+		findings = append(findings, domain.ReconciliationFinding{
+			Kind: finding.GetKind(), Name: finding.GetName(), Action: finding.GetAction(), Detail: finding.GetDetail(),
+		})
+	}
+	startedAt := time.Now()
+	if req.Msg.GetStartedAt() != nil {
+		startedAt = req.Msg.GetStartedAt().AsTime()
+	}
+	if err := s.svc.RecordReconciliation(ctx, req.Msg.GetWorkerRef(), startedAt, findings); err != nil {
+		return nil, connectError(err)
+	}
+	return connect.NewResponse(&millv1.RecordReconciliationResponse{}), nil
+}
+
 // RecordHeartbeat appends one heartbeat the harness sent a quiet session.
 func (s *StoreService) RecordHeartbeat(ctx context.Context, req *connect.Request[millv1.RecordHeartbeatRequest]) (*connect.Response[millv1.RecordHeartbeatResponse], error) {
 	if err := s.svc.RecordHeartbeat(ctx, req.Msg.GetLeaseId(), req.Msg.GetRunId(), req.Msg.GetStepRunId(),

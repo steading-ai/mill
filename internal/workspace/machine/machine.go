@@ -108,8 +108,10 @@ var ErrExists = errors.New("machine: run directory already exists")
 
 // ErrLostSandbox is Attach for a run whose machine machined no longer
 // knows: the run fails with that as evidence and nothing resumes into a
-// fresh machine (docs/sandbox.md §Reconciliation).
-var ErrLostSandbox = errors.New("machine: lost sandbox")
+// fresh machine (docs/sandbox.md §Reconciliation). It is the workspace
+// package's error, so the run loop tells a lost sandbox from any other
+// failure to open a workspace without knowing which backend it has.
+var ErrLostSandbox = workspace.ErrLostSandbox
 
 // ErrStillRegistered is a machine machined still lists after a stop and a
 // terminate. A run is not finished while its machine is registered
@@ -201,6 +203,9 @@ type Config struct {
 	// StopTimeout bounds the machine unit's stop; [DefaultStopTimeout]
 	// when zero.
 	StopTimeout time.Duration
+	// ScratchBudget is how old a scratch project must be before
+	// reconciliation sweeps it; [DefaultScratchBudget] when zero.
+	ScratchBudget time.Duration
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
 }
@@ -249,6 +254,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.StopTimeout <= 0 {
 		c.StopTimeout = DefaultStopTimeout
+	}
+	if c.ScratchBudget <= 0 {
+		c.ScratchBudget = DefaultScratchBudget
 	}
 	if c.Now == nil {
 		c.Now = time.Now
@@ -324,6 +332,9 @@ type Workspace struct {
 	// cleared by EndStep. An exec with none is refused: nothing would reap
 	// what it spawns (docs/sandbox.md §Exec).
 	slice string
+	// recreate is the ordinal of the slice Attach stopped, which the next
+	// BeginStep recreates; zero when there is none.
+	recreate int
 }
 
 // New returns a workspace for one run, reaching the host through host.
@@ -349,9 +360,15 @@ func New(host driver.Driver, c Config) *Workspace {
 }
 
 // Attach reopens the workspace of a run this host already has a machine
-// for: the record is read, machined is asked for the machine, and the
-// socket is started again. A machine machined no longer knows is
-// [ErrLostSandbox]; nothing boots a fresh one for a run that had one.
+// for: the record is read, machined is asked for the machine, the step
+// slice a previous worker left in flight is stopped, and the socket is
+// started again. A machine machined no longer knows is [ErrLostSandbox];
+// nothing boots a fresh one for a run that had one.
+//
+// The slice is stopped because whatever was running in it when the worker
+// died is not trusted to still be the step; the next BeginStep recreates
+// it under the same ordinal, which [Workspace.NextOrdinal] reports
+// (docs/sandbox.md §Reconciliation).
 func (w *Workspace) Attach(ctx context.Context, spec workspace.Spec) (*workspace.Handle, error) {
 	id, err := IDFor(spec.RunID)
 	if err != nil {
@@ -370,6 +387,19 @@ func (w *Workspace) Attach(ctx context.Context, spec workspace.Spec) (*workspace
 	}
 	if shown.State != driver.StateRunning {
 		return nil, fmt.Errorf("%w: %s is %s, not running", ErrLostSandbox, record.Machine, shown.State)
+	}
+	if record.Slice != "" {
+		if err := w.host.StopUnit(ctx, record.Machine, record.Slice); err != nil {
+			return nil, fmt.Errorf("machine: attach %s: stop %s left in flight: %w", spec.RunID, record.Slice, err)
+		}
+		w.logf("stopped %s left in flight in %s; the step resumes in a fresh slice", record.Slice, record.Machine)
+		record.Slice = ""
+		if err := writeRecord(w.config.runDir(id), record); err != nil {
+			return nil, err
+		}
+		w.mu.Lock()
+		w.recreate = record.Ordinal
+		w.mu.Unlock()
 	}
 	return w.open(&record, spec)
 }
@@ -637,4 +667,5 @@ var (
 	_ workspace.Workspace      = (*Workspace)(nil)
 	_ workspace.CacheCandidate = (*Workspace)(nil)
 	_ workspace.StepBoundary   = (*Workspace)(nil)
+	_ workspace.StepResumer    = (*Workspace)(nil)
 )

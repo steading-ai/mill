@@ -203,8 +203,26 @@ func newWorker(cmd *cobra.Command, opts *workOptions) (*run.Worker, error) {
 		}
 		runners = append(runners, runner)
 	}
+	// What precedes the first claim: the machine backend's reconciliation
+	// of the host against the ledger, then eviction (docs/sandbox.md
+	// §Reconciliation). The sweep it runs reaches the first project's
+	// dagger, which is the configured one; a dagger's projects are the
+	// principal's, not the project's, so one client sees them all.
+	kind, err := workspace.ParseKind(opts.run.workspace)
+	if err != nil {
+		return nil, fmt.Errorf("mill work: --workspace: %w", err)
+	}
+	worker, err := workerRef()
+	if err != nil {
+		return nil, err
+	}
+	startup, err := workerStartup(kind, opts.run, projects[0], worker, cmd.OutOrStdout())
+	if err != nil {
+		return nil, err
+	}
 	return run.NewWorker(run.WorkerOptions{
 		Runners:     runners,
+		Startup:     startup,
 		Labels:      opts.labels,
 		Concurrency: opts.concurrency,
 		Wait:        opts.wait,

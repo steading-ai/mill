@@ -466,6 +466,14 @@ func (r *Runner) openRun(ctx context.Context, s *state) error {
 		// done run on it is Invariant 11 violated. Park rather than guess.
 		return fmt.Errorf("%w: run %s is done but %s is open", ErrRefused, run.GetId(), s.node.GetReference())
 
+	case run.GetStatus() == millv1.RunStatus_RUN_STATUS_FAILED:
+		// A failed run is terminal to the loop: nothing mill does on its
+		// own leaves it (docs/domain-model.md §"Run states"). A lost
+		// sandbox leaves one on an open node, and a claim on that node is
+		// refused rather than driven, until a person reruns or restarts.
+		return fmt.Errorf("%w: run %s of %s failed; `mill restart` starts the next generation, `mill rerun` reopens this one",
+			ErrRefused, run.GetId(), s.node.GetReference())
+
 	default:
 		// The circuit breaker parked this run and a human has been asked
 		// what to do. Whether they answered is read after the workflow is
@@ -532,14 +540,57 @@ func (r *Runner) openWorkspace(ctx context.Context, s *state) error {
 		Ref:     ref,
 		Egress:  r.options.Egress,
 	})
+	if errors.Is(err, workspace.ErrLostSandbox) {
+		return r.lostSandbox(ctx, s, err)
+	}
 	if err != nil {
 		return fmt.Errorf("run %s: workspace: %w", s.run.GetId(), err)
 	}
 	s.workspace = ws
 	if boundary, ok := ws.(workspace.StepBoundary); ok {
 		s.boundary = boundary
+		if resumer, ok := ws.(workspace.StepResumer); ok {
+			// The count continues from the workspace's: a slice a dead
+			// worker left in flight is recreated under its own ordinal.
+			s.ordinal = resumer.NextOrdinal() - 1
+		}
 	}
 	return nil
+}
+
+// lostSandbox ends a run whose machine is gone: the ledger says the run is
+// live, this host made a machine for it, and the machine is no longer
+// registered. The run fails with that as evidence — the machine's name and
+// the ledger's step — and nothing boots a fresh machine for it, because the
+// workspace's state was the machine's and is not the ledger's to
+// reconstruct (docs/sandbox.md §Reconciliation, §"Failure modes").
+//
+// The node is held in dagger under the same reason, so it leaves the ready
+// set rather than being claimed again into the same refusal, and the person
+// who restarts it finds why on the node. Then the lease is released.
+func (r *Runner) lostSandbox(ctx context.Context, s *state, cause error) error {
+	detail, err := call(ctx, r.options.Store.Inspect, &millv1.InspectRequest{Id: s.run.GetId()})
+	if err != nil {
+		return err
+	}
+	step := detail.GetSummary().GetCurrentStep()
+	if step == "" {
+		step = "(selecting)"
+	}
+	reason := fmt.Sprintf("lost sandbox: %v; the ledger's step is %s", cause, step)
+	if _, err := call(ctx, r.options.Store.Fail, &millv1.FailRequest{
+		LeaseId: s.lease,
+		RunId:   s.run.GetId(),
+		Reason:  reason,
+	}); err != nil {
+		return err
+	}
+	if err := r.options.Dagger.Hold(ctx, dagger.RequestID(s.run.GetId(), "lost-sandbox", s.run.GetGeneration()),
+		s.lease, s.node.GetReference(), reason); err != nil {
+		r.options.Log.Warn("holding the node of a lost sandbox", "node", s.node.GetReference(), "error", err)
+	}
+	r.printf("%s: run %s failed: %s\n", s.node.GetReference(), s.run.GetId(), reason)
+	return fmt.Errorf("run %s: %w", s.run.GetId(), cause)
 }
 
 // runByNode reads the live run on a node, or nil.

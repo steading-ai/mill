@@ -53,6 +53,13 @@ type Record struct {
 	// (docs/sandbox.md §Destroy).
 	CreatedAt time.Time `json:"created_at"`
 	ReadyAt   time.Time `json:"ready_at,omitempty"`
+	// Slice is the step slice in flight, `mill-step-<ordinal>.slice`, and
+	// Ordinal its number: written by BeginStep, cleared by EndStep. A
+	// worker that attaches finds the slice a dead worker left running,
+	// stops it, and recreates it under the same ordinal (docs/sandbox.md
+	// §Reconciliation). Ordinal outlives the slice so the count continues.
+	Slice   string `json:"slice,omitempty"`
+	Ordinal int    `json:"ordinal,omitempty"`
 }
 
 // Ready reports whether the machine reached ready.

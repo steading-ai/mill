@@ -517,6 +517,91 @@ var _ = Describe("A machine on a real host", Label("live"), Serial, Ordered, fun
 		active, _, _ := host("sudo", "-n", "systemctl", "--machine="+name, "is-active", "mill-step-1.slice")
 		Expect(strings.TrimSpace(active)).NotTo(Equal("active"))
 	})
+
+	// Scenario: An orphan machine is stopped and its run directory removed
+	It("An orphan machine is stopped and its run directory removed", func(ctx context.Context) {
+		id := "acceptance-orphan-" + nonce
+		DeferCleanup(func() { sweep(id) })
+		name := "mill-" + id
+
+		By("given a registered machine with no live run")
+		_, err := machine.New(real, config).Create(ctx, workspace.Spec{RunID: id, NodeRef: "mill#63"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(must("machinectl", "list", "--no-legend")).To(ContainSubstring(name))
+		ledger := &fakeLedger{}
+
+		By("when the worker starts")
+		report, err := machine.NewReconciler(real, config).Reconcile(ctx, ledger)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("then the machine is gone and its run directory is deleted")
+		Expect(must("machinectl", "list", "--no-legend")).NotTo(ContainSubstring(name))
+		active, _, _ := host("systemctl", "is-active", "mill-machine@"+id+".service")
+		Expect(strings.TrimSpace(active)).NotTo(Equal("active"))
+		Expect(filepath.Join(liveRoot, "runs", id)).NotTo(BeADirectory())
+		Expect(filepath.Join(liveRunState, id)).NotTo(BeADirectory())
+
+		By("and the reconciliation is recorded")
+		Expect(ledger.recorded()).NotTo(BeNil())
+		orphans := report.Of(machine.FindingOrphan)
+		Expect(orphans).To(HaveLen(1))
+		Expect(orphans[0].Name).To(Equal(name))
+		Expect(orphans[0].Action).To(Equal("stopped; run directory removed"))
+	})
+
+	// Scenario: A live run resumes at its step with a fresh slice
+	It("A live run resumes at its step with a fresh slice", func(ctx context.Context) {
+		id := "acceptance-resume-" + nonce
+		DeferCleanup(func() { sweep(id) })
+		name := "mill-" + id
+		first := machine.New(real, config)
+		_, err := first.Create(ctx, workspace.Spec{RunID: id, NodeRef: "mill#63"})
+		Expect(err).NotTo(HaveOccurred())
+
+		By("given a live run at step 2 with a process still in its slice")
+		Expect(first.BeginStep(ctx, 1)).To(Succeed())
+		Expect(first.EndStep(ctx, 1, false)).To(Succeed())
+		Expect(first.BeginStep(ctx, 2)).To(Succeed())
+		lingering, err := first.Exec(ctx, workspace.Command{Path: "/bin/sh", Args: []string{"-c", "sleep 3600"}})
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func() string {
+			out, _ := inMachine(name, "", "sh", "-c", "pgrep -x sleep || echo none")
+			return strings.TrimSpace(out)
+		}, 20*time.Second, 200*time.Millisecond).ShouldNot(Equal("none"), "the process is in the slice")
+		// The worker dies here: its context ends, but nothing ends the
+		// step, and the exec's own cancellation stop is what a dead worker
+		// never issues.
+		ledger := &fakeLedger{live: []machine.LiveRun{{RunID: id, NodeRef: "mill#63", Step: "implement"}}}
+
+		By("when the worker starts")
+		report, err := machine.NewReconciler(real, config).Reconcile(ctx, ledger)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("then the slice is stopped")
+		resumable := report.Of(machine.FindingResumable)
+		Expect(resumable).To(HaveLen(1))
+		Expect(resumable[0].Action).To(Equal("stopped mill-step-2.slice"))
+		Eventually(func() string {
+			out, _ := inMachine(name, "", "sh", "-c", "pgrep -x sleep || echo none")
+			return strings.TrimSpace(out)
+		}, 20*time.Second, 200*time.Millisecond).Should(Equal("none"), "nothing of the step survives")
+		Expect(must("machinectl", "list", "--no-legend")).To(ContainSubstring(name), "the machine itself is untouched")
+		_, _, _ = drainProcess(lingering)
+
+		By("and recreated, and the run resumes at step 2")
+		second := machine.New(real, config)
+		_, err = second.Attach(ctx, workspace.Spec{RunID: id, NodeRef: "mill#63"})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func(ctx context.Context) { Expect(second.Destroy(ctx)).To(Succeed()) })
+		Expect(second.NextOrdinal()).To(Equal(2))
+		Expect(second.BeginStep(ctx, 2)).To(Succeed())
+		fresh, err := second.Exec(ctx, workspace.Command{Path: "/bin/sh", Args: []string{"-c", "cat /proc/self/cgroup"}})
+		Expect(err).NotTo(HaveOccurred())
+		out, stderr, res := drainProcess(fresh)
+		Expect(res.Status).To(BeEquivalentTo(0), stderr)
+		Expect(out).To(ContainSubstring("mill-step-2.slice"), "the fresh slice carries the same ordinal")
+		Expect(second.EndStep(ctx, 2, false)).To(Succeed())
+	})
 })
 
 func contains(list []string, want string) bool {

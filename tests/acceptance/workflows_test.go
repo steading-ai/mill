@@ -137,6 +137,7 @@ func stageWorkflow(ctx context.Context, definition map[string]any, push ...strin
 	GinkgoHelper()
 	name, _ := definition["name"].(string)
 	Expect(name).NotTo(BeEmpty(), "the derived definition has a name")
+	requireProjectScope(push)
 
 	source := workflowDir("feature")
 	root := filepath.Join(GinkgoT().TempDir(), "workflows")
@@ -158,6 +159,26 @@ func stageWorkflow(ctx context.Context, definition map[string]any, push ...strin
 	pushed.Stdout, pushed.Stderr = GinkgoWriter, GinkgoWriter
 	Expect(pushed.Run()).To(Succeed(), "mill workflow push %s", name)
 	return dir
+}
+
+// requireProjectScope is the guard on every push a suite makes: a derived
+// definition goes into the scenario's own scratch project and nowhere else,
+// so a sweep of the project takes the definition with it and no later
+// assessment — in this suite run or any after it — can pick it
+// (docs/sandbox.md §"External state"). An attempt to push at org scope, or
+// at no scope at all, fails the scenario that attempted it before anything
+// reaches the store.
+func requireProjectScope(push []string) {
+	GinkgoHelper()
+	scope := ""
+	for i, arg := range push {
+		if arg == "--scope" && i+1 < len(push) {
+			scope = push[i+1]
+		}
+	}
+	Expect(scope).To(Equal("project"),
+		"a suite pushes a derived workflow at project scope only; an org-scope definition outlives the "+
+			"scratch project and every later assessment gets to pick it (mill#34)")
 }
 
 // talksToForge reports whether a step's evidence is a fact only a forge can

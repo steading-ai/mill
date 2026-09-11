@@ -47,6 +47,23 @@ const (
 // the process exits non-zero even though the operator asked for it.
 var ErrKilled = errors.New("work: killed; sessions were stopped mid-step")
 
+// Startup is what a worker does to its host before it claims anything, in
+// this order: reconcile, then evict (docs/sandbox.md §Reconciliation,
+// §Eviction). The machine backend implements it — machines against the
+// ledger's live runs, leftovers, the scratch sweeps, then the caches and
+// images eviction ranks — and the local backend has nothing to do at start.
+//
+// A reconciliation that cannot run stops the worker before its first claim:
+// a host whose machines cannot be told from its live runs is not one to
+// start runs on. An eviction that fails is logged and the worker goes on,
+// because a cache that was not evicted is a cache that is still there.
+type Startup interface {
+	// Reconcile is the pass over the host, recorded in the ledger.
+	Reconcile(ctx context.Context) error
+	// Evict runs eviction, after reconciliation.
+	Evict(ctx context.Context) error
+}
+
 // WorkerOptions is everything a worker is built from.
 type WorkerOptions struct {
 	// Runners is one runner per project the worker claims from, polled in
@@ -54,6 +71,9 @@ type WorkerOptions struct {
 	// scoped to one project, so "which projects" and "which runners" are
 	// the same list.
 	Runners []*Runner
+	// Startup is run once, before the first claim. Nil does nothing at
+	// start, which is the local backend.
+	Startup Startup
 	// Labels is the label filter every claim carries. A node must hold all
 	// of them. Empty claims any node of the project.
 	Labels []string
@@ -120,6 +140,9 @@ func (w *Worker) Stop() {
 // ctx is the kill: cancelling it does not ask, it ends the sessions in
 // flight and returns [ErrKilled]. The graceful stop is [Worker.Stop].
 func (w *Worker) Run(ctx context.Context) error {
+	if err := w.start(ctx); err != nil {
+		return err
+	}
 	var wg sync.WaitGroup
 	err := w.claim(ctx, &wg)
 	wg.Wait()
@@ -127,6 +150,22 @@ func (w *Worker) Run(ctx context.Context) error {
 		return ErrKilled
 	}
 	return err
+}
+
+// start is what precedes the first claim: reconciliation, then eviction,
+// in that order and both before any lease is taken (docs/sandbox.md
+// §Reconciliation).
+func (w *Worker) start(ctx context.Context) error {
+	if w.options.Startup == nil {
+		return nil
+	}
+	if err := w.options.Startup.Reconcile(ctx); err != nil {
+		return fmt.Errorf("work: reconcile before claiming: %w", err)
+	}
+	if err := w.options.Startup.Evict(ctx); err != nil {
+		w.options.Log.Warn("eviction at start", "error", err)
+	}
+	return nil
 }
 
 // claim is the loop itself: a slot, a claim, a run, repeat.

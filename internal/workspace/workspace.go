@@ -578,6 +578,27 @@ type StepBoundary interface {
 	EndStep(ctx context.Context, ordinal int, closedOnEvidence bool) error
 }
 
+// StepResumer is a [StepBoundary] that remembers which step slice was in
+// flight when a previous worker left the run: on attach, that slice is
+// stopped — whatever was running in it is not trusted to still be the step
+// — and the next BeginStep recreates it under the same ordinal, so the run
+// resumes at the ledger's step in a fresh slice of the same name
+// (docs/sandbox.md §Reconciliation). The run loop asks it once, after the
+// workspace is opened, for the ordinal its count continues from.
+type StepResumer interface {
+	// NextOrdinal is the ordinal the next BeginStep should carry: 1 for a
+	// workspace no step has begun in, and the reaped slice's own ordinal
+	// for one attached mid-step.
+	NextOrdinal() int
+}
+
+// ErrLostSandbox is a run whose sandbox is gone: the ledger says the run
+// is live and this host once made a machine for it, but the machine is no
+// longer registered. The run fails with this as evidence and nothing boots
+// a fresh machine for it, because the workspace's state was the machine's
+// and is not the ledger's to reconstruct (docs/sandbox.md §Reconciliation).
+var ErrLostSandbox = errors.New("workspace: lost sandbox")
+
 // BranchFor is the run's working branch, derived from the node ref: `mill/`
 // and the ref with everything git forbids in a branch name replaced. A node
 // ref of `mill#12` becomes `mill/mill-12`. A node ref with nothing usable in

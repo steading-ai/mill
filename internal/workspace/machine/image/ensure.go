@@ -214,7 +214,7 @@ func (s *Store) lock(ctx context.Context, digest Digest) (func(), error) {
 	if err := os.MkdirAll(s.dir(), 0o750); err != nil {
 		return nil, fmt.Errorf("image: %w", err)
 	}
-	path := filepath.Join(s.dir(), string(digest)+".lock")
+	path := filepath.Join(s.dir(), string(digest)+lockSuffix)
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o640) //nolint:gosec // the lock file is the worker's own
 	if err != nil {
 		return nil, fmt.Errorf("image: %w", err)

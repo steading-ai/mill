@@ -1,0 +1,20 @@
+[
+  {
+    "id": 4711,
+    "name": "mill-acceptance-quick-fix-0badcafe",
+    "path": "mill-acceptance-quick-fix-0badcafe",
+    "path_with_namespace": "mill/scratch/mill-acceptance-quick-fix-0badcafe",
+    "created_at": "2026-09-09T08:15:00.000Z",
+    "default_branch": "main",
+    "visibility": "private"
+  },
+  {
+    "id": 4712,
+    "name": "homestead",
+    "path": "homestead",
+    "path_with_namespace": "mill/scratch/homestead",
+    "created_at": "2025-01-01T00:00:00.000Z",
+    "default_branch": "main",
+    "visibility": "private"
+  }
+]

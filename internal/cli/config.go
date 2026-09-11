@@ -75,8 +75,15 @@ type Config struct {
 	Proxy       string   `yaml:"proxy"`
 	NoProxy     string   `yaml:"no-proxy"`
 	Nested      []string `yaml:"nested"`
-	LogDir      string   `yaml:"log-dir"`
-	EnvMode     string   `yaml:"env_mode"`
+	// The reconciliation sweep (docs/sandbox.md §"External state"): the
+	// forge group the acceptance suite makes its scratch projects in, by
+	// path or numeric id, and how old a scratch project must be before the
+	// worker sweeps it. An empty namespace sweeps no forge; the budget
+	// defaults to the suite's own timeout.
+	ScratchNamespace string `yaml:"scratch-namespace"`
+	ScratchBudget    string `yaml:"scratch-budget"`
+	LogDir           string `yaml:"log-dir"`
+	EnvMode          string `yaml:"env_mode"`
 	// NotifyCommand is spelled the way env_mode is, for the same reason: a
 	// deployment sets it, and a deployment spells it with an underscore.
 	NotifyCommand string `yaml:"notify_command"`

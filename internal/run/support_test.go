@@ -19,6 +19,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"google.golang.org/protobuf/proto"
@@ -62,7 +63,10 @@ const workflowDir = "../../workflows/quick-fix"
 
 // fixture is one spec's whole world.
 type fixture struct {
-	dagger    *testsupport.Dagger
+	dagger *testsupport.Dagger
+	// db is the ledger's own database, for the one read the store's API
+	// does not offer.
+	db        *pgxpool.Pool
 	client    *dagger.Client
 	graph     daggerv1connect.GraphServiceClient
 	store     millv1connect.StoreServiceClient
@@ -171,8 +175,9 @@ func start(ctx context.Context) *fixture {
 	}))
 	Expect(err).NotTo(HaveOccurred())
 
+	f.db = pg.Database(ctx)
 	srv := server.New(server.Config{Logger: slog.New(slog.NewTextHandler(GinkgoWriter, nil))},
-		server.NewStoreService(domain.New(pg.Database(ctx))))
+		server.NewStoreService(domain.New(f.db)))
 	ts := httptest.NewServer(srv.Handler())
 	DeferCleanup(ts.Close)
 	f.store = millv1connect.NewStoreServiceClient(ts.Client(), ts.URL)

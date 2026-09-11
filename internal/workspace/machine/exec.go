@@ -147,14 +147,39 @@ func execUnit() string {
 // `mill-step-<ordinal>.slice`. The previous step's slice has already
 // reported inactive, because [EndStep] waited for it before returning
 // (docs/sandbox.md §"Step boundary").
+//
+// The slice and its ordinal are written to the run's record before any exec
+// runs under it, so a worker that attaches after this one dies knows which
+// slice to stop and which ordinal to recreate (docs/sandbox.md
+// §Reconciliation).
 func (w *Workspace) BeginStep(_ context.Context, ordinal int) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.record == nil {
 		return ErrNotCreated
 	}
-	w.slice = StepSlice(ordinal)
+	slice := StepSlice(ordinal)
+	w.record.Slice, w.record.Ordinal = slice, ordinal
+	if err := writeRecord(w.config.runDir(w.record.ID), *w.record); err != nil {
+		return err
+	}
+	w.slice, w.recreate = slice, 0
 	return nil
+}
+
+// NextOrdinal is the ordinal the next BeginStep carries: the ordinal of the
+// slice Attach found in flight and stopped, so that slice is recreated
+// under its own name; otherwise one past the last step begun here.
+func (w *Workspace) NextOrdinal() int {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if w.recreate != 0 {
+		return w.recreate
+	}
+	if w.record == nil {
+		return 1
+	}
+	return w.record.Ordinal + 1
 }
 
 // EndStep ends the step: it takes the promotion candidate when the step
@@ -170,6 +195,12 @@ func (w *Workspace) EndStep(ctx context.Context, ordinal int, closedOnEvidence b
 	record := w.record
 	slice := StepSlice(ordinal)
 	w.slice = ""
+	if record != nil {
+		record.Slice = ""
+		if err := writeRecord(w.config.runDir(record.ID), *record); err != nil {
+			w.logf("recording the end of step %d: %v", ordinal, err)
+		}
+	}
 	w.mu.Unlock()
 	if record == nil {
 		return ErrNotCreated

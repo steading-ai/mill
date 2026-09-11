@@ -160,6 +160,10 @@ One row per turn, per model, as the adapter reports — a turn that bills two mo
 | `state` | `live`, `retained`, `destroyed` |
 | `created_at`, `destroyed_at` | |
 
+### `reconciliations`
+
+One row per pass a worker ran at start, before its first claim (`docs/sandbox.md` §Reconciliation): the worker, when the pass began, and its findings as `[{kind, name, action, detail}]` — orphans stopped, lost sandboxes noted, slices reaped for resume, leftovers removed, scratch projects swept, failures. A record of the host rather than of a run: an orphan machine has no live run to hang an event on, so it is its own table and no lease fences it. Append-only.
+
 ### `events`
 
 Append-only. Every change to `runs.status`, every step run start and close, every token issue and revoke, every gate filed and every auto-approval, and every attempt to carry a filed gate to a person (`notified`: the kind, the gate, the notify command's exit status and its diagnostic). Fields: `id` (ULID), `run_id`, `step_run_id` (nullable), `op`, `before`, `after`, `worker_ref`, `occurred_at`. This is the audit trail and what `mill status --history` reads. It is not a change stream for consumers; nothing subscribes to it.
@@ -300,7 +304,7 @@ Every artifact's metadata carries `run_id`. Every `ApplyPatch` mill sends uses `
 
 ## Retention
 
-- `evidence`, `step_runs`, `events`: kept indefinitely. They are the audit record.
+- `evidence`, `step_runs`, `events`, `reconciliations`: kept indefinitely. They are the audit record.
 - `usage`: kept indefinitely; small.
 - `step_tokens`: revoked rows kept 30 days for attribution, then deleted. Hashes only, so the risk is nil either way.
 - `sessions`: kept while the run is not terminal, then 30 days. The transcript they point at is the harness's to retain.

@@ -499,6 +499,12 @@ type sandboxOptions struct {
 	proxy           string
 	noProxy         string
 	nested          []string
+	// What the worker's start does to the host (docs/sandbox.md
+	// §Reconciliation, §Eviction): the forge namespace and age the scratch
+	// sweep works by, and the expiry image eviction works by.
+	scratchNamespace string
+	scratchBudget    time.Duration
+	imageExpiry      time.Duration
 }
 
 // applySandboxConfig reads the machine backend's keys from the file.
@@ -512,6 +518,21 @@ func applySandboxConfig(config Config, opts *sandboxOptions) error {
 	opts.proxy = config.Proxy
 	opts.noProxy = config.NoProxy
 	opts.nested = config.Nested
+	opts.scratchNamespace = config.ScratchNamespace
+	if config.ScratchBudget != "" {
+		budget, err := time.ParseDuration(config.ScratchBudget)
+		if err != nil {
+			return fmt.Errorf("scratch-budget: %w", err)
+		}
+		opts.scratchBudget = budget
+	}
+	if config.ImageExpiry != "" {
+		expiry, err := parseWindow(config.ImageExpiry)
+		if err != nil {
+			return fmt.Errorf("image-expiry: %q is not a window such as 720h or 30d", config.ImageExpiry)
+		}
+		opts.imageExpiry = expiry
+	}
 	if config.ImageBuildBudget != "" {
 		budget, err := time.ParseDuration(config.ImageBuildBudget)
 		if err != nil {
@@ -647,11 +668,12 @@ func machineConfig(opts runOptions, f forge.Forge, redactor *redact.Redactor) ma
 			Pin:         sandbox.baseImage,
 			BuildBudget: sandbox.buildBudget,
 		},
-		Caches:      cache.Config{GlobalCap: sandbox.globalCap, RepoCap: sandbox.repoCap},
-		CacheDriver: cacheDriver(),
-		Proxy:       sandbox.proxy,
-		NoProxy:     sandbox.noProxy,
-		Nested:      sandbox.nested,
+		Caches:        cache.Config{GlobalCap: sandbox.globalCap, RepoCap: sandbox.repoCap},
+		CacheDriver:   cacheDriver(),
+		Proxy:         sandbox.proxy,
+		NoProxy:       sandbox.noProxy,
+		Nested:        sandbox.nested,
+		ScratchBudget: sandbox.scratchBudget,
 	}
 }
 

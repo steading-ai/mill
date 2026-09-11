@@ -184,4 +184,53 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 			Expect(dagger.RequestID("01RUN", "implement", 2)).To(Equal("mill-01RUN-implement-2"))
 		})
 	})
+
+	Describe("Projects, for the reconciliation sweep", func() {
+		It("lists the active projects, archives one by slug, and says delete is not offered", func() {
+			_, err := f.graph.CreateProject(ctx, connect.NewRequest(&daggerv1.CreateProjectRequest{
+				RequestId: "mill-spec-scratch", Title: "scratch", Slug: "mill-acceptance-x-0badcafe",
+			}))
+			Expect(err).NotTo(HaveOccurred())
+
+			projects, err := f.mill.ListProjects(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(slugsOf(projects)).To(ConsistOf(projectSlug, "mill-acceptance-x-0badcafe"))
+			Expect(projects[0].GetCreatedAt()).NotTo(BeNil(), "the age a sweep measures from is on every project")
+
+			Expect(f.mill.DeleteProject(ctx, "mill-acceptance-x-0badcafe")).To(MatchError(errors.ErrUnsupported),
+				"the vendored contract has no project delete")
+
+			archived, err := f.mill.ArchiveProject(ctx, "mill-acceptance-x-0badcafe")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(archived.GetArchivedAt()).NotTo(BeNil())
+			projects, err = f.mill.ListProjects(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(slugsOf(projects)).To(ConsistOf(projectSlug), "an archived project is out of the list")
+		})
+
+		It("holds a node with a reason, so it leaves the ready set until a person releases it", func() {
+			ref := f.node(ctx, "lost", "body", daggerv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
+			claimed, err := f.mill.Claim(ctx, ref)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(f.mill.Hold(ctx, "mill-spec-hold", claimed.Lease.GetId(), ref, "lost sandbox: mill-x is gone")).To(Succeed())
+			Expect(f.mill.Release(ctx, claimed.Lease.GetId(), daggerv1.ReleaseReason_RELEASE_REASON_CRASH, "lost sandbox")).To(Succeed())
+
+			reasons, err := f.mill.Explain(ctx, ref)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reasons).To(ContainElement("the node is held"))
+			node, err := f.mill.Node(ctx, ref)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(node.GetHold().GetReason()).To(Equal("lost sandbox: mill-x is gone"))
+		})
+	})
 })
+
+// slugsOf is the slugs of a project list.
+func slugsOf(projects []*daggerv1.Project) []string {
+	slugs := make([]string, 0, len(projects))
+	for _, project := range projects {
+		slugs = append(slugs, project.GetSlug())
+	}
+	return slugs
+}

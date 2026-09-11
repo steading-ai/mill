@@ -425,28 +425,33 @@ The rule: **a machine may only create external state that is swept by name from 
 
 | External state | Named by | Swept by |
 |---|---|---|
-| Machines | `mill-<run-id>`; suites use `mill-acceptance-<scenario>-<nonce>` | worker reconciliation: any `mill-*` machine with no live run |
+| Machines | `mill-<run-id>`; suites use `mill-acceptance-<scenario>-<nonce>` | worker reconciliation: any `mill-*` machine with no live run is stopped — as §Destroy stops one, or terminated when no record says it reported ready — and its run directory removed |
 | Cache lineages | scope and name; nested runs get their own root | eviction, and the nested root dies with the outer's ephemeral root |
-| Dagger scratch projects | `mill-acceptance-<scenario>-<nonce>` | worker reconciliation: archive any matching project older than the suite's budget. Dagger has no delete |
-| Forge scratch projects | `mill-acceptance-<scenario>-<nonce>` in the scratch namespace | worker reconciliation: delete any matching project older than the suite's budget |
-| Workflow rows a suite derives | project scope, in the scenario's scratch project | swept with the project; never at org scope from a suite |
+| Dagger scratch projects | `mill-acceptance-<scenario>-<nonce>` | worker reconciliation, through the worker's own client against the configured dagger: any matching project older than the suite's budget with no live run in it is deleted when the service offers a delete and archived when it does not, and the report says which. Dagger offers no delete today |
+| Forge scratch projects | `mill-acceptance-<scenario>-<nonce>` in the scratch namespace (`scratch-namespace` in worker configuration) | worker reconciliation: any matching project older than the suite's budget is deleted through the forge adapter's namespace verbs |
+| Workflow rows a suite derives | project scope, in the scenario's scratch project | swept with the project; never at org scope from a suite — `stageWorkflow` fails the scenario that asks for org scope |
 | Run directories, `.building` images | run id, derived digest | worker reconciliation |
 
-Reconciliation runs the sweeps on the same pass it reconciles machines. A suite that cannot name its state so that a sweep finds it has a bug in the suite, not a gap in the sweep.
+The pattern is `^mill-acceptance-<scenario>-<nonce>$` with an eight-hex-digit nonce, and the budget is the suite's own timeout, 90 minutes unless `scratch-budget` says otherwise: a project younger than that may belong to a suite still running. A live run is one the ledger holds open; a scratch project a live run's node is in is not swept whatever its age. The sweep matches by name and age and never by "everything not in the ledger" (mill#49).
+
+Reconciliation runs the sweeps on the same pass it reconciles machines, and the pass is recorded in the ledger (`reconciliations`: the worker, when it started, and each finding — orphan, lost sandbox, resumable, leftover, swept, failure — with what was done). A suite that cannot name its state so that a sweep finds it has a bug in the suite, not a gap in the sweep.
 
 ## Reconciliation on resume
 
 The ledger records per run: machine name, machine unit, derived digest, veth name, current step slice, lineages restored, and the candidate snapshot's step. The first five travel on the workspace handle as `workspace.Sandbox`, filled by `Create` and `Attach`; the run's own copy on the host is `runs/<id>/run.json`, which `Attach` reads before the ledger is asked anything and which also records when the machine reported ready.
 
-On worker start, in this order:
+On worker start, before the first claim and in this order:
 
-1. `machinectl list --output=json` and compare with live runs:
+1. `machinectl list` and compare with live runs:
    - a machine with no live run is an **orphan** → stop its unit (as §Destroy does: stop only if `run.json` says it was ready, else terminate), delete its run directory, record the fact.
-   - a live run with no machine is a **lost sandbox** → the run fails with that as evidence. Nothing resumes into a fresh machine; the workspace's state is not the ledger's to reconstruct.
-   - a live run with its machine present resumes at the ledger's step after stopping and recreating the current slice. Whatever was running when the worker died is not trusted to still be the step. The candidate snapshot from the last evidence-closed step is still valid and still promotes at finish.
-2. Delete `*.building` under `/var/lib/machines/` and any run directory with no live run.
+   - a live run with no machine is a **lost sandbox** → the run fails with that as evidence — the machine's name and the ledger's step — when it is next claimed: `Attach` refuses with it, the run is failed in the ledger, the node is held in dagger under the same reason so it is not claimed into the same refusal again, and the lease is released. Nothing resumes into a fresh machine; the workspace's state is not the ledger's to reconstruct. The pass records it and leaves the run directory, because the record is what tells the claim a machine once existed. A run that never had a machine on this host — one still selecting, or another host's — is not a lost sandbox.
+   - a live run with its machine present resumes at the ledger's step after stopping and recreating the current slice. Whatever was running when the worker died is not trusted to still be the step: the pass stops the slice `run.json` names, `Attach` stops it again and recreates it under the same ordinal, so the run loop's count continues from where the dead worker's left off. The candidate snapshot from the last evidence-closed step is still valid and still promotes at finish.
+2. Delete `*.building` under `/var/lib/machines/` — found through the build locks the worker's own image directory holds, since the machines directory is root's — and any run directory with no live run.
 3. Sweep external state by name (§External state): stale `mill-acceptance-*` dagger and forge projects.
-4. Run eviction.
+4. Record the pass in the ledger.
+5. Run eviction.
+
+A pass that cannot tell orphans from live runs — the ledger or machined not answering — stops the worker before it claims anything. Anything narrower is a `failure` finding and the rest of the pass stands.
 
 Polling `machinectl` is sufficient at run cadence. If it is not, host-side D-Bus signals are the upgrade, for lifecycle only; exec stays on the CLI.
 

@@ -408,6 +408,67 @@ func (s *Store) RecordHeartbeat(ctx context.Context, leaseID, runID, stepRunID s
 	})
 }
 
+// ReconciliationFinding is one line of a reconciliation pass, as the
+// `findings` column holds it.
+type ReconciliationFinding struct {
+	Kind   string `json:"kind"`
+	Name   string `json:"name"`
+	Action string `json:"action,omitempty"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// RecordReconciliation appends one reconciliation pass: what a worker found
+// and did at start, before it claimed anything. Nothing fences it — the
+// pass runs before the worker holds a lease, and it is a record of the host
+// rather than of a run — and it changes no run state (docs/sandbox.md
+// §Reconciliation).
+func (s *Store) RecordReconciliation(ctx context.Context, workerRef string, startedAt time.Time, findings []ReconciliationFinding) error {
+	if findings == nil {
+		findings = []ReconciliationFinding{}
+	}
+	encoded, err := json.Marshal(findings)
+	if err != nil {
+		return fmt.Errorf("encode reconciliation findings: %w", err)
+	}
+	if _, err := New(s.pool).InsertReconciliation(ctx, InsertReconciliationParams{
+		ID:        newULID(),
+		WorkerRef: workerRef,
+		StartedAt: startedAt,
+		Findings:  encoded,
+	}); err != nil {
+		return fmt.Errorf("record reconciliation: %w", err)
+	}
+	return nil
+}
+
+// ReconciliationPass is one recorded pass, its findings decoded.
+type ReconciliationPass struct {
+	ID         string
+	WorkerRef  string
+	StartedAt  time.Time
+	RecordedAt time.Time
+	Findings   []ReconciliationFinding
+}
+
+// Reconciliations is the newest passes recorded, newest first.
+func (s *Store) Reconciliations(ctx context.Context, limit int) ([]ReconciliationPass, error) {
+	rows, err := New(s.pool).ListReconciliations(ctx, int32(limit)) //nolint:gosec // a page size, never large
+	if err != nil {
+		return nil, fmt.Errorf("list reconciliations: %w", err)
+	}
+	out := make([]ReconciliationPass, 0, len(rows))
+	for _, row := range rows {
+		var findings []ReconciliationFinding
+		if err := json.Unmarshal(row.Findings, &findings); err != nil {
+			return nil, fmt.Errorf("decode reconciliation %s: %w", row.ID, err)
+		}
+		out = append(out, ReconciliationPass{
+			ID: row.ID, WorkerRef: row.WorkerRef, StartedAt: row.StartedAt, RecordedAt: row.RecordedAt, Findings: findings,
+		})
+	}
+	return out, nil
+}
+
 // ClearGate takes the answered gate off a run and leaves it running, which
 // is what lets the next gate step file one of its own (Invariant 12).
 //

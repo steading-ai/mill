@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -158,6 +159,34 @@ func (m *machined) ShowMachine(ctx context.Context, name string) (driver.Machine
 		return driver.Machine{}, driver.ErrNoMachine
 	}
 	return driver.Machine{Name: name, State: driver.StateRunning, Class: "container", Service: "systemd-nspawn"}, nil
+}
+
+// ListMachines answers from machined's state, so a reconciliation spec sees
+// exactly what a lifecycle spec started; a spec may still register a
+// machine by hand with add, as a suite's machine or a hand-started one is.
+func (m *machined) ListMachines(ctx context.Context) ([]driver.Machine, error) {
+	if _, err := m.FakeDriver.ListMachines(ctx); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	names := make([]string, 0, len(m.running))
+	for name := range m.running {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	machines := make([]driver.Machine, 0, len(names))
+	for _, name := range names {
+		machines = append(machines, driver.Machine{Name: name, State: driver.StateRunning, Class: "container", Service: "systemd-nspawn"})
+	}
+	return machines, nil
+}
+
+// add registers a machine nothing here started.
+func (m *machined) add(name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.running[name] = true
 }
 
 func (m *machined) MachineInterfaces(ctx context.Context, name string) ([]string, error) {

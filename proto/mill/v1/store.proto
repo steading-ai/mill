@@ -91,6 +91,14 @@ service StoreService {
   // no run state: the row of the audit trail is the whole record, and
   // `mill inspect` counts the rows to say what an attempt's wait cost.
   rpc RecordHeartbeat(RecordHeartbeatRequest) returns (RecordHeartbeatResponse);
+  // RecordReconciliation appends what one reconciliation pass found and did
+  // at worker start: the machines it told from the ledger's live runs —
+  // orphans stopped, lost sandboxes noted, slices reaped for resume — the
+  // leftovers it removed, and the scratch projects it swept by name
+  // (docs/sandbox.md §Reconciliation, §"External state"). It is a record of
+  // the host, not of a run: no lease fences it, because the pass runs before
+  // the worker holds one.
+  rpc RecordReconciliation(RecordReconciliationRequest) returns (RecordReconciliationResponse);
   // SetCompleteRequestId mints and stores the idempotency key of the patch
   // that completes the node, before that patch is sent. Minting is once per
   // run: a second call returns the key already stored, so a worker resuming
@@ -479,6 +487,38 @@ message RecordHeartbeatRequest {
 // RecordHeartbeatResponse carries nothing: the event is the record.
 message RecordHeartbeatResponse {
   // Reserved: the event the call wrote is the whole of the answer.
+}
+
+// RecordReconciliationRequest records one reconciliation pass. It carries
+// no lease: the pass runs before the worker holds one, and what it records
+// is the host's state, not a run's, so there is no run row to fence it by.
+message RecordReconciliationRequest {
+  // The worker that ran the pass.
+  string worker_ref = 1;
+  // When the pass began.
+  google.protobuf.Timestamp started_at = 2;
+  // What it found and did, in order.
+  repeated ReconciliationFinding findings = 3;
+}
+
+// ReconciliationFinding is one line of a reconciliation pass.
+message ReconciliationFinding {
+  // What was found: `orphan`, `lost-sandbox`, `resumable`, `leftover`,
+  // `swept`, `failure`.
+  string kind = 1;
+  // The thing: a machine, a run id, a path, a project.
+  string name = 2;
+  // What was done to it: `stopped`, `terminated`, `removed`, `archived`,
+  // `deleted`; empty when nothing was.
+  string action = 3;
+  // What qualifies it: the run's step, the unit, why a delete was an
+  // archive.
+  string detail = 4;
+}
+
+// RecordReconciliationResponse carries nothing: the row is the record.
+message RecordReconciliationResponse {
+  // Reserved: the row the call wrote is the whole of the answer.
 }
 
 // SetCompleteRequestIdRequest asks for the run's completing request id.
