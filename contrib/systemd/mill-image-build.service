@@ -1,0 +1,25 @@
+# Builds the base image and publishes it to Harbor: docs/sandbox.md §Images
+# §Base. A user unit beside mill.service, run weekly by mill-image-build.timer
+# and on demand with `systemctl --user start mill-image-build`. Install with
+#
+#   install -Dm644 contrib/systemd/mill-image-build.service ~/.config/systemd/user/mill-image-build.service
+#   install -Dm644 contrib/systemd/mill-image-build.timer ~/.config/systemd/user/mill-image-build.timer
+#   systemctl --user enable --now mill-image-build.timer
+#
+# The build runs from this repository's checkout, where images/base is. The
+# push presents the Harbor robot credential — one line, robot:secret —
+# delivered as a file under $CREDENTIALS_DIRECTORY and read from nowhere
+# else. The registry and repository come from ~/.config/mill/config.yaml
+# (image-registry, image-repository) when they are not the defaults.
+
+[Unit]
+Description=mill: build and publish the base image
+Documentation=https://github.com/ivy/mill
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/src/github.com/ivy/mill
+LoadCredential=harbor-robot:%E/mill/harbor-robot
+ExecStart=mill image build-base --push

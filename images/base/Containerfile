@@ -1,0 +1,87 @@
+# The base image a machine boots from: docs/sandbox.md §Images §Base. Built
+# on the host by `mill image build-base --push` from a weekly timer
+# (contrib/systemd/mill-image-build.timer), published to Harbor as
+# mill/base:<date> and mill/base:latest, and resolved to a digest at each
+# provision. The worker derives a repository's image from it by digest,
+# exports the result flat into a btrfs subvolume, and restores the two file
+# capabilities `podman export` drops (README.md, "What export must do").
+#
+# Contains: systemd as PID 1, dbus-broker, rootless podman for the user
+# agent, git, sudo, mise with node for the harness, and the toolchain native
+# extensions build against. Contains no credential, no skill and no sidecar:
+# those are the worker's, mounted at provision.
+
+# The Harbor host every registry pull goes through: the Fedora base here and,
+# inside the machine, docker.io, quay.io and ghcr.io through the proxy
+# projects the host's own registries.conf names (homestead#31).
+ARG HARBOR_HOST=harbor.tailcbcc0e.ts.net
+FROM ${HARBOR_HOST}/fedora-cache/fedora:44
+ARG HARBOR_HOST
+
+# The system and the toolchain: what ruby-build, node-gyp and linked crates
+# need to compile against, and procps-ng because a check step will pgrep.
+RUN dnf -y install \
+      systemd dbus-broker podman git sudo curl procps-ng \
+      gcc gcc-c++ make pkgconf python3 \
+      openssl-devel zlib-devel libffi-devel libyaml-devel \
+      readline-devel ncurses-devel gdbm-devel sqlite-devel \
+    && dnf clean all
+
+RUN curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh \
+    && /usr/local/bin/mise --version
+
+# The session user. Its subordinate ids sit inside the machine's own 65536
+# uids (--private-users=pick); useradd's default range starts past it and
+# the kernel refuses the map (spike E2).
+RUN useradd -u 1000 -m agent \
+    && echo 'agent:10000:55536' > /etc/subuid \
+    && echo 'agent:10000:55536' > /etc/subgid \
+    && mkdir -p /work && chown agent:agent /work
+
+# Node for the harness's runtime, installed globally through mise so a
+# session's own mise.toml can still choose another.
+RUN MISE_DATA_DIR=/usr/local/share/mise MISE_CACHE_DIR=/tmp/mise-cache \
+      /usr/local/bin/mise use --global node@lts \
+    && MISE_DATA_DIR=/usr/local/share/mise /usr/local/bin/mise exec -- node --version \
+    && ln -s "$(MISE_DATA_DIR=/usr/local/share/mise /usr/local/bin/mise which node)" /usr/local/bin/node \
+    && ln -s "$(MISE_DATA_DIR=/usr/local/share/mise /usr/local/bin/mise which npm)" /usr/local/bin/npm \
+    && rm -rf /tmp/mise-cache
+
+# Podman's socket at the system level and for agent's user manager: linger
+# starts that manager at boot, and the wants link enables the socket with
+# no manager running to be asked. Storage is overlay under the ephemeral
+# root; containers land under the step's slice (cgroups = "split"); the
+# public registries resolve to Harbor's proxy projects.
+COPY storage.conf containers.conf /etc/containers/
+COPY registries.conf /etc/containers/registries.conf.d/harbor.conf
+RUN sed -i "s/@HARBOR_HOST@/${HARBOR_HOST}/g" /etc/containers/registries.conf.d/harbor.conf \
+    && systemctl enable podman.socket \
+    && mkdir -p /var/lib/systemd/linger && touch /var/lib/systemd/linger/agent \
+    && mkdir -p /home/agent/.config/systemd/user/sockets.target.wants \
+    && ln -s /usr/lib/systemd/user/podman.socket \
+         /home/agent/.config/systemd/user/sockets.target.wants/podman.socket \
+    && chown -R agent:agent /home/agent/.config
+
+# nspawn masks /proc's sensitive paths, and podman's pause process copies
+# that mount table; a pristine proc stacked over it at boot is what lets
+# rootless podman start (spike E2). A unit in the image, so no exec has to
+# do it.
+COPY mill-proc.service /etc/systemd/system/mill-proc.service
+RUN systemctl enable mill-proc.service
+
+# The dnf shim and the one sudo path it uses: `/usr/bin/dnf install`, and
+# nothing else, as root (docs/sandbox.md §"The dnf shim").
+COPY dnf /usr/local/bin/dnf
+RUN chmod 0755 /usr/local/bin/dnf \
+    && echo 'agent ALL=(root) NOPASSWD: /usr/bin/dnf install *' > /etc/sudoers.d/agent-dnf \
+    && chmod 0440 /etc/sudoers.d/agent-dnf \
+    && visudo -cf /etc/sudoers.d/agent-dnf
+
+# The checkout is trusted before any session sees it, so `mise install`
+# runs without a prompt.
+RUN su agent -c '/usr/local/bin/mise trust /work' \
+    && su agent -c '/usr/local/bin/mise trust --show'
+
+# A booted machine wants a fresh machine-id; an empty file tells systemd to
+# generate one at boot.
+RUN : > /etc/machine-id

@@ -1,0 +1,19 @@
+# A pristine proc over the one nspawn masked, mounted once at boot before
+# agent's user manager can start podman: podman's pause process copies the
+# mount table it is born with, and the kernel admits a new proc mount in
+# agent's namespace only while a fully visible one exists
+# (docs/spikes/nspawn-per-run-sandbox.md E2, "The recipe: one mount").
+[Unit]
+Description=mill: a pristine /proc for rootless podman
+DefaultDependencies=no
+ConditionVirtualization=systemd-nspawn
+After=local-fs.target
+Before=sysinit.target user@1000.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/mount -t proc -o nosuid,nodev,noexec proc /proc
+
+[Install]
+WantedBy=sysinit.target

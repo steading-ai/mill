@@ -44,6 +44,9 @@ func newHost() *host {
 			Machinectl: stub("machinectl"),
 			SystemdRun: stub("systemd-run"),
 			Btrfs:      stub("btrfs"),
+			Podman:     stub("podman"),
+			Tar:        stub("tar"),
+			Setcap:     stub("setcap"),
 		},
 	}
 }

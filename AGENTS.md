@@ -31,7 +31,7 @@ Your contract is the node's **Acceptance criteria** and **Scenarios**. Every cri
 
 ```
 cmd/mill/             binary entrypoint; one binary, two faces (service, worker)
-internal/cli/         the cobra command tree: serve, work, run, restart, workflow, version
+internal/cli/         the cobra command tree: serve, work, run, restart, workflow, image, version
 internal/store/       persistence and its migrations; only internal/domain may import it
 internal/dagger/      the client for dagger's dagger.v1 API, and the refusals mill owes a gate
 internal/run/         the loop: claim, heartbeat, steps, evidence, finish. docs/ledger.md §Resume in Go
@@ -44,6 +44,7 @@ proto/                the contracts: mill.v1 the store API, harness.v1 the sidec
 gen/                  generated Go, committed. buf owns it; `make generate` writes it
 sidecar/              the TypeScript harness adapter; sidecar/gen is harness.v1 in TypeScript
 workflows/            the workflow definitions this repo seeds the store with; `mill workflow push` loads them
+images/               the base image machines boot from: images/base is the Containerfile, the dnf shim and what the export must restore; docs/sandbox.md §Images
 tests/acceptance/     the suite that drives the whole mill against real dependencies; docs/runbook.md
 docs/                 the design. Authoritative
 docs/sandbox.md       the per-run sandbox: one systemd-nspawn machine per run, its images, caches, network and credentials; the O2 milestone's authority

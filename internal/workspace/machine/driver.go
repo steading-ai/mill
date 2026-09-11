@@ -98,6 +98,69 @@ type Driver interface {
 	// which is what eviction decides on and what doctor asks of the
 	// sandbox root (§Eviction, §Storage).
 	Statfs(path string) (Filesystem, error)
+
+	// The verbs below are the image pipeline's (§Images): the one place the
+	// worker runs a container outside a machine, and the export that turns
+	// its filesystem into a subvolume a machine boots. The image directory
+	// is root's on the host (homestead's mill_storage), so the subvolume
+	// verbs that write it — CreateSubvolume, Rename, Setcap, the extraction
+	// in ExportImage, and DeleteSubvolume — run through sudo when
+	// [Commands.Sudo] names it. Snapshot never does: a cache the operator
+	// cannot delete is a cache the operator cannot promote.
+
+	// Exists reports whether a path is on the host, asked as whoever may
+	// see the image directory.
+	Exists(ctx context.Context, path string) (bool, error)
+	// CreateSubvolume is `btrfs subvolume create <path>`: the `.building`
+	// subvolume an export lands in.
+	CreateSubvolume(ctx context.Context, path string) error
+	// Rename moves a path, atomically when both are on one filesystem:
+	// `.building` into the name a machine boots from.
+	Rename(ctx context.Context, oldPath, newPath string) error
+	// Setcap is `setcap <capability> <path>`: what podman export drops from
+	// newuidmap and newgidmap, restored on the exported tree
+	// (docs/spikes/nspawn-per-run-sandbox.md E2).
+	Setcap(ctx context.Context, capability, path string) error
+	// PullImage is `podman pull <reference>`: the base from Harbor, at each
+	// provision.
+	PullImage(ctx context.Context, reference string) error
+	// ImageDigest is the registry digest of an image podman holds —
+	// `sha256:<hex>` — which is what the derived digest is computed from
+	// and what the generated Containerfile pins.
+	ImageDigest(ctx context.Context, reference string) (string, error)
+	// BuildImageOnHost is `podman build` on the host, outside any machine:
+	// the only container the worker runs there, which docs/sandbox.md
+	// §"Derived images" asks the code to make visible. The whole of the
+	// build's output comes back with the error, because its last lines are
+	// the finding a failed derived build attaches to the run.
+	BuildImageOnHost(ctx context.Context, build ImageBuild) (output string, err error)
+	// ExportImage is `podman create`, `podman export | tar -x` into dir, and
+	// `podman rm`: the image's filesystem as a flat tree, never layers.
+	ExportImage(ctx context.Context, image, dir string) error
+	// RemoveImage is `podman rmi <image>`: the built image once its tree is
+	// exported, so the host's container storage does not carry a copy of
+	// every subvolume.
+	RemoveImage(ctx context.Context, image string) error
+	// Login is `podman login <registry>` with the secret on stdin, never
+	// on the command line.
+	Login(ctx context.Context, registry, user, secret string) error
+	// Logout is `podman logout <registry>`.
+	Logout(ctx context.Context, registry string) error
+	// PushImage is `podman push <reference>`.
+	PushImage(ctx context.Context, reference string) error
+}
+
+// ImageBuild is one `podman build` on the host.
+type ImageBuild struct {
+	// Context is the build context directory.
+	Context string
+	// Containerfile is the file to build from; empty means the context's
+	// own `Containerfile`.
+	Containerfile string
+	// Tags are the names the result is tagged with, at least one.
+	Tags []string
+	// Args are the build arguments, `--build-arg NAME=VALUE`.
+	Args map[string]string
 }
 
 // ErrNoMachine is a machine name machined does not know: never started, or

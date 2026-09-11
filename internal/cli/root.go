@@ -57,6 +57,7 @@ func NewRootCommand(stdout, stderr io.Writer) *cobra.Command {
 "mill restart" abandons a node's run and starts a new generation.
 "mill rerun" redoes a run from a step, keeping the generation and sessions.
 "mill workspace" shows and cleans up the checkouts runs leave on this host.
+"mill image" builds the base image and lists and prunes image subvolumes.
 "mill workflow" pushes, pulls, shows, and lists workflow definitions.
 "mill status", "inspect", "explain", "logs", "history" and "cost" read the
 ledger; "mill doctor" probes what a run depends on; "mill cancel" stops one.
@@ -80,6 +81,7 @@ ledger; "mill doctor" probes what a run depends on; "mill cancel" stops one.
 		newRerunCommand(),
 		newWorkflowCommand(),
 		newWorkspaceCommand(),
+		newImageCommand(),
 		newStatusCommand(),
 		newInspectCommand(),
 		newExplainCommand(),

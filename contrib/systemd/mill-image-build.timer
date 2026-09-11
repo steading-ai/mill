@@ -1,0 +1,14 @@
+# Runs mill-image-build.service weekly, so a machine's base is never more
+# than a week behind Fedora's updates. A missed run — the host was off —
+# happens at the next boot.
+
+[Unit]
+Description=mill: weekly base image build
+
+[Timer]
+OnCalendar=weekly
+Persistent=true
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target

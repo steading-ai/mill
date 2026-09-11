@@ -71,20 +71,22 @@ Everything below is in this order. The order is the design: configuration is rea
 
 ### Base
 
-- Built from a Containerfile in this repository (under `images/base`, added by the images node) by `mill image build-base --push`, run weekly by a user timer on `core` (a unit beside `contrib/systemd/mill.service`) and on demand; pushed to Harbor as `mill/base:<date>` and `mill/base:latest` with a robot credential delivered by `LoadCredential`. **Not by forge CI**: CI is not active on the GitLab projects, and the host that runs machines is the host that has podman and the credential.
+- Built from `images/base/Containerfile` by `mill image build-base --push`, run weekly by `contrib/systemd/mill-image-build.timer` on `core` (a user unit beside `contrib/systemd/mill.service`) and on demand; pushed to Harbor as `mill/base:<date>` and `mill/base:latest` with a robot credential delivered by `LoadCredential` as `$CREDENTIALS_DIRECTORY/harbor-robot`. `images/base/README.md` lists what is in it and what the export step must do to the tree. **Not by forge CI**: CI is not active on the GitLab projects, and the host that runs machines is the host that has podman and the credential.
 - **MUST** contain: systemd as PID 1, `dbus-broker`, `podman` with `podman.socket` enabled and `storage.conf` selecting `overlay`, `git`, `sudo`, `mise`, and the native-extension toolchain — gcc, g++, make, pkgconf, python3, and the `-devel` set ruby-build, node-gyp and linked crates require (openssl, zlib, libffi, libyaml, readline, ncurses, gdbm, sqlite). Node installed globally through mise for the harness's runtime.
 - **MUST** contain the user `agent` (uid 1000, home `/home/agent`), the `dnf` shim (§The dnf shim) and its sudoers rule, `registries.conf` routing pulls through Harbor's proxy projects, and a pre-granted `mise trust` for `/work`.
 - **MUST NOT** contain credentials, the mill skill, the sidecar, or any of the operator's `$HOME`. The skill and sidecar are the worker's and are mounted at provision.
-- The worker resolves the base digest at each provision. A new base takes effect on the next run; rollback is a pin in worker config.
+- The worker resolves the base digest at each provision. A new base takes effect on the next run; rollback is a pin in worker config (`base-image`, a tag or a digest).
+- What the spike found the exported tree needs, and where each lands: the file capabilities on `newuidmap` and `newgidmap` are restored by the export step, because `podman export` drops them and the Containerfile cannot put them back; `agent`'s subordinate ranges (`10000:55536`, inside the machine's 65536 uids), the `mill-proc.service` unit that mounts a pristine `proc` before `agent`'s user manager, and `containers.conf` with `cgroups = "split"` are baked into the image.
 
 ### Derived images
 
 - The derived digest is `sha256(base digest ‖ sorted, deduplicated package list)`.
-- The build is on demand:
-  1. Take `flock` on `/var/lib/mill/images/<digest>.lock`. A concurrent run of the same repo waits here.
+- The build is on demand (`internal/workspace/machine/image`, `Ensure`):
+  1. Take `flock` on `/var/lib/mill/images/<digest>.lock`. A concurrent run of the same repo waits here. The lock is held on a descriptor podman never inherits: `flock <file> cmd` leaks it into `pasta`, which logs a denial per build.
   2. Under the lock, if `mill-image-<digest>` exists, use it.
-  3. Otherwise generate `FROM <harbor>/mill/base@<digest>` + `RUN dnf install -y <packages>`, `podman build` it on the host (through the workspace chokepoint; this is the one place the worker runs a container outside a machine, and the code **MUST** make that visible), export the container's filesystem into `mill-image-<digest>.building` as a subvolume, then rename atomically to `mill-image-<digest>`.
+  3. Otherwise generate `FROM <harbor>/mill/base@<digest>` + `RUN dnf install -y <packages>`, `podman build` it on the host (through the workspace chokepoint; this is the one place the worker runs a container outside a machine, and the code **MUST** make that visible), export the container's filesystem into `mill-image-<digest>.building` as a subvolume — `podman create`, `podman export | tar -x`, a flat tree and not layers — restore the two file capabilities, then rename atomically to `mill-image-<digest>`. The export is one function so that a label for a confined machine (§SELinux) has one place to go.
   4. Release the lock.
+- The image directory is root's (§Storage), so the subvolume steps of the export run through `sudo`; the worker's own record of each image — base digest, package list, built-at, last-booted-at — is `/var/lib/mill/images/<digest>.json`, beside the lock, and `mill image ls` reads those.
 - The build has a time budget from worker config. A build that fails or exceeds it **MUST** release the lock, remove `.building`, boot the run from the **base** subvolume, and attach a finding to the first session: the `dnf` error's last lines and the package list that failed. This covers a misspelled package and a distro that dropped one alike.
 - Derived images are not pushed to Harbor. A second worker rebuilds them; base is the artefact worth distributing.
 - Image subvolumes are a lineage for eviction purposes (§Eviction): last-used at each boot, 30-day expiry, evicted under the same watermarks. A base bump makes the previous derived images unused; they expire on their own.
@@ -273,7 +275,7 @@ Three mechanisms, applied in this order at each trigger.
 - A lineage under eviction may be the parent of an in-flight run's writable snapshot. That is safe: btrfs snapshots are independent. A run whose lineage was evicted mid-run promotes into a fresh lineage.
 - Triggers: after each promotion; at worker start, with reconciliation; on a systemd timer for expiry.
 - A per-lineage cap on repo scope is a number `mill cache ls` flags, not a gate on promotion. A project whose build state is naturally large is still cached; the watermark decides.
-- Operator tools: `mill cache ls`, `mill cache prune`, `mill image ls`, `mill image prune`. To be described in `docs/tools.md`.
+- Operator tools: `mill cache ls`, `mill cache prune`, `mill image ls`, `mill image prune`. The image pair is in `docs/tools.md`; `prune` is expiry alone until the eviction node adds watermarks.
 - Later, not now: consult dagger's ready set so repos with pending work are protected from eviction. LRU first.
 
 ## Network
@@ -321,9 +323,9 @@ Three mechanisms, applied in this order at each trigger.
 
 ## The dnf shim
 
-- `/usr/local/bin/dnf` in the base image wraps `sudo /usr/bin/dnf`, and the sudoers rule allows `agent` to run `/usr/bin/dnf install` and nothing else.
+- `/usr/local/bin/dnf` in the base image (`images/base/dnf`) wraps `sudo /usr/bin/dnf`, and the sudoers rule allows `agent` to run `/usr/bin/dnf install` and nothing else. The proxy goes to dnf as `--setopt=proxy=` after `install`, because sudo strips the environment and the rule's pattern is `dnf install *`.
 - On success the shim prints, as its **last lines**, a hint: the packages installed, that this machine is ephemeral, and the `[image].packages` line to add to `mill.toml`. Agents read the tail of output; the hint is where they look.
-- The shim reports the install over the workspace socket. The run's provenance records "installed `<packages>`, not declared in `mill.toml`". This is not routed to the reviewer, who judges acceptance criteria only; it is for the operator to see which projects keep needing something undeclared.
+- The shim reports the install over the workspace socket (`/run/mill/ws.sock`, a POST to the `dnf` verb preparatory steps add; a socket that is absent or does not answer costs nothing). The run's provenance records "installed `<packages>`, not declared in `mill.toml`". This is not routed to the reviewer, who judges acceptance criteria only; it is for the operator to see which projects keep needing something undeclared.
 - Nothing installed this way survives the run. The declaration the agent commits is what is remembered.
 
 ## Preparatory steps
@@ -399,7 +401,7 @@ Polling `machinectl` is sufficient at run cadence. If it is not, host-side D-Bus
 
 | Failure | Detection | Response |
 |---|---|---|
-| Base digest unresolvable (Harbor down) | HEAD fails at sequence step 4 | Use the last resolved digest if its subvolume exists; else fail the run before boot |
+| Base digest unresolvable (Harbor down) | the pull fails at sequence step 4 | Use the last resolved digest (`/var/lib/mill/images/base.json`) if its subvolume exists, recording the fallback; else fail the run before boot |
 | Derived build fails or times out | `podman build` exit / budget | Boot base; finding to first session |
 | `mill.toml` invalid | parse/validate at step 3 | Defaults; finding to first session |
 | Machine never reaches ready | readiness timeout | Destroy, fail the run |
@@ -483,7 +485,7 @@ Things this design found that are wrong or missing today, each a node of its own
 - Whether `--private-users-ownership=auto` behaves on the workspace bind under SELinux enforcing. E4.
 - Whether podman containers land under the step slice without `--cgroups=split`. E3.
 - Whether testcontainers' reaper is content with `podman.socket` inside the machine. E6.
-- Whether the derived-image export should snapshot base and `dnf --installroot` instead of `podman build` + flat export, if flat exports prove too large. Deferred until measured.
+- Whether the derived-image export should snapshot base and `dnf --installroot` instead of `podman build` + flat export. Measured by the storage spike (E10: build 4.3 s, export 0.8 s, a derived subvolume the size of base plus the package) and closed: the flat export stays. Exporting onto a snapshot of base is the change to make if `mill image ls` ever shows dozens of derived images.
 
 ## Future considerations
 

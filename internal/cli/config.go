@@ -49,8 +49,18 @@ type Config struct {
 	WorkspaceDir string   `yaml:"workspace-dir"`
 	Workspace    string   `yaml:"workspace"`
 	SandboxRoot  string   `yaml:"sandbox-root"`
-	LogDir       string   `yaml:"log-dir"`
-	EnvMode      string   `yaml:"env_mode"`
+	// The machine backend's images (docs/sandbox.md §Images): where the
+	// subvolumes are, which Harbor they come from, a pin that stands in
+	// for `latest`, how long a derived build may take, and how long an
+	// unbooted image lives. `base-image` is a tag or a digest.
+	MachinesDir      string `yaml:"machines-dir"`
+	ImageRegistry    string `yaml:"image-registry"`
+	ImageRepository  string `yaml:"image-repository"`
+	BaseImage        string `yaml:"base-image"`
+	ImageBuildBudget string `yaml:"image-build-budget"`
+	ImageExpiry      string `yaml:"image-expiry"`
+	LogDir           string `yaml:"log-dir"`
+	EnvMode          string `yaml:"env_mode"`
 	// NotifyCommand is spelled the way env_mode is, for the same reason: a
 	// deployment sets it, and a deployment spells it with an underscore.
 	NotifyCommand string `yaml:"notify_command"`

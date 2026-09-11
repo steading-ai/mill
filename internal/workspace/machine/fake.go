@@ -3,6 +3,7 @@ package machine
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"sync"
 
@@ -19,6 +20,19 @@ const (
 	Snapshot        = "Snapshot"
 	DeleteSubvolume = "DeleteSubvolume"
 	Statfs          = "Statfs"
+
+	Exists           = "Exists"
+	CreateSubvolume  = "CreateSubvolume"
+	Rename           = "Rename"
+	Setcap           = "Setcap"
+	PullImage        = "PullImage"
+	ImageDigest      = "ImageDigest"
+	BuildImageOnHost = "BuildImageOnHost"
+	ExportImage      = "ExportImage"
+	RemoveImage      = "RemoveImage"
+	Login            = "Login"
+	Logout           = "Logout"
+	PushImage        = "PushImage"
 )
 
 // Call is one call a [FakeDriver] received: the method and its arguments in
@@ -51,6 +65,12 @@ type Output struct {
 // succeeds and returns its zero value, so a spec scripts only what it is
 // about. A scripted error is returned as the call's error; a scripted value
 // is returned as its result.
+//
+// The subvolume verbs an image build needs — Exists, CreateSubvolume,
+// Rename, DeleteSubvolume — act on plain directories when they succeed, so
+// a spec's temporary directory stands in for the image directory and a
+// second caller finds what the first built. Snapshot and the podman verbs
+// touch nothing.
 type FakeDriver struct {
 	mu      sync.Mutex
 	calls   []Call
@@ -178,9 +198,120 @@ func (f *FakeDriver) Snapshot(_ context.Context, source, destination string, rea
 	return asError(f.record(Snapshot, source, destination, readOnly))
 }
 
-// DeleteSubvolume records the call and returns the scripted error, if any.
+// DeleteSubvolume records the call, returns the scripted error if any, and
+// otherwise removes the directory standing in for the subvolume.
 func (f *FakeDriver) DeleteSubvolume(_ context.Context, path string) error {
-	return asError(f.record(DeleteSubvolume, path))
+	if err := asError(f.record(DeleteSubvolume, path)); err != nil {
+		return err
+	}
+	return os.RemoveAll(path)
+}
+
+// Exists records the call and answers the scripted value, or whether the
+// path is there.
+func (f *FakeDriver) Exists(_ context.Context, path string) (bool, error) {
+	switch result := f.record(Exists, path).(type) {
+	case nil:
+		_, err := os.Stat(path)
+		return err == nil, nil
+	case error:
+		return false, result
+	case bool:
+		return result, nil
+	default:
+		return false, scriptMismatch(Exists, result)
+	}
+}
+
+// CreateSubvolume records the call, returns the scripted error if any, and
+// otherwise makes a directory standing in for the subvolume.
+func (f *FakeDriver) CreateSubvolume(_ context.Context, path string) error {
+	if err := asError(f.record(CreateSubvolume, path)); err != nil {
+		return err
+	}
+	return os.Mkdir(path, 0o755)
+}
+
+// Rename records the call, returns the scripted error if any, and otherwise
+// renames the directory.
+func (f *FakeDriver) Rename(_ context.Context, oldPath, newPath string) error {
+	if err := asError(f.record(Rename, oldPath, newPath)); err != nil {
+		return err
+	}
+	return os.Rename(oldPath, newPath)
+}
+
+// Setcap records the call and returns the scripted error, if any.
+func (f *FakeDriver) Setcap(_ context.Context, capability, path string) error {
+	return asError(f.record(Setcap, capability, path))
+}
+
+// PullImage records the call and returns the scripted error, if any.
+func (f *FakeDriver) PullImage(_ context.Context, reference string) error {
+	return asError(f.record(PullImage, reference))
+}
+
+// ImageDigest records the call and returns the scripted digest or error.
+func (f *FakeDriver) ImageDigest(_ context.Context, reference string) (string, error) {
+	return asString(ImageDigest, f.record(ImageDigest, reference))
+}
+
+// BuildImageOnHost records the build and returns the scripted output or
+// error. A scripted [Output] is a build that failed: its Stdout is the
+// build's transcript and the error carries its status.
+func (f *FakeDriver) BuildImageOnHost(_ context.Context, build ImageBuild) (string, error) {
+	switch result := f.record(BuildImageOnHost, build).(type) {
+	case nil:
+		return "", nil
+	case error:
+		return "", result
+	case string:
+		return result, nil
+	case Output:
+		return result.Stdout + result.Stderr, fmt.Errorf("machine: podman build exited %d", result.Status)
+	default:
+		return "", scriptMismatch(BuildImageOnHost, result)
+	}
+}
+
+// ExportImage records the call and returns the scripted error, if any.
+func (f *FakeDriver) ExportImage(_ context.Context, image, dir string) error {
+	return asError(f.record(ExportImage, image, dir))
+}
+
+// RemoveImage records the call and returns the scripted error, if any.
+func (f *FakeDriver) RemoveImage(_ context.Context, image string) error {
+	return asError(f.record(RemoveImage, image))
+}
+
+// Login records the registry and user — never the secret — and returns the
+// scripted error, if any.
+func (f *FakeDriver) Login(_ context.Context, registry, user, _ string) error {
+	return asError(f.record(Login, registry, user))
+}
+
+// Logout records the call and returns the scripted error, if any.
+func (f *FakeDriver) Logout(_ context.Context, registry string) error {
+	return asError(f.record(Logout, registry))
+}
+
+// PushImage records the call and returns the scripted error, if any.
+func (f *FakeDriver) PushImage(_ context.Context, reference string) error {
+	return asError(f.record(PushImage, reference))
+}
+
+// asString is a scripted result for a method that returns a string.
+func asString(method string, result any) (string, error) {
+	switch result := result.(type) {
+	case nil:
+		return "", nil
+	case error:
+		return "", result
+	case string:
+		return result, nil
+	default:
+		return "", scriptMismatch(method, result)
+	}
 }
 
 // Statfs records the call and returns the scripted filesystem or error.

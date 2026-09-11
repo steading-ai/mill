@@ -20,7 +20,9 @@ files a dagger node ([prd.md](prd.md) R-55).
 
 Every tool takes `--socket`; the readers take `--view`; the two `workspace`
 subcommands take `--workspace-dir`, since the files they answer about are on
-this host and not in the ledger.
+this host and not in the ledger. The `image` subcommands take no socket at
+all: they answer about subvolumes and a registry, and nothing in the ledger
+knows either.
 
 | Tool | What it answers |
 |---|---|
@@ -36,6 +38,9 @@ this host and not in the ledger.
 | `cancel <run>` | Stop a run's current step cleanly, leaving it resumable |
 | `rerun <run> --from <step>` | Redo from a step, keeping the generation and the sessions |
 | `workspace clean` | Remove the checkouts of runs that have ended |
+| `image ls` | Which image subvolumes this host holds, from what, and when last booted |
+| `image prune` | Remove the image subvolumes nothing has booted within the expiry |
+| `image build-base` | Build the base image machines boot from, and push it |
 
 A run is named by its node reference — `mill#18` — or by the run id `status`
 prints. Anything carrying a `#` is a node reference; anything else is a run
@@ -564,6 +569,70 @@ The mill's signing key lives above the run directories and survives a clean:
 it is the account's, not any run's.
 
 Needs the `operator` role.
+
+## image ls
+
+Which image subvolumes this host holds (`docs/sandbox.md` §Images): the
+derived digest, the base it derives from, the packages over the base, when
+it was built, and when a machine last booted it. Least recently used first,
+which is the order `prune` takes them in.
+
+```
+$ mill image ls
+DIGEST        BASE          PACKAGES                BUILT                 LAST BOOT
+7d3a1f0c9b2e  base          -                       2026-09-04T03:12:09Z  2026-09-10T22:41:07Z
+599b7919d9a1  7d3a1f0c9b2e  libpq-devel,vips-devel  2026-09-05T14:02:51Z  2026-09-11T06:35:20Z
+```
+
+`base` in the second column is the base's own subvolume, the one a run
+boots when its repository declares no packages or its derived build failed.
+The listing is the worker's records under `<sandbox-root>/images`, each
+checked against the subvolume it names; a record whose subvolume is gone is
+not shown. The subvolume directory is root's, so the check goes through
+`sudo`; `--sudo none` on a host where it is not.
+
+## image prune
+
+Remove the image subvolumes whose last boot — or build, when nothing has
+booted them — is older than the expiry: 30 days, or `--expiry`, or the
+configuration's `image-expiry`. Expiry only; free-space watermarks arrive
+with eviction.
+
+```
+$ mill image prune --dry-run
+DIGEST        PACKAGES     LAST BOOT             ACTION
+599b7919d9a1  libpq-devel  2026-08-01T06:35:20Z  would remove
+
+$ mill image prune
+DIGEST        PACKAGES     LAST BOOT             ACTION
+599b7919d9a1  libpq-devel  2026-08-01T06:35:20Z  removed
+```
+
+Each removal holds the image's build lock, so a provision ensuring the
+same digest either finds the subvolume or rebuilds it. A running machine's
+root is an ephemeral snapshot of its own and is untouched by the source
+going.
+
+## image build-base
+
+Build the base image from `images/base` — `podman build` on this host,
+outside any machine, the one place mill runs a container there — tag it
+`<registry>/mill/base:<today>` and `:latest`, and with `--push` publish
+both. The push presents the Harbor robot credential, one line of
+`robot:secret` from `$CREDENTIALS_DIRECTORY/harbor-robot` or
+`--robot-credential-file`, over podman's stdin and never its command line.
+
+```
+$ mill image build-base --push
+pushed harbor.example/mill/base:2026-09-11
+pushed harbor.example/mill/base:latest
+digest sha256:7d3a1f0c9b2e…
+```
+
+`contrib/systemd/mill-image-build.timer` runs it weekly. The worker
+resolves `:latest` to a digest at each provision, so a pushed base takes
+effect on the next run; `base-image` in the configuration file — a tag or
+a digest — is the rollback.
 
 ## Identity
 
