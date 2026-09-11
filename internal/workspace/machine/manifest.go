@@ -34,8 +34,9 @@ type Manifest struct {
 	// machine's cgroup tree is the unit's (docs/sandbox.md §"Resource
 	// limits"). A limit left empty is the unit's default.
 	Limits Limits `json:"limits"`
-	// Nested gives the machine the wide uid range a run that boots
-	// machines of its own needs (docs/sandbox.md §Provision).
+	// Nested marks a machine that boots machines of its own: the helper
+	// binds the host's sysfs at HostSysfsTarget for it, and admits the
+	// nested read-only sources only with it (docs/sandbox.md §Provision).
 	Nested bool `json:"nested"`
 }
 
@@ -62,6 +63,11 @@ type Limits struct {
 	TasksMax string `json:"TasksMax,omitempty"`
 }
 
+// HostSysfsTarget is where the helper binds the host's sysfs in a nested
+// machine, for an inner nspawn to pivot with. It is the helper's own and no
+// manifest bind may take it.
+const HostSysfsTarget = "/.hostsys"
+
 // imagePattern is what the helper accepts as an image digest.
 var imagePattern = regexp.MustCompile(`^[a-z0-9]+$`)
 
@@ -72,9 +78,9 @@ var ErrManifest = errors.New("machine: machine.json would be refused")
 // Check is the helper's validation, ahead of it: the image is a digest,
 // every bind's source is absolute and under one of the allowed roots, a
 // source under a read-only root is bound read-only, and every target is
-// absolute and not `/`. allowed maps each root to whether binds under it
-// must be read-only. What it cannot check — that the paths exist as root
-// sees them — the helper does.
+// absolute, not `/` and not the helper's own HostSysfsTarget. allowed maps
+// each root to whether binds under it must be read-only. What it cannot
+// check — that the paths exist as root sees them — the helper does.
 func (m Manifest) Check(allowed map[string]bool) error {
 	if !imagePattern.MatchString(m.Image) {
 		return fmt.Errorf("%w: image %q is not a digest matching ^[a-z0-9]+$", ErrManifest, m.Image)
@@ -86,6 +92,9 @@ func (m Manifest) Check(allowed map[string]bool) error {
 		}
 		if !filepath.IsAbs(bind.Target) || filepath.Clean(bind.Target) != bind.Target || bind.Target == "/" {
 			return fmt.Errorf("%w: %s.target %q is not an absolute, normalised path other than /", ErrManifest, field, bind.Target)
+		}
+		if bind.Target == HostSysfsTarget {
+			return fmt.Errorf("%w: %s.target %s is reserved for the helper's sysfs bind", ErrManifest, field, bind.Target)
 		}
 		root, readOnly, ok := underAllowed(bind.Source, allowed)
 		if !ok {

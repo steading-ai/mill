@@ -629,6 +629,12 @@ var _ = Describe("Names and the preflight", Label("unit"), func() {
 		bad = good
 		bad.Binds[0].Target = "/"
 		Expect(bad.Check(allowed)).To(MatchError(ContainSubstring("target")))
+		// The helper's own sysfs bind for a nested machine: neither its
+		// target nor its source is a manifest's to name.
+		reserved := machine.Manifest{Image: good.Image, Binds: []machine.Bind{{Source: "/var/lib/mill/runs/x/sys", Target: machine.HostSysfsTarget, ReadOnly: true}}}
+		Expect(reserved.Check(allowed)).To(MatchError(ContainSubstring("binds[0].target /.hostsys is reserved")))
+		sysfs := machine.Manifest{Image: good.Image, Binds: []machine.Bind{{Source: "/sys", Target: "/mnt/sys", ReadOnly: true}}}
+		Expect(sysfs.Check(allowed)).To(MatchError(ContainSubstring("binds[0].source /sys is outside")))
 	})
 
 	It("Check refuses a sandbox root that is not btrfs, naming the filesystem, and a run-state directory the worker cannot write", func() {
