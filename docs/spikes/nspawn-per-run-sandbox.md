@@ -13,8 +13,9 @@ from `spikes/nspawn/Containerfile.spike`. The four scenarios are executable in
 `spikes/nspawn/spike_test.go` — the live tier of `docs/sandbox.md` §Testing —
 and run with `MILL_SANDBOX_HOST=1 ginkgo ./spikes/nspawn` on a host with root,
 nspawn and the image; the E0 scenario fails there at its exec assertion, which
-is E0's result. Later spike nodes (network and suite, storage, nested,
-gateway) append their sections to this file.
+is E0's result. E14, the credential gateway, is the last section: a session
+in a machine with an empty `~/.claude` answers through
+`spikes/nspawn/gateway.py` on the host.
 
 ## What was under test
 
@@ -54,6 +55,7 @@ Summary of verdicts, one line each; the detail is in the sections.
 | E2 | pass, after three fixes | `overlay systemd` and hello as `agent`, once `newuidmap` had its file capability back, `agent`'s subordinate range fit inside the machine's 65536 uids, and `/proc` was unmasked inside the machine; no AVCs |
 | E3 | pass with `--cgroups=split` | without it the container lands under `user@1000.service` and survives the slice stop; with it and `Delegate=yes` on the exec unit everything sits under the step slice and is dead in the next step |
 | E4 | pass with `:idmap` on the bind | `--private-users-ownership=auto` idmaps the root tree only; `/work` was uid 65534 inside until the bind carried `:idmap`, then the same SHA both sides and owner `1000` on the host |
+| E14 | pass | `"result":"ok"` through the gateway with no `.credentials.json` in the machine; the upstream took the swapped bearer with the CLI's own headers and nothing added; tool search is off by default behind a non-Anthropic base URL |
 
 ---
 
@@ -1745,3 +1747,299 @@ the next four spike nodes; the last of them removes them.
   manages `core`'s interfaces, so `--network-veth` alone yields no address
   (the network spike's problem); Harbor was down for this session; the host's
   `policy.json` rejects registries it does not list.
+
+---
+
+## E14 — The gateway with a setup-token upstream
+
+The last spike node: a session inside a machine, with an empty `~/.claude`,
+answers through a reverse proxy on the host that swaps its step token for the
+subscription's `claude setup-token` value. The proxy is
+`spikes/nspawn/gateway.py` (standard library, 183 lines): it binds a host
+address, forwards only `/v1/messages…` to `https://api.anthropic.com`,
+replaces `Authorization` with `Bearer $CLAUDE_CODE_OAUTH_TOKEN`, passes every
+other header through, streams the response body back in chunks, and logs the
+inbound token and the outbound host per request. The subscription token was
+read from `.env` into the proxy's environment and nowhere else; the log lines
+below carry the step token only.
+
+Run 2026-09-11 00:41 – 00:49 PDT on the same host as E0–E4. Claude Code CLI
+`2.1.266`.
+
+### Setup: the machine, the veth, the CLI
+
+The machine boots as in E1, with one extra flag: the host's CLI binary bound
+read-only. `curl -fsSL https://claude.ai/install.sh | sh` was not tried — the
+machine has no route out (the network spike's squid is not in place), and the
+host's `/usr/bin/claude` is a static-ish ELF the Fedora image runs unchanged.
+
+```
+$ sudo systemd-run --unit=mill-run-e1 --collect -p KillMode=mixed systemd-nspawn --boot --quiet --machine=mill-e1 --directory=/var/lib/machines/mill-image-spike --ephemeral --private-users=pick --private-users-ownership=auto --network-veth --settings=false --bind-ro=/usr/bin/claude:/usr/local/bin/claude
+Running as unit: mill-run-e1.service; invocation ID: 79e6aa487192491086976d85b811ce57
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -- systemctl is-system-running --wait
+running
+$ ip -br addr show ve-mill-e1
+ve-mill-e1@if2   DOWN
+```
+
+`--network-veth` yields a link with no address on either side, as the host
+facts above predicted, and the image has no `ip` (iproute is not in the
+package list) but does have `systemd-networkd`. Addressed by hand — a
+`/run/systemd/network` file inside, `ip addr add` outside — and the veth put
+in firewalld's `trusted` zone for the session, because the host's default zone
+is `drop`:
+
+```
+$ sudo ip addr add 10.99.14.1/24 dev ve-mill-e1 && sudo ip link set ve-mill-e1 up
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -- sh -c 'mkdir -p /run/systemd/network && printf "[Match]\nName=host0\n\n[Network]\nAddress=10.99.14.2/24\nLinkLocalAddressing=no\n" > /run/systemd/network/10-host0.network && systemctl start systemd-networkd && sleep 1 && networkctl status host0 --no-pager | head -20'
+● 2: host0
+                   Link File: n/a
+                Network File: /run/systemd/network/10-host0.network
+                       State: routable (configured)
+                Online state: online
+                        Type: ether
+                        Kind: veth
+…
+                     Address: 10.99.14.2
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -- curl -s -o /dev/null -w 'from machine to host: %{http_code}\n' http://10.99.14.1:8080/
+from machine to host: 000
+$ sudo firewall-cmd --get-default-zone
+drop
+$ sudo firewall-cmd --zone=trusted --add-interface=ve-mill-e1
+success
+```
+
+Port 8080 on the host is held by a rootless podman `pasta` (`ss -ltnp` shows
+`*:8080 users:(("pasta.avx2",…))`), and binding `10.99.14.1:8080` beside a
+wildcard listener is `Address already in use`, so the gateway ran on **8081**
+instead of the work order's 8080. Started with the token in its environment
+and its log in a file:
+
+```
+$ (set -a; . ./.env; set +a; GATEWAY_BIND=10.99.14.1:8081 GATEWAY_LOG=/tmp/spike-out/gateway.log nohup python3 spikes/nspawn/gateway.py >/tmp/spike-out/gateway.stdout 2>&1 &)
+$ cat /tmp/spike-out/gateway.log
+listening bind=10.99.14.1:8081 upstream=https://api.anthropic.com swap=yes
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -- curl -s -o /dev/null -w 'from machine, /v1/models: %{http_code}\n' -H 'Authorization: Bearer probe' http://10.99.14.1:8081/v1/models
+from machine, /v1/models: 404
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -- sh -c 'claude --version; ls -a ~/.claude 2>&1'
+2.1.266 (Claude Code)
+ls: cannot access '/home/agent/.claude': No such file or directory
+```
+
+### The run
+
+The work order's command, with the port changed:
+
+```
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent \
+    -p Environment=ANTHROPIC_BASE_URL=http://10.99.14.1:8081 -p Environment=ANTHROPIC_AUTH_TOKEN=step-token-e14 \
+    -- claude -p 'reply with the single word ok' --output-format json
+{"duration_api_ms":1251,"stop_reason":"end_turn","session_id":"476ad135-9325-4971-bb03-defb6160e048","total_cost_usd":0.16426625,"usage":{"input_tokens":2,"cache_creation_input_tokens":26265,"cache_read_input_tokens":0,"output_tokens":4,"output_tokens_details":{"thinking_tokens":0},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":26265},"inference_geo":"not_available","iterations":[],"speed":"standard"},"modelUsage":{"claude-opus-5[1m]":{"inputTokens":2,"outputTokens":4,"cacheReadInputTokens":0,"cacheCreationInputTokens":26265,"webSearchRequests":0,"costUSD":0.16426625,"contextWindow":1000000,"maxOutputTokens":64000,"thinkingTokens":0,"canonicalModel":"claude-opus-5","provider":"firstParty","costBasis":"list"}},"permission_denials":[],"terminal_reason":"completed","fast_mode_state":"off","fast_mode_disabled_reason":"sdk_opt_in_required","subagent_stats":{"spawned":0,"requested":{"background":0,"foreground":0,"unset":0},"started_in_background":0,"max_depth":0,"spawned_by_subagents":0,"completed":0,"failed":0,"killed":{"parent":0,"user":0,"system":0},"refused":{"depth_limit":0,"concurrency_limit":0,"budget":0},"by_type":{}},"is_error":false,"num_turns":1,"subtype":"success","api_error_status":null,"result":"ok","ttft_ms":1283,"type":"result","duration_ms":1300,"uuid":"407772d4-7b59-4580-844e-1c427ed6dd7b","ttft_stream_ms":1279,"time_to_request_ms":48,"first_content_frame_ms":1279,"queued_turn_count":0}
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -- sh -c 'ls -a ~/.claude; test ! -e ~/.claude/.credentials.json && echo no-login-file'
+.
+..
+backups
+projects
+sessions
+telemetry
+no-login-file
+$ cat /tmp/spike-out/gateway.log
+listening bind=10.99.14.1:8081 upstream=https://api.anthropic.com swap=yes
+refuse method=GET path=/v1/models
+request method=POST path=/v1/messages?beta=true inbound-token=step-token-e14 outbound-host=api.anthropic.com swap=yes headers=accept,accept-encoding,anthropic-beta,anthropic-dangerous-direct-browser-access,anthropic-version,authorization,connection,content-length,content-type,host,user-agent,x-app,x-claude-code-session-id,x-stainless-arch,x-stainless-lang,x-stainless-os,x-stainless-package-version,x-stainless-retry-count,x-stainless-runtime,x-stainless-runtime-version,x-stainless-timeout
+request method=POST path=/v1/messages?beta=true inbound-token=step-token-e14 outbound-host=api.anthropic.com swap=yes headers=accept,accept-encoding,anthropic-beta,anthropic-dangerous-direct-browser-access,anthropic-version,authorization,connection,content-length,content-type,host,user-agent,x-app,x-claude-code-session-id,x-stainless-arch,x-stainless-lang,x-stainless-os,x-stainless-package-version,x-stainless-retry-count,x-stainless-runtime,x-stainless-runtime-version,x-stainless-timeout
+response inbound-token=step-token-e14 outbound-host=api.anthropic.com status=200 bytes=623 content-type=text/event-stream; charset=utf-8
+```
+
+`"result":"ok"`, `"is_error":false`, `"provider":"firstParty"`; 1.3 s end to
+end. `~/.claude` afterwards holds the CLI's own state — a transcript under
+`projects/`, a telemetry spool — and no `.credentials.json`. **The upstream
+accepted the swapped bearer unchanged**: a 200 with `text/event-stream`, no
+header added by the proxy beyond the `Authorization` swap and the `Host`
+rewrite.
+
+Two requests, one response line: the CLI opens a second `/v1/messages` call in
+parallel with the answer (its session-title request: the body dump in the
+tool-search run below shows it as `1.json`, no tools, "Write the title …")
+and closes that connection when the first one finishes. The first version of the proxy logged nothing for it and
+printed a `BrokenPipeError` traceback to stderr; the committed version catches
+the disconnect and logs `client-closed …` instead. `mill#57` must expect a
+client that abandons streams.
+
+#### The headers the CLI sent
+
+Names, from the log line above; the values were captured without a second
+subscription call by pointing a second gateway (`GATEWAY_SWAP=0
+GATEWAY_UPSTREAM=http://127.0.0.1:18099`, a stub that answers 400) at a fake
+upstream and running the same `claude -p` against it (`GATEWAY_DUMP` writes
+the inbound headers, `Authorization` omitted):
+
+```
+Accept: application/json
+Content-Type: application/json
+User-Agent: claude-cli/2.1.266 (external, sdk-cli)
+X-Claude-Code-Session-Id: c65c533b-38cb-4fc3-85ef-320585d715f3
+X-Stainless-Arch: x64
+X-Stainless-Lang: js
+X-Stainless-OS: Linux
+X-Stainless-Package-Version: 0.112.1
+X-Stainless-Retry-Count: 0
+X-Stainless-Runtime: node
+X-Stainless-Runtime-Version: v26.3.0
+X-Stainless-Timeout: 600
+anthropic-beta: claude-code-20250219,context-1m-2025-08-07,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,effort-2025-11-24,structured-outputs-2025-12-15
+anthropic-dangerous-direct-browser-access: true
+anthropic-version: 2023-06-01
+x-app: cli
+Connection: keep-alive
+Host: 10.99.14.1:8082
+Accept-Encoding: gzip, deflate, br, zstd
+Content-Length: 4085
+```
+
+Plus `Authorization: Bearer step-token-e14`, and the query string
+`?beta=true`. In `ANTHROPIC_AUTH_TOKEN` mode the CLI sends **no
+`oauth-2025-04-20`** beta and no `x-api-key`; the upstream took the
+subscription bearer with exactly this `anthropic-beta` list. **Nothing beyond
+the bearer was required.** The gateway rewrites `Host` (the CLI sends the
+gateway's), drops the hop-by-hop `Connection`, and passes the rest through,
+`Accept-Encoding` included — the upstream's `Content-Encoding` travels back
+untouched.
+
+The fallback (`CLAUDE_CODE_OAUTH_TOKEN` in the session's environment) was not
+run: it is for the case where the swap is refused, and it was not.
+
+### Tool search with `ANTHROPIC_BASE_URL` at a non-Anthropic host
+
+One more `claude -p`, with a local MCP server. `/work/.mcp.json` names the
+CLI's own `claude mcp serve` — the only stdio MCP server the image has —
+and is passed with `--mcp-config` because a project `.mcp.json` sits at
+"Pending approval (run `claude` to approve)" in a non-interactive session:
+
+```
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p WorkingDirectory=/work -- sh -c 'printf "{\"mcpServers\":{\"local\":{\"command\":\"claude\",\"args\":[\"mcp\",\"serve\"]}}}\n" > /work/.mcp.json; claude mcp list 2>&1'
+Checking MCP server health…
+
+local: claude mcp serve - ⏸ Pending approval (run `claude` to approve)
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p WorkingDirectory=/work \
+    -p Environment=ANTHROPIC_BASE_URL=http://10.99.14.1:8081 -p Environment=ANTHROPIC_AUTH_TOKEN=step-token-e14 \
+    -- claude -p 'Answer with only a comma-separated list of the names of the tools you have from the MCP server named local, and nothing else.' --output-format json --mcp-config /work/.mcp.json --strict-mcp-config
+{"result":"Agent, Bash, CronCreate, CronDelete, CronList, DesignSync, Edit, EnterWorktree, ExitWorktree, ListAgents, NotebookEdit, Read, ReportFindings, ScheduleWakeup, SendMessage, Skill, TaskOutput, TaskStop, WebFetch, WebSearch, Workflow, Write","is_error":false,"num_turns":1,…}
+```
+
+The request bodies the gateway dumped (`GATEWAY_DUMP`), reduced to their
+`tools` arrays:
+
+```
+1.json model= claude-opus-5 stream= True ntools= 0          # the title request
+2.json model= claude-opus-5 stream= True ntools= 44
+  defer_loading on any: False | tool-search tool types: []
+  mcp tools: ['mcp__local__Agent', 'mcp__local__Bash', … 22 in all … 'mcp__local__Write']
+```
+
+All 22 MCP tools go up **inline, in full, with no `defer_loading`, and no
+tool-search tool** in the request; the model sees and lists them. The CLI's
+own reason is in its binary:
+
+```
+$ strings -n 8 /usr/bin/claude | grep -F 'ToolSearch:optimistic'
+[ToolSearch:optimistic] disabled: ANTHROPIC_BASE_URL=
+ is not a first-party Anthropic host. Set ENABLE_TOOL_SEARCH=true (or auto / auto:N) if your proxy forwards tool_reference blocks.
+```
+
+So a base URL at the gateway turns tool search **off by default**: tools are
+listed, not searched, and a session with many MCP servers pays for every
+definition on every turn. The gateway forwards bodies byte for byte, so
+`ENABLE_TOOL_SEARCH=true` (or `auto`) in the exec environment restores the
+deferred shape; `mill#57` or `mill#62` sets it, and it is a workspace
+decision like the proxy variables.
+
+### The executable form
+
+`spikes/nspawn/gateway_test.go` holds the three scenarios. The two that need
+no machine run in `make test`: `/v1/models` is 404, and a request through the
+gateway to a stand-in upstream is logged with the step token inbound and the
+upstream host outbound while the stand-in sees the swapped bearer and the log
+never contains it. The third boots a machine, addresses the veth, starts the
+gateway with `CLAUDE_CODE_OAUTH_TOKEN` from the environment, and runs the
+`claude -p`; it is `Label("live")` and was run once:
+
+```
+$ (set -a; . ./.env; set +a; MILL_SANDBOX_HOST=1 ginkgo -v --label-filter=live --focus='no credential' ./spikes/nspawn)
+The credential gateway on a real machine The session answers with no credential in the machine [live, Serial]
+  STEP: a machine whose agent has an empty ~/.claude @ 09/11/26 00:48:36.867
+  STEP: the veth addressed on both sides and admitted by the host's firewall @ 09/11/26 00:48:37.157
+  STEP: a gateway on the host holding the subscription token @ 09/11/26 00:48:37.424
+  STEP: the session runs claude -p with the step token and the gateway as base URL @ 09/11/26 00:48:37.445
+  STEP: the answer is ok and no .credentials.json exists in the machine @ 09/11/26 00:48:38.874
+• [2.498 seconds]
+Ran 1 of 7 Specs in 2.498 seconds
+SUCCESS! -- 1 Passed | 0 Failed | 0 Pending | 6 Skipped
+```
+
+**Verdict: E14 passes. The CLI answers `ok` through the gateway with an empty `~/.claude` and no `.credentials.json` afterwards; the gateway log pairs `inbound-token=step-token-e14` with `outbound-host=api.anthropic.com` on the same request; the upstream accepted the swapped bearer with the CLI's own headers and nothing added. Decision for `mill#57`: the gateway with a swapped bearer, as §Credentials describes; the fallback is not needed.**
+
+### Teardown
+
+The last spike node removes the template unit and the image, and the two
+`.#machine.mill-image-spike…` snapshots (plus their `.lck` files) that earlier
+sessions left behind after a machine died without nspawn's cleanup:
+
+```
+$ sudo systemctl stop mill-run-e1 2>/dev/null; echo "rc=$?"
+rc=5
+$ sudo systemctl stop mill-machine@*.service 2>/dev/null; echo "rc=$?"
+rc=1
+$ sudo rm -f /etc/systemd/system/mill-machine@.service && sudo systemctl daemon-reload; echo "rc=$?"
+rc=0
+$ sudo btrfs subvolume delete /var/lib/machines/mill-image-spike
+Delete subvolume 273 (no-commit): '/var/lib/machines/mill-image-spike'
+Delete subvolume 282 (no-commit): '/var/lib/machines/.#machine.mill-image-spikee0b6c81c3f66d6e5'
+Delete subvolume 284 (no-commit): '/var/lib/machines/.#machine.mill-image-spikedf0e8928e4e6ad47'
+$ machinectl list --no-pager; ls -l /etc/systemd/system/mill-machine@.service 2>&1; sudo btrfs subvolume list /var/lib/machines; sudo ls -a /var/lib/machines
+No machines.
+ls: cannot access '/etc/systemd/system/mill-machine@.service': No such file or directory
+ID 256 gen 145 top level 5 path @mill
+ID 257 gen 154 top level 5 path @machines
+.
+..
+$ sudo firewall-cmd --zone=trusted --list-interfaces
+
+$ sudo ausearch -m avc -ts 00:40:00
+<no matches>
+```
+
+`rc=5` and `rc=1` on the two stops are "no such unit": the machine had been
+stopped after the run, and no `mill-machine@` instance existed. The veth was
+taken out of the `trusted` zone before the machine stopped; the change was
+runtime-only and never `--permanent`.
+
+Fifteen minutes later the host held a new `/var/lib/machines/mill-image-spike`
+(created 00:52:47, a different subvolume id) and a 1640-byte
+`/etc/systemd/system/mill-machine@.service` describing itself as "mill:
+sandbox machine for run %i", with `mill-machine@x.service` running: another
+agent on this host, working `homestead#33`, installing the real ones. Those
+are not the spike's and were left alone.
+
+### What the design takes from E14
+
+- **§Credentials stands as written.** The step token in
+  `ANTHROPIC_AUTH_TOKEN`, the gateway at `ANTHROPIC_BASE_URL`, the bearer
+  swapped for the setup-token: the CLI works with an empty `~/.claude`, and
+  the upstream needs nothing beyond the swapped bearer. The fallback paragraph
+  can go.
+- **`mill#57`.** Forward every request header except `Host` and the
+  hop-by-hop set, rewrite `Host`, swap `Authorization`; refuse paths outside
+  `/v1/messages`; stream the body; tolerate a client that closes a stream
+  midway (the CLI's parallel title request does) without treating it as an
+  upstream failure; and set `ENABLE_TOOL_SEARCH=true` in the exec environment
+  or accept that tool search is off for every session.
+- **§Network / `mill#61`.** The host-side veth address is the worker's to
+  assign (NetworkManager does not), the image needs `systemd-networkd`
+  enabled with a `host0` `.network` file (or `iproute` for the helper), and
+  firewalld's `drop` default zone must admit the veth or nothing on the host
+  answers — squid included.
+- **§Images / `mill#59`.** The host's `claude` binary runs unchanged in the
+  image when bound in; installing it into the image at build time is the
+  cleaner shape. The image's port for the gateway must be chosen against what
+  the host already listens on: rootless podman's `pasta` held 8080 here.
