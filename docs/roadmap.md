@@ -29,7 +29,41 @@ The `feature` workflow with a reviewer that has demonstrably said no, and a plan
 
 **Done when** M.2 holds, and a feature node the reference harness would have worked is delivered with a plan gate answered from Slack.
 
-## O2 — Unattended, for real
+## O2 — Isolated
+
+A run's sessions execute inside a machine the worker started without root: an ephemeral `systemd-nspawn` snapshot of an image the repo's `mill.toml` declared, the build cache warm from a btrfs lineage, egress only through the host, and no credential in the machine. The design is `docs/sandbox.md`, its behaviour `docs/sandbox-scenarios.md`, its decision [ADR-018](adrs/018-a-runs-sandbox-is-a-systemd-nspawn-machine.md). Sandboxing was made the priority on 2026-09-10, ahead of unattended operation and pluggability, which moved down one milestone each with their content unchanged.
+
+| Item | Decided |
+|---|---|
+| The sandbox design lands in docs/ — the spec, the scenarios, ADR 018, and the roadmap reordered | mill#55, ADR-018 |
+| Spike — a machine boots from the operator's uid through polkit, execs, runs podman, reaps a step, and shares a workspace | mill#73, Sandbox §Privilege, §Lifecycle |
+| Spike — a session answers through a host gateway holding the subscription token, with no login file in the machine | mill#74, Sandbox §Credentials |
+| Spike — egress through squid only, the db suite inside a machine, Harbor-proxied pulls, and the dnf shim | mill#75, Sandbox §Network, §The dnf shim |
+| Spike — a machine inside a machine, so the sandbox can test itself; then unprivileged nspawn and vmspawn as informants | mill#76, Sandbox §Self-hosting, §Privilege |
+| Spike — cache lineages restore and promote by snapshot in constant time, and a derived image builds, boots, and falls back | mill#77, Sandbox §Caching, §Images |
+| The acceptance suite runs against a disposable dagger, not the operator's deployed one | mill#51, Sandbox §Testing |
+| The proxy and gateway variables cross both environment floors as workspace decisions | mill#54, Sandbox §Network, §Credentials |
+| The workspace backend is chosen by configuration, and the machine backend has a driver seam | mill#56, Sandbox §Self-hosting, Architecture §The workspace |
+| The credential gateway — the session holds the step token, the host holds the subscription | mill#57, Sandbox §Credentials, principle 9 |
+| mill.toml — what a repo declares about its machine, validated, with defaults from mise.toml | mill#58, Sandbox §mill.toml |
+| Images — the base Containerfile, derived images by digest, the build lock and the fallback | mill#59, Sandbox §Images |
+| Cache lineages — restore by snapshot, promote only from evidence, keep two, reset globals over cap | mill#60, Sandbox §Caching |
+| The machine backend — create, attach, destroy, rotate: a run's machine through mill-machine@ | mill#61, Sandbox §Lifecycle, §Privilege |
+| Exec into the machine under a step slice, and a step boundary that reaps everything | mill#62, Sandbox §Exec, §Step boundary |
+| Reconciliation on resume, and the sweep of every kind of external state a machine can leave | mill#63, Sandbox §Reconciliation on resume, §External state |
+| Preparatory steps degrade into findings — toolchain, image build, mill.toml, and the dnf shim's report | mill#64, Sandbox §Preparatory steps, §The dnf shim |
+| The mill skill rides with the worker — mounted read-only into the machine, and it documents mill.toml and the proxy | mill#65, Sandbox §Skill mount |
+| nested — a repo whose tests boot machines may do so inside its own machine | mill#66, Sandbox §Self-hosting |
+| Eviction — expiry, then least-recently-used under free-space watermarks, images included | mill#67, Sandbox §Eviction |
+| A session waits in the foreground for as long as its step may run | mill#68, Sandbox §Preparatory steps |
+| End to end inside a machine — a node delivered, the test suite run, the boundaries proven | mill#69, Sandbox §Testing |
+| The documents catch up with what was built — runbook, tools, architecture, the repo map | mill#70 |
+| Prove O2 — the live tier run on core by a person, then mill moved into its own machines | mill#71, Sandbox §Self-hosting |
+| Mill moves into its own machines — the deployed worker delivers a node inside a machine with the live tier as a check step, and the O2 retrospective | mill#72, Sandbox §Self-hosting |
+
+**Done when** the live tier has passed on `core` with the ginkgo summary as the gate's result, and mill's own sessions run inside machines with `[machine].nested`, so the sandbox tests itself from then on.
+
+## O3 — Unattended, for real
 
 Runs the operator does not think about. Concurrency above one, caps that park rather than surprise, and a deploy that is a repin.
 
@@ -47,7 +81,7 @@ Runs the operator does not think about. Concurrency above one, caps that park ra
 
 **Done when** M.1, M.4, and M.5 hold: a node filed from a Slack conversation is delivered across two projects in one unattended run; the harness is retired from delivery; usage is in dagger under mill's leases.
 
-## O3 — Pluggable
+## O4 — Pluggable
 
 Adding a workflow, a project, a forge, or a harness is configuration.
 
@@ -62,24 +96,19 @@ Adding a workflow, a project, a forge, or a harness is configuration.
 | Skill evals: a workflow definition ships with fixture nodes; `mill run --dry-run` and single-run mode are the harness | R-47 |
 | `decompose` workflow — gather-context → think → patch of child nodes → parent becomes a grouping node → run ends; the path to seeding a big idea as a project | C5, post-MVP |
 
-**Done when** M.3 holds, the third workflow costs less to add than the second, and Codex runs `quick-fix` unchanged.
-
-## O4 — Isolated
-
-Sandboxing and identity, behind the seams O0 drew.
+Parked here from the former O4 — *Isolated* — because O2 took its sandbox and left these, each with its provenance; they are not in this milestone's done-when:
 
 | Item | Decided |
 |---|---|
-| `container` workspace: rootless podman with a devcontainer so tests run their own services; same handle, no workflow change | R-33, Architecture §The workspace |
 | Capability sets enforced by the workspace, not the adapter's tool policy; `exec` gated against `write`; reviewer genuinely read-only | R-32, C3, Domain Model §Capability set |
-| Reviewer end-to-end verification: runs the thing (e.g. dagger) to confirm the bug is fixed; needs the container workspace first | B3 (post-MVP) |
+| Reviewer end-to-end verification: runs the thing (e.g. dagger) to confirm the bug is fixed; needs the machine workspace first | B3 (post-MVP) |
 | Secrets service: step credentials minted from Vault per step, none on disk | R-37, bet *Agents hold no secrets* |
 | Per-run SSH certificates from a CA, principal `mill/<node>`, TTL = the run; `git verify-commit` as provenance | C1 |
 | Mill as its own account and `agent` principal — requires dagger's `onlyOrchestrators` to admit it or a stored delegation grant; every gate veto then applies | R-35, Dagger principal check §5–6 |
-| microVM runtime for untrusted workloads and edge services | bet *The workspace seam is enough* |
+| microVM runtime for untrusted workloads and edge services: `systemd-vmspawn` boots the same tree, Sandbox §Scope | bet *The workspace seam is enough* |
 | Ephemeral sandbox uids mapped to a principal (dagger's open item) | Dagger principal check §6 |
 
-**Done when** a workflow runs identically on local and container workspaces, no long-lived credential exists in mill's account, and mill is its own principal with `ReportUsage` still accepted.
+**Done when** M.3 holds, the third workflow costs less to add than the second, and Codex runs `quick-fix` unchanged.
 
 ## O5 — Distributed
 
@@ -114,7 +143,7 @@ Each wants an ADR when its milestone starts. From the specs' open-question secti
 | `skills.files` bytes in mill's database or dagger's blob store | mill's, so a workflow loads without dagger | O1 |
 | Gate filed in dagger but not recorded in the store (crash between) — search open user-assigned children before filing | as `gates` node Notes | O0 |
 | `revise` semantics when the target step is in a different session | supersede as usual; the target session resumes with feedback | O1 |
-| Stale-lease usage: reconcile abandoned attempts' usage into dagger, or accept the undercount | accept; the ledger is complete | O2 |
+| Stale-lease usage: reconcile abandoned attempts' usage into dagger, or accept the undercount | accept; the ledger is complete | O3 |
 | Polling `status` vs a `WatchRuns` stream for thicket | polling until a consumer asks | O5 |
 
 ## What mill needs from the neighbours
@@ -129,5 +158,6 @@ Not mill's to build; mill's to wait on or work around.
 | `dg admin` bootstrap so a second principal is not a `psql` job | dagger | O4 |
 | An orchestrator principal kind or stored delegation grants, and M2's "owns its own principal" wording reconciled with `onlyOrchestrators` | dagger | O4 |
 | tsnet enabled in dagger's deployment | dagger, homestead | O5 |
-| Attested releases and a CI runner for mill's own repo | homestead, the delivery bet | O2 |
+| The `mill` role on `core`: the btrfs volume, `mill-machine@.service` and its polkit rule, the nftables table, squid, the SELinux module, the model credential by `LoadCredential` (Sandbox §Sequencing across repositories) | homestead | O2 |
+| Attested releases and a CI runner for mill's own repo | homestead, the delivery bet | O3 |
 | Vault | homestead, the identity bet | O4 |

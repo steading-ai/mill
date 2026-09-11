@@ -1,12 +1,12 @@
----
-status: draft
-date: 2026-09-10
-tags: [mill, spec, sandbox, gherkin]
----
+# Per-run sandbox — scenarios
 
-# Per-Run Sandbox — Scenarios
+The behaviour in [the sandbox spec](sandbox.md) as Gherkin. Each scenario is a contract: it becomes a Ginkgo spec whose name is the scenario text and whose assertions are its Then clauses. The nodes of [Roadmap §O2](roadmap.md#o2--isolated) carry their own scenarios, drawn from these; this document is the reference they draw on, not a suite of its own.
 
-The behaviour in [[Per-Run Sandbox (Tech Spec)]] as Gherkin. Each scenario is a contract: it becomes a Ginkgo spec whose name is the scenario text and whose assertions are its Then clauses. Tags map to the three tiers the tree already uses: `@unit` runs against the fake backend with no machine; `@db` is `Label("db")` and takes a testsupport database; `@live` is `Label("live")` and boots a real machine — it skips in `BeforeEach` unless `MILL_SANDBOX_HOST` is set, with a message naming what it costs, and runs in the loop once the mill repo's sessions run in a machine with `[machine].nested`. Until then it is run once on the host by a person, on the record (spec §Self-hosting).
+Tags map to the three tiers the tree already uses:
+
+- `@unit` — `Label("unit")`, against the fake backend, no machine, no database. `make test-unit` runs it.
+- `@db` — `Label("db")`, a database from `internal/testsupport`. `make test-db` runs it.
+- `@live` — `Label("live")`, a real machine on a host with root, nspawn, btrfs and Harbor. The spec skips in `BeforeEach` unless `MILL_SANDBOX_HOST` is set, and the skip message names what running it costs: *"set MILL_SANDBOX_HOST=1 on a host with root, nspawn and btrfs to run the spec that boots a real machine."* `make test` runs it and it skips; it runs in the loop once the mill repo's sessions run in a machine with `[machine].nested`, and until then once on `core` by a person, on the record ([spec §Self-hosting](sandbox.md#self-hosting)).
 
 Vocabulary follows the spec: *machine*, *machine unit*, *step slice*, *exec*, *lineage*, *generation*, *promotion*, *preparatory step*, *finding*.
 
@@ -56,9 +56,9 @@ Feature: The sequence of a run
 Feature: Machine lifecycle
 
   @live
-  Scenario: A machine is a transient unit that boots an ephemeral snapshot
+  Scenario: A machine is a unit instance that boots an ephemeral snapshot
     When a run provisions its machine
-    Then a host unit named "mill-run-<run-id>.service" is active
+    Then a host unit named "mill-machine@<run-id>.service" is active
     And machinectl lists a machine named "mill-<run-id>" in state "running"
     And a btrfs snapshot of the image subvolume exists for the duration of the machine
 

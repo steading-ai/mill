@@ -1,20 +1,26 @@
----
-status: draft
-date: 2026-09-10
-tags: [mill, spec, sandbox]
----
+# Per-run sandbox
 
-# Per-Run Sandbox
+How a run's workspace becomes a `systemd-nspawn` machine: the image it boots, the caches it restores, what mill does to it, and what it may assume about it. Decided in [ADR-018](adrs/018-a-runs-sandbox-is-a-systemd-nspawn-machine.md); specified as behaviour in [the scenarios](sandbox-scenarios.md); validated by a spike run on `core` by a person (§The host). RFC 2119 keywords are normative.
 
-How a run's workspace becomes a `systemd-nspawn` machine: the image it boots, the caches it restores, what mill does to it, and what it may assume about it. Decided in [[ADR - Per-Run Sandbox Backend]]; validated by [[2026-09-10 - Spike - nspawn per-run sandbox]]; specified as behaviour in [[Per-Run Sandbox (Scenarios)]]. RFC 2119 keywords are normative.
-
-This spec describes the backend behind `Workspace`. It does not describe the `Workspace` interface's Go shape, which `docs/architecture.md` and `internal/workspace` own; where this document names an operation it names a capability the interface must expose, not a method signature.
+This spec describes the backend behind `Workspace`. It does not describe the `Workspace` interface's Go shape, which [Architecture §The workspace](architecture.md#the-workspace) and `internal/workspace` own; where this document names an operation it names a capability the interface must expose, not a method signature.
 
 ## Scope
 
 In scope: the run's sequence from claim to destroy; base and derived images; `mill.toml`; the machine's lifecycle, exec channel and step boundaries; filesystem, caches and eviction; network; credentials; session identity; the `dnf` shim; preparatory steps; resource limits; privilege; reconciliation on resume; failure modes.
 
 Out of scope: the harness sidecar and its wire protocol; what a workflow's steps are; the multi-tenant boundary (`systemd-vmspawn`), which this design admits later without changing the interface.
+
+## The host
+
+The worker runs on `core`, the operator's host, and the design assumes its facts. They are stated here once and referred to by name everywhere else.
+
+- Fedora 44; systemd 259 with `systemd-nspawn` and `systemd-vmspawn`; `systemd-container` installed. SELinux enforcing. Bare metal with `/dev/kvm` (mode 0666).
+- Rootless podman 5.8. A Harbor registry with proxy-cache projects for `docker.io`, `quay.io` and `ghcr.io`.
+- The root filesystem is XFS on LVM on LUKS with no free extents. A second NVMe, `nvme1n1` (931 GB), is the sandbox's own volume (§Storage).
+- firewalld owns `inet firewalld`; NetworkManager manages links unless told otherwise. Every polkit action the design names is present: `org.freedesktop.machine1.{shell,manage-machines,login,open-pty}` and `org.freedesktop.systemd1.manage-units`.
+- Host configuration mill cannot ship — the storage volume, the machine template unit and its polkit rule, the nftables table, squid, the SELinux module, the credential delivered by `LoadCredential` — is homestead's, the operator's host-configuration project, and reaches `core` as roles there (§Sequencing across repositories).
+
+**The spike.** The experiments this design depends on — numbered E0 to E14 below — are run on `core` by a person, outside this repository, before the backend milestone starts; a section that names one records its result here when it is known, and until then the section states the design that the experiment decides.
 
 ## Terms
 
@@ -24,7 +30,7 @@ Out of scope: the harness sidecar and its wire protocol; what a workflow's steps
 | **derived image** | Base plus the system packages a repo's `mill.toml` declares. Identified by `hash(base digest, sorted packages)`. A repo declaring no packages has a derived digest equal to the base digest. |
 | **image subvolume** | A derived image exported to a btrfs subvolume under `/var/lib/machines/`. What a machine boots from. |
 | **machine** | One `systemd-nspawn` instance, booted (`-b`) from an ephemeral snapshot of an image subvolume, registered with `systemd-machined` under the run's name. One per run. |
-| **machine unit** | The transient host unit that owns the machine's process tree and resource limits. Stopping it destroys the machine. |
+| **machine unit** | The host unit that owns the machine's process tree and resource limits: one instance of the `mill-machine@.service` template, started and stopped by the worker through polkit. Stopping it destroys the machine. |
 | **step slice** | A slice inside the machine's systemd under which every process of one step runs. Stopping it reaps the step. |
 | **exec** | A transient service inside the machine, addressed by machine name, with piped stdio and an exit code. `Workspace.Exec` realised. |
 | **workspace dir** | A host directory per run, bind-mounted into the machine at `/work`. The checkout lives here. |
@@ -38,7 +44,7 @@ Out of scope: the harness sidecar and its wire protocol; what a workflow's steps
 ## Naming
 
 - Machine: `mill-<run-id>`. The reconciliation key; **MUST** be derivable from the run alone.
-- Machine unit: `mill-run-<run-id>.service` on the host.
+- Machine unit: `mill-machine@<run-id>.service` on the host, an instance of the root-owned template (§Privilege).
 - Step slice: `mill-step-<ordinal>.slice` inside the machine.
 - Exec unit: `mill-exec-<uuid>.service` inside the machine, under its step's slice.
 - Image subvolume: `/var/lib/machines/mill-image-<derived-digest>`.
@@ -65,7 +71,7 @@ Everything below is in this order. The order is the design: configuration is rea
 
 ### Base
 
-- Built from `images/base/Containerfile` in the mill repo by `mill image build-base --push`, run weekly by a user timer on the worker's host (`contrib/systemd/mill-image.timer`) and on demand; pushed to Harbor as `mill/base:<date>` and `mill/base:latest` with a robot credential delivered by `LoadCredential`. Not by forge CI: CI is not active on the GitLab projects, and the host that runs machines is the host that has podman and the credential.
+- Built from a Containerfile in this repository (under `images/base`, added by the images node) by `mill image build-base --push`, run weekly by a user timer on `core` (a unit beside `contrib/systemd/mill.service`) and on demand; pushed to Harbor as `mill/base:<date>` and `mill/base:latest` with a robot credential delivered by `LoadCredential`. **Not by forge CI**: CI is not active on the GitLab projects, and the host that runs machines is the host that has podman and the credential.
 - **MUST** contain: systemd as PID 1, `dbus-broker`, `podman` with `podman.socket` enabled and `storage.conf` selecting `overlay`, `git`, `sudo`, `mise`, and the native-extension toolchain — gcc, g++, make, pkgconf, python3, and the `-devel` set ruby-build, node-gyp and linked crates require (openssl, zlib, libffi, libyaml, readline, ncurses, gdbm, sqlite). Node installed globally through mise for the harness's runtime.
 - **MUST** contain the user `agent` (uid 1000, home `/home/agent`), the `dnf` shim (§The dnf shim) and its sudoers rule, `registries.conf` routing pulls through Harbor's proxy projects, and a pre-granted `mise trust` for `/work`.
 - **MUST NOT** contain credentials, the mill skill, the sidecar, or any of the operator's `$HOME`. The skill and sidecar are the worker's and are mounted at provision.
@@ -120,11 +126,10 @@ nested = true                    # only for a repo whose tests boot machines; se
 
 ### Provision
 
+The worker writes `/var/lib/mill/runs/<run-id>/machine.json` — the image subvolume, binds, limits and whether `nested` is granted — and starts `mill-machine@<run-id>.service` (§Privilege). The template's `ExecStart` reads that file and becomes:
+
 ```
-systemd-run --unit=mill-run-<run-id> --collect \
-  -p MemoryMax=<limit> -p CPUQuota=<limit> -p TasksMax=<limit> \
-  -p KillMode=mixed \
-  systemd-nspawn --boot --quiet \
+systemd-nspawn --boot --quiet \
     --machine=mill-<run-id> \
     --directory=/var/lib/machines/mill-image-<derived-digest> --ephemeral \
     --private-users=pick --private-users-ownership=auto \
@@ -135,6 +140,8 @@ systemd-run --unit=mill-run-<run-id> --collect \
     --bind=/var/lib/mill/runs/<run-id>/cache/<name>:<path>   # one per cache
     --settings=false
 ```
+
+with `MemoryMax=`, `CPUQuota=`, `TasksMax=` and `KillMode=mixed` on the unit (§Resource limits).
 
 - `--ephemeral` **MUST** be used: the root is a btrfs snapshot of the image subvolume, discarded on exit.
 - `--private-users=pick` allocates a 64K uid range per machine; two machines never share one.
@@ -172,7 +179,7 @@ systemd-run --machine=mill-<run-id> --pipe --wait --quiet --collect \
 
 ### Destroy
 
-- `systemctl stop mill-run-<run-id>.service`. `KillMode=mixed` lets nspawn shut the machine down, then kills the rest.
+- `systemctl stop mill-machine@<run-id>.service`. `KillMode=mixed` lets nspawn shut the machine down, then kills the rest.
 - The ephemeral root is discarded by nspawn. The run directory — workspace, socket dir, cache copies — is the host's, and mill **MUST** remove it after promotion and after any evidence it needs from the workspace is recorded. Removing a cache copy is `btrfs subvolume delete`.
 - A run **MUST NOT** be marked finished while its machine is still registered.
 
@@ -193,7 +200,7 @@ systemd-run --machine=mill-<run-id> --pipe --wait --quiet --collect \
 
 ## Storage
 
-The reference host's root is XFS on LVM on LUKS with no free extents, so the sandbox gets a volume of its own: the second NVMe (`nvme1n1`, 931 GB), LUKS with a keyfile on the encrypted root so it opens after root does, btrfs on top, mounted at `/var/lib/mill` with `user_subvol_rm_allowed`, and a `machines` subvolume bind-mounted at `/var/lib/machines`. Lineages, run directories, image subvolumes and squid's cache all live there. This is a homestead role (`mill_storage`) and the first prerequisite of the spike; nothing below runs on XFS as written. XFS reflink would have carried the design at file-level copy-on-write — seconds rather than milliseconds to restore a large cache — and is the fallback if the disk ever has to go back.
+`core`'s root is XFS (§The host), so the sandbox gets a volume of its own: `nvme1n1`, LUKS with a keyfile on the encrypted root so it opens after root does, btrfs on top, mounted at `/var/lib/mill` with `user_subvol_rm_allowed`, and a `machines` subvolume bind-mounted at `/var/lib/machines`. Lineages, run directories, image subvolumes and squid's cache all live there. This is homestead's `mill_storage` role and the first prerequisite of the spike; nothing below runs on XFS as written. XFS reflink would have carried the design at file-level copy-on-write — seconds rather than milliseconds to restore a large cache — and is the fallback if the disk ever has to go back.
 
 ## Caching
 
@@ -259,7 +266,7 @@ Three mechanisms, applied in this order at each trigger.
 ## Network
 
 - The machine has a private network namespace on a host-side veth named `ve-mill-<run-id>` (truncated to the interface-name limit; mill **MUST** record the actual name). The host addresses it the way systemd's own `80-container-ve.network` does — a DHCP server on the host side of every `ve-mill*` link, no masquerade — with NetworkManager told to leave `ve-mill*` unmanaged.
-- The host's nftables table is **static**, because the worker is unprivileged and cannot add rules at run time: one `table inet mill` matching `iifname "ve-mill*"`, permitting DNS to the host resolver, TCP to the proxy and gateway ports on the host, and established/related; dropping everything else, including forwarding between `ve-mill*` links and to the LAN. Its own table and its own loader unit, never a `flush ruleset`, because firewalld owns `inet firewalld` (the thicket pattern on this host).
+- The host's nftables table is **static**, because the worker is unprivileged and cannot add rules at run time: one `table inet mill` matching `iifname "ve-mill*"`, permitting DNS to the host resolver, TCP to the proxy and gateway ports on the host, and established/related; dropping everything else, including forwarding between `ve-mill*` links and to the LAN. Its own table and its own loader unit, never a `flush ruleset`, because firewalld owns `inet firewalld` on `core` (the pattern homestead's `thicket_nftables` role already uses).
 - Egress is a forward proxy on the host — squid, or something equally plain — listening on the host side of each machine's veth. It is **transparent in policy**: no allowlist, no interception, `CONNECT` passed through so the TLS a session sees is the origin's. Its job for now is to be the only path out, so the network architecture is settled and a smarter proxy can replace it without the machines noticing. `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY` are set in every exec's environment.
 - The nftables drop is what makes the proxy mandatory, not the proxy itself. A session that ignores the environment and connects directly gets a timeout, not a bypass.
 - **The proxy variables MUST cross both environment floors.** The harness adapter (`envFloor`, `internal/harness/claude/environment.go`) and the sidecar (`ENVIRONMENT_PASSTHROUGH`, `sidecar/src/session.ts`) are allowlists of eleven names, and the SDK does not merge an exec's environment with them. Setting the variables on the exec alone leaves a session's shell with no proxy on a host that drops the direct path: every outbound call hangs to its timeout with nothing naming a proxy. They are copied past both floors the way `mill#50` copies the workspace-git variables — as decisions the workspace made, not values the host supplied — in both files, which already point at each other.
@@ -317,7 +324,7 @@ The rule: a preparatory step **MUST NOT** fail the run. The circuit breaker exis
 Budgets are the workflow's. A preparatory step and a check step each run under the `timeout` the workflow definition gives them — `workflows/feature/workflow.yaml` already carries `20m`, `30m` and `168h` on its steps — not under any harness setting. Two consequences:
 
 - Every preparatory step **MUST** have an explicit `timeout`; there is no default that is right for both a warm `mise install` and a cold Rust toolchain.
-- **The sidecar MUST set the session's shell timeout to the step's budget.** It sets none today, so a session gets the SDK's default and a command over about two minutes is backgrounded — after which a session invents a poll loop and loses an hour, which is the failure the harness fixed for its own sessions in `d395942` and `mill#42` but not for mill's. A session that can wait in the foreground never has a task to lose.
+- **The sidecar MUST set the session's shell timeout to the step's budget.** It sets none today, so a session gets the SDK's default and a command over about two minutes is backgrounded — after which a session invents a poll loop and loses an hour, which is the failure the harness fixed for its own sessions (`mill#42`) but not for mill's. A session that can wait in the foreground never has a task to lose.
 
 ## Resource limits
 
@@ -327,18 +334,18 @@ Budgets are the workflow's. A preparatory step and a check step each run under t
 
 ## Privilege
 
-The worker is not root. It runs as the operator's account, as a user unit — `contrib/systemd/mill.service`, deployed by `homestead#29` — because that account is mill's dagger principal and holds the forge token and the model credential, and none of that should be root. What needs root is starting a machine, and that is separated out the way `homestead-apply` already is: a system unit the operator's uid may drive through polkit.
+The worker is not root. It runs as the operator's account, as a user unit — `contrib/systemd/mill.service`, deployed by homestead — because that account is mill's dagger principal and holds the forge token and the model credential, and none of that should be root. What needs root is starting a machine, and that is separated out the way `homestead-apply` already is: a system unit the operator's uid may drive through polkit.
 
-- `mill-machine@.service` is a root-owned template on the system manager. Its `ExecStart` is the `systemd-nspawn` invocation of §Provision, reading the run's declared binds and limits from `/var/lib/mill/runs/%i/machine.json`, which the worker writes. The worker starts and stops it with `systemctl start mill-machine@<run-id>` under a polkit rule granting its uid `org.freedesktop.systemd1.manage-units` for that template and nothing else — the `homestead_apply` rule, copied not widened.
-- Exec into the machine is `systemd-run -M` as the operator's uid, under a polkit rule for `org.freedesktop.machine1.shell` and `manage-machines`. Whether machined's polkit path satisfies `systemd-run -M` for an unprivileged caller, or the namespace entry still wants `CAP_SYS_ADMIN`, is the first experiment in the spike (E0); it decides the shape of this section before anything else is built.
+- `mill-machine@.service` is a root-owned template on the system manager. Its `ExecStart` is the `systemd-nspawn` invocation of §Provision, reading the run's declared binds and limits from `/var/lib/mill/runs/%i/machine.json`, which the worker writes. The worker starts and stops it with `systemctl start mill-machine@<run-id>` under a polkit rule granting its uid `org.freedesktop.systemd1.manage-units` for that template and nothing else — homestead's `homestead-apply` rule, copied not widened.
+- Exec into the machine is `systemd-run -M` as the operator's uid, under a polkit rule for `org.freedesktop.machine1.shell` and `manage-machines`. Whether machined's polkit path satisfies `systemd-run -M` for an unprivileged caller, or the namespace entry still wants `CAP_SYS_ADMIN`, is the spike's E0; it decides the shape of this section before anything else is built.
 - If E0 fails, the fallback keeps the pattern: a small root-owned helper unit with three verbs — start, exec, stop, by machine name — that the polkit rule admits the operator to. Still a system unit plus a polkit rule; the worker still never holds root.
 - Every process inside the machine is unprivileged on the host through the user namespace, including root inside a `nested` machine.
 - Unprivileged nspawn through `systemd-nsresourced` (E7) would remove the template unit entirely. It is the more elegant answer and the less proven one; it stays a spike for repos without `nested`.
-- The host's polkit actions are all present: `org.freedesktop.machine1.{shell,manage-machines,login,open-pty,...}` and `org.freedesktop.systemd1.manage-units`.
+- The polkit actions the rules name are present on `core` (§The host).
 
 ## SELinux
 
-The reference host enforces SELinux. Nested labelling for a machine that runs containers is expected to need `--selinux-context=`/`--selinux-apifs-context=` on the invocation or a small local policy module. The spike reports which; the answer is recorded here when known.
+`core` enforces SELinux. Nested labelling for a machine that runs containers needs either `--selinux-context=`/`--selinux-apifs-context=` on the invocation or a small local policy module; the spike (E4 and the nested experiments) decides which, and the answer goes here.
 
 ## External state
 
@@ -394,15 +401,15 @@ Polling `machinectl` is sufficient at run cadence. If it is not, host-side D-Bus
 
 ## Testing
 
-The behaviour is specified as scenarios in [[Per-Run Sandbox (Scenarios)]]. Each is a Ginkgo spec named for the scenario, in one of three tiers the tree already uses:
+The behaviour is specified as scenarios in [sandbox-scenarios.md](sandbox-scenarios.md). Each is a Ginkgo spec named for the scenario, in one of three tiers the tree already uses:
 
 - **unit** — against the fake backend, no machine. `make test` runs it.
 - **db** — `Label("db")`, a testsupport database. `make test` runs it.
-- **live** — `Label("live")`, a real machine on a host with root, nspawn, btrfs and Harbor. The spec skips in `BeforeEach` when `MILL_SANDBOX_HOST` is unset, and the skip message names what running it costs, in the words the five existing `live` specs use: *"set MILL_SANDBOX_HOST=1 on a host with root, nspawn and btrfs to run the spec that boots a real machine."* `make test` runs it and it skips; on the host it runs.
+- **live** — `Label("live")`, a real machine on a host with root, nspawn, btrfs and Harbor. The spec skips in `BeforeEach` when `MILL_SANDBOX_HOST` is unset, and the skip message names what running it costs, in the words the existing `live` specs use: *"set MILL_SANDBOX_HOST=1 on a host with root, nspawn and btrfs to run the spec that boots a real machine."* `make test` runs it and it skips; on the host it runs.
 
 There is no fourth tier and no new target. What makes the live tier real rather than a skip nobody triggers is §Self-hosting.
 
-**Every suite runs against a throwaway dagger.** `mill#51` (filed, p1, `o2`) moves the acceptance suite to `internal/testsupport/dagger.go` by default: a blank database from the shared testcontainers Postgres, dagger's own migrations applied with `goose` from a dagger checkout, one seeded org and one `user`-kind principal bound to the spec process's uid, one `dg serve` on a temporary socket, `SIGKILL`ed on cleanup. Its criteria are that `make test-acceptance` with no socket variable creates nothing in the deployed dagger, that the fencing and resume scenarios pass against the disposable instance, and that a killed suite leaves nothing behind. Nothing the acceptance scenarios exercise — claim, heartbeat, fence, gate, complete, usage, holds — needs the deployed graph: fencing is per-lease and uses a second client under the same principal, and the seeded principal is `user`-kind, so it can answer a gate and place a hold.
+**Every suite runs against a throwaway dagger.** `mill#51` moves the acceptance suite to the fixture in `internal/testsupport/dagger.go` by default: a blank database from the shared testcontainers Postgres, dagger's own migrations applied with `goose` from a dagger checkout, one seeded org and one `user`-kind principal bound to the spec process's uid, one `dg serve` on a temporary socket, `SIGKILL`ed on cleanup. Its criteria are that `make test-acceptance` with no socket variable creates nothing in the deployed dagger, that the fencing and resume scenarios pass against the disposable instance, and that a killed suite leaves nothing behind. Nothing the acceptance scenarios exercise — claim, heartbeat, fence, gate, complete, usage, holds — needs the deployed graph: fencing is per-lease and uses a second client under the same principal, and the seeded principal is `user`-kind, so it can answer a gate and place a hold.
 
 The fixture is **per-spec** and stays that way: per-suite would share one graph across parallel scenarios, which is the cross-scenario pollution being removed. A spec that uses it carries the `db` label.
 
@@ -411,7 +418,7 @@ Two rules differ by tier:
 - The **local-workspace suite** keeps `MILL_ACCEPTANCE_DAGGER_SOCKET` as a deliberate opt-in to the deployed dagger, for a `#38`-style proof on the deployment and for checking whether the real graph agrees with the throwaway one. The runbook says which is which.
 - The **live tier refuses** any socket the environment names as the deployed dagger, flag or not. It starts machines through a root-owned unit and `mill run` subprocesses inside them, and `mill#49` already showed a test process becoming a worker against the live graph with no session involved. A flag a stray variable can flip is not a safe default for that tier.
 
-**In a machine, the fixture's prerequisites are image or mount contents**, and neither `mill#51` nor the base image names them today: the dagger checkout's `internal/store/migrations`, `goose`, and the `dg` binary. Until `dagger#25` publishes a dagger image with an exported fixture, the mill repo's machine gets the dagger checkout bind-mounted read-only, declared in its `mill.toml` the way the image subvolumes are for `nested`. That is a deliverable of the backend milestone.
+**In a machine, the fixture's prerequisites are image or mount contents**, and neither `mill#51` nor the base image names them today: dagger's store migrations from its checkout, `goose`, and the `dg` binary. Until `dagger#25` publishes a dagger image with an exported fixture, the mill repo's machine gets the dagger checkout bind-mounted read-only, declared in its `mill.toml` the way the image subvolumes are for `nested`. That is a deliverable of the backend milestone.
 
 If mill ever takes an `agent`-kind principal of its own — so dagger can enforce the gate rule against it — the fixture needs **two** seeded principals, the mill and the person, because today a gate is answerable only because both are the same one. `seedDagger` is a four-row insert; the change is trivial, the fact is not.
 
@@ -425,8 +432,8 @@ Mill builds mill, and the sandbox is the thing being built, so the sequence matt
 
 **The sequence.**
 
-1. **Build on local, gate once.** Agents implement the backend on the local workspace. The live specs exist, are labelled, skip with the right message, and assert the scenarios' Then clauses — that is what the reviewer checks, and a spec named for a scenario that asserts nothing is a fail. The milestone that creates the backend ends at exactly one `assignee_kind: user` node, shaped like `mill#38`: run `MILL_SANDBOX_HOST=1 make test` on the homestead as root, complete the gate with the ginkgo summary as its result. The loop drains to `WAITING: nothing claimable` when only that node remains, which is a clean stop. Its acceptance criterion is the output, not a person's say-so, so that a skipped tier cannot be mistaken for a passing one during the window the backend is least trusted.
-2. **Wire the selector.** `workspace.Kind` already names `KindLocal`, `KindContainer` and `KindRemote`, but nothing reads it: `run.Workspaces` is a function type, wired as `localWorkspaces(...)` in `internal/cli/run.go`. Moving to machines is implementing the `Workspace` interface for a machine, adding `machineWorkspaces(...)` beside the local one, and a flag or config key that picks. That is close to a config change, and is not one until those lines exist; the sequence names them so nobody writes "config change" and stops. `KindContainer`'s comment says "a clone in a rootless container", which the ADR rejects; it is corrected in the same node.
+1. **Build on local, gate once.** Agents implement the backend on the local workspace. The live specs exist, are labelled, skip with the right message, and assert the scenarios' Then clauses — that is what the reviewer checks, and a spec named for a scenario that asserts nothing is a fail. The milestone that creates the backend ends at exactly one `assignee_kind: user` node, shaped like `mill#38`: run `MILL_SANDBOX_HOST=1 make test` on `core` as root, complete the gate with the ginkgo summary as its result. The loop drains to `WAITING: nothing claimable` when only that node remains, which is a clean stop. Its acceptance criterion is the output, not a person's say-so, so that a skipped tier cannot be mistaken for a passing one during the window the backend is least trusted.
+2. **Wire the selector.** `workspace.Kind` already names `KindLocal`, `KindContainer` and `KindRemote`, but nothing reads it: `run.Workspaces` is a function type, wired as `localWorkspaces(...)` in `internal/cli/run.go`. Moving to machines is implementing the `Workspace` interface for a machine, adding `machineWorkspaces(...)` beside the local one, and a flag or config key that picks. That is close to a config change, and is not one until those lines exist; the sequence names them so nobody writes "config change" and stops. `KindContainer`'s comment says "a clone in a rootless container", which [ADR-018](adrs/018-a-runs-sandbox-is-a-systemd-nspawn-machine.md) rejects; the kind becomes `machine` and the comment is corrected in the same node.
 3. **Move the mill repo into machines with `nested`.** Worker config grants `[machine].nested` for the mill repo. From here the live tier runs inside the agent's own machine as a check step under the workflow's `timeout`, on every node that touches the sandbox, with an exit code as evidence. No skip, no gate, no `WAITING`.
 4. **Other repos follow without `nested`.** They never boot machines; they get the default provision.
 
@@ -439,9 +446,9 @@ Mill builds mill, and the sandbox is the thing being built, so the sequence matt
 The sandbox has prerequisites mill cannot provide for itself. In order:
 
 1. **homestead — `mill_storage`.** The btrfs volume (§Storage). Nothing else can start without it, and the spike needs only this.
-2. **The spike**, run on the host by a person. E0 (polkit) and E13 (nested) decide the shape of §Privilege and §Self-hosting; E1–E6, E9–E11 accept the ADR.
-3. **homestead — a sandbox ADR and the `mill` role.** The ADR names the third runtime class on the host: neither a Quadlet service nor a libvirt guest (ADR-006 rejected nspawn for a workload that *is* an OS; a run is not one), and it is what reconciles mill running under the operator's account with ADR-002, because a session inside a user namespace is not that account. The role is `homestead#29` plus: `systemd-container`, `mill-machine@.service` and its polkit rule, the nftables table in `thicket_nftables`'s style (its own table, its own loader unit, never a flush), squid, the SELinux module in `thicket_selinux`'s style, and `vault_claude_code_oauth_token` delivered by `LoadCredential`. The homestead project's hold lifts for exactly this.
-4. **mill — the backend milestone**, on the local workspace: `mill#51` first (the whole suite on the throwaway dagger, with the in-machine prerequisites named), then the `Workspace` implementation and selector, images, lineages, the credential gateway, the environment-floor and sidecar-timeout fixes, the live tier. Ends at the one bootstrap gate.
+2. **The spike**, run on `core` by a person (§The host). E0 (polkit) and E13 (nested) decide the shape of §Privilege and §Self-hosting; E1–E6, E9–E11 accept the ADR.
+3. **homestead — a sandbox ADR and the `mill` role.** Homestead's ADR names the third runtime class on the host: neither a Quadlet service nor a libvirt guest (homestead's ADR-006 rejected nspawn for a workload that *is* an OS; a run is not one), and it is what reconciles mill running under the operator's account with homestead's ADR-002, because a session inside a user namespace is not that account. The role is the one that deploys `contrib/systemd/mill.service` plus: `systemd-container`, `mill-machine@.service` and its polkit rule, the nftables table in `thicket_nftables`'s style (its own table, its own loader unit, never a flush), squid, the SELinux module in `thicket_selinux`'s style, and `vault_claude_code_oauth_token` delivered by `LoadCredential`. The homestead project's hold lifts for exactly this.
+4. **mill — the backend milestone** ([Roadmap §O2](roadmap.md#o2--isolated)), on the local workspace: `mill#51` first (the whole suite on the throwaway dagger, with the in-machine prerequisites named), then the `Workspace` implementation and selector, images, lineages, the credential gateway, the environment-floor and sidecar-timeout fixes, the live tier. Ends at the one bootstrap gate.
 5. **mill — sessions move into machines** with `nested` and the dagger checkout bound read-only. The sandbox tests itself from here.
 6. **dagger — `dagger#25`**, a published image with an exported fixture, so the machine's dagger is a pull rather than a bind of a checkout; and a real delete for scratch projects, which is hygiene for the deployed path only — the throwaway instance's cleanup is `DROP DATABASE`.
 
@@ -474,7 +481,7 @@ Not supported, not designed for, recorded so the design does not accidentally fo
 The case: an agent selects, builds and tests kernel patches with `kpatch` — build the module against a specific kernel, boot that kernel in a guest, load the module there, run tests, push. It fits the design with one addition the spec currently forbids, and it is worth keeping in view because it stresses the parts that are still abstract.
 
 - **The build is ordinary.** `kpatch-build`, `qemu-kvm` and `virtme-ng` are `[image].packages`; versioned kernel packages change the derived digest as they should. `kernel-debuginfo` stays out of the image and in `kpatch-build`'s own cache dir, which becomes a repo-scoped lineage alongside `~/.cache/ccache` — skipping a kernel rebuild would be the largest win the cache design ever delivers. Step budgets in hours and `MemoryMax` in the tens of GB are workflow-declared already; eviction headroom would need to cover a kernel build's ephemeral root.
-- **The guest is the one addition.** `/dev/kvm` is not mounted today (§Filesystem). Supporting this means a declared, granted capability — `[machine].kvm = true` requested by the repo, allowed by worker config, unmet becoming a finding — realised as `DeviceAllow=/dev/kvm rw` on the machine unit plus a bind. The node is 0666 on the reference host, so uid 1000 inside the user namespace can open it. Nothing else escalates: the module loads inside the guest, so the machine never needs `CAP_SYS_MODULE`; `virtme-ng` uses user-mode networking, so no `/dev/net/tun`. The boundary widens by one device node.
+- **The guest is the one addition.** `/dev/kvm` is not mounted today (§Filesystem). Supporting this means a declared, granted capability — `[machine].kvm = true` requested by the repo, allowed by worker config, unmet becoming a finding — realised as `DeviceAllow=/dev/kvm rw` on the machine unit plus a bind. The node is 0666 on `core` (§The host), so uid 1000 inside the user namespace can open it. Nothing else escalates: the module loads inside the guest, so the machine never needs `CAP_SYS_MODULE`; `virtme-ng` uses user-mode networking, so no `/dev/net/tun`. The boundary widens by one device node.
 - **Evidence is an exit code.** `virtme-ng` boots a kernel in about a second with the machine's root as the guest's userspace, runs a command, and returns its status. The check step is `vng --run <vmlinuz> -- 'kpatch load patch.ko && ./run-tests'`; principle 8 is satisfied without parsing anything.
 - **It is an argument for nspawn over vmspawn.** In a system container the guest uses the host's KVM directly. Under `systemd-vmspawn` this becomes nested virtualisation — workable on this hardware, slower and less reliable. When multi-tenancy pushes toward vmspawn, this is the workflow that pays.
 - **It makes a `dnf` cache on the worker the first step, not the fallback.** Kernel debuginfo through the proxy to Fedora mirrors on every lineage reset is many GB per fetch.

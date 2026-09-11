@@ -23,3 +23,4 @@ Format is dagger's: frontmatter status and date, context, decision drivers, cons
 | [015](015-commit-evidence-is-a-commit-the-step-made.md) | Commit evidence is a commit the step made: descended from the attempt's `base_commit`, on the run's branch, and the mill's own |
 | [016](016-one-workflow-yaml-skills-by-name-and-digest.md) | One `workflow.yaml` per workflow; a step references a skill by name and digest, across workflow directories |
 | [017](017-workflow-and-skill-bytes-in-mills-database.md) | Workflows and their skills live in mill's database, versioned by digest; the set is whatever has been pushed |
+| [018](018-a-runs-sandbox-is-a-systemd-nspawn-machine.md) | A run's sandbox is a `systemd-nspawn` machine: an ephemeral btrfs snapshot per run, started by a root-owned template under polkit, exec under a step slice, caches as lineages, egress through the host, no credential inside |

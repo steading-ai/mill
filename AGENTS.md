@@ -46,6 +46,7 @@ sidecar/              the TypeScript harness adapter; sidecar/gen is harness.v1 
 workflows/            the workflow definitions this repo seeds the store with; `mill workflow push` loads them
 tests/acceptance/     the suite that drives the whole mill against real dependencies; docs/runbook.md
 docs/                 the design. Authoritative
+docs/sandbox.md       the per-run sandbox: one systemd-nspawn machine per run, its images, caches, network and credentials; the O2 milestone's authority
 harness/              the reference agent loop that works one milestone of the backlog
 compose.yaml          PostgreSQL for local development; .env.example seeds .env
 ```

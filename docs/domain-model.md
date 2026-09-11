@@ -319,7 +319,7 @@ What a step receives instead of a path and a keychain.
 |---|---|
 | `id` | ULID |
 | `run_id` | One workspace per run. Concurrent runs never share one |
-| `kind` | `local` today; `container`, `remote` later behind the same interface |
+| `kind` | `local` today; `machine` (`docs/sandbox.md`) and `remote` later behind the same interface |
 | `ref` | The git ref checked out at creation: the project's default branch, or the run's branch on resume |
 | `branch` | The run's working branch, derived from the node ref |
 | `socket` | The unix socket a step's session reaches the workspace through |
@@ -343,7 +343,7 @@ A named set of what a step may do through its workspace.
 | `forge` | A forge credential scoped to the project's repository: push the branch, open and query a PR, read CI status |
 | `deploy` | Whatever the project's deploy step needs; defined per project |
 
-MVP enforces `read`/`write`/`exec` through the adapter's tool policy — the only enforcement until containers — and grants `network` and `forge` by injecting scoped credentials per step. A reviewer that may run tests has `exec`, and `exec` can write; MVP does not prevent that, it **detects** it: a `clean-tree` check after every read-only step fails the step if the tree changed. Enforcement moves into the workspace implementation with containers. A step that needs a capability it lacks fails with a named reason the session sees — *"forge capability not granted to step `implement`"* — so a definition error is legible rather than mysterious.
+MVP enforces `read`/`write`/`exec` through the adapter's tool policy — the only enforcement until machines — and grants `network` and `forge` by injecting scoped credentials per step. A reviewer that may run tests has `exec`, and `exec` can write; MVP does not prevent that, it **detects** it: a `clean-tree` check after every read-only step fails the step if the tree changed. Enforcement moves into the workspace implementation with the machine workspace (`docs/sandbox.md`). A step that needs a capability it lacks fails with a named reason the session sees — *"forge capability not granted to step `implement`"* — so a definition error is legible rather than mysterious.
 
 ## Step token
 

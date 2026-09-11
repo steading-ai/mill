@@ -93,7 +93,7 @@ The sidecar receives: the session id (deterministic, so `Resume` finds the trans
 
 **The options are the harness's, not mill's.** `Session.Options` is the yaml block as the workflow wrote it, and nothing on this side of the wire reads a key of it: the loader checks only that it is a mapping, the adapter hands it over whole, and the sidecar validates it against its own schema (`sidecar/src/options.ts`) before the SDK is loaded. A key the sidecar does not have, or a value of the wrong type, ends the request as a terminal record with `Status = -1` and `Reason = policy` naming the key, which the worker records as a failed attempt. That is what keeps mill harness-agnostic in fact and not only in shape: a knob the Claude SDK grows next quarter costs a change to the sidecar and to a workflow, and no change to the proto, the loader, or the worker. The one thing mill checks is the harness *name*, at run start, against the adapters it has.
 
-`tools.allow` and `tools.deny` are the Claude sidecar's keys for the tool policy, and in MVP they are the harness's half of a read-only step: the SDK enforces them and the model does not get a vote. Mill's half is the capability set — the workspace refuses `fs.write` and `git.commit` under a step token that lacks `write` — and it becomes the whole of it when the socket is the session's tool server and containers arrive.
+`tools.allow` and `tools.deny` are the Claude sidecar's keys for the tool policy, and in MVP they are the harness's half of a read-only step: the SDK enforces them and the model does not get a vote. Mill's half is the capability set — the workspace refuses `fs.write` and `git.commit` under a step token that lacks `write` — and it becomes the whole of it when the socket is the session's tool server and machines arrive.
 
 **A session runs under the model classifier.** The Claude sidecar sets the SDK's `permissionMode` to `auto` unless the step names another in `permission_mode`; a step may name `default`, `acceptEdits`, `dontAsk` or `plan`, and `bypassPermissions` is refused with `Reason = policy` before the SDK is loaded. A mill session is unattended, and under the SDK's `default` mode a tool call that needs permission raises a prompt nobody answers — which is where the first end-to-end run stopped, at `git add`. The classifier is a permission *answerer*, not a boundary: `tools.deny` and the workspace's socket remain the enforcement. `bypassPermissions` stays refused until the workspace is a sandbox (`docs/roadmap.md` §O4), because today a session runs as the mill's own account on the mill's own host and a mode that says yes to everything would have only the tool policy left between it and that host.
 
@@ -151,7 +151,7 @@ Nothing about the notification is load-bearing. A command that fails, hangs past
 
 ## The workspace
 
-The workspace is the seam that makes sandboxing a later decision instead of a rewrite. A step never receives a filesystem path it may treat as the host, and never a credential in its environment. It receives a **unix socket and a step token**, and everything it does to the world goes through that socket.
+The workspace is the seam that keeps sandboxing behind one interface. A step never receives a filesystem path it may treat as the host, and never a credential in its environment. It receives a **unix socket and a step token**, and everything it does to the world goes through that socket.
 
 ```
 session ──socket, bearer──▶ workspace ──▶ checkout / git / commands / forge
@@ -177,16 +177,16 @@ Implementations behind the interface:
 | Kind | Checkout | Isolation | When |
 |---|---|---|---|
 | `local` | A clone under the mill's account | The account, the tool policy | MVP |
-| `container` | A clone in a rootless podman container with a devcontainer, so tests can run their own services | The container | O4 |
+| `machine` | A clone on the host, bind-mounted into a `systemd-nspawn` machine booted per run from an ephemeral snapshot of the image the repo's `mill.toml` declares, so tests run their own services and containers inside it; `docs/sandbox.md` | The machine: a user namespace, its own network namespace behind the host's proxy, no credential inside | O2 |
 | `remote` | A clone on another host reached over the tailnet | That host's account | when a worker lives elsewhere |
 
-A workflow definition does not change across these. If it has to, the seam leaked.
+A workflow definition does not change across these. If it has to, the seam leaked. Which one a worker uses is configuration; `Workspace.Exec` under `machine` is `systemd-run -M` under a per-step slice, and everything the machine is — image, binds, limits, network, credentials — is specified in `docs/sandbox.md`, which this section defers to.
 
 **Commit identity and signing are the workspace's, not the session's.** Who a commit is by, and what signs it, is decided once per run by the workspace and imposed on every process it or its harness spawns: an SSH signing key under the mill's account, and a git configuration in the run's directory — beside the checkout, never in it — named by `GIT_CONFIG_GLOBAL`, with `GIT_CONFIG_SYSTEM` and the four `GIT_AUTHOR_*`/`GIT_COMMITTER_*` variables alongside it. So the account's `~/.gitconfig` and `~/.config/git/config` are displaced on every session, a plain `git commit` in a session's own shell is the mill's commit, signed, and the `commit` verifier is comparing against the identity git was actually given rather than against whatever the host was configured for. The mill's own git says the same thing a different way — `-c user.name=`, `-c user.email=`, `-c user.signingkey=`, `-c commit.gpgsign=true` per invocation — and for the same reason: the answer lives outside the checkout, where a session can neither read the key nor change who it is committing as. A run never reads, and never asks an operator to change, any git configuration of the host's.
 
 A session gets the socket path and token, over the floor its harness's environment mode allows and nothing else (§"Skill steps: the harness adapter"). The adapter is the socket's client, not the session: the Claude sidecar holds the socket and re-exposes the verbs as an MCP server hosted in its own process, and the session's built-in `Read`/`Write`/`Edit`/`Bash` are removed by policy so the workspace's tools are the only filesystem and the only way to a process. A session cannot be pointed at the socket directly — the SDK's MCP transports are stdio, HTTP and in-process, and no URL spelling reaches a unix socket (`docs/spikes/mcp-workspace.md`). The mount is what makes every file and command one auditable call at a seam the mill owns; it is not what enforces. Enforcement is the process boundary `Workspace.Exec` sets — cwd, uid, environment — because a command run through `exec` is bounded by the process it spawns, not by the tool that spawned it.
 
-In MVP the adapter's tool allowlist is the **only** enforcement: the workspace's `local` implementation does not yet gate `exec` against `write`, so a reviewer allowed `Bash` to run tests can also write. MVP detects rather than prevents: a `clean-tree` check after every read-only step fails it if the tree changed, and the ledger says which session did it. The capability set becomes a second, independent layer with the container workspace.
+In MVP the adapter's tool allowlist is the **only** enforcement: the workspace's `local` implementation does not yet gate `exec` against `write`, so a reviewer allowed `Bash` to run tests can also write. MVP detects rather than prevents: a `clean-tree` check after every read-only step fails it if the tree changed, and the ledger says which session did it. The capability set becomes a second, independent layer with the machine workspace.
 
 ## Identity and credentials
 
@@ -226,7 +226,7 @@ wellspring                              mill account
                                                   └── sidecar (per step, stdio)
 ```
 
-Workspaces live under the account. When runs move to containers, the account is where podman runs them. The mill never runs across zones; it is one more thing in the operator's account that reaches dagger over the socket — which is why dagger sees the operator, and why `harness: mill` on every lease is not optional.
+Workspaces live under the account. When runs move into machines, the account is the one that starts them, through a root-owned template unit it drives under polkit (`docs/sandbox.md` §Privilege). The mill never runs across zones; it is one more thing in the operator's account that reaches dagger over the socket — which is why dagger sees the operator, and why `harness: mill` on every lease is not optional.
 
 ## Failure and stop
 
