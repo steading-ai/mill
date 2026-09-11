@@ -68,6 +68,9 @@ Summary of verdicts, one line each; the detail is in the sections.
 | E12 | pass | `dnf install -y vips-devel` as `agent` ends in the three-line hint; `sudo dnf remove` is `a password is required`; `--setopt=proxy=` goes after `install` for the sudoers pattern |
 | E9 | pass | restore 1 ms, promote 52 ms for a 2.8G / 3.0G lineage; the run's `-tags e9` link output is in gen-2 and not gen-1; gen-1 deleted under the live run without effect; no `sudo` for create/snapshot/delete, but a read-only snapshot must be made writable before its owner can delete it, and `subvolume sync` needs root and is not what moves `df` — `filesystem sync` is |
 | E10 | pass | `rpm -q libpq-devel` inside the derived machine; the second builder slept in `locks_lock_inode` and found the image `present`; the missing package leaves `rc=1`, no `.building`, and `No match for argument: no-such-package-e10`; build 4.3 s, export 0.8 s; 1005M against the base's 1020M, nothing shared |
+| E13 | **pass, five of five** | the inner boots `--private-users=identity` from a snapshot the outer takes of the read-only bind, with `/proc` and the host's `/sys` bound into it; `machinectl list` in the outer names `inner`, hello prints inside it, `ok` from the subvolume round-trip as `agent` (with E9's `ro false`), `200` through the host squid from the inner; a 65536-uid outer is enough; no AVCs at any level; inner boot 2.26 s |
+| E7 | **fail, zero of four** | `systemd-nsresourced` is denied `read` on `nsfs_t` (`systemd_nsresourced_t`), and the unprivileged `managed` boot hangs in `sigsuspend` on it; no policy change was made |
+| E8 | **fail** (boots, `-M` does not reach it) | `--directory` dies in the host initrd on `root=root`; a `systemd-repart` raw image boots with the host kernel and `rd.luks=0 rd.lvm=0` to a getty in 9.8 s; `-M` is ssh over vsock and the tree has no `sshd` |
 
 ---
 
@@ -3462,3 +3465,597 @@ created in the checkout for the bind is gone.
 - **Tooling.** `btrfs subvolume show`, `list` and `sync` all need
   `CAP_SYS_ADMIN`; the worker lists lineages and generations from the
   directory tree and its manifests, never from btrfs.
+
+## E13 — nspawn inside nspawn
+
+Run 2026-09-11 09:46 – 09:53 PDT on `core`. The image subvolume from the boot
+spike was still present (`ID 298 … mill-image-spike`), so no rebuild. The host
+network is now homestead's, not this spike's: `systemd-networkd` is active with
+`70-mill-ve.network` (a `/28` per `ve-mill*` veth, DHCP, `DNS=10.99.255.1`,
+`IPMasquerade=no`), squid listens on `:3128` with a `mill` ACL admitting
+`192.168.0.0/16`, and `inet mill` is loaded from `/etc/nftables/mill.nft`
+(`ve-mill*` admitted to firewalld's `mill` zone). So "start squid and load the
+table again" was not needed and was not done; the spike's own `squid.conf` and
+`egress.nft` stayed on disk. Homestead's `mill-machine@.service` was not
+touched; the outer boots through `systemd-run` as E1 did.
+
+The preflight:
+
+```
+$ findmnt -no OPTIONS /var/lib/machines | tr , '\n' | grep user_subvol_rm_allowed
+user_subvol_rm_allowed
+```
+
+### The outer
+
+Booted as written, plus the three things the boot and network spikes settled:
+`:idmap` on the bind (E4), a fresh `proc` over the masked one (E2), and a
+read-only bind of the host's `/sys` at `/.hostsys`, which the inner turns out
+to need (below). `agent` gets `ALL=(ALL) NOPASSWD: ALL` through
+`/etc/sudoers.d/` in the running machine — **that is this spike's shortcut for
+what the `nested` image variant bakes; it is not the design** — and
+`systemd-container` and `btrfs-progs`, which the spike image lacks, are
+installed through the host proxy at the outer's gateway address.
+
+```
+$ sudo systemd-run --unit=mill-run-e13 --collect -p KillMode=mixed \
+    systemd-nspawn --boot --quiet --machine=mill-e13 \
+      --directory=/var/lib/machines/mill-image-spike --ephemeral \
+      --private-users=1048576:1048576 --private-users-ownership=auto \
+      --network-veth --bind-ro=/var/lib/machines:/var/lib/machines:idmap \
+      --bind-ro=/sys:/.hostsys --settings=false
+Running as unit: mill-run-e13.service; invocation ID: 90dd0b0657e145d3bbbdc24f8cd29290
+$ M() { sudo systemd-run -M mill-e13 --pipe --wait --quiet --collect "$@"; }
+$ M -- systemctl is-system-running --wait
+running
+$ M -- mount -t proc -o nosuid,nodev,noexec proc /proc
+$ M -- sh -c 'echo "agent ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/agent-spike-e13 && chmod 0440 /etc/sudoers.d/agent-spike-e13'
+$ M -- networkctl status host0 --no-pager | awk '/Gateway:/{print $2}'
+192.168.203.209
+$ M -p User=agent -- sudo dnf install -y -q --setopt=proxy=http://192.168.203.209:3128 systemd-container btrfs-progs iproute
+[…44 packages…]
+[44/44] Installing systemd-container-0: 100% |   7.0 MiB/s |   2.3 MiB |  00m00s
+$ sudo machinectl list --no-pager
+MACHINE        CLASS     SERVICE        OS     VERSION ADDRESSES
+mill-e13       container systemd-nspawn fedora 44      192.168.203.218…
+```
+
+Boot to `dnf` done: 9.1 s.
+
+### The inner, as written: three refusals
+
+Ephemeral from the read-only bind, exactly as the work order has it:
+
+```
+$ M -p User=agent -- sudo systemd-run --unit=inner --collect \
+    systemd-nspawn --boot --quiet --machine=inner --directory=/var/lib/machines/mill-image-spike --ephemeral \
+      --private-users=pick --network-veth --settings=false
+Running as unit: inner.service; invocation ID: 2cfc64fb0b724f4e9838ce07b9ffa1a8
+$ M -- journalctl -u inner --no-pager -o cat | tail -3
+Failed to lock /var/lib/machines/.#machine.mill-image-spikeeb7712c8f3eb1df3: Read-only file system
+inner.service: Main process exited, code=exited, status=1/FAILURE
+inner.service: Failed with result 'exit-code'.
+```
+
+`--ephemeral` snapshots *next to* the source and needs the source's parent
+writable, so a read-only bind of `/var/lib/machines` can never be the inner's
+`--directory`. The bind can stay read-only; the outer snapshots the image into
+its own tree first (its root is a btrfs subvolume on the same filesystem, so
+the snapshot is a reflink, not a copy):
+
+```
+$ M -- sh -c 'mkdir -p /var/lib/mill-machines && btrfs subvolume snapshot /var/lib/machines/mill-image-spike /var/lib/mill-machines/mill-image-spike'
+Create snapshot of '/var/lib/machines/mill-image-spike' in '/var/lib/mill-machines/mill-image-spike'
+```
+
+From that, `--private-users=pick` picks a base with no regard to the outer's
+own map and then cannot idmap the tree; `chown` ownership fails on the first
+`fchown` to nspawn's busy base `0xFFFE0000`, which is outside any outer range:
+
+```
+$ M -- sh -c 'timeout 30 systemd-nspawn --boot --machine=inner --directory=/var/lib/mill-machines/mill-image-spike --ephemeral --private-users=pick --network-veth --settings=false; echo "rc=$?"'
+░ Spawning container inner on /var/lib/mill-machines/.#machine.mill-image-spike5f645341a082b0cb.
+Selected user namespace base 1231486976 and range 65536.
+Failed to set up ID mapped mounts: Operation not permitted
+rc=1
+$ M -- sh -c 'timeout 60 systemd-nspawn --boot --machine=inner --directory=/var/lib/mill-machines/mill-image-spike --ephemeral --private-users=65536:65536 --private-users-ownership=chown --network-veth --settings=false; echo "rc=$?"'
+░ Spawning container inner on /var/lib/mill-machines/.#machine.mill-image-spikefefc296bf4b30ef4.
+Selected user namespace base 65536 and range 65536.
+Failed to adjust UID/GID shift of OS tree: Invalid argument
+rc=1
+```
+
+(`--private-users-ownership=map` gives the same `Operation not permitted`: the
+outer's root is already an idmapped mount and the kernel refuses to stack
+another. The first attempt at this node traced both to `shift-uid.c`'s
+`UID_BUSY_BASE` dance and nspawn's `pick` picking outside the map.)
+
+`--private-users=identity` — a user namespace, mapped 1:1 onto the outer's —
+needs no ownership change at all, and gets past the uid work to the next
+refusal:
+
+```
+$ M -- sh -c 'timeout 30 systemd-nspawn --boot --machine=inner --directory=/var/lib/mill-machines/mill-image-spike --ephemeral --private-users=identity --network-veth --settings=false; echo "rc=$?"'
+░ Spawning container inner on /var/lib/mill-machines/.#machine.mill-image-spike558cbfcf6d80b685.
+Selected user namespace base 0 and range 65536.
+Failed to mount proc (type proc) on /run/host/proc (MS_NOSUID|MS_NODEV|MS_NOEXEC ""): Operation not permitted
+rc=1
+```
+
+This is E2's kernel rule one level up: a new `proc` (and `sysfs`) in a user
+namespace is allowed only when the mount namespace already holds a fully
+visible one, and nspawn has just pivoted into a tree that holds neither. The
+fix is to have both inside the inner's tree when nspawn pivots: bind the
+outer's own (unmasked, E2) `/proc` and the host's `/sys` (bound read-only into
+the outer at boot as `/.hostsys`; a fresh `sysfs` mount in the outer needs
+`LIBMOUNT_FORCE_MOUNT2=always` and is not fully visible anyway) to two paths in
+the inner. With that, `--ephemeral` works from the outer-owned snapshot.
+
+### The recipe, and the five checks
+
+```
+$ I() { M -p User=agent -- sudo systemd-run -M inner --pipe --wait --quiet --collect "$@"; }
+$ M -p User=agent -- sudo systemd-run --unit=inner --collect \
+    systemd-nspawn --boot --quiet --machine=inner --directory=/var/lib/mill-machines/mill-image-spike --ephemeral \
+      --private-users=identity --network-veth --settings=false \
+      --bind-ro=/proc:/.hostproc --bind-ro=/.hostsys:/.hostsys
+Running as unit: inner.service; invocation ID: 59d5fc44c0eb45acb94215bd90309347
+inner bus reachable after .338522596 s
+$ I -- systemctl is-system-running --wait
+running
+inner is-system-running after 2.258797144 s
+```
+
+**Check 1 — the inner registers with the outer's machined:**
+
+```
+$ M -p User=agent -- sudo machinectl list --no-pager
+MACHINE CLASS     SERVICE        OS     VERSION ADDRESSES
+inner   container systemd-nspawn fedora 44      192.168.146.50…
+
+1 machines listed.
+```
+
+**Check 2 — `-M inner` from the outer:**
+
+```
+$ I -- sh -c 'cat /proc/self/uid_map; systemd-detect-virt; cat /etc/machine-id'; echo "rc=$?"
+         0          0      65536
+systemd-nspawn
+9597dc7a83014f748d81d1b93bb3caa5
+rc=0
+```
+
+**Check 3 — podman inside the inner, as `agent`** (the E2 `/proc` line first,
+the proxy in the environment; the three `network is unreachable` retries are
+the inner's DHCP lease arriving after `is-system-running`, and the pull went
+through Harbor as E11 says):
+
+```
+$ I -- mount -t proc -o nosuid,nodev,noexec proc /proc
+$ I -p User=agent -p Environment=HTTPS_PROXY=http://192.168.164.97:3128 -p Environment=https_proxy=http://192.168.164.97:3128 -- podman run --rm quay.io/podman/hello
+Trying to pull quay.io/podman/hello:latest...
+time="2026-09-11T09:51:22-07:00" level=warning msg="Failed, retrying in 1s ... (1/3). Error: initializing source docker://quay.io/podman/hello:latest: pinging container registry harbor.tailcbcc0e.ts.net: Get \"https://harbor.tailcbcc0e.ts.net/v2/\": proxyconnect tcp: dial tcp 192.168.164.97:3128: connect: network is unreachable"
+time="2026-09-11T09:51:23-07:00" level=warning msg="Failed, retrying in 1s ... (2/3). Error: initializing source docker://quay.io/podman/hello:latest: pinging container registry harbor.tailcbcc0e.ts.net: Get \"https://harbor.tailcbcc0e.ts.net/v2/\": proxyconnect tcp: dial tcp 192.168.164.97:3128: connect: network is unreachable"
+time="2026-09-11T09:51:24-07:00" level=warning msg="Failed, retrying in 1s ... (3/3). Error: initializing source docker://quay.io/podman/hello:latest: pinging container registry harbor.tailcbcc0e.ts.net: Get \"https://harbor.tailcbcc0e.ts.net/v2/\": proxyconnect tcp: dial tcp 192.168.164.97:3128: connect: network is unreachable"
+Getting image source signatures
+Copying blob sha256:81df7ff16254ed9756e27c8de9ceb02a9568228fccadbf080f41cc5eb5118a44
+Copying config sha256:5dd467fce50b56951185da365b5feee75409968cbab5767b9b59e325fb2ecbc0
+Writing manifest to image destination
+!... Hello Podman World ...!
+
+         .--"--.           
+       / -     - \         
+      / (O)   (O) \        
+   ~~~| -=(,Y,)=- |         
+    .---. /`  \   |~~      
+ ~/  o  o \~~~~.----. ~~   
+  | =(X)= |~  / (O (O) \   
+   ~~~~~~~  ~| =(Y_)=-  |   
+  ~~~~    ~~~|   U      |~~ 
+[…]
+rc=0
+$ I -p User=agent -- podman info --format '{{.Store.GraphDriverName}} {{.Host.CgroupManager}} {{.Host.OCIRuntime.Name}} {{.Host.IDMappings.UIDMap}}'
+overlay systemd crun [{0 1000 1} {1 10000 55536}]
+```
+
+On the first (1048576-uid) outer, with the lease already there, the same pull
+and run took 0.86 s.
+
+**Check 4 — subvolumes as `agent` in the outer.** As written it fails, and
+fails the same way for root in the outer and for the operator on the host,
+because deleting a *read-only* subvolume under `user_subvol_rm_allowed` is
+`EROFS` for everyone but `CAP_SYS_ADMIN` — E9's finding, not nesting's. (Also
+`/tmp` in the machine is tmpfs; the round-trip has to be on the btrfs root.)
+With E9's `ro false` first it passes:
+
+```
+$ M -p User=agent -- sh -c 'cd /home/agent && btrfs subvolume create s && btrfs subvolume snapshot -r s s-ro && btrfs subvolume delete s s-ro && echo ok'; echo "rc=$?"
+Create subvolume './s'
+Create readonly snapshot of 's' in 's-ro'
+ERROR: Could not destroy subvolume/snapshot: Read-only file system
+Delete subvolume 766 (no-commit): '/home/agent/s'
+Delete subvolume 767 (no-commit): '/home/agent/s-ro'
+rc=1
+$ cd /var/lib/mill && btrfs subvolume create s && btrfs subvolume snapshot -r s s-ro && btrfs subvolume delete s s-ro && echo ok; echo "rc=$?"     # the operator, on the host
+Create subvolume './s'
+Create readonly snapshot of 's' in 's-ro'
+ERROR: Could not destroy subvolume/snapshot: Read-only file system
+Delete subvolume 772 (no-commit): '/var/lib/mill/s'
+Delete subvolume 773 (no-commit): '/var/lib/mill/s-ro'
+rc=1
+$ M -p User=agent -- sh -c 'cd /home/agent && btrfs subvolume create s && btrfs subvolume snapshot -r s s-ro && btrfs property set -ts s-ro ro false && btrfs subvolume delete s s-ro && echo ok'; echo "rc=$?"
+Create subvolume './s'
+Create readonly snapshot of 's' in 's-ro'
+Delete subvolume 779 (no-commit): '/home/agent/s'
+Delete subvolume 780 (no-commit): '/home/agent/s-ro'
+ok
+rc=0
+```
+
+`user_subvol_rm_allowed` on the host mount was enough; the outer's root
+inherits it (`findmnt` inside: `btrfs rw,noatime,idmapped,seclabel,…,user_subvol_rm_allowed`)
+and nothing was remounted. `btrfs subvolume list` is `Operation not permitted`
+inside the outer even as root, as E9 found on the host.
+
+**Check 5 — the inner reaches the host's proxy** at the outer's gateway (the
+host side of `ve-mill-e13`) and at the fixed `10.99.255.1`:
+
+```
+$ I -p User=agent -- curl -sS -o /dev/null -w 'http=%{http_code} rc=%{exitcode} remote=%{remote_ip}:%{remote_port} %{time_total}s\n' -x http://192.168.203.209:3128 https://example.com
+http=200 rc=0 remote=192.168.203.209:3128 0.030535s
+$ I -p User=agent -- curl -sS -m 5 -o /dev/null -w 'http=%{http_code} rc=%{exitcode}\n' -x http://10.99.255.1:3128 https://example.com
+http=200 rc=0
+$ sudo tail -1 /var/log/squid/access.log
+1789145312.556     24 192.168.203.218 TCP_TUNNEL/200 6450 CONNECT example.com:443 - HIER_DIRECT/104.20.23.154 -
+```
+
+Squid sees the *outer's* address, because the inner's traffic is masqueraded
+in the outer. Nothing was configured for that: the image's `systemd-networkd`
+applies the stock `80-container-ve.network` to `ve-inner`, which carries
+`IPMasquerade=both`, and networkd sets `ip_forward=1` and installs an
+`io.systemd.nat` table with a `masquerade` for the inner's `/28`. Both are
+required — removing either times out — and one sysctl plus one rule by hand
+restores it without networkd, so no second squid:
+
+```
+$ M -- sh -c 'nft delete table ip io.systemd.nat; nft list tables; echo "ip_forward=$(cat /proc/sys/net/ipv4/ip_forward)"'
+ip_forward=1
+$ I -p User=agent -- curl -sS -m 5 -o /dev/null -w 'http=%{http_code}\n' -x http://192.168.203.209:3128 https://example.com; echo "rc=$?"
+curl: (28) Connection timed out after 5003 milliseconds
+http=000
+rc=28
+$ M -- sh -c 'nft add table ip mill-inner; nft "add chain ip mill-inner postrouting { type nat hook postrouting priority srcnat; policy accept; }"; nft add rule ip mill-inner postrouting iifname ve-inner oifname host0 masquerade'
+$ I -p User=agent -- curl -sS -m 5 -o /dev/null -w 'http=%{http_code} rc=%{exitcode}\n' -x http://192.168.203.209:3128 https://example.com
+http=200 rc=0
+$ M -- sh -c 'echo 0 > /proc/sys/net/ipv4/ip_forward'
+$ I -p User=agent -- curl -sS -m 5 -o /dev/null -w 'http=%{http_code}\n' -x http://192.168.203.209:3128 https://example.com; echo "rc=$?"
+curl: (28) Connection timed out after 5002 milliseconds
+http=000
+rc=28
+$ M -- sh -c 'echo 1 > /proc/sys/net/ipv4/ip_forward'
+$ I -p User=agent -- curl -sS -m 5 -o /dev/null -w 'http=%{http_code}\n' -x http://192.168.203.209:3128 https://example.com
+http=200
+```
+
+The host's `inet mill` table is unchanged by this: the outer's masqueraded
+packets arrive on `ve-mill-e13` from the outer's address, to `tcp/3128`, which
+it already admits; no forwarding on the host is involved.
+
+### The uid range
+
+The work order's `--private-users=1048576:1048576` was tried first and every
+check passed under it; then the outer was rebooted with
+`--private-users=1048576:65536` and all five were re-run and passed.
+Checks 1–4 above are transcribed from the 65536 run (gateway
+`192.168.164.97`), check 5 and the masquerade probes from the 1048576 run
+(gateway `192.168.203.209`); each check passed identically under both. The inner needs no range of its own beyond
+the outer's, because `identity` is the only `--private-users` mode that works
+one level down: `pick` and any explicit shift need either an idmapped mount
+the kernel refuses to stack or a `chown` to `0xFFFE0000` the map cannot hold.
+The inner's root is therefore the outer's root, host uid `1048576`, and the
+inner's `agent` is host `1048576+1000`:
+
+```
+$ cat /proc/$(sudo machinectl show mill-e13 -p Leader --value)/uid_map        # 65536 run
+         0    1048576      65536
+$ I -- cat /proc/self/uid_map
+         0          0      65536
+$ M -- cat /etc/subuid
+agent:10000:55536
+```
+
+**A 65536-uid outer is enough.** The wide range §Provision specifies for
+`nested` buys nothing here; what nesting needs instead is `identity` on the
+inner, which `[machine].nested` should carry into the inner nspawn argv.
+
+### AVC denials
+
+None at any level: `ausearch -m avc,user_avc -ts 09:46:00` on the host is
+`<no matches>`; `journalctl -o cat | grep 'avc:  denied'` in the outer and in
+the inner match only the `systemd-run` unit descriptions that ran the grep.
+
+### Wall clock
+
+| | |
+|---|---|
+| outer boot to `is-system-running` | 2.17 s |
+| outer boot to `dnf` done and tree snapshotted | 9.1 s |
+| inner boot to bus reachable | 0.34 s |
+| inner boot to `is-system-running` | 2.26 s |
+| podman hello in the inner, lease present | 0.86 s |
+
+**Verdict: E13 pass, five of five**, with three changes to the written form:
+the inner's `--directory` is a snapshot the outer takes of the read-only bind
+(the bind itself stays read-only), the inner runs `--private-users=identity`,
+and the inner's argv carries `--bind-ro=/proc:/.hostproc --bind-ro=/.hostsys:/.hostsys`
+with the outer booted `--bind-ro=/sys:/.hostsys`. `[machine].nested` stands.
+
+## E7 — Unprivileged nspawn for repos without `nested`
+
+Run 2026-09-11 09:53 – 09:57 PDT, after E13 was stopped. Scoped as the work
+order says: a non-nested machine, provisioned by the operator without `sudo`.
+
+```
+$ sudo systemctl enable --now systemd-nsresourced.socket systemd-mountfsd.socket
+$ systemctl is-active systemd-nsresourced.socket systemd-mountfsd.socket
+active
+active
+```
+
+As written, from the root-`0700` `/var/lib/machines`:
+
+```
+$ systemd-run --user --unit=mill-run-e7 --collect \
+    systemd-nspawn --boot --quiet --machine=mill-e7 \
+      --directory=/var/lib/machines/mill-image-spike --ephemeral --private-users=pick --network-veth --settings=false
+Running as unit: mill-run-e7.service; invocation ID: c6582f94acb540608dccc94a15bebc15
+$ journalctl --user -u mill-run-e7 --no-pager -o cat | tail -4
+Failed to pick version on path '/var/lib/machines/mill-image-spike': Permission denied
+Failed to determine whether '/run/systemd/nspawn/propagate/mill-e7' is the root file system: Permission denied
+mill-run-e7.service: Main process exited, code=exited, status=1/FAILURE
+mill-run-e7.service: Failed with result 'exit-code'.
+```
+
+A copy the operator can read was already on the host from the first attempt at
+this node, made with `sudo btrfs subvolume snapshot /var/lib/machines/mill-image-spike /var/lib/mill/mill-image-e7`
+(`drwxr-xr-x. 1 root root … /var/lib/mill/mill-image-e7`; root-owned, world
+readable). From it, `pick` refuses outright, and the only mode an unprivileged
+caller has is `managed`, which asks `systemd-nsresourced` for the range:
+
+```
+$ systemd-nspawn --boot --quiet --machine=mill-e7 --directory=/var/lib/mill/mill-image-e7 --ephemeral --private-users=pick --network-veth --settings=false
+Unprivileged operation requires managed user namespaces, as otherwise no UID range can be acquired.
+Failed to determine whether '/run/systemd/nspawn/propagate/mill-e7' is the root file system: Permission denied
+$ timeout 30 systemd-nspawn --boot --quiet --machine=mill-e7 --directory=/var/lib/mill/mill-image-e7 --ephemeral --private-users=managed --network-veth --settings=false; echo "rc=$?"
+rc=124
+$ machinectl list --no-pager | grep -c mill-e7
+0
+```
+
+Nothing is printed and nothing is registered: nspawn sits in `sigsuspend`
+waiting on its varlink call to nsresourced, which SELinux stops from reading
+the caller's user namespace, once per attempt:
+
+```
+$ sudo ausearch -m avc -ts 09:53:00 | grep 'avc:'
+type=AVC msg=audit(1789145630.709:138047): avc:  denied  { read } for  pid=1195768 comm="systemd-nsresou" path="user:[4026533005]" dev="nsfs" ino=4026533005 scontext=system_u:system_r:systemd_nsresourced_t:s0 tcontext=system_u:object_r:nsfs_t:s0 tclass=file permissive=0
+type=AVC msg=audit(1789145693.505:138068): avc:  denied  { read } for  pid=1202009 comm="systemd-nsresou" path="user:[4026533005]" dev="nsfs" ino=4026533005 scontext=system_u:system_r:systemd_nsresourced_t:s0 tcontext=system_u:object_r:nsfs_t:s0 tclass=file permissive=0
+$ sudo cat /proc/$(pgrep -u ivy -f 'machine=mill-e7' | head -1)/stack | head -2
+[<0>] sigsuspend.isra.0+0x79/0xa0
+[<0>] __x64_sys_rt_sigsuspend+0x6d/0x80
+```
+
+The fix is a host policy change — `semanage permissive -a systemd_nsresourced_t`
+for the experiment, or an `allow systemd_nsresourced_t nsfs_t:file read`
+module for real — and this node did not make one: it is a change to `core`'s
+SELinux policy, which homestead owns, and it was not tried with the cap
+running. Fedora's policy for `systemd-nsresourced` under `systemd 259` is
+where the first attempt at this node stopped too.
+
+**Verdict: E7 fail, zero of four.** The boot does not happen (it hangs on
+nsresourced rather than erroring), so veth, `-M` entry and podman were not
+reached. Machines stay behind the root-owned template unit, as `docs/sandbox.md`
+§Privilege already says; the one fact to carry is that unprivileged nspawn on
+`core` is a policy-module question before it is anything else, and the copy
+the operator can boot from must be made with `sudo` (the source is `0700`).
+
+## E8 — vmspawn boots the same tree
+
+Run 2026-09-11 09:56 – 10:03 PDT, under a twenty-minute cap, and by the work
+order's rule for this attempt: no initrd is built and no vsock plumbing is
+added; the host kernel and initrd are what the tree gets.
+
+```
+$ rpm -q systemd-vmspawn
+package systemd-vmspawn is not installed
+$ rpm -qf /usr/bin/systemd-vmspawn
+systemd-container-259.8-1.fc44.x86_64
+```
+
+No package to install: on Fedora 44 `systemd-vmspawn` ships in
+`systemd-container`, and `qemu-kvm-core-10.2.2-1.fc44` (its backend) was
+already on the host.
+
+### `--directory`, with the host kernel
+
+The tree has no kernel, so `--directory` needs `--linux=`; with the host's
+kernel and initrd the VM starts, `virtiofsd` serves the tree, and the initrd
+refuses the root vmspawn hands it:
+
+```
+$ sudo timeout 90 systemd-vmspawn --machine=mill-e8 --directory=/var/lib/machines/mill-image-spike --network-tap --console=read-only
+░ Spawning VM mill-e8 on /var/lib/machines/mill-image-spike.
+Failed to discover any boot entries.
+Failed to locate UKI in directory type image, please specify one with --linux=.
+$ sudo timeout 120 systemd-vmspawn --machine=mill-e8 --directory=/var/lib/machines/mill-image-spike --network-tap --console=read-only --linux=/boot/vmlinuz-7.1.13-200.fc44.x86_64 --initrd=/boot/initramfs-7.1.13-200.fc44.x86_64.img
+Executing: /usr/libexec/virtiofsd --shared-dir /var/lib/machines/mill-image-spike --xattr --fd 3 --no-announce-submounts
+[2026-09-11T16:56:44Z INFO  virtiofsd] Client connected, servicing requests
+Booting initrd of Fedora Linux 44 (Server Edition) dracut-108-7.fc44 (Initramfs).
+[    1.485018] dracut: FATAL: Don't know how to handle 'root=root'
+[    1.485076] dracut: Refusing to continue
+[    1.503255] systemd-shutdown[1]: Powering off.
+$ sudo lsinitrd /boot/initramfs-7.1.13-200.fc44.x86_64.img | grep -c virtiofs
+0
+```
+
+`root=root` is vmspawn's virtiofs root tag, which only an initrd with the
+`virtiofs` module (or a UKI made for it) understands; Fedora's host-only
+initrd has neither, and building one is out of scope. That is the
+`--directory` record: **it does not boot the tree with the host initrd.**
+
+### `--image`, a raw disk made with `systemd-repart`
+
+The raw image: one GPT root partition, ext4, the tree copied in.
+`systemd-repart` was the tool; `--make-ddi=portable` was not tried because a
+portable DDI needs the same virtiofs-less boot path, and `virt-make-fs` is not
+installed. The first run failed with the auto size — `Failed to copy … to
+'/run/systemd/mount-root/': No space left on device` — and `SizeMinBytes=4G`
+fixed it:
+
+```
+$ cat /tmp/e8-repart.d/10-root.conf
+[Partition]
+Type=root
+Format=ext4
+CopyFiles=/
+Label=root
+SizeMinBytes=4G
+$ sudo systemd-repart --empty=create --size=auto --definitions=/tmp/e8-repart.d --root=/var/lib/machines/mill-image-spike --dry-run=no /var/lib/machines/mill-image-spike.raw
+Syncing future partition 0 contents to disk.
+Adding new partition 0 to partition table.
+Writing new partition table.
+All done.
+-rw-r--r--. 1 root root 4296036352 Sep 11 09:57 /var/lib/machines/mill-image-spike.raw
+```
+
+2 s to make. Booting it with the host kernel found the root partition by
+GPT auto-discovery but then waited without limit for the *host's* LUKS
+volume, which the host-only initrd carries in its baked `etc/crypttab`:
+
+```
+$ sudo systemd-run --unit=mill-run-e8 --collect -p KillMode=mixed systemd-vmspawn --machine=mill-e8 --image=/var/lib/machines/mill-image-spike.raw --network-tap --console=read-only --linux=/boot/vmlinuz-7.1.13-200.fc44.x86_64 --initrd=/boot/initramfs-7.1.13-200.fc44.x86_64.img
+[    1.317752] systemd[1]: Expecting device dev-disk-by\x2dpartuuid-c18d41e3\x2d15ee\x2d4136\x2d827f\x2d3cf6da78ab2b.device - /dev/disk/by-partuuid/c18d41e3-15ee-4136-827f-3cf6da78ab2b...
+[    1.317934] systemd[1]: Expecting device dev-disk-by\x2duuid-3e7ec610\x2d9806\x2d4bc6\x2d8632\x2d2f17cf4f5467.device - /dev/disk/by-uuid/3e7ec610-9806-4bc6-8632-2f17cf4f5467...
+[  OK  ] Found device dev-disk-by\x2dpartuu…8d41e3-15ee-4136-827f-3cf6da78ab2b.
+M[***   ] Job dev-disk-by\x2duuid-3e7ec610\x2…start running (2min 8s / no limit)
+$ sudo lsinitrd /boot/initramfs-7.1.13-200.fc44.x86_64.img | grep crypttab
+-rw-r--r--   1 root     root          110 Apr 28 17:00 etc/crypttab
+```
+
+`rd.luks=0 rd.lvm=0` on the kernel command line (arguments after `--`) get
+past that, and the tree boots as a VM to a getty in under ten seconds:
+
+```
+$ sudo systemctl stop mill-run-e8; sudo machinectl terminate mill-e8
+$ sudo systemd-run --unit=mill-run-e8 --collect -p KillMode=mixed systemd-vmspawn --machine=mill-e8 --image=/var/lib/machines/mill-image-spike.raw --network-tap --console=read-only --linux=/boot/vmlinuz-7.1.13-200.fc44.x86_64 --initrd=/boot/initramfs-7.1.13-200.fc44.x86_64.img -- rd.luks=0 rd.lvm=0
+Running as unit: mill-run-e8.service; invocation ID: 287ee8064fd5454a95d929a40868df16
+[    0.232073] virtio_blk virtio5: [vda] 8390696 512-byte logical blocks (4.30 GB/4.00 GiB)
+[  OK  ] Reached target initrd-switch-root.target - Switch Root.
+Welcome to Fedora Linux 44 (Container Image)!
+[    3.370057] systemd[1]: Started systemd-journald.service - Journal Service.
+[    9.752783] fbcon: Taking over console
+Fedora Linux 44 (Container Image)
+Kernel 7.1.13-200.fc44.x86_64 on x86_64 (hvc0)
+$ sudo machinectl list --no-pager
+MACHINE        CLASS SERVICE         OS VERSION ADDRESSES
+mill-e8        vm    systemd-vmspawn -  -       -
+qemu-1-omarchy vm    libvirt-qemu    -  -       -
+```
+
+`-M` does not reach it. vmspawn's machine transport is ssh over vsock — the
+VM is handed `ssh.ephemeral-authorized_keys-all` and
+`systemd.unit-dropin.sshd-vsock@.service` as credentials — and the tree has
+no `sshd`:
+
+```
+$ sudo systemd-run -M mill-e8 --pipe --wait --quiet --collect -- true; echo "-M rc=$?"
+Failed to connect to system scope bus via machine transport: Input/output error
+-M rc=1
+$ sudo machinectl shell mill-e8 /bin/true
+Failed to get shell PTY: Operation not supported
+$ sudo ls /var/lib/machines/mill-image-spike/usr/sbin/sshd
+ls: cannot access '/var/lib/machines/mill-image-spike/usr/sbin/sshd': No such file or directory
+```
+
+Adding `openssh-server` to the tree and the `vsock` modules to the initrd is
+where the first attempt at this node spent its last hour; it is not repeated.
+
+**Verdict: E8 fail** on the pass line as written — the tree boots as a VM
+(image tool `systemd-repart`, 2 s to make; 9.8 s from `systemd-run` to the
+guest's getty, with `rd.luks=0 rd.lvm=0` and the host kernel), but `-M` does
+not reach it without an `sshd` in the image. Half way, and what the vmspawn
+upgrade in `docs/sandbox.md` would cost is now concrete: a kernel or UKI the
+image carries, an `openssh-server` in it, and `podman` untested.
+
+## Teardown (E13, E7, E8)
+
+```
+$ sudo systemctl stop mill-run-e13; systemctl --user stop mill-run-e7; sudo systemctl stop mill-run-e8; sudo machinectl terminate mill-e8
+$ sudo systemctl disable --now systemd-nsresourced.socket systemd-mountfsd.socket
+Removed '/etc/systemd/system/sockets.target.wants/systemd-nsresourced.socket'.
+Removed '/etc/systemd/system/sockets.target.wants/systemd-mountfsd.socket'.
+$ sudo rm -f /var/lib/machines/mill-image-spike.raw; sudo rm -rf /var/lib/machines/mill-image-spike.raw.tpmstate
+$ sudo btrfs subvolume delete /var/lib/mill/mill-image-e7; sudo btrfs subvolume delete /var/lib/machines/mill-image-e8     # the first attempt's copies
+Delete subvolume 395 (no-commit): '/var/lib/mill/mill-image-e7'
+Delete subvolume 396 (no-commit): '/var/lib/machines/mill-image-e8'
+$ sudo machinectl list --no-pager
+MACHINE        CLASS SERVICE      OS VERSION ADDRESSES
+qemu-1-omarchy vm    libvirt-qemu -  -       -
+
+1 machines listed.
+$ systemctl is-enabled systemd-nsresourced.socket systemd-mountfsd.socket
+disabled
+disabled
+$ sudo ls /var/lib/machines/
+mill-image-3c9a43029a6b9cdd908374177645456633f20d06e6837e21e08bd08e75be2c02
+mill-image-spike
+```
+
+Squid, `systemd-networkd` and the `inet mill` table are homestead's and were
+not started or stopped by this node; nothing on `core`'s SELinux policy was
+changed; the image subvolume stays. `qemu-1-omarchy` is not this node's.
+
+### What the design takes from E13, E7 and E8
+
+- **§Self-hosting stands: `[machine].nested` stays.** All five E13 checks
+  pass, and the live tier can run inside the agent's own machine as a check
+  step. Three corrections to §Provision, for `mill#66`: the inner is booted
+  `--private-users=identity` (the only mode that works one level down —
+  `pick` and every explicit shift fail on the idmap or on the `chown`), so
+  the outer needs **no** wide range, `--private-users=<base>:65536` is
+  enough; the outer's `nested` argv adds `--bind-ro=/sys:/.hostsys` and the
+  inner's adds `--bind-ro=/proc:/.hostproc --bind-ro=/.hostsys:/.hostsys`,
+  or the inner's nspawn cannot mount `proc`; and the inner's `--ephemeral`
+  runs from a snapshot the outer takes of the read-only bind, not from the
+  bind, because `--ephemeral` snapshots beside its source. The bind itself
+  stays read-only as the design says. `agent`'s full `sudo` is what the
+  `nested` image variant bakes; here it was a `sudoers.d` line in the
+  running outer.
+- **Inner egress needs forwarding and one masquerade in the outer, no
+  second squid.** The stock `80-container-ve.network` in the image does both
+  (`IPMasquerade=both` → `ip_forward=1` and `io.systemd.nat`), so nothing
+  had to be configured; if the image ever ships a `.network` for `ve-*`
+  without it, the fix is `net.ipv4.ip_forward=1` and
+  `iifname ve-* oifname host0 masquerade`. The host proxy is reachable from
+  the inner at the outer's gateway or at `10.99.255.1`, and the host's table
+  sees only the outer's address.
+- **`user_subvol_rm_allowed` on the host is enough for the outer's btrfs
+  operations**, with E9's rule carried over: a read-only snapshot needs
+  `ro false` before its owner can delete it.
+- **No SELinux work for nesting.** Zero denials on the host, in the outer
+  and in the inner, so §SELinux's "the spike decides" resolves to: no module,
+  no context flags, for nested as for flat machines.
+- **E7 stays a spike, and its first obstacle is policy.** `systemd-nsresourced`
+  is denied `read` on `nsfs_t` under `core`'s policy, and nspawn hangs on it
+  rather than failing. §Privilege's template-unit answer is unchanged.
+- **§Testing.** The four scenarios run live in `spikes/nspawn/nested_test.go`
+  under the same `MILL_SANDBOX_HOST=1` gate and pass on `core` (46 s): the
+  outer boots once for the three nested scenarios, and the unprivileged one
+  records which of boot, veth, entry and podman worked rather than asserting
+  any of them, then checks §E7 carries a verdict with a count.
+- **vmspawn is a bigger step than the ADR's "same tree".** The tree boots as
+  a VM only with a kernel supplied from outside and `rd.luks=0 rd.lvm=0`
+  against the host's initrd; a real upgrade needs a kernel or UKI in the
+  image, `openssh-server` for `-M`, and a raw image per boot (`systemd-repart`,
+  2 s, 4 GB).
