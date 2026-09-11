@@ -1,0 +1,9 @@
+{
+  "default": [{"type": "reject"}],
+  "transports": {
+    "docker": {
+      "registry.fedoraproject.org": [{"type": "insecureAcceptAnything"}]
+    },
+    "containers-storage": {"": [{"type": "insecureAcceptAnything"}]}
+  }
+}

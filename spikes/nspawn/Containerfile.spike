@@ -1,0 +1,56 @@
+# The base image the per-run sandbox boots: docs/sandbox.md §Images §Base,
+# rehearsed with an empty package list. build-image.sh turns the image into a
+# btrfs subvolume under /var/lib/machines that systemd-nspawn boots.
+FROM registry.fedoraproject.org/fedora:44
+
+RUN dnf -y install \
+      systemd dbus-broker podman git sudo curl \
+      gcc gcc-c++ make pkgconf python3 openssl-devel zlib-devel libffi-devel \
+      libyaml-devel readline-devel ncurses-devel gdbm-devel sqlite-devel \
+    && dnf clean all
+
+RUN curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh \
+    && /usr/local/bin/mise --version
+
+# agent's subordinate ids must fit inside the machine's own 65536-uid range
+# (--private-users=pick); useradd's default 524288+ cannot be mapped there.
+RUN useradd -u 1000 -m agent \
+    && echo 'agent:10000:55536' > /etc/subuid \
+    && echo 'agent:10000:55536' > /etc/subgid \
+    && mkdir -p /work && chown agent:agent /work
+
+# The system podman socket, and the user instance's for agent: linger makes
+# agent's user manager start at boot, and the wants link enables the socket
+# without a running manager to talk to.
+RUN systemctl enable podman.socket \
+    && mkdir -p /var/lib/systemd/linger && touch /var/lib/systemd/linger/agent \
+    && mkdir -p /home/agent/.config/systemd/user/sockets.target.wants \
+    && ln -s /usr/lib/systemd/user/podman.socket \
+         /home/agent/.config/systemd/user/sockets.target.wants/podman.socket \
+    && chown -R agent:agent /home/agent/.config
+
+RUN echo 'agent ALL=(root) NOPASSWD: /usr/bin/dnf install *' > /etc/sudoers.d/agent-dnf \
+    && chmod 0440 /etc/sudoers.d/agent-dnf
+
+RUN printf '[storage]\ndriver = "overlay"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n' \
+      > /etc/containers/storage.conf
+
+# docker.io and quay.io resolve to Harbor's proxy-cache projects; the host
+# name and project names are homestead's (ansible/roles/podman).
+RUN mkdir -p /etc/containers/registries.conf.d \
+    && printf '%s\n' \
+      '[[registry]]' \
+      'prefix = "docker.io"' \
+      'location = "harbor.tailcbcc0e.ts.net/dockerhub-cache"' \
+      '' \
+      '[[registry]]' \
+      'prefix = "quay.io"' \
+      'location = "harbor.tailcbcc0e.ts.net/quay-cache"' \
+      > /etc/containers/registries.conf.d/harbor.conf
+
+RUN su agent -c '/usr/local/bin/mise trust /work' \
+    && su agent -c '/usr/local/bin/mise trust --show'
+
+# A booted machine wants a fresh machine-id; an empty file tells systemd to
+# generate one at boot.
+RUN : > /etc/machine-id
