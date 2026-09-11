@@ -164,3 +164,8 @@ func (c *Client) Checks(ctx context.Context, request workspace.ChecksRequest) (w
 func (c *Client) Redact(ctx context.Context, values ...string) error {
 	return c.Call(ctx, VerbRedact, RedactRequest{Values: values}, nil)
 }
+
+// ReportInstall reports packages the `dnf` shim installed into the machine.
+func (c *Client) ReportInstall(ctx context.Context, packages ...string) error {
+	return c.Call(ctx, VerbReportInstall, ReportInstallRequest{Packages: packages}, nil)
+}

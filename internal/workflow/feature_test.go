@@ -35,13 +35,13 @@ var _ = Describe("The feature workflow", Label("unit"), func() {
 		Expect(err).NotTo(HaveOccurred())
 	})
 
-	It("loads with twelve steps, in order", func() {
+	It("loads with the toolchain step and twelve steps, in order", func() {
 		names := []string{}
 		for _, s := range loaded.GetSteps() {
 			names = append(names, s.GetName())
 		}
 		Expect(names).To(Equal([]string{
-			"gather-context", "think", "plan", "review-plan", "plan-approval",
+			"toolchain", "gather-context", "think", "plan", "review-plan", "plan-approval",
 			"implement", "simplify", "commit", "clean-tree", "pr", "review", "merge",
 		}))
 	})

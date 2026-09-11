@@ -758,6 +758,8 @@ func stepKindName(kind millv1.StepKind) string {
 		return "check"
 	case millv1.StepKind_STEP_KIND_GATE:
 		return "gate"
+	case millv1.StepKind_STEP_KIND_PREPARATORY:
+		return "preparatory"
 	default:
 		return "unspecified"
 	}

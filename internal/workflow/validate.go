@@ -99,8 +99,38 @@ func validateStep(step *millv1.Step) []error {
 		if step.GetGate().GetAsk().GetTitle() == "" {
 			errs = append(errs, fmt.Errorf("step %s: a gate step names what it asks", name))
 		}
+	case millv1.StepKind_STEP_KIND_PREPARATORY:
+		errs = append(errs, validatePreparatory(step)...)
 	default:
-		errs = append(errs, fmt.Errorf("step %s: kind is required: skill, check, or gate", name))
+		errs = append(errs, fmt.Errorf("step %s: kind is required: skill, check, gate, or preparatory", name))
+	}
+	return errs
+}
+
+// validatePreparatory checks a step that readies the machine: it names a
+// command and closes on `exit`, the record of how that command ended,
+// whichever way it did (docs/sandbox.md §"Preparatory steps"). The rest of a
+// check's contract — the codes that pass, the shape of stdout, what a
+// failure does with stderr — is refused rather than ignored, because a step
+// that declares an exit code it "passes" with has been written as a check,
+// and a preparatory step that fails never fails the run.
+func validatePreparatory(step *millv1.Step) []error {
+	name := step.GetName()
+	var errs []error
+	check := step.GetCheck()
+	if len(check.GetCommand()) == 0 {
+		errs = append(errs, fmt.Errorf("step %s: a preparatory step names a command", name))
+	}
+	if len(check.GetExit()) > 0 || check.GetStdout() != millv1.StdoutShape_STDOUT_SHAPE_UNSPECIFIED ||
+		check.GetFeedback() != millv1.Feedback_FEEDBACK_UNSPECIFIED || strings.TrimSpace(check.GetStdoutSchema()) != "" {
+		errs = append(errs, fmt.Errorf("step %s: a preparatory step names only a command; its exit and output are the evidence whichever way it ends, so exit, stdout and feedback are a check's to declare", name))
+	}
+	if step.GetEvidence() != millv1.EvidenceKind_EVIDENCE_KIND_UNSPECIFIED &&
+		step.GetEvidence() != millv1.EvidenceKind_EVIDENCE_KIND_EXIT {
+		errs = append(errs, fmt.Errorf("step %s: a preparatory step closes on exit evidence, the record of how its command ended", name))
+	}
+	if step.GetSession() != "" || step.GetSkill().GetName() != "" || step.GetGate() != nil {
+		errs = append(errs, fmt.Errorf("step %s: a preparatory step runs no session and files no gate", name))
 	}
 	return errs
 }

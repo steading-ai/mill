@@ -147,15 +147,15 @@ Dagger nodes carry no workflow label. Dagger never learns the word.
 
 ## Step
 
-One unit of a workflow. Three kinds.
+One unit of a workflow. Four kinds.
 
 | Field | Notes |
 |---|---|
 | `name` | Unique within the workflow. The ledger's key for the step |
-| `kind` | `skill`, `check`, or `gate` |
+| `kind` | `skill`, `check`, `gate`, or `preparatory` |
 | `session` | Skill steps only. Names the session this step runs in; steps sharing a name resume the same session. See [Session](#session) |
 | `skill` | Skill steps: the skill's name and content hash, resolved from the store at workflow load. A definition names it as `<name>`, or as `<workflow>/<name>` for a skill a sibling workflow's directory carries — one record, whichever workflow reached for it |
-| `check` | Check steps: command path relative to the skill or workflow, exit-code semantics, expected stdout shape. See [Check](#check) |
+| `check` | Check steps: command path relative to the skill or workflow, exit-code semantics, expected stdout shape. See [Check](#check). Preparatory steps: the command alone; the loader refuses `exit`, `stdout` and `feedback` on one, because they are a check's contract and a preparatory step has none |
 | `gate` | Gate steps: the ask, and the auto-approve policy. See [Gate](#gate) |
 | `evidence` | What closes this step. See [Evidence](#evidence) |
 | `artifact` | Skill steps closing on `artifact`: the file in the checkout whose content is the artifact, as a template over the run — `docs/plans/{{.Date}}-{{.NodeSlug}}.md`. Absent, the artifact is the session's last message |
@@ -189,6 +189,8 @@ An artifact step's evidence is the session's own report, which is the right defa
 A **check step** runs a command through the workspace and reads its exit code and stdout. It produces evidence directly.
 
 A **gate step** files a dagger gate and releases the lease. It produces no evidence of its own; it closes when the gate node completes, and the gate's result is the evidence.
+
+A **preparatory step** readies the machine for the sessions — `workflows/quick-fix` and `workflows/feature` open with `toolchain`, `mise trust /work && mise install`. It runs a command through the workspace like a check, but its evidence is the record of how the command ended, whichever way it did: `exit` evidence carrying the process exit and the captured output, whole. It has no pass code, so it always closes and never fails: a non-zero exit, or a budget spent, is a *finding* the first session receives as feedback, never a failed attempt, so it consumes no retry, consults no `on_failure`, and cannot trip the circuit breaker; the loader refuses `retries` and `on_failure` on one. Its output is recorded and never shown to a session. It runs only in a workspace that provisions a machine; on the local backend there is nothing to ready, and the step closes on the record that it did not run. `docs/sandbox.md` §"Preparatory steps" is the authority.
 
 Steps run in order. There is no branching except `on_failure`. A workflow that needs a decision makes it in a skill step and records it as structured output the next step reads.
 

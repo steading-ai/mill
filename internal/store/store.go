@@ -385,6 +385,35 @@ func (s *Store) RecordNotice(ctx context.Context, leaseID, runID, stepRunID, kin
 	})
 }
 
+// RecordInstall appends what a session installed into its machine with the
+// `dnf` shim. It changes no run state: the install is the session's own
+// errand and the ephemeral root it went into dies with the run, so the row
+// of the audit trail is the whole record — the run's provenance of a package
+// `mill.toml` does not declare (docs/sandbox.md §"The dnf shim"). Fenced by
+// the lease like every other write.
+func (s *Store) RecordInstall(ctx context.Context, leaseID, runID, stepRunID string, packages []string) error {
+	return s.withTx(ctx, func(ctx context.Context, tx pgx.Tx, q *Queries) error {
+		if _, err := fence(ctx, tx, runID, leaseID); err != nil {
+			return err
+		}
+		return record(ctx, q, event{
+			runID:     runID,
+			stepRunID: stepRunID,
+			op:        "installed",
+			after: map[string]any{
+				"packages": packages,
+				"detail":   InstallDetail(packages),
+			},
+		})
+	})
+}
+
+// InstallDetail is the line the ledger keeps for an undeclared install, in
+// the words docs/sandbox.md §"The dnf shim" fixes.
+func InstallDetail(packages []string) string {
+	return "installed " + strings.Join(packages, ", ") + ", not declared in mill.toml"
+}
+
 // RecordHeartbeat appends one heartbeat the harness sent a session that had
 // gone quiet. Like a notice it changes no run state — the wait is the
 // harness's business and the row of the audit trail is the whole record —

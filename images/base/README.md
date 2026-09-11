@@ -34,7 +34,7 @@ the host's own `registries.conf` uses.
 |---|---|
 | `agent`, uid 1000, home `/home/agent` | the session user; `/work` is its checkout mount, `mise trust` pre-granted |
 | `/etc/subuid`, `/etc/subgid` | `agent:10000:55536` — inside the machine's own 65536 uids, so rootless podman can write its map |
-| `/usr/local/bin/dnf` | the shim: `sudo /usr/bin/dnf install`, a report to `/run/mill/ws.sock` when it is there, the `[image].packages` hint as the last three lines |
+| `/usr/local/bin/dnf` | the shim: `sudo /usr/bin/dnf install`, a `report.install` to `/run/mill/ws.sock` with the session's `STEP_TOKEN` when both are there, the `[image].packages` hint as the last three lines |
 | `/etc/sudoers.d/agent-dnf` | `agent ALL=(root) NOPASSWD: /usr/bin/dnf install *` — the only sudo path |
 | `/etc/containers/storage.conf` | `overlay` under the ephemeral root |
 | `/etc/containers/containers.conf` | `cgroups = "split"`: containers under the step's slice |

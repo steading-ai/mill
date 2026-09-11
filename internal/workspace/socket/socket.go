@@ -66,24 +66,30 @@ const (
 	VerbForgePR     = "forge.pr"
 	VerbForgeChecks = "forge.checks"
 	VerbRedact      = "redact"
+	// VerbReportInstall is the `dnf` shim's report of what a session
+	// installed into its machine (docs/sandbox.md §"The dnf shim"). Any
+	// live token may report: the install already happened, and the report
+	// is provenance, not a grant.
+	VerbReportInstall = "report.install"
 )
 
 // required is the capability each verb is gated by. A verb absent from this
 // table does not exist; a verb whose capability is empty needs only a live
 // token, which is what "any" means for `redact` in the architecture's table.
 var required = map[string]workspace.Capability{
-	VerbFSRead:      workspace.Read,
-	VerbFSList:      workspace.Read,
-	VerbFSWrite:     workspace.Write,
-	VerbExec:        workspace.Exec,
-	VerbGitStatus:   workspace.Read,
-	VerbGitDiff:     workspace.Read,
-	VerbGitLog:      workspace.Read,
-	VerbGitCommit:   workspace.Write,
-	VerbGitPush:     workspace.Forge,
-	VerbForgePR:     workspace.Forge,
-	VerbForgeChecks: workspace.Forge,
-	VerbRedact:      "",
+	VerbFSRead:        workspace.Read,
+	VerbFSList:        workspace.Read,
+	VerbFSWrite:       workspace.Write,
+	VerbExec:          workspace.Exec,
+	VerbGitStatus:     workspace.Read,
+	VerbGitDiff:       workspace.Read,
+	VerbGitLog:        workspace.Read,
+	VerbGitCommit:     workspace.Write,
+	VerbGitPush:       workspace.Forge,
+	VerbForgePR:       workspace.Forge,
+	VerbForgeChecks:   workspace.Forge,
+	VerbRedact:        "",
+	VerbReportInstall: "",
 }
 
 // Error codes on the wire.
@@ -421,6 +427,22 @@ func (s *Server) dispatch(ctx context.Context, verb string, body []byte) (any, i
 		s.verbs.Redact(request.Values...)
 		s.logf("verb=%s values=%d", verb, len(request.Values))
 		return RedactResponse{Registered: len(request.Values)}, http.StatusOK, nil
+
+	case VerbReportInstall:
+		var request ReportInstallRequest
+		if err := decode(body, &request); err != nil {
+			return nil, http.StatusBadRequest, err
+		}
+		reporter, ok := s.verbs.(workspace.Reporter)
+		if !ok {
+			return nil, http.StatusNotImplemented, &Error{Code: CodeNotImplemented, Verb: verb,
+				Message: "workspace: this workspace keeps no record of installs"}
+		}
+		if err := reporter.ReportInstall(ctx, request.Packages); err != nil {
+			return nil, statusFor(err), failure(verb, err)
+		}
+		s.logf("verb=%s packages=%s", verb, strings.Join(request.Packages, ","))
+		return ReportInstallResponse{Packages: len(request.Packages)}, http.StatusOK, nil
 
 	case VerbGitPush:
 		var request workspace.PushRequest

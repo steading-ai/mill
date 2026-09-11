@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -185,6 +186,23 @@ var _ = Describe("Exit-code semantics", Label("unit"), func() {
 		Expect(result.Exit.GetStatus()).To(Equal(int32(-1)))
 		Expect(result.Exit.GetSignal()).To(Equal(int32(15)))
 		Expect(result.Reason).To(Equal("the command never ran"))
+	})
+
+	It("kills the command when its context ends, and records the budget as the reason", func() {
+		dir := script(GinkgoT().TempDir(), "scripts/slow", "#!/bin/sh\necho warming up\nsleep 30\n")
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel()
+
+		started := time.Now()
+		result, err := check.Run(ctx, tree, check.Request{Name: "probe",
+			Check: &millv1.Check{Command: []string{"scripts/slow"}, Stdout: millv1.StdoutShape_STDOUT_SHAPE_TEXT}, WorkflowDir: dir})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(time.Since(started)).To(BeNumerically("<", 10*time.Second), "stopped at the budget, not waited for")
+		Expect(result.Passed).To(BeFalse())
+		Expect(result.Exit.GetStatus()).To(Equal(int32(-1)))
+		Expect(result.Exit.GetReason()).To(Equal(harnessv1.ExitReason_EXIT_REASON_TIMEOUT))
+		Expect(result.Stdout).To(Equal("warming up\n"), "what it wrote before the budget is kept")
 	})
 
 	It("passes the command's arguments through as the definition wrote them", func() {

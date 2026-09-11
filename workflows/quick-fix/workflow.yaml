@@ -13,6 +13,26 @@
 name: quick-fix
 scope: org
 steps:
+  # Ready the machine before any session runs: trust the checkout's mise
+  # configuration and install what it pins. `mise trust` is pre-granted for
+  # /work in the base image, and runs anyway so a repo whose config moved
+  # is trusted too. The step closes on its exit and output whichever way it
+  # ends, and its output stays out of every session; a non-zero exit is a
+  # finding the first session receives, never a failed run (docs/sandbox.md
+  # §"Preparatory steps"). The budget is the step's own, because a warm
+  # install and a cold toolchain are nothing alike.
+  - name: toolchain
+    kind: preparatory
+    check:
+      command:
+        - sh
+        - -c
+        - mise trust /work && mise install
+    evidence: exit
+    capabilities:
+      - exec
+    timeout: 20m
+
   - name: gather-context
     kind: skill
     session: implement

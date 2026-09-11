@@ -602,6 +602,121 @@ var _ = Describe("A machine on a real host", Label("live"), Serial, Ordered, fun
 		Expect(out).To(ContainSubstring("mill-step-2.slice"), "the fresh slice carries the same ordinal")
 		Expect(second.EndStep(ctx, 2, false)).To(Succeed())
 	})
+
+	// The shim's report, taken apart from dnf: the socket directory is bound
+	// at boot, `agent` inside is the worker outside, and the verb answers a
+	// bearer the sidecar would have put in the session's environment. This is
+	// what the dnf scenario below relies on, proven without a mirror.
+	It("The shim's report reaches the workspace socket from inside the machine", func(ctx context.Context) {
+		id := "acceptance-report-" + nonce
+		DeferCleanup(func() { sweep(id) })
+		ws := machine.New(real, config)
+		_, err := ws.Create(ctx, workspace.Spec{RunID: id, NodeRef: "mill#64"})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func(ctx context.Context) { _ = ws.Destroy(ctx) })
+
+		const bearer = "report-step-bearer"
+		Expect(ws.Rotate(ctx, workspace.TokenFor(bearer, workspace.Exec))).To(Succeed())
+		Expect(ws.BeginStep(ctx, 1)).To(Succeed())
+		defer func() { _ = ws.EndStep(ctx, 1, false) }()
+
+		By("when the shim's own curl line runs as agent, with the step token in its environment")
+		report, err := ws.Exec(ctx, workspace.Command{
+			Path: "/bin/sh", Args: []string{"-c", `test -S /run/mill/ws.sock && curl -sS --max-time 5 --unix-socket /run/mill/ws.sock -X POST ` +
+				`-H "Authorization: Bearer $STEP_TOKEN" -H 'Content-Type: application/json' ` +
+				`--data '{"packages":["vips-devel"]}' -o /dev/null -w '%{http_code}' http://mill/v1/report.install`},
+			Env: map[string]string{"STEP_TOKEN": bearer},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		stdout, stderr, result := drainProcess(report)
+		Expect(result.Status).To(BeEquivalentTo(0), stderr)
+		Expect(strings.TrimSpace(stdout)).To(Equal("200"))
+
+		By("then the workspace holds the report, and a bearer that is not the step's is refused")
+		Expect(ws.Installs()).To(Equal([]workspace.Install{{Packages: []string{"vips-devel"}}}))
+		forged, err := ws.Exec(ctx, workspace.Command{
+			Path: "/bin/sh", Args: []string{"-c", `curl -sS --max-time 5 --unix-socket /run/mill/ws.sock -X POST ` +
+				`-H "Authorization: Bearer not-the-token" --data '{"packages":["gcc"]}' -o /dev/null -w '%{http_code}' http://mill/v1/report.install`},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		stdout, _, _ = drainProcess(forged)
+		Expect(strings.TrimSpace(stdout)).To(Equal("401"))
+		Expect(ws.Installs()).To(BeEmpty())
+	})
+
+	// Scenario: A runtime install is reported and not remembered
+	//   Given a session installs a package with the shim and does not change mill.toml
+	//   When the run's provenance is read and the next run starts
+	//   Then the install is recorded as undeclared
+	//   And the package is absent in the next machine
+	//
+	// The session's half is an exec as a session's shell would make it: as
+	// `agent`, under a step slice, with the step token in its environment
+	// the way the sidecar sets it. The shim reports over `/run/mill/ws.sock`,
+	// the socket directory bound at boot, and the workspace holds the report
+	// for the run loop to write as "installed vips-devel, not declared in
+	// mill.toml" (internal/run/preparatory.go; the ledger row is that
+	// package's spec).
+	It("A runtime install is reported and not remembered", func(ctx context.Context) {
+		id := "acceptance-dnf-" + nonce
+		DeferCleanup(func() { sweep(id) })
+		ws := machine.New(real, config)
+		_, err := ws.Create(ctx, workspace.Spec{RunID: id, NodeRef: "mill#64"})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func(ctx context.Context) { _ = ws.Destroy(ctx) })
+
+		By("given a session installs a package with the shim and does not change mill.toml")
+		const bearer = "dnf-step-bearer"
+		Expect(ws.Rotate(ctx, workspace.TokenFor(bearer, workspace.Exec))).To(Succeed())
+		Expect(ws.BeginStep(ctx, 1)).To(Succeed())
+		install, err := ws.Exec(ctx, workspace.Command{
+			Path: "/bin/sh", Args: []string{"-c", "dnf install -y vips-devel"},
+			Env: map[string]string{"STEP_TOKEN": bearer},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		stdout, stderr, result := drainProcess(install)
+		Expect(result.Status).To(BeEquivalentTo(0), stdout+stderr)
+
+		By("then the hint is the last lines of its output")
+		lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
+		Expect(len(lines)).To(BeNumerically(">=", 3))
+		tail := lines[len(lines)-3:]
+		Expect(tail[0]).To(Equal("mill: installed vips-devel into an ephemeral machine; the next run's image will not have it."))
+		Expect(tail[1]).To(Equal("mill: declare it in mill.toml so the image does. Under [image], add:"))
+		Expect(tail[2]).To(Equal(`mill:   packages = ["vips-devel"]`))
+		installed, err := ws.Exec(ctx, workspace.Command{Path: "/usr/bin/rpm", Args: []string{"-q", "vips-devel"}})
+		Expect(err).NotTo(HaveOccurred())
+		_, _, res := drainProcess(installed)
+		Expect(res.Status).To(BeEquivalentTo(0), "the package is in this machine")
+
+		By("and sudo /usr/bin/dnf remove is refused by sudoers")
+		remove, err := ws.Exec(ctx, workspace.Command{Path: "/usr/bin/sudo", Args: []string{"-n", "/usr/bin/dnf", "remove", "-y", "vips-devel"}})
+		Expect(err).NotTo(HaveOccurred())
+		_, refusal, res := drainProcess(remove)
+		Expect(res.Status).NotTo(BeEquivalentTo(0))
+		Expect(refusal).To(ContainSubstring("password"))
+
+		By("when the run's provenance is read")
+		Expect(ws.EndStep(ctx, 1, false)).To(Succeed())
+		Expect(ws.Installs()).To(Equal([]workspace.Install{{Packages: []string{"vips-devel"}}}),
+			"the shim's report reached the socket, for the loop to record as undeclared")
+		Expect(ws.Destroy(ctx)).To(Succeed())
+
+		By("and the next run starts, the package is absent in the next machine")
+		next := "acceptance-dnf-next-" + nonce
+		DeferCleanup(func() { sweep(next) })
+		second := machine.New(real, config)
+		_, err = second.Create(ctx, workspace.Spec{RunID: next, NodeRef: "mill#64"})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func(ctx context.Context) { _ = second.Destroy(ctx) })
+		Expect(second.BeginStep(ctx, 1)).To(Succeed())
+		absent, err := second.Exec(ctx, workspace.Command{Path: "/usr/bin/rpm", Args: []string{"-q", "vips-devel"}})
+		Expect(err).NotTo(HaveOccurred())
+		out, _, res := drainProcess(absent)
+		Expect(res.Status).NotTo(BeEquivalentTo(0), out)
+		Expect(out).To(ContainSubstring("not installed"))
+		Expect(second.EndStep(ctx, 1, false)).To(Succeed())
+	})
 })
 
 func contains(list []string, want string) bool {

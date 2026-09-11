@@ -83,6 +83,9 @@ const (
 	// StoreServiceRecordHeartbeatProcedure is the fully-qualified name of the StoreService's
 	// RecordHeartbeat RPC.
 	StoreServiceRecordHeartbeatProcedure = "/mill.v1.StoreService/RecordHeartbeat"
+	// StoreServiceRecordInstallProcedure is the fully-qualified name of the StoreService's
+	// RecordInstall RPC.
+	StoreServiceRecordInstallProcedure = "/mill.v1.StoreService/RecordInstall"
 	// StoreServiceRecordReconciliationProcedure is the fully-qualified name of the StoreService's
 	// RecordReconciliation RPC.
 	StoreServiceRecordReconciliationProcedure = "/mill.v1.StoreService/RecordReconciliation"
@@ -194,6 +197,13 @@ type StoreServiceClient interface {
 	// no run state: the row of the audit trail is the whole record, and
 	// `mill inspect` counts the rows to say what an attempt's wait cost.
 	RecordHeartbeat(context.Context, *connect.Request[v1.RecordHeartbeatRequest]) (*connect.Response[v1.RecordHeartbeatResponse], error)
+	// RecordInstall appends what a session installed into its machine with
+	// the `dnf` shim, as the shim reported it over the workspace socket
+	// (docs/sandbox.md §"The dnf shim"). It changes no run state: the row of
+	// the audit trail is the run's provenance of an undeclared install, for
+	// an operator to see which projects keep needing something `mill.toml`
+	// does not name. It is not routed to a reviewer.
+	RecordInstall(context.Context, *connect.Request[v1.RecordInstallRequest]) (*connect.Response[v1.RecordInstallResponse], error)
 	// RecordReconciliation appends what one reconciliation pass found and did
 	// at worker start: the machines it told from the ledger's live runs —
 	// orphans stopped, lost sandboxes noted, slices reaped for resume — the
@@ -380,6 +390,12 @@ func NewStoreServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(storeServiceMethods.ByName("RecordHeartbeat")),
 			connect.WithClientOptions(opts...),
 		),
+		recordInstall: connect.NewClient[v1.RecordInstallRequest, v1.RecordInstallResponse](
+			httpClient,
+			baseURL+StoreServiceRecordInstallProcedure,
+			connect.WithSchema(storeServiceMethods.ByName("RecordInstall")),
+			connect.WithClientOptions(opts...),
+		),
 		recordReconciliation: connect.NewClient[v1.RecordReconciliationRequest, v1.RecordReconciliationResponse](
 			httpClient,
 			baseURL+StoreServiceRecordReconciliationProcedure,
@@ -537,6 +553,7 @@ type storeServiceClient struct {
 	park                  *connect.Client[v1.ParkRequest, v1.ParkResponse]
 	recordNotice          *connect.Client[v1.RecordNoticeRequest, v1.RecordNoticeResponse]
 	recordHeartbeat       *connect.Client[v1.RecordHeartbeatRequest, v1.RecordHeartbeatResponse]
+	recordInstall         *connect.Client[v1.RecordInstallRequest, v1.RecordInstallResponse]
 	recordReconciliation  *connect.Client[v1.RecordReconciliationRequest, v1.RecordReconciliationResponse]
 	setCompleteRequestId  *connect.Client[v1.SetCompleteRequestIdRequest, v1.SetCompleteRequestIdResponse]
 	done                  *connect.Client[v1.DoneRequest, v1.DoneResponse]
@@ -630,6 +647,11 @@ func (c *storeServiceClient) RecordNotice(ctx context.Context, req *connect.Requ
 // RecordHeartbeat calls mill.v1.StoreService.RecordHeartbeat.
 func (c *storeServiceClient) RecordHeartbeat(ctx context.Context, req *connect.Request[v1.RecordHeartbeatRequest]) (*connect.Response[v1.RecordHeartbeatResponse], error) {
 	return c.recordHeartbeat.CallUnary(ctx, req)
+}
+
+// RecordInstall calls mill.v1.StoreService.RecordInstall.
+func (c *storeServiceClient) RecordInstall(ctx context.Context, req *connect.Request[v1.RecordInstallRequest]) (*connect.Response[v1.RecordInstallResponse], error) {
+	return c.recordInstall.CallUnary(ctx, req)
 }
 
 // RecordReconciliation calls mill.v1.StoreService.RecordReconciliation.
@@ -801,6 +823,13 @@ type StoreServiceHandler interface {
 	// no run state: the row of the audit trail is the whole record, and
 	// `mill inspect` counts the rows to say what an attempt's wait cost.
 	RecordHeartbeat(context.Context, *connect.Request[v1.RecordHeartbeatRequest]) (*connect.Response[v1.RecordHeartbeatResponse], error)
+	// RecordInstall appends what a session installed into its machine with
+	// the `dnf` shim, as the shim reported it over the workspace socket
+	// (docs/sandbox.md §"The dnf shim"). It changes no run state: the row of
+	// the audit trail is the run's provenance of an undeclared install, for
+	// an operator to see which projects keep needing something `mill.toml`
+	// does not name. It is not routed to a reviewer.
+	RecordInstall(context.Context, *connect.Request[v1.RecordInstallRequest]) (*connect.Response[v1.RecordInstallResponse], error)
 	// RecordReconciliation appends what one reconciliation pass found and did
 	// at worker start: the machines it told from the ledger's live runs —
 	// orphans stopped, lost sandboxes noted, slices reaped for resume — the
@@ -983,6 +1012,12 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(storeServiceMethods.ByName("RecordHeartbeat")),
 		connect.WithHandlerOptions(opts...),
 	)
+	storeServiceRecordInstallHandler := connect.NewUnaryHandler(
+		StoreServiceRecordInstallProcedure,
+		svc.RecordInstall,
+		connect.WithSchema(storeServiceMethods.ByName("RecordInstall")),
+		connect.WithHandlerOptions(opts...),
+	)
 	storeServiceRecordReconciliationHandler := connect.NewUnaryHandler(
 		StoreServiceRecordReconciliationProcedure,
 		svc.RecordReconciliation,
@@ -1151,6 +1186,8 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 			storeServiceRecordNoticeHandler.ServeHTTP(w, r)
 		case StoreServiceRecordHeartbeatProcedure:
 			storeServiceRecordHeartbeatHandler.ServeHTTP(w, r)
+		case StoreServiceRecordInstallProcedure:
+			storeServiceRecordInstallHandler.ServeHTTP(w, r)
 		case StoreServiceRecordReconciliationProcedure:
 			storeServiceRecordReconciliationHandler.ServeHTTP(w, r)
 		case StoreServiceSetCompleteRequestIdProcedure:
@@ -1260,6 +1297,10 @@ func (UnimplementedStoreServiceHandler) RecordNotice(context.Context, *connect.R
 
 func (UnimplementedStoreServiceHandler) RecordHeartbeat(context.Context, *connect.Request[v1.RecordHeartbeatRequest]) (*connect.Response[v1.RecordHeartbeatResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.RecordHeartbeat is not implemented"))
+}
+
+func (UnimplementedStoreServiceHandler) RecordInstall(context.Context, *connect.Request[v1.RecordInstallRequest]) (*connect.Response[v1.RecordInstallResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.RecordInstall is not implemented"))
 }
 
 func (UnimplementedStoreServiceHandler) RecordReconciliation(context.Context, *connect.Request[v1.RecordReconciliationRequest]) (*connect.Response[v1.RecordReconciliationResponse], error) {

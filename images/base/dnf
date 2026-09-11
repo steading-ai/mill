@@ -22,12 +22,15 @@ for arg in "$@"; do
     *) packages="$packages${packages:+, }\"$arg\"" ;;
   esac
 done
-# The report to the run's provenance, over the workspace socket when the
-# host bound one. The verb is preparatory-steps' to add; a socket that does
-# not answer it, or no socket at all, costs the agent nothing.
-if [ -S /run/mill/ws.sock ]; then
+# The report to the run's provenance: the workspace socket's `report.install`
+# verb, over the socket directory the host bound at boot, with the step's
+# token as the bearer every verb wants. No socket, no token, or a socket
+# that does not answer the verb costs the agent nothing: the install is
+# done, and the hint below is still the last thing it reads.
+if [ -S /run/mill/ws.sock ] && [ -n "${STEP_TOKEN:-}" ]; then
   curl -sS --max-time 5 --unix-socket /run/mill/ws.sock -X POST \
-    --data "installed $packages" http://mill/dnf >/dev/null 2>&1 || true
+    -H "Authorization: Bearer $STEP_TOKEN" -H 'Content-Type: application/json' \
+    --data "{\"packages\":[$packages]}" http://mill/v1/report.install >/dev/null 2>&1 || true
 fi
 printf 'mill: installed %s into an ephemeral machine; the next run'"'"'s image will not have it.\n' "$(echo "$packages" | tr -d '"')"
 printf 'mill: declare it in mill.toml so the image does. Under [image], add:\n'

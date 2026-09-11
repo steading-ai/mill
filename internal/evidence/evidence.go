@@ -418,11 +418,21 @@ func verifyCommitter(ctx context.Context, step Step, sha string) error {
 // verifyExit proves a check's exit: the process the workspace ran exited
 // with a code the definition names. A process that never ran — status -1 —
 // proves nothing at all, whatever the definition would have accepted.
+//
+// A preparatory step is the one exception, and it is the whole of the
+// difference between the two kinds: its evidence is the record of how its
+// command ended, whichever way it did, because a step that readies the
+// machine never fails the run and the record is what says whether a finding
+// was owed (docs/sandbox.md §"Preparatory steps"). A budget it spent is
+// recorded as the reason its process has no status; that too is the record.
 func verifyExit(_ context.Context, step Step) (Evidence, error) {
 	kind := millv1.EvidenceKind_EVIDENCE_KIND_EXIT
 	exit := step.Exit
 	if exit == nil {
 		return Evidence{}, &NotVerifiedError{Kind: kind, Reason: "no process ran"}
+	}
+	if step.Definition.GetKind() == millv1.StepKind_STEP_KIND_PREPARATORY {
+		return Evidence{Value: &millv1.Evidence{Value: &millv1.Evidence_Exit{Exit: exit}}}, nil
 	}
 	if exit.GetStatus() < 0 {
 		return Evidence{}, &NotVerifiedError{Kind: kind, Reason: fmt.Sprintf(
@@ -738,6 +748,9 @@ func verifyGate(ctx context.Context, step Step) (Evidence, error) {
 func verifiedBy(kind millv1.EvidenceKind, step Step) string {
 	if step.Definition.GetKind() == millv1.StepKind_STEP_KIND_CHECK && step.Name != "" {
 		return "check " + step.Name
+	}
+	if step.Definition.GetKind() == millv1.StepKind_STEP_KIND_PREPARATORY && step.Name != "" {
+		return "preparatory " + step.Name
 	}
 	return "evidence." + kindName(kind)
 }

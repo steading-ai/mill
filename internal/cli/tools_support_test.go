@@ -94,6 +94,17 @@ func openRunOn(ctx context.Context, m mill, nodeRef, nodeID string) *runs {
 			VerifiedBy: "spec",
 		},
 	})
+	// The toolchain step readied the machine and closed on its record, as
+	// every run's first step does before a session runs (docs/sandbox.md
+	// §"Preparatory steps").
+	r.close(ctx, r.start(ctx, "toolchain", millv1.StepKind_STEP_KIND_PREPARATORY), &millv1.CloseStepRunRequest{
+		Evidence: &millv1.Evidence{
+			Kind:       millv1.EvidenceKind_EVIDENCE_KIND_EXIT,
+			Value:      &millv1.Evidence_Exit{Exit: &harnessv1.ProcessExit{Status: 0}},
+			Output:     "mise all tools are installed\n",
+			VerifiedBy: "preparatory toolchain",
+		},
+	})
 	return r
 }
 

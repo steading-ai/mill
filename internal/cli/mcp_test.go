@@ -303,7 +303,7 @@ var _ = Describe("mill mcp under a reader uid", Label(testsupport.DBLabel), func
 		// A reader may look at what a run would follow.
 		shown := s.tool("workflow_show", map[string]any{"name": "quick-fix"})
 		Expect(shown).To(HaveKeyWithValue("name", "quick-fix"))
-		Expect(shown["steps"]).To(HaveLen(6))
+		Expect(shown["steps"]).To(HaveLen(7))
 
 		// It may not redo one. The store refuses the write, naming the
 		// role.

@@ -28,6 +28,7 @@ var quickFixSteps = []struct {
 	evidence millv1.EvidenceKind
 }{
 	{"select", millv1.EvidenceKind_EVIDENCE_KIND_STRUCTURED},
+	{"toolchain", millv1.EvidenceKind_EVIDENCE_KIND_EXIT},
 	{"gather-context", millv1.EvidenceKind_EVIDENCE_KIND_ARTIFACT},
 	{"implement", millv1.EvidenceKind_EVIDENCE_KIND_ARTIFACT},
 	{"commit", millv1.EvidenceKind_EVIDENCE_KIND_COMMIT},

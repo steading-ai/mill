@@ -201,6 +201,45 @@ var _ = Describe("The exit verifier", Label("unit"), func() {
 
 		Expect(err).To(MatchError(ContainSubstring("never ran (timeout)")))
 	})
+
+	// A preparatory step's evidence is the record of how its command ended,
+	// whichever way: a non-zero exit and a spent budget close it as zero
+	// does, because its failure is a finding and never a failed attempt
+	// (docs/sandbox.md §"Preparatory steps").
+	DescribeTable("closes a preparatory step on the record of its exit, whichever way it ended",
+		func(exit *harnessv1.ProcessExit) {
+			step := evidence.Step{
+				Name: "toolchain",
+				Definition: &millv1.Step{
+					Name:  "toolchain",
+					Kind:  millv1.StepKind_STEP_KIND_PREPARATORY,
+					Check: &millv1.Check{Command: []string{"sh", "-c", "mise trust /work && mise install"}},
+				},
+				Exit: exit,
+			}
+
+			result, err := evidence.Verify(context.Background(), millv1.EvidenceKind_EVIDENCE_KIND_EXIT, step)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Value.GetExit().GetStatus()).To(Equal(exit.GetStatus()))
+			Expect(result.Value.GetExit().GetReason()).To(Equal(exit.GetReason()))
+			Expect(result.Value.GetVerifiedBy()).To(Equal("preparatory toolchain"))
+		},
+		Entry("exited 0", &harnessv1.ProcessExit{Status: 0}),
+		Entry("exited 1", &harnessv1.ProcessExit{Status: 1}),
+		Entry("stopped at its budget", &harnessv1.ProcessExit{Status: -1, Reason: harnessv1.ExitReason_EXIT_REASON_TIMEOUT}),
+	)
+
+	It("still refuses a preparatory step with no process behind it", func() {
+		step := evidence.Step{
+			Name:       "toolchain",
+			Definition: &millv1.Step{Name: "toolchain", Kind: millv1.StepKind_STEP_KIND_PREPARATORY},
+		}
+
+		_, err := evidence.Verify(context.Background(), millv1.EvidenceKind_EVIDENCE_KIND_EXIT, step)
+
+		Expect(err).To(MatchError(ContainSubstring("no process ran")))
+	})
 })
 
 var _ = Describe("The verdict verifier", Label("unit"), func() {

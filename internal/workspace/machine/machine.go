@@ -335,6 +335,9 @@ type Workspace struct {
 	// recreate is the ordinal of the slice Attach stopped, which the next
 	// BeginStep recreates; zero when there is none.
 	recreate int
+	// installs are the shim's reports not yet drained into the run's
+	// provenance (workspace.Reporter).
+	installs []workspace.Install
 }
 
 // New returns a workspace for one run, reaching the host through host.
@@ -469,6 +472,36 @@ func (w *Workspace) Findings() []string {
 		return append([]string(nil), record.Findings...)
 	}
 	return nil
+}
+
+// ReportInstall takes the `dnf` shim's report of what a session installed
+// into the machine, to be drained by [Workspace.Installs]. The packages are
+// kept as named: the report is provenance, and provenance says what was
+// said.
+func (w *Workspace) ReportInstall(_ context.Context, packages []string) error {
+	named := make([]string, 0, len(packages))
+	for _, pkg := range packages {
+		if pkg = strings.TrimSpace(pkg); pkg != "" {
+			named = append(named, pkg)
+		}
+	}
+	if len(named) == 0 {
+		return errors.New("machine: report.install names no package")
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.installs = append(w.installs, workspace.Install{Packages: named})
+	return nil
+}
+
+// Installs hands over the reports taken since the last call and forgets
+// them.
+func (w *Workspace) Installs() []workspace.Install {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	installs := w.installs
+	w.installs = nil
+	return installs
 }
 
 // Committer is the identity the workspace's commits carry.
@@ -668,4 +701,6 @@ var (
 	_ workspace.CacheCandidate = (*Workspace)(nil)
 	_ workspace.StepBoundary   = (*Workspace)(nil)
 	_ workspace.StepResumer    = (*Workspace)(nil)
+	_ workspace.Provisioned    = (*Workspace)(nil)
+	_ workspace.Reporter       = (*Workspace)(nil)
 )

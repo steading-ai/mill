@@ -481,6 +481,19 @@ var _ = Describe("The machine workspace", Label("unit"), func() {
 		Expect(f.manifest().Nested).To(BeFalse())
 	})
 
+	It("holds the shim's report of an install until the loop drains it, and refuses one naming nothing", func(ctx context.Context) {
+		ws := f.workspace()
+		Expect(ws.ReportInstall(ctx, []string{"vips-devel", " libpq-devel "})).To(Succeed())
+		Expect(ws.ReportInstall(ctx, []string{"gcc"})).To(Succeed())
+		Expect(ws.ReportInstall(ctx, []string{"", "  "})).To(MatchError(ContainSubstring("names no package")))
+
+		Expect(ws.Installs()).To(Equal([]workspace.Install{
+			{Packages: []string{"vips-devel", "libpq-devel"}},
+			{Packages: []string{"gcc"}},
+		}))
+		Expect(ws.Installs()).To(BeEmpty(), "handed over once")
+	})
+
 	It("grants nested to a listed origin and binds the host's images read-only for it", func(ctx context.Context) {
 		f = newFixture(origin(map[string]string{"mill.toml": "[machine]\nnested = true\n"}))
 		spec.Origin = f.config.Origin

@@ -37,6 +37,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -99,6 +100,13 @@ func Run(ctx context.Context, execer workspace.Execer, request Request) (Result,
 	if err != nil {
 		return Result{}, fmt.Errorf("check %s: %w", request.Name, err)
 	}
+	// The step's budget is the context's: when it ends, the process group
+	// is killed so the streams close and the wait below returns, and the
+	// exit is recorded as the budget's below. A workspace whose exec is
+	// stopped another way — the machine's, by its unit — is stopped that
+	// way too; the signal reaches whatever this side can still see.
+	stop := context.AfterFunc(ctx, func() { _ = process.Signal(syscall.SIGKILL) })
+	defer stop()
 
 	// Both streams are drained concurrently: a command that fills the pipe
 	// mill is not reading blocks forever, and a check that hangs is worse

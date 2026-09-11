@@ -189,7 +189,7 @@ func (ParkedReason) EnumDescriptor() ([]byte, []int) {
 	return file_mill_v1_mill_proto_rawDescGZIP(), []int{1}
 }
 
-// StepKind says how a step is executed. Three kinds, no more:
+// StepKind says how a step is executed. Four kinds, no more:
 // docs/domain-model.md §Step.
 type StepKind int32
 
@@ -205,6 +205,12 @@ const (
 	// STEP_KIND_GATE files a dagger gate and releases the lease. It produces
 	// no evidence of its own; the gate's result is the evidence.
 	StepKind_STEP_KIND_GATE StepKind = 3
+	// STEP_KIND_PREPARATORY readies the machine for the sessions: a command
+	// run through the workspace whose exit and captured output are the
+	// evidence, whichever way it exited. A non-zero exit or a spent budget is
+	// a finding carried to the first session, never a failed attempt
+	// (docs/sandbox.md §"Preparatory steps").
+	StepKind_STEP_KIND_PREPARATORY StepKind = 4
 )
 
 // Enum value maps for StepKind.
@@ -214,12 +220,14 @@ var (
 		1: "STEP_KIND_SKILL",
 		2: "STEP_KIND_CHECK",
 		3: "STEP_KIND_GATE",
+		4: "STEP_KIND_PREPARATORY",
 	}
 	StepKind_value = map[string]int32{
 		"STEP_KIND_UNSPECIFIED": 0,
 		"STEP_KIND_SKILL":       1,
 		"STEP_KIND_CHECK":       2,
 		"STEP_KIND_GATE":        3,
+		"STEP_KIND_PREPARATORY": 4,
 	}
 )
 
@@ -1694,7 +1702,12 @@ type Evidence struct {
 	// Which check or which mill routine established it.
 	VerifiedBy string `protobuf:"bytes,11,opt,name=verified_by,json=verifiedBy,proto3" json:"verified_by,omitempty"`
 	// When it was established.
-	VerifiedAt    *timestamppb.Timestamp `protobuf:"bytes,12,opt,name=verified_at,json=verifiedAt,proto3" json:"verified_at,omitempty"`
+	VerifiedAt *timestamppb.Timestamp `protobuf:"bytes,12,opt,name=verified_at,json=verifiedAt,proto3" json:"verified_at,omitempty"`
+	// What the process wrote, both streams as they arrived, for a step whose
+	// evidence is the record of its run rather than a code it passed with: a
+	// preparatory step (docs/sandbox.md §"Preparatory steps"). Empty for every
+	// other kind.
+	Output        string `protobuf:"bytes,13,opt,name=output,proto3" json:"output,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1834,6 +1847,13 @@ func (x *Evidence) GetVerifiedAt() *timestamppb.Timestamp {
 		return x.VerifiedAt
 	}
 	return nil
+}
+
+func (x *Evidence) GetOutput() string {
+	if x != nil {
+		return x.Output
+	}
+	return ""
 }
 
 type isEvidence_Value interface {
@@ -2610,7 +2630,7 @@ type Step struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Unique within the workflow. The ledger's key for the step.
 	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	// skill, check, or gate.
+	// skill, check, gate, or preparatory.
 	Kind StepKind `protobuf:"varint,2,opt,name=kind,proto3,enum=mill.v1.StepKind" json:"kind,omitempty"`
 	// Skill steps only. Names the session this step runs in; steps sharing a
 	// name resume the same session.
@@ -2619,7 +2639,9 @@ type Step struct {
 	// at workflow load.
 	Skill *SkillRef `protobuf:"bytes,4,opt,name=skill,proto3" json:"skill,omitempty"`
 	// Check steps: command path relative to the skill or workflow, exit-code
-	// semantics, expected stdout shape.
+	// semantics, expected stdout shape. Preparatory steps: the command alone;
+	// the exit codes, stdout shape and feedback are a check's contract and a
+	// preparatory step has none.
 	Check *Check `protobuf:"bytes,5,opt,name=check,proto3" json:"check,omitempty"`
 	// Gate steps: the ask, and the auto-approve policy.
 	Gate *Gate `protobuf:"bytes,6,opt,name=gate,proto3" json:"gate,omitempty"`
@@ -3983,7 +4005,7 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"\blocation\x18\x04 \x01(\tR\blocation\"m\n" +
 	"\aVerdict\x124\n" +
 	"\bdecision\x18\x01 \x01(\x0e2\x18.mill.v1.VerdictDecisionR\bdecision\x12,\n" +
-	"\bfindings\x18\x02 \x03(\v2\x10.mill.v1.FindingR\bfindings\"\xd0\x03\n" +
+	"\bfindings\x18\x02 \x03(\v2\x10.mill.v1.FindingR\bfindings\"\xe8\x03\n" +
 	"\bEvidence\x12\x1e\n" +
 	"\vstep_run_id\x18\x01 \x01(\tR\tstepRunId\x12)\n" +
 	"\x04kind\x18\x02 \x01(\x0e2\x15.mill.v1.EvidenceKindR\x04kind\x12\x18\n" +
@@ -4001,7 +4023,8 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"\vverified_by\x18\v \x01(\tR\n" +
 	"verifiedBy\x12;\n" +
 	"\vverified_at\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"verifiedAtB\a\n" +
+	"verifiedAt\x12\x16\n" +
+	"\x06output\x18\r \x01(\tR\x06outputB\a\n" +
 	"\x05value\"\xb0\x02\n" +
 	"\aSession\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x12\n" +
@@ -4194,12 +4217,13 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"\x14PARKED_REASON_BUDGET\x10\x02\x12\x18\n" +
 	"\x14PARKED_REASON_DENIED\x10\x03\x12\x19\n" +
 	"\x15PARKED_REASON_TIMEOUT\x10\x04\x12\x19\n" +
-	"\x15PARKED_REASON_REFUSED\x10\x05*c\n" +
+	"\x15PARKED_REASON_REFUSED\x10\x05*~\n" +
 	"\bStepKind\x12\x19\n" +
 	"\x15STEP_KIND_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fSTEP_KIND_SKILL\x10\x01\x12\x13\n" +
 	"\x0fSTEP_KIND_CHECK\x10\x02\x12\x12\n" +
-	"\x0eSTEP_KIND_GATE\x10\x03*\xc2\x01\n" +
+	"\x0eSTEP_KIND_GATE\x10\x03\x12\x19\n" +
+	"\x15STEP_KIND_PREPARATORY\x10\x04*\xc2\x01\n" +
 	"\rStepRunStatus\x12\x1f\n" +
 	"\x1bSTEP_RUN_STATUS_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17STEP_RUN_STATUS_RUNNING\x10\x01\x12\x1a\n" +

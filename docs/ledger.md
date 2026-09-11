@@ -76,7 +76,7 @@ One row per attempt at a step. Append-only.
 | `id` | ULID |
 | `run_id`, `step_name` | The step from the run's workflow definition |
 | `attempt` | 1-based per `(run_id, step_name)` |
-| `kind` | `skill`, `check`, `gate`, copied at start so the row reads alone |
+| `kind` | `skill`, `check`, `gate`, `preparatory`, copied at start so the row reads alone |
 | `session_id` | Skill steps: the session this attempt ran in |
 | `lease_id` | The dagger lease held when this attempt ran |
 | `worker_ref` | |
@@ -106,7 +106,7 @@ Immutable. One row per closed step run.
 |---|---|
 | `step_run_id` | Unique. A step run has at most one closing evidence |
 | `kind` | `commit`, `exit`, `verdict`, `structured`, `url`, `status`, `artifact`, `gate` |
-| `value` | JSONB. The fact, in the shape the kind defines |
+| `value` | JSONB. The fact, in the shape the kind defines. A preparatory step's `exit` value carries `output` beside the process exit: what the command wrote, whole, because the record of the step's run is the fact it closes on (`docs/sandbox.md` §"Preparatory steps") |
 | `verified_by` | The check name or mill routine that established it |
 | `verified_at` | |
 
@@ -166,7 +166,7 @@ One row per pass a worker ran at start, before its first claim (`docs/sandbox.md
 
 ### `events`
 
-Append-only. Every change to `runs.status`, every step run start and close, every token issue and revoke, every gate filed and every auto-approval, and every attempt to carry a filed gate to a person (`notified`: the kind, the gate, the notify command's exit status and its diagnostic). Fields: `id` (ULID), `run_id`, `step_run_id` (nullable), `op`, `before`, `after`, `worker_ref`, `occurred_at`. This is the audit trail and what `mill status --history` reads. It is not a change stream for consumers; nothing subscribes to it.
+Append-only. Every change to `runs.status`, every step run start and close, every token issue and revoke, every gate filed and every auto-approval, every attempt to carry a filed gate to a person (`notified`: the kind, the gate, the notify command's exit status and its diagnostic), and every package a session installed into its machine with the `dnf` shim (`installed`: the packages and the line "installed `<packages>`, not declared in `mill.toml`", against the attempt whose session made it — the run's provenance of an undeclared install, `docs/sandbox.md` §"The dnf shim"). Fields: `id` (ULID), `run_id`, `step_run_id` (nullable), `op`, `before`, `after`, `worker_ref`, `occurred_at`. This is the audit trail and what `mill status --history` reads. It is not a change stream for consumers; nothing subscribes to it.
 
 Not time-partitioned, unlike dagger's events. Dagger's are partitioned from the start because they are a change stream many consumers resume from; these are neither, and one operator running tens of runs a day does not justify the machinery. Partitioning is a migration away if volume ever asks for it.
 

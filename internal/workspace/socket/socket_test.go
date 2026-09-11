@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -159,6 +160,47 @@ var _ = Describe("The workspace socket", Label("unit"), func() {
 
 		server.Rotate(workspace.Token{})
 		Expect(refusal(step.Redact(ctx, "too-late")).Code).To(Equal(socket.CodeUnauthorized))
+	})
+
+	It("takes report.install from any live token, into the workspace's record, and refuses it where there is none", func(ctx context.Context) {
+		By("given a workspace that keeps the shim's reports")
+		reporter := &reporting{tree: verbs}
+		server = socket.New(reporter, socket.WithLog(log, redactor))
+		path = filepath.Join(GinkgoT().TempDir(), "report.sock")
+		Expect(server.Listen(path)).To(Succeed())
+		DeferCleanup(func(ctx context.Context) { Expect(server.Close(ctx)).To(Succeed()) })
+		step := live("report-bearer")
+
+		By("when the shim reports over the socket exactly as it does: a POST with the bearer and a JSON package list")
+		client := &http.Client{Transport: &http.Transport{DialContext: unixDialer(path)}}
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://mill/v1/report.install",
+			strings.NewReader(`{"packages":["vips-devel", "libpq-devel"]}`))
+		Expect(err).NotTo(HaveOccurred())
+		request.Header.Set("Authorization", "Bearer report-bearer")
+		request.Header.Set("Content-Type", "application/json")
+		response, err := client.Do(request)
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = response.Body.Close() }()
+		Expect(response.StatusCode).To(Equal(http.StatusOK))
+
+		By("then the workspace holds the report, and the log names the packages")
+		Expect(reporter.Installs()).To(Equal([]workspace.Install{{Packages: []string{"vips-devel", "libpq-devel"}}}))
+		Expect(log.String()).To(ContainSubstring("verb=report.install packages=vips-devel,libpq-devel"))
+
+		By("and the client verb is the same wire")
+		Expect(step.ReportInstall(ctx, "gcc")).To(Succeed())
+		Expect(reporter.Installs()).To(Equal([]workspace.Install{{Packages: []string{"gcc"}}}))
+
+		By("and no live token means no report")
+		server.Rotate(workspace.Token{})
+		Expect(refusal(step.ReportInstall(ctx, "too-late")).Code).To(Equal(socket.CodeUnauthorized))
+	})
+
+	It("answers report.install with a typed not-implemented on a workspace that keeps no record", func(ctx context.Context) {
+		step := live("report-bearer")
+		wire := refusal(step.ReportInstall(ctx, "vips-devel"))
+		Expect(wire.Code).To(Equal(socket.CodeNotImplemented))
+		Expect(wire.Verb).To(Equal(socket.VerbReportInstall))
 	})
 
 	It("serves the forge verbs to a token that carries forge", func(ctx context.Context) {

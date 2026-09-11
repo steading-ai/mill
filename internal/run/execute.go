@@ -48,6 +48,10 @@ type result struct {
 	judgment bool
 	// autoApproved records a gate the `auto` predicate closed.
 	autoApproved bool
+	// output is what a preparatory step's command wrote, both streams,
+	// which its evidence carries whole: the record of the step's run is
+	// the fact the step closes on (docs/sandbox.md §"Preparatory steps").
+	output string
 }
 
 // execute runs one attempt by kind.
@@ -69,6 +73,8 @@ func (r *Runner) execute(ctx context.Context, s *state, step *millv1.Step, sr *m
 		return r.runCheck(stepCtx, s, step, sr)
 	case millv1.StepKind_STEP_KIND_GATE:
 		return r.runGate(stepCtx, s, step, sr, detail)
+	case millv1.StepKind_STEP_KIND_PREPARATORY:
+		return r.runPreparatory(stepCtx, s, step, sr)
 	default:
 		return result{}, fmt.Errorf("run %s: step %s has no kind", s.run.GetId(), step.GetName())
 	}
@@ -594,8 +600,11 @@ func outputSchema(step *millv1.Step) string {
 	return step.GetOutputSchema()
 }
 
-// feedbackHeading introduces what the previous attempt failed on.
-const feedbackHeading = "## What the last attempt failed on\n\nThis is the mill's own report of the check or review that sent this step back. Fix it."
+// feedbackHeading introduces what the previous attempt failed on: the check
+// or review that sent this step back, or — before the first session — what
+// readying the machine found (internal/run/preparatory.go). One heading,
+// because there is one path.
+const feedbackHeading = "## What the last attempt failed on\n\nThis is the mill's own report of what failed before this attempt: the check or review that sent this step back, or a preparatory step that readied the machine. Fix it."
 
 // pullRequest is the run branch's pull request, opened if the forge has
 // none. It is the mill's own read of the forge, not the session's: a `url`

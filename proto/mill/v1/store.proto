@@ -91,6 +91,13 @@ service StoreService {
   // no run state: the row of the audit trail is the whole record, and
   // `mill inspect` counts the rows to say what an attempt's wait cost.
   rpc RecordHeartbeat(RecordHeartbeatRequest) returns (RecordHeartbeatResponse);
+  // RecordInstall appends what a session installed into its machine with
+  // the `dnf` shim, as the shim reported it over the workspace socket
+  // (docs/sandbox.md §"The dnf shim"). It changes no run state: the row of
+  // the audit trail is the run's provenance of an undeclared install, for
+  // an operator to see which projects keep needing something `mill.toml`
+  // does not name. It is not routed to a reviewer.
+  rpc RecordInstall(RecordInstallRequest) returns (RecordInstallResponse);
   // RecordReconciliation appends what one reconciliation pass found and did
   // at worker start: the machines it told from the ledger's live runs —
   // orphans stopped, lost sandboxes noted, slices reaped for resume — the
@@ -486,6 +493,24 @@ message RecordHeartbeatRequest {
 
 // RecordHeartbeatResponse carries nothing: the event is the record.
 message RecordHeartbeatResponse {
+  // Reserved: the event the call wrote is the whole of the answer.
+}
+
+// RecordInstallRequest records one install a session made with the shim.
+message RecordInstallRequest {
+  // The lease the caller holds, compared against the run's current lease
+  // inside the writing transaction.
+  string lease_id = 1;
+  // The run whose machine the packages went into.
+  string run_id = 2;
+  // The attempt whose session installed them.
+  string step_run_id = 3;
+  // The packages, as the shim named them.
+  repeated string packages = 4;
+}
+
+// RecordInstallResponse carries nothing: the event is the record.
+message RecordInstallResponse {
   // Reserved: the event the call wrote is the whole of the answer.
 }
 

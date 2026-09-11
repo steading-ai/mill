@@ -71,7 +71,7 @@ enum ParkedReason {
   PARKED_REASON_REFUSED = 5;
 }
 
-// StepKind says how a step is executed. Three kinds, no more:
+// StepKind says how a step is executed. Four kinds, no more:
 // docs/domain-model.md §Step.
 enum StepKind {
   // STEP_KIND_UNSPECIFIED is the zero value and carries no meaning.
@@ -85,6 +85,12 @@ enum StepKind {
   // STEP_KIND_GATE files a dagger gate and releases the lease. It produces
   // no evidence of its own; the gate's result is the evidence.
   STEP_KIND_GATE = 3;
+  // STEP_KIND_PREPARATORY readies the machine for the sessions: a command
+  // run through the workspace whose exit and captured output are the
+  // evidence, whichever way it exited. A non-zero exit or a spent budget is
+  // a finding carried to the first session, never a failed attempt
+  // (docs/sandbox.md §"Preparatory steps").
+  STEP_KIND_PREPARATORY = 4;
 }
 
 // StepRunStatus is the state of one attempt at a step. docs/ledger.md
@@ -473,6 +479,11 @@ message Evidence {
   string verified_by = 11;
   // When it was established.
   google.protobuf.Timestamp verified_at = 12;
+  // What the process wrote, both streams as they arrived, for a step whose
+  // evidence is the record of its run rather than a code it passed with: a
+  // preparatory step (docs/sandbox.md §"Preparatory steps"). Empty for every
+  // other kind.
+  string output = 13;
 }
 
 // Session is a resumable agent session inside a run. Named by the step
@@ -632,7 +643,7 @@ message HarnessSettings {
 message Step {
   // Unique within the workflow. The ledger's key for the step.
   string name = 1;
-  // skill, check, or gate.
+  // skill, check, gate, or preparatory.
   StepKind kind = 2;
   // Skill steps only. Names the session this step runs in; steps sharing a
   // name resume the same session.
@@ -641,7 +652,9 @@ message Step {
   // at workflow load.
   SkillRef skill = 4;
   // Check steps: command path relative to the skill or workflow, exit-code
-  // semantics, expected stdout shape.
+  // semantics, expected stdout shape. Preparatory steps: the command alone;
+  // the exit codes, stdout shape and feedback are a check's contract and a
+  // preparatory step has none.
   Check check = 5;
   // Gate steps: the ask, and the auto-approve policy.
   Gate gate = 6;

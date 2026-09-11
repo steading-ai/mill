@@ -259,7 +259,14 @@ func (s stepYAML) toProto() (*millv1.Step, error) {
 		TokenBudget:  s.TokenBudget,
 		Models:       s.Models,
 	}
-	if step.GetRetries() == 0 {
+	// A preparatory step is never failed, so it has no retries to spend
+	// and no on_failure to consult (docs/sandbox.md §"Preparatory steps");
+	// a definition that writes either has misread the kind, and is told.
+	if kind == millv1.StepKind_STEP_KIND_PREPARATORY {
+		if s.Retries != 0 || s.OnFailure != "" {
+			return fail(fmt.Errorf("a preparatory step never fails, so it has no retries and no on_failure"))
+		}
+	} else if step.GetRetries() == 0 {
 		step.Retries = defaultRetries
 	}
 	if s.TokenBudget < 0 {
@@ -320,8 +327,10 @@ func (s stepYAML) toProto() (*millv1.Step, error) {
 			step.Harness[name] = &millv1.HarnessSettings{Options: document}
 		}
 	}
-	if step.OnFailure, err = parseOnFailure(s.OnFailure); err != nil {
-		return fail(err)
+	if kind != millv1.StepKind_STEP_KIND_PREPARATORY {
+		if step.OnFailure, err = parseOnFailure(s.OnFailure); err != nil {
+			return fail(err)
+		}
 	}
 	if s.Timeout != "" {
 		d, err := time.ParseDuration(s.Timeout)
@@ -413,10 +422,15 @@ func toDocument(w *millv1.Workflow) document {
 }
 
 func onFailureText(f *millv1.OnFailure) string {
-	if f.GetKind() == millv1.OnFailureKind_ON_FAILURE_KIND_REVISE {
+	switch {
+	case f == nil:
+		// A preparatory step, which has none.
+		return ""
+	case f.GetKind() == millv1.OnFailureKind_ON_FAILURE_KIND_REVISE:
 		return "revise " + f.GetReviseTarget()
+	default:
+		return "park"
 	}
-	return "park"
 }
 
 // parseEnum reads an enum by its lower-case name without the type prefix,

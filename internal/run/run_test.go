@@ -53,6 +53,7 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_DONE))
 			Expect(closedSteps(f.inspect(ctx))).To(Equal(map[string]millv1.EvidenceKind{
 				"select":         millv1.EvidenceKind_EVIDENCE_KIND_STRUCTURED,
+				"toolchain":      millv1.EvidenceKind_EVIDENCE_KIND_EXIT,
 				"gather-context": millv1.EvidenceKind_EVIDENCE_KIND_ARTIFACT,
 				"implement":      millv1.EvidenceKind_EVIDENCE_KIND_ARTIFACT,
 				"commit":         millv1.EvidenceKind_EVIDENCE_KIND_COMMIT,

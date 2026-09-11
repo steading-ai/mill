@@ -76,6 +76,29 @@ func (t *tree) Redact(values ...string) {
 	t.redacts = append(t.redacts, values...)
 }
 
+// reporting is a tree whose socket takes the shim's report
+// (workspace.Reporter); the plain tree does not, which is what a workspace
+// with no machine looks like to the verb.
+type reporting struct {
+	*tree
+	installs []workspace.Install
+}
+
+func (r *reporting) ReportInstall(_ context.Context, packages []string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.installs = append(r.installs, workspace.Install{Packages: packages})
+	return nil
+}
+
+func (r *reporting) Installs() []workspace.Install {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	installs := r.installs
+	r.installs = nil
+	return installs
+}
+
 func (t *tree) Status(context.Context) (workspace.Status, error) {
 	return workspace.Status{Branch: "mill/mill-12", Clean: true}, nil
 }

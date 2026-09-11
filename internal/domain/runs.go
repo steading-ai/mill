@@ -114,6 +114,13 @@ func (s *Service) RecordHeartbeat(ctx context.Context, leaseID, runID, stepRunID
 	return s.store.RecordHeartbeat(ctx, leaseID, runID, stepRunID, strike, strikes, waitingSeconds, tasks)
 }
 
+// RecordInstall appends what a session installed into its machine with the
+// shim. There is no transition to check: it records the run's provenance of
+// an undeclared package, not a change to the run.
+func (s *Service) RecordInstall(ctx context.Context, leaseID, runID, stepRunID string, packages []string) error {
+	return s.store.RecordInstall(ctx, leaseID, runID, stepRunID, packages)
+}
+
 // SetCompleteRequestID mints the completing patch's idempotency key, or
 // returns the one the run already carries. There is no transition to check:
 // it records a key against a run that is still running, before the patch

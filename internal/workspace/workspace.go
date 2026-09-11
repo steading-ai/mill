@@ -592,6 +592,43 @@ type StepResumer interface {
 	NextOrdinal() int
 }
 
+// Provisioned is a workspace that provisions a machine for its run
+// (docs/sandbox.md §Provision), and so has two things the local backend
+// does not. Provisioning leaves findings for the run's first session — an
+// invalid `mill.toml`, a derived build that fell back to base — and the
+// machine is what a workflow's preparatory steps ready (docs/sandbox.md
+// §"Preparatory steps"). The run loop delivers the findings and runs the
+// preparatory steps only in a workspace that is one: on the operator's own
+// host there is no machine to ready, and a step written for one — `mise
+// trust /work` — would act on the host's own configuration instead.
+type Provisioned interface {
+	// Findings are what provisioning left for the first session, in the
+	// order they were found, each one line in the words the session is
+	// given.
+	Findings() []string
+}
+
+// Install is one report from the `dnf` shim: the packages a session put
+// into its machine's ephemeral root, which the next run's image will not
+// have (docs/sandbox.md §"The dnf shim").
+type Install struct {
+	// Packages as the shim named them.
+	Packages []string
+}
+
+// Reporter is a workspace whose socket answers `report.install`: the shim's
+// report is taken over the socket and held until the run loop drains it
+// into the run's provenance, because the workspace has no ledger of its own
+// to write. A workspace that is not one refuses the verb, and the shim
+// tolerates that.
+type Reporter interface {
+	// ReportInstall takes one report. An empty package list is refused.
+	ReportInstall(ctx context.Context, packages []string) error
+	// Installs hands over every report taken since the last call, oldest
+	// first, and forgets them.
+	Installs() []Install
+}
+
 // ErrLostSandbox is a run whose sandbox is gone: the ledger says the run
 // is live and this host once made a machine for it, but the machine is no
 // longer registered. The run fails with this as evidence and nothing boots

@@ -77,7 +77,9 @@ var _ = Describe("The cache candidate hook", Label(testsupport.DBLabel), func() 
 		for _, step := range ws.taken() {
 			Expect(closed).To(HaveKey(step))
 		}
-		Expect(ws.taken()[0]).To(Equal("gather-context"))
+		// The toolchain step is first: what readying the machine put in the
+		// caches — a warm mise — is exactly what is worth promoting.
+		Expect(ws.taken()[0]).To(Equal("toolchain"))
 		Expect(ws.taken()[len(ws.taken())-1]).To(Equal("merge"))
 	})
 
@@ -100,8 +102,8 @@ var _ = Describe("The cache candidate hook", Label(testsupport.DBLabel), func() 
 		Expect(f.cancelRun(ctx)).To(Succeed())
 		Eventually(done, 10*time.Second).Should(Receive(BeNil()))
 
-		By("then no candidate was taken")
+		By("then no candidate was taken for it; the toolchain step before it, closed on evidence, left the only one")
 		Expect(f.stepRunStatus(ctx, stepRunID)).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_ABORTED))
-		Expect(ws.taken()).To(BeEmpty())
+		Expect(ws.taken()).To(Equal([]string{"toolchain"}))
 	})
 })

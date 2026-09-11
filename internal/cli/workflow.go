@@ -379,10 +379,15 @@ func skillText(ref *millv1.SkillRef) string {
 // onFailureText is what a step's failure does to the run: park, or revise a
 // named earlier step.
 func onFailureText(onFailure *millv1.OnFailure) string {
-	if onFailure.GetKind() == millv1.OnFailureKind_ON_FAILURE_KIND_REVISE {
+	switch {
+	case onFailure == nil:
+		// A preparatory step: never failed, so nothing to do about it.
+		return "-"
+	case onFailure.GetKind() == millv1.OnFailureKind_ON_FAILURE_KIND_REVISE:
 		return "revise:" + onFailure.GetReviseTarget()
+	default:
+		return "park"
 	}
-	return "park"
 }
 
 // pushSource records who pushed and from where. It is excluded from the

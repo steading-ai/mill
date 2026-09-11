@@ -377,7 +377,7 @@ Three mechanisms, applied in this order at each trigger.
 
 - `/usr/local/bin/dnf` in the base image (`images/base/dnf`) wraps `sudo /usr/bin/dnf`, and the sudoers rule allows `agent` to run `/usr/bin/dnf install` and nothing else. The proxy goes to dnf as `--setopt=proxy=` after `install`, because sudo strips the environment and the rule's pattern is `dnf install *`.
 - On success the shim prints, as its **last lines**, a hint: the packages installed, that this machine is ephemeral, and the `[image].packages` line to add to `mill.toml`. Agents read the tail of output; the hint is where they look.
-- The shim reports the install over the workspace socket (`/run/mill/ws.sock`, a POST to the `dnf` verb preparatory steps add; a socket that is absent or does not answer costs nothing). The run's provenance records "installed `<packages>`, not declared in `mill.toml`". This is not routed to the reviewer, who judges acceptance criteria only; it is for the operator to see which projects keep needing something undeclared.
+- The shim reports the install over the workspace socket: a POST to the `report.install` verb at `/run/mill/ws.sock`, the socket directory bound `:idmap` at boot like every other bind, with the step token the sidecar put in the session's environment (`STEP_TOKEN`) as the bearer every verb wants. No socket, no token, or a socket that does not answer the verb costs nothing; the hint is still the last thing the agent reads. The workspace holds the report (`workspace.Reporter`) and the run loop drains it into the run's provenance after the attempt: an `installed` event in the ledger, "installed `<packages>`, not declared in `mill.toml`", against the attempt whose session made it, which `mill history` shows. This is not routed to the reviewer, who judges acceptance criteria only; it is for the operator to see which projects keep needing something undeclared.
 - Nothing installed this way survives the run. The declaration the agent commits is what is remembered.
 
 ## Preparatory steps
@@ -389,6 +389,15 @@ A preparatory step readies the machine for the sessions. It is a deterministic s
 - **`mill.toml` validation** (§mill.toml) — failure → defaults, finding.
 
 The rule: a preparatory step **MUST NOT** fail the run. The circuit breaker exists for work that cannot be done, not for a typo an agent can fix in one session.
+
+The step kind, exactly (`kind: preparatory`, `docs/domain-model.md` §Step; `internal/run/preparatory.go`):
+
+- **Declaration.** A workflow step naming a command under `check.command` and closing on `exit`, with an explicit `timeout`. The loader refuses `exit`, `stdout` and `feedback` on it — those are a check's contract, and a preparatory step has none — and refuses a session, a skill or a gate on it. `workflows/quick-fix` and `workflows/feature` open with `toolchain`: `sh -c 'mise trust /work && mise install'`, `timeout: 20m`. `mise trust` is pre-granted for `/work` in the base image; the step runs it anyway so a repo whose config moved is trusted too.
+- **Execution.** The command runs through `Workspace.Exec` — in a machine, as `agent`, under the step's slice — with its own step token rotated in like any attempt, under the step's `timeout` and nothing else. Both streams are captured whole; at the budget the process is killed and the exit is recorded as `-1` with reason `timeout`.
+- **Evidence.** The step closes on `exit` evidence carrying the process exit and the captured output, verified by `preparatory <name>`, **whichever way the command ended**: a non-zero exit and a spent budget close it exactly as a zero does. The record of the run is the fact. `mill logs <run> --step <name>` reads the same output from the step's log.
+- **Findings.** A non-zero exit, or a spent budget, owes the first session a finding: the step's name and command, how it ended (`exited 3`, or `was stopped at its 20m0s budget`), and the last twenty lines of its output. It is derived from the evidence when the first session is prompted, not remembered by the worker, so a worker that dies between the step and the session delivers it anyway. Delivery is the path a reviewer's `revise` findings already take — the feedback the prompt appends under its one heading — and provisioning's own findings (a derived build that fell back to base, an invalid `mill.toml`, `workspace.Provisioned`) take it too, each as one line prefixed `Provisioning:`. They are delivered to the first skill step until any session in the ledger has started; after that, nothing owes them.
+- **Never a failure.** The step is closed, not failed: no retry is consumed, `on_failure` is never consulted, and the breaker cannot trip on it — so the loader refuses `retries` and `on_failure` on one, and `mill workflow show` prints neither. A step that exited 0 owes nothing and says nothing.
+- **Only where there is a machine.** The run loop runs a preparatory step only in a workspace that provisions one (`workspace.Provisioned`: the machine backend). The local backend is the operator's own host, where `mise trust /work` would trust whatever `/work` resolves to on the host; there the step closes on `exit` evidence saying it did not run (`-1`, reason `refused`, the output naming why), and that is not a finding.
 
 Budgets are the workflow's. A preparatory step and a check step each run under the `timeout` the workflow definition gives them — `workflows/feature/workflow.yaml` already carries `20m`, `30m` and `168h` on its steps — not under any harness setting. Two consequences:
 
@@ -464,7 +473,7 @@ Polling `machinectl` is sufficient at run cadence. If it is not, host-side D-Bus
 | `mill.toml` invalid | parse/validate at step 3 | Defaults; finding to first session |
 | Machine never reaches ready | readiness timeout | Terminate (never stop), remove the run directory, fail the run with the timeout and the digest |
 | Helper refuses the readiness probe | exit 78 from the helper | Fail at once with the refusal: the worker's manifest or slice name is wrong, not the machine |
-| Toolchain step fails | exit ≠ 0 | Continue; finding to first session |
+| Toolchain step fails | exit ≠ 0, or its budget spent | Continue; the step closes on the record, finding to first session; no retry consumed (§Preparatory steps) |
 | Exec unit fails to start (not the command) | the helper's `systemd-run` non-zero before the service runs | Retry once; then fail the step with stderr as evidence. A helper refusal (78) is not retried |
 | Command exits non-zero | `--wait` propagates | The step's contract decides |
 | Step exceeds its budget | mill's timer | Stop the slice; no candidate snapshot; fail the step |

@@ -171,6 +171,7 @@ Verbs on the socket, gated by the step's capability set:
 | `git.push` | `forge` | With a forge credential minted for this step |
 | `forge.pr`, `forge.checks` | `forge` | Open or query the PR; read CI status |
 | `redact` | any | Register a value the workspace must scrub from logs |
+| `report.install` | any | The `dnf` shim's report of packages a session installed into its machine; recorded in the run's provenance as undeclared, never routed to a reviewer (`docs/sandbox.md` §"The dnf shim") |
 
 `Workspace.Exec` is the **single chokepoint** for every process a step spawns. It sets cwd to the checkout, uid to the workspace's account, and environment to exactly what the step's capabilities allow. `exec.Command` is forbidden everywhere else in the mill's code by lint — the same depguard/forbidigo pattern dagger uses to keep `internal/store` out of handlers — so the guarantee is checkable, not aspirational.
 

@@ -71,3 +71,14 @@ type RedactRequest struct {
 type RedactResponse struct {
 	Registered int `json:"registered"`
 }
+
+// ReportInstallRequest is report.install: the packages the `dnf` shim just
+// installed into the machine, as it named them.
+type ReportInstallRequest struct {
+	Packages []string `json:"packages"`
+}
+
+// ReportInstallResponse confirms how many packages were recorded.
+type ReportInstallResponse struct {
+	Packages int `json:"packages"`
+}

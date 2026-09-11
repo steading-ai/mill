@@ -73,6 +73,16 @@ func (r *Runner) walk(ctx context.Context, s *state) error {
 			return fmt.Errorf("run %s: the workflow has no step %q", s.run.GetId(), name)
 		}
 
+		// What the run owes its first session — provisioning's findings
+		// and every preparatory step that failed — goes the way a revise's
+		// feedback goes, and only until a session has begun: the ledger
+		// says whether one has, so a worker that dies before the session
+		// speaks delivers them again and one that dies after does not
+		// (internal/run/preparatory.go).
+		if step.GetKind() == millv1.StepKind_STEP_KIND_SKILL && !anySessionStarted(detail) {
+			feedback = withFindings(r.findings(s, detail), feedback)
+		}
+
 		outcome, err := r.stepUnderBoundary(ctx, s, step, detail, feedback, feedbackFrom)
 		if err != nil {
 			return err
@@ -227,6 +237,12 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 		return outcome{}, r.stopped(ctx, s)
 	}
 
+	// What the session installed into its machine with the shim goes into
+	// the run's provenance whether the attempt closes or fails: the install
+	// happened either way (internal/run/preparatory.go).
+	if err := r.recordInstalls(ctx, s, sr); err != nil {
+		return outcome{}, err
+	}
 	// Usage is written to the ledger and posted to dagger whether the
 	// attempt closes or fails, once per model, before anything releases the
 	// lease that ReportUsage needs.
@@ -327,6 +343,9 @@ func (r *Runner) gatewayRefusal(s *state, sr *millv1.StepRun) *gateway.BudgetErr
 func (r *Runner) closeStep(ctx context.Context, s *state, sr *millv1.StepRun, step *millv1.Step, verified evidence.Evidence, res result) error {
 	value := verified.Value
 	value.StepRunId = sr.GetId()
+	// A preparatory step's record is its evidence, output included; no
+	// other kind has any (internal/run/preparatory.go).
+	value.Output = res.output
 	if _, err := call(ctx, r.options.Store.CloseStepRun, &millv1.CloseStepRunRequest{
 		LeaseId:      s.lease,
 		StepRunId:    sr.GetId(),

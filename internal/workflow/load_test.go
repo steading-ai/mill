@@ -519,6 +519,87 @@ steps:
 		Expect(err).To(MatchError(ContainSubstring("evidence is required")))
 	})
 
+	It("loads a preparatory step that names a command and closes on exit", func() {
+		loaded, _, err := workflow.Load(dir(`
+name: readied
+steps:
+  - name: toolchain
+    kind: preparatory
+    check:
+      command: [sh, -c, "mise trust /work && mise install"]
+    evidence: exit
+    timeout: 20m
+  - name: implement
+    kind: skill
+    session: implement
+    skill: implement
+    evidence: artifact
+    timeout: 10m
+`, map[string]string{"implement": "Make the change."}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(loaded.GetSteps()[0].GetKind()).To(Equal(millv1.StepKind_STEP_KIND_PREPARATORY))
+		Expect(loaded.GetSteps()[0].GetCheck().GetCommand()).To(HaveLen(3))
+	})
+
+	It("refuses a preparatory step written as a check: a pass code, a stdout shape, or feedback", func() {
+		_, _, err := workflow.Load(dir(`
+name: readied
+steps:
+  - name: toolchain
+    kind: preparatory
+    check:
+      command: [mise, install]
+      exit: [0]
+      feedback: revise
+    evidence: exit
+    timeout: 20m
+`, nil))
+		Expect(err).To(MatchError(ContainSubstring("step toolchain: a preparatory step names only a command")))
+	})
+
+	It("refuses a preparatory step with no command, or one that closes on anything but exit", func() {
+		_, _, err := workflow.Load(dir(`
+name: readied
+steps:
+  - name: toolchain
+    kind: preparatory
+    evidence: artifact
+    timeout: 20m
+`, nil))
+		Expect(err).To(MatchError(ContainSubstring("step toolchain: a preparatory step names a command")))
+		Expect(err).To(MatchError(ContainSubstring("step toolchain: a preparatory step closes on exit evidence")))
+	})
+
+	It("refuses retries or on_failure on a preparatory step, which is never failed", func() {
+		_, _, err := workflow.Load(dir(`
+name: readied
+steps:
+  - name: toolchain
+    kind: preparatory
+    check:
+      command: [mise, install]
+    evidence: exit
+    retries: 2
+    timeout: 20m
+`, nil))
+		Expect(err).To(MatchError(ContainSubstring("step toolchain: a preparatory step never fails, so it has no retries and no on_failure")))
+	})
+
+	It("refuses a preparatory step that names a session", func() {
+		_, _, err := workflow.Load(dir(`
+name: readied
+steps:
+  - name: toolchain
+    kind: preparatory
+    session: implement
+    check:
+      command: [mise, install]
+    evidence: exit
+    timeout: 20m
+`, nil))
+		Expect(err).To(MatchError(ContainSubstring("step toolchain: a preparatory step runs no session and files no gate")))
+	})
+
 	It("refuses a skill whose frontmatter carries a field the spec does not allow", func() {
 		root := dir(`
 name: tiny
@@ -591,12 +672,23 @@ var _ = Describe("The quick-fix workflow", Label("unit"), func() {
 		Expect(err).NotTo(HaveOccurred())
 	})
 
-	It("loads with the six steps of the Quick Fix tier, in order", func() {
+	It("loads with the toolchain step and the six steps of the Quick Fix tier, in order", func() {
 		names := []string{}
 		for _, s := range loaded.GetSteps() {
 			names = append(names, s.GetName())
 		}
-		Expect(names).To(Equal([]string{"gather-context", "implement", "commit", "clean-tree", "pr", "merge"}))
+		Expect(names).To(Equal([]string{"toolchain", "gather-context", "implement", "commit", "clean-tree", "pr", "merge"}))
+	})
+
+	It("readies the machine with a preparatory toolchain step under its own budget", func() {
+		s := step(loaded, "toolchain")
+		Expect(s.GetKind()).To(Equal(millv1.StepKind_STEP_KIND_PREPARATORY))
+		Expect(s.GetCheck().GetCommand()).To(Equal([]string{"sh", "-c", "mise trust /work && mise install"}))
+		Expect(s.GetEvidence()).To(Equal(millv1.EvidenceKind_EVIDENCE_KIND_EXIT))
+		Expect(s.GetTimeout().AsDuration()).To(Equal(20 * time.Minute))
+		Expect(s.GetSession()).To(BeEmpty(), "a preparatory step runs no session")
+		Expect(s.GetRetries()).To(BeZero(), "and is never failed, so has no retries")
+		Expect(s.GetOnFailure()).To(BeNil(), "and no on_failure")
 	})
 
 	DescribeTable("a skill step runs in a session with a capability set and an evidence kind",
