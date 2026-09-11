@@ -254,6 +254,28 @@ type runOptions struct {
 	// scenario can assert that the person the gate was filed for was told
 	// about it (internal/notify).
 	NotifyCommand string
+	// Machine runs the node in a systemd-nspawn machine instead of under the
+	// mill's own account: `--workspace machine`, the sandbox root, and the
+	// credential gateway a machine's sessions reach the model through, since
+	// no login enters a machine (docs/sandbox.md §Credentials). The rest of
+	// the machine's host configuration — the Harbor registry, the proxy, the
+	// gateway's listen address — is the run flags' own defaults, which are the
+	// ones homestead fixes on `core`. Only the sandbox suite sets it; every
+	// other scenario leaves it and runs on the local backend.
+	//
+	// It is here, on the shared runOptions, rather than in a machine-only
+	// starter, so that a machine run is the local run with a backend flag and
+	// nothing else — the one difference docs/architecture.md §"The workspace"
+	// says a workflow definition must not notice.
+	Machine bool
+	// SandboxRoot is the btrfs volume a machine run's directories, caches and
+	// images live under; empty takes the run flag's own default. The sandbox
+	// suite reads it back to find a run's `run.json` and its promoted cache
+	// generations on the host.
+	SandboxRoot string
+	// ModelCredential is the `claude setup-token` file the credential gateway
+	// presents upstream for a machine run's sessions. Read only with Machine.
+	ModelCredential string
 }
 
 // start invokes `mill run` for a node, against the suite's service, the
@@ -304,6 +326,21 @@ func start(ctx context.Context, s *staged, opts runOptions) *worker {
 	}
 	for step, from := range opts.SkillOverrides {
 		args = append(args, "--skill-override", step+"="+from)
+	}
+	if opts.Machine {
+		// A machine run is the local run with a backend flag and the gateway
+		// the machine's sessions reach the model through: the subscription
+		// credential stays on the host, and a session with no login carries
+		// only the step token (docs/sandbox.md §Credentials). Everything else
+		// the machine needs — Harbor, the proxy, the gateway's listen address
+		// — is the run flags' own defaults, the ones homestead fixes on core.
+		args = append(args, "--workspace", "machine", "--gateway")
+		if opts.SandboxRoot != "" {
+			args = append(args, "--sandbox-root", opts.SandboxRoot)
+		}
+		if opts.ModelCredential != "" {
+			args = append(args, "--model-credential-file", opts.ModelCredential)
+		}
 	}
 
 	command := exec.CommandContext(ctx, env.Mill, args...) //nolint:gosec // the suite's own binary

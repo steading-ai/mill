@@ -464,6 +464,97 @@ Half a forge is refused: a URL with no token or no namespace fails the
 preflight rather than skipping, because that is a configuration mistake and
 not a choice.
 
+## The live tier
+
+Most of the suite proves mill against a real forge and a real Claude account
+but on the mill's own host account — a clone under `~/.local/state/mill`, the
+session on the account's login. The **live tier** proves the per-run sandbox
+of [sandbox.md](sandbox.md): the same node delivered inside a
+`systemd-nspawn` machine — cloned, imaged, cached, booted, worked by a
+session that runs as an unprivileged uid in its own network namespace,
+tested, merged — with the properties the design promises asserted from
+*outside* the machine. It is `tests/acceptance/sandbox_test.go`, labelled
+`live`, and it is what the bootstrap gate (`prove-sandbox`) runs.
+
+**What it needs.** `core`, prepared by homestead's `mill-role-sandbox`: the
+btrfs volume at `/var/lib/mill`, the machine template unit and its polkit
+rule, the root-owned helper at `/usr/libexec/mill-machine`, the nftables
+table, squid on the `mill-host` link, the base image in Harbor, and the SELinux
+module ([sandbox.md](sandbox.md) §"The host"). On top of the ordinary
+suite's variables:
+
+| Variable | What it is |
+|---|---|
+| `MILL_SANDBOX_HOST` | Set to anything to turn the live tier on. Unset, every `live` spec skips with the message that names its cost: *set MILL_SANDBOX_HOST=1 on a host with root, nspawn and btrfs to run the spec that boots a real machine*. `make test` never sets it, so the tier skips there and on any laptop. |
+| `MILL_SANDBOX_MODEL_CREDENTIAL` | The `claude setup-token` file the credential gateway presents upstream for a machine's sessions. No login enters a machine, so a machine run has no account credential of its own; supply the setup-token the deployed worker loads from its vault ([sandbox.md](sandbox.md) §Credentials). Unset, the live tier skips before booting anything. |
+
+The live tier **refuses** to file into the deployed dagger. It boots real
+machines and drives real `mill run` subprocesses, and `mill#49` already showed
+a test process becoming a worker against the operator's graph; so a
+`MILL_ACCEPTANCE_DAGGER_SOCKET` — or a `DG_SOCKET` — that names
+`/run/dagger/dg.sock` fails the tier before anything boots, naming the socket
+and telling you to unset it and let the suite start its own throwaway dagger
+from `internal/testsupport` ([Which dagger](#which-dagger)). The live tier
+runs on that same disposable dagger `mill#51` gave the suite.
+
+**Run it one scenario at a time.** The first host run is debugged scenario by
+scenario, because a machine that will not boot, an image that will not build,
+or a proxy that will not answer is a different repair each time. Each scenario
+is `--focus`able by its name:
+
+```sh
+set -a; . ~/.config/mill/acceptance.env; set +a
+export MILL_SANDBOX_HOST=1 MILL_SANDBOX_MODEL_CREDENTIAL=~/.config/mill/credentials/claude-oauth
+make sidecar-build
+MILL_ACCEPTANCE=1 ginkgo --label-filter=sandbox \
+  --focus 'One node, delivered, inside a machine' ./tests/acceptance
+```
+
+The scenarios: *One node, delivered, inside a machine* (the whole delivery,
+its every step's evidence in the ledger, and the run's own `run.json`
+recording the machine, the derived digest, the veth and the lineages it
+restored and promoted); *The db suite runs inside a machine* (`make test-db`
+inside a machine bound to a mill checkout, against the machine's own podman
+socket, no container outliving the step); *The boundaries hold* (the uid, the
+unreachable home, the proxy the only way out, no login in the machine,
+nothing outliving its step, `machinectl list` empty after); *The second run
+is warm* (the go-build lineage restored from a promoted generation and the
+build step faster off the ledger's durations); *The live tier refuses the
+deployed dagger* (the refusal, which needs no host); and a killed run swept
+clean by the next worker's reconciliation.
+
+**What it creates, and what it leaves behind.** One machine per scenario,
+named `mill-acceptance-<scenario>-<nonce>` where the spec boots it and
+`mill-<run-id>` where `mill run` does, on the btrfs volume; a run directory
+under `/var/lib/mill/runs`; cache copies restored from the worker's lineages;
+and, for the delivering scenarios, a scratch project and a merge on it as the
+ordinary suite makes. It leaves behind **nothing but promoted cache
+generations** — the `gen-<n>` snapshots an evidence-closed step earns, which
+are the point of the warm run and which eviction reclaims under its watermarks
+([sandbox.md](sandbox.md) §Eviction). Everything else is swept **by name**:
+a `mill-*` machine with no live run, its run directory, and stale scratch
+projects on the forge and in dagger are taken by the next worker's
+reconciliation pass ([sandbox.md](sandbox.md) §"External state",
+§Reconciliation), which a killed live-tier run exercises on purpose. To sweep
+by hand before the next worker start, the machine cleanup a `live` spec's own
+teardown does is `sudo /usr/libexec/mill-machine terminate mill-<name>` then
+`sudo btrfs subvolume delete` of any leftover run copy, and the scratch
+projects go the way [What it leaves behind](#what-it-leaves-behind) describes.
+
+**Its wall clock and cost the first time.** The first run on a cold host pays
+for the base image: `mill image build-base --push` is minutes of `dnf`, and
+the first machine's derived build and cache lineages start empty, so *One
+node, delivered, inside a machine* is dominated by the toolchain install
+(`mise install` of the Go toolchain through the proxy) rather than the
+session. Budget the base build separately — it is a prerequisite, not a
+scenario — and expect the first delivering scenario to take several minutes
+over its local-backend counterpart's ~2 min 20 s, most of it setup that the
+second, warm run does not repeat. The session cost is the ordinary suite's:
+roughly a quick-fix's `$0.37` per delivering scenario. Recompute the base
+build's wall clock the same way after a change to `images/base`; the shape of
+the first-run bill is `dnf` and a cold toolchain, and nothing else comes
+close.
+
 ## Adding a scenario
 
 Adding a scenario is adding a fixture. `tests/acceptance/fixtures_test.go`
