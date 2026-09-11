@@ -1,4 +1,4 @@
-package machine
+package driver
 
 import (
 	"context"
@@ -27,8 +27,12 @@ type Commands struct {
 	Systemctl string
 	// Machinectl shows and lists machines; `machinectl`.
 	Machinectl string
-	// SystemdRun runs a transient unit inside a machine; `systemd-run`.
-	SystemdRun string
+	// Helper is the root-owned helper everything that enters a running
+	// machine goes through — exec, a stop inside it, terminate — always
+	// as `sudo -n <Helper> <verb>`; [DefaultHelper]. Its verbs and what
+	// each admits are homestead's mill_machine role's (docs/sandbox.md
+	// §Privilege).
+	Helper string
 	// Btrfs snapshots and deletes subvolumes; `btrfs`.
 	Btrfs string
 	// Podman pulls, builds, exports and pushes images; `podman`.
@@ -44,9 +48,32 @@ type Commands struct {
 	// subvolume create, rename and delete, the extraction, setcap, and the
 	// existence check. Empty runs them as the worker, which is right for a
 	// host where the directory is the worker's and for every spec that
-	// stubs the tools.
+	// stubs the tools. The helper is the exception: it is root's by
+	// construction and always runs through sudo, [HelperSudo] when this is
+	// empty.
 	Sudo string
+	// HelperSudo is the sudo the helper runs through when Sudo is empty;
+	// `sudo`. It exists so a spec can stub the one without the other.
+	HelperSudo string
 }
+
+// DefaultHelper is where homestead installs the helper.
+const DefaultHelper = "/usr/libexec/mill-machine"
+
+// The helper's verbs. They cannot be run ids: the helper's dispatch reads
+// its first argument as one of these and anything else as the run to boot.
+const (
+	HelperExec      = "exec"
+	HelperStop      = "stop"
+	HelperTerminate = "terminate"
+	HelperShutdown  = "shutdown"
+)
+
+// HelperRefused is the status the helper exits with when it refuses a
+// request on its own terms — a property outside its allow-list, a slice
+// outside the step pattern, a machine that is not mill's — before anything
+// runs. It is EX_CONFIG, and it is never the command's own status.
+const HelperRefused = 78
 
 // withDefaults is the commands with every empty one named.
 func (c Commands) withDefaults() Commands {
@@ -56,8 +83,14 @@ func (c Commands) withDefaults() Commands {
 	if c.Machinectl == "" {
 		c.Machinectl = "machinectl"
 	}
-	if c.SystemdRun == "" {
-		c.SystemdRun = "systemd-run"
+	if c.Helper == "" {
+		c.Helper = DefaultHelper
+	}
+	if c.HelperSudo == "" {
+		c.HelperSudo = "sudo"
+	}
+	if c.Sudo != "" {
+		c.HelperSudo = c.Sudo
 	}
 	if c.Btrfs == "" {
 		c.Btrfs = "btrfs"
@@ -87,18 +120,17 @@ func (c Commands) privileged(path string, args ...string) (string, []string) {
 	return c.Sudo, append([]string{"-n", path}, args...)
 }
 
+// helper is one helper verb as it is run: `sudo -n <helper> <verb> <args>`.
+func (c Commands) helper(verb string, args ...string) (string, []string) {
+	return c.HelperSudo, append([]string{"-n", c.Helper, verb}, args...)
+}
+
 // systemdDriver is the host reached through its own tools — systemctl,
-// machinectl, systemd-run and btrfs — every one of them spawned through
-// [workspace.Spawner.Exec] and nothing else. Mill drives systemd through its
-// command line rather than D-Bus (docs/adrs/018): the commands are what the
-// specification names, what the spike ran, and what an operator can rerun
-// by hand from a log line.
-//
-// What the spike found about privilege — `systemctl start` and `stop` of the
-// template unit work from the operator's uid under polkit, and `systemd-run
-// --machine` does not (docs/spikes/nspawn-per-run-sandbox.md, E0) — lands
-// here when the exec node builds on it: the caller asks for an exec, and
-// this driver is where a helper would be named instead.
+// machinectl, the mill-machine helper and btrfs — every one of them spawned
+// through [workspace.Spawner.Exec] and nothing else. Mill drives systemd
+// through its command line rather than D-Bus (docs/adrs/018): the commands
+// are what the specification names, what the spike ran, and what an
+// operator can rerun by hand from a log line.
 type systemdDriver struct {
 	spawner  workspace.Spawner
 	commands Commands
@@ -116,15 +148,22 @@ func (d *systemdDriver) StartUnit(ctx context.Context, unit string) error {
 	return err
 }
 
-// StopUnit is `systemctl stop <unit>`, addressed into the machine when one
-// is named.
+// StopUnit is `systemctl stop <unit>` on the host, or the helper's `stop
+// <machine> <unit>` when a machine is named.
 func (d *systemdDriver) StopUnit(ctx context.Context, machine, unit string) error {
-	args := []string{}
-	if machine != "" {
-		args = append(args, "--machine="+machine)
+	if machine == "" {
+		_, err := d.run(ctx, d.commands.Systemctl, "stop", unit)
+		return err
 	}
-	args = append(args, "stop", unit)
-	_, err := d.run(ctx, d.commands.Systemctl, args...)
+	path, args := d.commands.helper(HelperStop, machine, unit)
+	_, err := d.run(ctx, path, args...)
+	return err
+}
+
+// Terminate is the helper's `terminate <machine>`.
+func (d *systemdDriver) Terminate(ctx context.Context, machine string) error {
+	path, args := d.commands.helper(HelperTerminate, machine)
+	_, err := d.run(ctx, path, args...)
 	return err
 }
 
@@ -159,14 +198,15 @@ func (d *systemdDriver) ShowMachine(ctx context.Context, name string) (Machine, 
 	return machine, nil
 }
 
-// Exec is `systemd-run --machine=<name> --pipe --wait --quiet --collect`,
-// with the unit, the slice, the directory, the user and the environment as
-// properties. The process comes back with its pipes still open: `--pipe`
-// connects them to the service, and streaming them is the caller's.
+// Exec is the helper's `exec <machine>`, with the unit, the slice, the
+// directory, the user and the environment as the properties the helper
+// admits; the helper adds `--pipe --wait --quiet --collect`, `Delegate=yes`
+// and `KillMode=mixed` itself. The process comes back with its pipes still
+// open: `--pipe` connects them to the service through the helper, and
+// streaming them is the caller's.
 //
-// The environment goes as `--setenv=NAME=VALUE`, which sets the same
-// `Environment=` property `-p` would and takes the value verbatim, where a
-// property assignment is parsed for quotes first.
+// The environment goes as `-p Environment=NAME=VALUE`, one per variable,
+// which is the form the helper's allow-list matches.
 func (d *systemdDriver) Exec(ctx context.Context, request ExecRequest) (*workspace.Process, error) {
 	if request.Machine == "" {
 		return nil, errors.New("machine: exec names no machine")
@@ -177,30 +217,49 @@ func (d *systemdDriver) Exec(ctx context.Context, request ExecRequest) (*workspa
 	if len(request.Argv) == 0 {
 		return nil, errors.New("machine: exec with nothing to run")
 	}
-	args := []string{
-		"--machine=" + request.Machine,
-		"--pipe", "--wait", "--quiet", "--collect",
-		"--property=Slice=" + request.Slice,
-	}
+	args := []string{request.Machine}
 	if request.Unit != "" {
 		args = append(args, "--unit="+request.Unit)
 	}
+	args = append(args, "-p", "Slice="+request.Slice)
 	if request.Dir != "" {
-		args = append(args, "--property=WorkingDirectory="+request.Dir)
+		args = append(args, "-p", "WorkingDirectory="+request.Dir)
 	}
 	if request.User != "" {
-		args = append(args, "--property=User="+request.User)
+		args = append(args, "-p", "User="+request.User)
 	}
 	for _, name := range slices.Sorted(maps.Keys(request.Env)) {
-		args = append(args, "--setenv="+name+"="+request.Env[name])
+		args = append(args, "-p", "Environment="+name+"="+request.Env[name])
 	}
 	args = append(args, "--")
 	args = append(args, request.Argv...)
-	process, err := d.spawner.Exec(ctx, workspace.Command{Path: d.commands.SystemdRun, Args: args})
+	path, args := d.commands.helper(HelperExec, args...)
+	process, err := d.spawner.Exec(ctx, workspace.Command{Path: path, Args: args})
 	if err != nil {
 		return nil, fmt.Errorf("machine: exec in %s: %w", request.Machine, err)
 	}
 	return process, nil
+}
+
+// MachineInterfaces is `machinectl status -n0 <name>`, read for its
+// `Iface:` line, which names the host-side interfaces machined knows of.
+// `machinectl show` carries the same fact only as interface indexes it
+// prints as unprintable.
+func (d *systemdDriver) MachineInterfaces(ctx context.Context, name string) ([]string, error) {
+	out, err := d.run(ctx, d.commands.Machinectl, "status", "--no-pager", "-n", "0", name)
+	if err != nil {
+		if strings.Contains(err.Error(), "No machine") {
+			return nil, fmt.Errorf("%w: %s", ErrNoMachine, name)
+		}
+		return nil, err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		key, value, found := strings.Cut(strings.TrimSpace(line), ":")
+		if found && key == "Iface" {
+			return strings.Fields(value), nil
+		}
+	}
+	return nil, nil
 }
 
 // ListMachines is `machinectl list --no-legend`, one machine per line: name,

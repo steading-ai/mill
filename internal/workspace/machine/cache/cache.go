@@ -15,7 +15,7 @@
 // [Restored] and [Promoted] for the ledger to note, and nothing else about
 // a lineage is recorded anywhere but under its directory.
 //
-// Every subvolume operation goes through [machine.Driver], as the worker's
+// Every subvolume operation goes through [driver.Driver], as the worker's
 // own uid: a read-only generation is made writable before it is deleted,
 // generations are enumerated from the directory tree and never from btrfs,
 // and nothing runs through sudo.
@@ -36,7 +36,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ivy/mill/internal/workspace/machine"
+	"github.com/ivy/mill/internal/workspace/machine/driver"
 )
 
 // The layout under the sandbox root (docs/sandbox.md §Naming).
@@ -183,7 +183,7 @@ func HashKey(checkout string, files []string) (string, error) {
 
 // Config is what the worker's configuration says about lineages.
 type Config struct {
-	// Root is the sandbox root, [machine.DefaultRoot] when empty. Lineages
+	// Root is the sandbox root, [driver.DefaultRoot] when empty. Lineages
 	// live under `<Root>/cache`, run copies under `<Root>/runs/<id>`.
 	Root string
 	// GlobalCap is the size estimate a global lineage may not exceed at
@@ -199,7 +199,7 @@ type Config struct {
 
 func (c Config) withDefaults() Config {
 	if c.Root == "" {
-		c.Root = machine.DefaultRoot
+		c.Root = driver.DefaultRoot
 	}
 	if c.GlobalCap == 0 {
 		c.GlobalCap = DefaultGlobalCap
@@ -223,13 +223,13 @@ func (c Config) Cap(scope Scope) uint64 {
 
 // Store is the lineages on one worker, reached through the driver.
 type Store struct {
-	driver machine.Driver
+	host   driver.Driver
 	config Config
 }
 
 // New is a store over the host the driver reaches.
-func New(driver machine.Driver, config Config) *Store {
-	return &Store{driver: driver, config: config.withDefaults()}
+func New(host driver.Driver, config Config) *Store {
+	return &Store{host: host, config: config.withDefaults()}
 }
 
 // Config is the configuration in effect, defaults filled.
@@ -338,8 +338,8 @@ func (s *Store) lock(ctx context.Context, lineage Lineage) (func(), error) {
 // generation or a candidate is read-only, and its owner cannot delete it
 // while it is (docs/spikes/nspawn-per-run-sandbox.md E9).
 func (s *Store) deleteReadOnly(ctx context.Context, path string, sync bool) error {
-	if err := s.driver.SetReadOnly(ctx, path, false); err != nil {
+	if err := s.host.SetReadOnly(ctx, path, false); err != nil {
 		return err
 	}
-	return s.driver.DeleteSubvolume(ctx, path, sync)
+	return s.host.DeleteSubvolume(ctx, path, sync)
 }

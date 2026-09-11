@@ -1,88 +1,73 @@
-// Package machine is the workspace of docs/architecture.md's `machine` row:
-// one systemd-nspawn machine per run, booted from an ephemeral snapshot of
-// an image subvolume, with the run's checkout bind-mounted into it. The
-// machine itself — its image, binds, limits, network and credentials — is
-// specified in docs/sandbox.md, which this package implements and defers to.
+// Package driver is the host as the machine workspace reaches it: one seam,
+// [Driver], with a method per host command docs/sandbox.md names, so a
+// machine's lifecycle can be specified against [FakeDriver] and proven
+// against the real host under Label("live"). The real driver, [NewSystemd],
+// shells out through [workspace.Spawner] and nothing else; the forbidigo
+// rule in .golangci.yml is what makes that checkable.
 //
-// The host is reached through one seam, [Driver]: a method per host command
-// the specification names, so a machine's lifecycle can be specified against
-// [FakeDriver] and proven against the real host under Label("live"). The
-// real driver shells out through [workspace.Spawner] and nothing else; the
-// forbidigo rule in .golangci.yml is what makes that checkable.
-//
-// The backend is being built. [New] returns a workspace whose verbs answer
-// [ErrNotBuilt], each naming the node that builds it, so a worker configured
-// for machines fails before it claims anything rather than after.
-package machine
+// Which uid may run which command is the host's configuration
+// (docs/sandbox.md §Privilege) and this package's concern, never a
+// caller's: the machine unit is started and stopped with systemctl under
+// polkit, and everything that enters a running machine — exec, a stop
+// inside it, terminate — goes through the root-owned helper
+// /usr/libexec/mill-machine under sudo (docs/spikes/nspawn-per-run-sandbox.md
+// E0: systemd-run -M wants CAP_SYS_ADMIN whatever polkit says).
+package driver
 
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/ivy/mill/internal/workspace"
 )
 
-// The nodes that build what this package does not yet do. An error names
-// one so that whoever meets it knows where the work is.
-const (
-	// LifecycleNode builds create, attach, destroy and rotate: a run's
-	// machine through mill-machine@ (docs/sandbox.md §Lifecycle).
-	LifecycleNode = "machine-lifecycle (mill#61)"
-	// ExecNode builds exec under a step slice and the step boundary that
-	// reaps everything (docs/sandbox.md §Exec, §"Step boundary").
-	ExecNode = "machine-exec (mill#62)"
-)
+// DefaultRoot is where the sandbox lives on the host: the btrfs volume
+// holding run directories, cache lineages and squid's cache
+// (docs/sandbox.md §Storage).
+const DefaultRoot = "/var/lib/mill"
 
-// ErrNotBuilt is a verb the machine backend does not do yet. Every error a
-// verb returns wraps it and names the node that builds the verb; see
-// [NotBuiltError].
-var ErrNotBuilt = errors.New("machine: not built")
+// DefaultMachines is where image subvolumes live: the `machines` subvolume
+// of the sandbox volume, bind-mounted where systemd-nspawn looks
+// (docs/sandbox.md §Storage, §Naming).
+const DefaultMachines = "/var/lib/machines"
 
-// NotBuiltError is [ErrNotBuilt] with the verb and the node attached.
-type NotBuiltError struct {
-	// Verb is what was asked for, such as `create`.
-	Verb string
-	// Node is the node that builds it: [LifecycleNode] or [ExecNode].
-	Node string
-}
-
-func (e *NotBuiltError) Error() string {
-	return fmt.Sprintf("machine: %s is not built yet; the %s node builds it", e.Verb, e.Node)
-}
-
-// Unwrap makes errors.Is(err, ErrNotBuilt) true.
-func (e *NotBuiltError) Unwrap() error { return ErrNotBuilt }
-
-// notBuilt is a verb's answer until its node lands.
-func notBuilt(verb, node string) error {
-	return &NotBuiltError{Verb: verb, Node: node}
-}
+// DefaultRunState is where a run's socket directory lives on the host,
+// `/run/mill/<id>`, bound into the machine at `/run/mill`
+// (docs/sandbox.md §Filesystem). The helper's policy admits binds under it.
+const DefaultRunState = "/run/mill"
 
 // Driver is the host as the backend reaches it. Every method is one host
 // command docs/sandbox.md names, in the shape it names it, and nothing the
 // backend does to the host goes around it. Keeping it to that is what lets a
 // spec script the host and a live spec prove the script.
-//
-// Which uid may run which command — the polkit rule on the template unit,
-// and whether exec needs a helper — is the host's configuration
-// (docs/sandbox.md §Privilege) and the driver's concern, never a caller's.
 type Driver interface {
 	// StartUnit is `systemctl start <unit>` on the host's manager: the
-	// machine's own unit, an instance of mill-machine@ (§Provision).
+	// machine's own unit, an instance of mill-machine@, admitted to the
+	// worker's uid by polkit (§Provision, §Privilege). The unit is
+	// Type=notify, so the call returns once the machine's systemd is up.
 	StartUnit(ctx context.Context, unit string) error
-	// StopUnit is `systemctl stop <unit>`: on the host when machine is
-	// empty, which destroys a machine (§Destroy); inside the machine
-	// otherwise, which is how a step slice or an exec is stopped (§"Step
-	// boundary", §Exec).
+	// StopUnit stops a unit. With machine empty it is `systemctl stop
+	// <unit>` on the host, which destroys a machine (§Destroy). With a
+	// machine named it is the helper's `stop <machine> <unit>`, which is
+	// how a step slice or an exec inside the machine is stopped (§"Step
+	// boundary", §Exec): `systemctl -M stop`, then the slice's cgroup.kill.
 	StopUnit(ctx context.Context, machine, unit string) error
+	// Terminate is the helper's `terminate <machine>`: machinectl
+	// terminate, then nspawn's second SIGTERM after a second, then SIGKILL.
+	// The escape when a stop has not removed the machine (§Destroy).
+	Terminate(ctx context.Context, machine string) error
 	// ShowMachine is `machinectl show <name>`: the machine as machined
 	// knows it, which is how readiness is polled (§Provision). A name
 	// machined does not know is [ErrNoMachine].
 	ShowMachine(ctx context.Context, name string) (Machine, error)
-	// Exec is `systemd-run --machine=<name> --pipe --wait` under a step
-	// slice (§Exec). The process's stdin, stdout and stderr are the
-	// caller's to stream, and its exit status is the command's own.
+	// MachineInterfaces is the host-side network interfaces of a machine
+	// as `machinectl status` lists them: the veth the ledger records
+	// (§Network). A name machined does not know is [ErrNoMachine].
+	MachineInterfaces(ctx context.Context, name string) ([]string, error)
+	// Exec is the helper's `exec <machine>`: `systemd-run --machine
+	// --pipe --wait --quiet --collect -p Delegate=yes -p KillMode=mixed`
+	// under a step slice (§Exec). The process's stdin, stdout and stderr
+	// are the caller's to stream, and its exit status is the command's own.
 	Exec(ctx context.Context, request ExecRequest) (*workspace.Process, error)
 	// ListMachines is `machinectl list`: every machine registered on the
 	// host, which is the truth reconciliation reads (§"External state").

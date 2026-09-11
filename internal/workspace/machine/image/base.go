@@ -66,7 +66,7 @@ func (s *Store) ResolveBase(ctx context.Context) (Base, error) {
 	if readErr != nil {
 		return Base{}, fmt.Errorf("%w: %s: %w; and no base was resolved before", ErrNoBase, reference, err)
 	}
-	present, existsErr := s.driver.Exists(ctx, s.Path(last.Digest))
+	present, existsErr := s.host.Exists(ctx, s.Path(last.Digest))
 	if existsErr != nil {
 		return Base{}, existsErr
 	}
@@ -84,10 +84,10 @@ func (s *Store) ResolveBase(ctx context.Context) (Base, error) {
 
 // pull fetches the reference and reads the digest podman records for it.
 func (s *Store) pull(ctx context.Context, reference string) (Digest, error) {
-	if err := s.driver.PullImage(ctx, reference); err != nil {
+	if err := s.host.PullImage(ctx, reference); err != nil {
 		return "", err
 	}
-	raw, err := s.driver.ImageDigest(ctx, reference)
+	raw, err := s.host.ImageDigest(ctx, reference)
 	if err != nil {
 		return "", err
 	}

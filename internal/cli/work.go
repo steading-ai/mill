@@ -141,7 +141,7 @@ func applyConfig(cmd *cobra.Command, opts *workOptions, socket *string) error {
 	if config.Gateway && unset(cmd, "gateway") {
 		opts.run.gateway.enabled = true
 	}
-	return nil
+	return applySandboxConfig(config, &opts.run.sandbox)
 }
 
 // runWork builds the worker and supervises it.

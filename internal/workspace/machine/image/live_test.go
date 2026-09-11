@@ -17,7 +17,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/machine"
+	"github.com/ivy/mill/internal/workspace/machine/driver"
 	"github.com/ivy/mill/internal/workspace/machine/image"
 )
 
@@ -86,18 +86,18 @@ func repoRoot() string {
 
 // countingDriver is the real driver with its builds counted.
 type countingDriver struct {
-	machine.Driver
+	driver.Driver
 	builds atomic.Int32
 }
 
-func (d *countingDriver) BuildImageOnHost(ctx context.Context, build machine.ImageBuild) (string, error) {
+func (d *countingDriver) BuildImageOnHost(ctx context.Context, build driver.ImageBuild) (string, error) {
 	d.builds.Add(1)
 	return d.Driver.BuildImageOnHost(ctx, build)
 }
 
 var _ = Describe("Images on a real host", Label("live"), Serial, Ordered, func() {
 	var (
-		driver   *countingDriver
+		counted  *countingDriver
 		store    *image.Store
 		machines string
 		base     image.Digest
@@ -125,8 +125,8 @@ var _ = Describe("Images on a real host", Label("live"), Serial, Ordered, func()
 			}
 		})
 
-		driver = &countingDriver{Driver: machine.NewSystemd(workspace.Spawner{}, machine.Commands{Sudo: "sudo"})}
-		store = image.New(driver, image.Config{
+		counted = &countingDriver{Driver: driver.NewSystemd(workspace.Spawner{}, driver.Commands{Sudo: "sudo"})}
+		store = image.New(counted, image.Config{
 			Root:        GinkgoT().TempDir(),
 			Machines:    machines,
 			Registry:    liveRegistry,
@@ -139,7 +139,7 @@ var _ = Describe("Images on a real host", Label("live"), Serial, Ordered, func()
 		Expect(err).NotTo(HaveOccurred())
 		tags = result.Tags
 		base = result.Digest
-		driver.builds.Store(0)
+		counted.builds.Store(0)
 	})
 
 	It("The base carries the session user and the shim and nothing of the operator's", func(ctx context.Context) {
@@ -190,10 +190,10 @@ var _ = Describe("Images on a real host", Label("live"), Serial, Ordered, func()
 	It("A missing derived image is built once", func(ctx context.Context) {
 		By("given no subvolume for the digest")
 		digest := image.Derived(base, []string{livePackage})
-		present, err := driver.Exists(ctx, store.Path(digest))
+		present, err := counted.Exists(ctx, store.Path(digest))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(present).To(BeFalse())
-		driver.builds.Store(0)
+		counted.builds.Store(0)
 
 		By("when two runs of the repo are provisioned at once")
 		var wg sync.WaitGroup
@@ -212,7 +212,7 @@ var _ = Describe("Images on a real host", Label("live"), Serial, Ordered, func()
 		By("then the second waits on the lock and then finds the subvolume")
 		Expect(errs).To(Equal([]error{nil, nil}))
 		Expect(results).To(Equal([]image.Digest{digest, digest}))
-		Expect(driver.builds.Load()).To(Equal(int32(1)), "one build for two callers")
+		Expect(counted.builds.Load()).To(Equal(int32(1)), "one build for two callers")
 		Expect(must("sudo", "-n", "rpm", "--root", store.Path(digest), "-q", livePackage)).To(HavePrefix(livePackage + "-"))
 		_, _, status := host("sudo", "-n", "test", "-e", store.Path(digest)+image.BuildingSuffix)
 		Expect(status).NotTo(BeZero(), "no .building remains")
@@ -232,7 +232,7 @@ var _ = Describe("Images on a real host", Label("live"), Serial, Ordered, func()
 
 		By("then the run boots from base")
 		Expect(digest).To(Equal(base))
-		present, err := driver.Exists(ctx, store.Path(base))
+		present, err := counted.Exists(ctx, store.Path(base))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(present).To(BeTrue())
 		for _, leftover := range []string{store.Path(derived), store.Path(derived) + image.BuildingSuffix} {

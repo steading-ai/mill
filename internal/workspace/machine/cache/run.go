@@ -145,13 +145,13 @@ func (s *Store) restore(ctx context.Context, run string, lineage Lineage) (Resto
 	switch latest := manifest.Latest(); {
 	case latest == nil:
 		restored.Reason = "no generation"
-		err = s.driver.CreateSubvolume(ctx, copyPath)
+		err = s.host.CreateSubvolume(ctx, copyPath)
 	case latest.KeyHash != lineage.KeyHash:
 		restored.Reason = "key changed"
-		err = s.driver.CreateSubvolume(ctx, copyPath)
+		err = s.host.CreateSubvolume(ctx, copyPath)
 	default:
 		restored.Generation = latest.Number
-		err = s.driver.Snapshot(ctx, s.GenerationPath(lineage, latest.Number), copyPath, false)
+		err = s.host.Snapshot(ctx, s.GenerationPath(lineage, latest.Number), copyPath, false)
 	}
 	if err != nil {
 		return Restored{}, fmt.Errorf("cache: restore %s for run %s: %w", lineage, run, err)
@@ -189,7 +189,7 @@ func (s *Store) Candidate(ctx context.Context, run, step string) error {
 	var taken []string
 	for _, lineage := range record.Lineages {
 		target := s.candidateNext(run, lineage.Name)
-		if err := s.driver.Snapshot(ctx, s.CopyPath(run, lineage.Name), target, true); err != nil {
+		if err := s.host.Snapshot(ctx, s.CopyPath(run, lineage.Name), target, true); err != nil {
 			for _, path := range taken {
 				_ = s.deleteReadOnly(ctx, path, false)
 			}
@@ -250,7 +250,7 @@ func (s *Store) Discard(ctx context.Context, run string) error {
 		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 			continue
 		}
-		if err := s.driver.DeleteSubvolume(ctx, path, false); err != nil {
+		if err := s.host.DeleteSubvolume(ctx, path, false); err != nil {
 			return fmt.Errorf("cache: discard %s: %w", lineage.Name, err)
 		}
 	}

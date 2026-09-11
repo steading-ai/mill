@@ -69,7 +69,7 @@ func (s *Store) promote(ctx context.Context, run, step string, lineage Lineage, 
 	}
 	// The estimate is du -s of the read-only snapshot, once, here; it is
 	// the same subvolume before and after the rename.
-	size, err := s.driver.DiskUsage(ctx, candidate)
+	size, err := s.host.DiskUsage(ctx, candidate)
 	if err != nil {
 		return Promoted{}, fmt.Errorf("cache: size of %s candidate: %w", lineage, err)
 	}
@@ -126,14 +126,14 @@ func (s *Store) promote(ctx context.Context, run, step string, lineage Lineage, 
 // just as unlink does. The generation is the candidate's own subvolume,
 // not a copy of it.
 func (s *Store) move(ctx context.Context, candidate, generation string) error {
-	if err := s.driver.SetReadOnly(ctx, candidate, false); err != nil {
+	if err := s.host.SetReadOnly(ctx, candidate, false); err != nil {
 		return err
 	}
-	if err := s.driver.Rename(ctx, candidate, generation); err != nil {
-		_ = s.driver.SetReadOnly(ctx, candidate, true)
+	if err := s.host.Rename(ctx, candidate, generation); err != nil {
+		_ = s.host.SetReadOnly(ctx, candidate, true)
 		return err
 	}
-	return s.driver.SetReadOnly(ctx, generation, true)
+	return s.host.SetReadOnly(ctx, generation, true)
 }
 
 // reset is the promotion a global cap refuses: the candidate goes, every

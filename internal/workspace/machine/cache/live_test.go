@@ -17,8 +17,8 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/machine"
 	"github.com/ivy/mill/internal/workspace/machine/cache"
+	"github.com/ivy/mill/internal/workspace/machine/driver"
 )
 
 // The live tier: lineages on the sandbox's btrfs volume through the real
@@ -148,11 +148,11 @@ var _ = Describe("Cache lineages on the sandbox volume", Label("live"), Serial, 
 		root, err = os.MkdirTemp(liveRoot, "cache-live-*")
 		Expect(err).NotTo(HaveOccurred(), "the sandbox root %s is not this account's", liveRoot)
 		DeferCleanup(func() { sweep(root) })
-		driver := machine.NewSystemd(workspace.Spawner{}, machine.Commands{})
-		fs, err := driver.Statfs(root)
+		host := driver.NewSystemd(workspace.Spawner{}, driver.Commands{})
+		fs, err := host.Statfs(root)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(fs.Btrfs()).To(BeTrue(), "%s is %s, not btrfs", root, fs.Type)
-		store = cache.New(driver, cache.Config{Root: root, GlobalCap: 1 << 30})
+		store = cache.New(host, cache.Config{Root: root, GlobalCap: 1 << 30})
 	})
 
 	It("The latest generation restores and the run's writes do not touch it", func(ctx context.Context) {

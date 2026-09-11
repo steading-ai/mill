@@ -12,8 +12,8 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/ivy/mill/internal/cli"
-	"github.com/ivy/mill/internal/workspace/machine"
 	"github.com/ivy/mill/internal/workspace/machine/cache"
+	"github.com/ivy/mill/internal/workspace/machine/driver"
 )
 
 // The cache verbs read the directory tree and each lineage's manifest, so a
@@ -25,7 +25,7 @@ var _ = Describe("mill cache", Label("unit"), func() {
 	var root string
 	var now time.Time
 	var store *cache.Store
-	var fake *machine.FakeDriver
+	var fake *driver.FakeDriver
 
 	run := func(args ...string) int {
 		stdout.Reset()
@@ -36,7 +36,7 @@ var _ = Describe("mill cache", Label("unit"), func() {
 	BeforeEach(func() {
 		root = GinkgoT().TempDir()
 		now = time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
-		fake = machine.NewFake()
+		fake = driver.NewFake()
 		store = cache.New(fake, cache.Config{Root: root, GlobalCap: 1 << 30, Now: func() time.Time { return now }})
 		GinkgoT().Setenv("MILL_CONFIG", "")
 		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
@@ -50,7 +50,7 @@ var _ = Describe("mill cache", Label("unit"), func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(os.WriteFile(filepath.Join(store.CopyPath(id, lineage.Name), "f"), []byte("x"), 0o644)).To(Succeed())
 		Expect(store.Candidate(ctx, id, "build")).To(Succeed())
-		fake.Script(machine.DiskUsage, size)
+		fake.Script(driver.DiskUsage, size)
 		_, err = store.Promote(ctx, id)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(store.Discard(ctx, id)).To(Succeed())

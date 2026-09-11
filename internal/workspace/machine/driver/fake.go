@@ -1,4 +1,4 @@
-package machine
+package driver
 
 import (
 	"context"
@@ -14,16 +14,18 @@ import (
 
 // The methods of [Driver], as [FakeDriver] records and scripts them.
 const (
-	StartUnit       = "StartUnit"
-	StopUnit        = "StopUnit"
-	ShowMachine     = "ShowMachine"
-	Exec            = "Exec"
-	ListMachines    = "ListMachines"
-	Snapshot        = "Snapshot"
-	DeleteSubvolume = "DeleteSubvolume"
-	SetReadOnly     = "SetReadOnly"
-	DiskUsage       = "DiskUsage"
-	Statfs          = "Statfs"
+	StartUnit         = "StartUnit"
+	StopUnit          = "StopUnit"
+	Terminate         = "Terminate"
+	ShowMachine       = "ShowMachine"
+	MachineInterfaces = "MachineInterfaces"
+	Exec              = "Exec"
+	ListMachines      = "ListMachines"
+	Snapshot          = "Snapshot"
+	DeleteSubvolume   = "DeleteSubvolume"
+	SetReadOnly       = "SetReadOnly"
+	DiskUsage         = "DiskUsage"
+	Statfs            = "Statfs"
 
 	Exists           = "Exists"
 	CreateSubvolume  = "CreateSubvolume"
@@ -91,7 +93,8 @@ func NewFake() *FakeDriver {
 
 // Script queues what the next calls of method return, one result per call.
 // A result is an error, or the method's value: [Machine] for ShowMachine,
-// []Machine for ListMachines, [Filesystem] for Statfs, [Output] for Exec.
+// []Machine for ListMachines, []string for MachineInterfaces, [Filesystem]
+// for Statfs, [Output] for Exec.
 func (f *FakeDriver) Script(method string, results ...any) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -139,6 +142,26 @@ func (f *FakeDriver) StartUnit(_ context.Context, unit string) error {
 // StopUnit records the call and returns the scripted error, if any.
 func (f *FakeDriver) StopUnit(_ context.Context, machine, unit string) error {
 	return asError(f.record(StopUnit, machine, unit))
+}
+
+// Terminate records the call and returns the scripted error, if any.
+func (f *FakeDriver) Terminate(_ context.Context, machine string) error {
+	return asError(f.record(Terminate, machine))
+}
+
+// MachineInterfaces records the call and returns the scripted names or
+// error.
+func (f *FakeDriver) MachineInterfaces(_ context.Context, name string) ([]string, error) {
+	switch result := f.record(MachineInterfaces, name).(type) {
+	case nil:
+		return nil, nil
+	case error:
+		return nil, result
+	case []string:
+		return result, nil
+	default:
+		return nil, scriptMismatch(MachineInterfaces, result)
+	}
 }
 
 // ShowMachine records the call and returns the scripted machine or error.

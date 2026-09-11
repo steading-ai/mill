@@ -22,6 +22,7 @@ import (
 	"github.com/ivy/mill/internal/notify"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/machine"
+	"github.com/ivy/mill/internal/workspace/machine/driver"
 	"github.com/ivy/mill/internal/workspace/signing"
 )
 
@@ -188,7 +189,7 @@ func doctor(ctx context.Context, opts doctorOptions) []probe {
 		probeSigning(opts),
 		probeForge(ctx, opts),
 		probeNotify(ctx, opts),
-		probeWorkspace(opts, machine.NewSystemd(workspace.Spawner{}, machine.Commands{})),
+		probeWorkspace(opts, driver.NewSystemd(workspace.Spawner{}, driver.Commands{})),
 		probeGateway(ctx, opts, time.Now()),
 	}
 }
@@ -420,7 +421,7 @@ func probeNotify(ctx context.Context, opts doctorOptions) probe {
 //
 // The driver is the seam the backend reaches the host through, so what the
 // probe asks is what a run would ask.
-func probeWorkspace(opts doctorOptions, driver machine.Driver) probe {
+func probeWorkspace(opts doctorOptions, host driver.Driver) probe {
 	kind, err := workspace.ParseKind(opts.workspace)
 	if err != nil {
 		return fail("workspace", "%v", err)
@@ -428,13 +429,13 @@ func probeWorkspace(opts doctorOptions, driver machine.Driver) probe {
 	if kind != workspace.KindMachine {
 		return pass("workspace", "%s: a clone under the mill's account", kind)
 	}
-	fs, err := driver.Statfs(opts.sandboxRoot)
+	fs, err := host.Statfs(opts.sandboxRoot)
 	if err != nil {
 		return fail("workspace", "%s: sandbox root %s: %v", kind, opts.sandboxRoot, err)
 	}
 	if !fs.Btrfs() {
 		return fail("workspace", "%s: sandbox root %s is %s, not %s (docs/sandbox.md §Storage)",
-			kind, opts.sandboxRoot, fs.Type, machine.TypeBtrfs)
+			kind, opts.sandboxRoot, fs.Type, driver.TypeBtrfs)
 	}
 	return pass("workspace", "%s: sandbox root %s is %s", kind, opts.sandboxRoot, fs.Type)
 }

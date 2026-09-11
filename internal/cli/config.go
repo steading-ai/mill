@@ -64,8 +64,19 @@ type Config struct {
 	// repo-scoped one is flagged. Sizes such as `20G`.
 	CacheGlobalCap string `yaml:"cache-global-cap"`
 	CacheRepoCap   string `yaml:"cache-repo-cap"`
-	LogDir         string `yaml:"log-dir"`
-	EnvMode        string `yaml:"env_mode"`
+	// The machine backend's host facts (docs/sandbox.md §Provision,
+	// §Network, §"Skill mount"): the worker's skill directory bound
+	// read-only into every machine, the run-state directory the socket
+	// directories are made under, the proxy every machine leaves through
+	// and what bypasses it, and the origins whose `[machine].nested`
+	// request is granted. Each has the default homestead fixes on `core`.
+	SkillDir    string   `yaml:"skill-dir"`
+	RunStateDir string   `yaml:"run-state-dir"`
+	Proxy       string   `yaml:"proxy"`
+	NoProxy     string   `yaml:"no-proxy"`
+	Nested      []string `yaml:"nested"`
+	LogDir      string   `yaml:"log-dir"`
+	EnvMode     string   `yaml:"env_mode"`
 	// NotifyCommand is spelled the way env_mode is, for the same reason: a
 	// deployment sets it, and a deployment spells it with an underscore.
 	NotifyCommand string `yaml:"notify_command"`

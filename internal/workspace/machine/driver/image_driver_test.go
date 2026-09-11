@@ -1,4 +1,4 @@
-package machine_test
+package driver_test
 
 import (
 	"context"
@@ -9,25 +9,25 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/workspace/machine"
+	"github.com/ivy/mill/internal/workspace/machine/driver"
 )
 
 var _ = Describe("The systemd driver's image verbs", Label("unit"), func() {
 	var (
-		h      *host
-		driver machine.Driver
+		h *host
+		d driver.Driver
 	)
 
 	BeforeEach(func() {
 		h = newHost()
-		driver = machine.NewSystemd(h.spawner, h.commands)
+		d = driver.NewSystemd(h.spawner, h.commands)
 	})
 
 	It("pulls and reads a digest through podman", func(ctx context.Context) {
 		h.stub("podman", `case "$1" in inspect|image) echo "sha256:abc"; esac; exit 0`)
 
-		Expect(driver.PullImage(ctx, "harbor.example/mill/base:latest")).To(Succeed())
-		digest, err := driver.ImageDigest(ctx, "harbor.example/mill/base:latest")
+		Expect(d.PullImage(ctx, "harbor.example/mill/base:latest")).To(Succeed())
+		digest, err := d.ImageDigest(ctx, "harbor.example/mill/base:latest")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(digest).To(Equal("sha256:abc"))
 		Expect(h.calls("podman")).To(Equal([]string{
@@ -39,7 +39,7 @@ var _ = Describe("The systemd driver's image verbs", Label("unit"), func() {
 	It("builds on the host with every tag and build argument, returning the transcript whole", func(ctx context.Context) {
 		h.stub("podman", `echo "STEP 1/2: FROM base"; echo "No match for argument: libfooo-devel" >&2; echo "Error: building at STEP" >&2; exit 1`)
 
-		output, err := driver.BuildImageOnHost(ctx, machine.ImageBuild{
+		output, err := d.BuildImageOnHost(ctx, driver.ImageBuild{
 			Context:       "/tmp/ctx",
 			Containerfile: "/tmp/ctx/Containerfile",
 			Tags:          []string{"localhost/a:1", "localhost/a:latest"},
@@ -53,7 +53,7 @@ var _ = Describe("The systemd driver's image verbs", Label("unit"), func() {
 			"--file", "/tmp/ctx/Containerfile", "--build-arg", "HARBOR_HOST=harbor.example", "/tmp/ctx",
 		}))
 
-		_, err = driver.BuildImageOnHost(ctx, machine.ImageBuild{Context: "/tmp/ctx"})
+		_, err = d.BuildImageOnHost(ctx, driver.ImageBuild{Context: "/tmp/ctx"})
 		Expect(err).To(MatchError(ContainSubstring("no tag")))
 	})
 
@@ -61,7 +61,7 @@ var _ = Describe("The systemd driver's image verbs", Label("unit"), func() {
 		h.stub("podman", `case "$1" in create) echo c0ffee;; export) printf 'tarball';; esac; exit 0`)
 		h.stub("tar", `cat > "$(dirname "$0")/tar.stdin"; exit 0`)
 
-		Expect(driver.ExportImage(ctx, "localhost/mill/derived:d", "/var/lib/machines/mill-image-d.building")).To(Succeed())
+		Expect(d.ExportImage(ctx, "localhost/mill/derived:d", "/var/lib/machines/mill-image-d.building")).To(Succeed())
 
 		Expect(h.calls("podman")).To(Equal([]string{
 			"create", "localhost/mill/derived:d",
@@ -78,7 +78,7 @@ var _ = Describe("The systemd driver's image verbs", Label("unit"), func() {
 		h.stub("podman", `case "$1" in create) echo c0ffee;; export) printf 'tarball';; esac; exit 0`)
 		h.stub("tar", `echo "tar: no space left" >&2; exit 2`)
 
-		err := driver.ExportImage(ctx, "localhost/mill/derived:d", "/x")
+		err := d.ExportImage(ctx, "localhost/mill/derived:d", "/x")
 		Expect(err).To(MatchError(ContainSubstring("tar exited 2")))
 		Expect(err).To(MatchError(ContainSubstring("no space left")))
 		Expect(h.calls("podman")).To(ContainElements("rm", "--force", "c0ffee"))
@@ -90,17 +90,17 @@ var _ = Describe("The systemd driver's image verbs", Label("unit"), func() {
 		dir := GinkgoT().TempDir()
 		Expect(os.Mkdir(filepath.Join(dir, "a.building"), 0o755)).To(Succeed())
 
-		Expect(driver.CreateSubvolume(ctx, "/x/a.building")).To(Succeed())
-		Expect(driver.Setcap(ctx, "cap_setuid=ep", "/x/a.building/usr/bin/newuidmap")).To(Succeed())
-		Expect(driver.Rename(ctx, filepath.Join(dir, "a.building"), filepath.Join(dir, "a"))).To(Succeed())
+		Expect(d.CreateSubvolume(ctx, "/x/a.building")).To(Succeed())
+		Expect(d.Setcap(ctx, "cap_setuid=ep", "/x/a.building/usr/bin/newuidmap")).To(Succeed())
+		Expect(d.Rename(ctx, filepath.Join(dir, "a.building"), filepath.Join(dir, "a"))).To(Succeed())
 		Expect(filepath.Join(dir, "a")).To(BeADirectory())
-		present, err := driver.Exists(ctx, filepath.Join(dir, "a"))
+		present, err := d.Exists(ctx, filepath.Join(dir, "a"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(present).To(BeTrue())
-		present, err = driver.Exists(ctx, filepath.Join(dir, "absent"))
+		present, err = d.Exists(ctx, filepath.Join(dir, "absent"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(present).To(BeFalse())
-		Expect(driver.DeleteSubvolume(ctx, "/x/a", false)).To(Succeed())
+		Expect(d.DeleteSubvolume(ctx, "/x/a", false)).To(Succeed())
 
 		Expect(h.calls("btrfs")).To(Equal([]string{"subvolume", "create", "/x/a.building", "subvolume", "delete", "/x/a"}))
 		Expect(h.calls("setcap")).To(Equal([]string{"cap_setuid=ep", "/x/a.building/usr/bin/newuidmap"}))
@@ -112,7 +112,7 @@ var _ = Describe("The systemd driver's image verbs", Label("unit"), func() {
 		h.stub("podman", `exit 0`)
 		commands := h.commands
 		commands.Sudo = filepath.Join(h.dir, "sudo")
-		privileged := machine.NewSystemd(h.spawner, commands)
+		privileged := driver.NewSystemd(h.spawner, commands)
 
 		Expect(privileged.CreateSubvolume(ctx, "/x/a.building")).To(Succeed())
 		Expect(privileged.Setcap(ctx, "cap_setgid=ep", "/x/a.building/usr/bin/newgidmap")).To(Succeed())
@@ -137,9 +137,9 @@ var _ = Describe("The systemd driver's image verbs", Label("unit"), func() {
 	It("logs in with the secret on stdin and never on the command line, pushes, and logs out", func(ctx context.Context) {
 		h.stub("podman", `if [ "$1" = login ]; then cat > "$(dirname "$0")/podman.stdin"; fi; exit 0`)
 
-		Expect(driver.Login(ctx, "harbor.example", "robot$mill+builder", "s3cret")).To(Succeed())
-		Expect(driver.PushImage(ctx, "harbor.example/mill/base:latest")).To(Succeed())
-		Expect(driver.Logout(ctx, "harbor.example")).To(Succeed())
+		Expect(d.Login(ctx, "harbor.example", "robot$mill+builder", "s3cret")).To(Succeed())
+		Expect(d.PushImage(ctx, "harbor.example/mill/base:latest")).To(Succeed())
+		Expect(d.Logout(ctx, "harbor.example")).To(Succeed())
 
 		Expect(h.calls("podman")).To(Equal([]string{
 			"login", "--username", "robot$mill+builder", "--password-stdin", "harbor.example",
@@ -158,7 +158,7 @@ var _ = Describe("The systemd driver's image verbs", Label("unit"), func() {
 		defer cancel()
 
 		started := time.Now()
-		_, err := driver.BuildImageOnHost(budget, machine.ImageBuild{Context: "/tmp/ctx", Tags: []string{"t"}})
+		_, err := d.BuildImageOnHost(budget, driver.ImageBuild{Context: "/tmp/ctx", Tags: []string{"t"}})
 		Expect(err).To(MatchError(context.DeadlineExceeded))
 		Expect(time.Since(started)).To(BeNumerically("<", 5*time.Second))
 	})

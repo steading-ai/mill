@@ -11,6 +11,7 @@ import (
 
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/machine"
+	"github.com/ivy/mill/internal/workspace/machine/driver"
 	"github.com/ivy/mill/internal/workspace/machine/image"
 )
 
@@ -283,8 +284,8 @@ func imageStore(cmd *cobra.Command, opts *imageOptions) (*image.Store, error) {
 	if sudo == "none" {
 		sudo = ""
 	}
-	driver := machine.NewSystemd(workspace.Spawner{}, machine.Commands{Sudo: sudo})
-	return image.New(driver, imageConfig(opts)), nil
+	host := driver.NewSystemd(workspace.Spawner{}, driver.Commands{Sudo: sudo})
+	return image.New(host, imageConfig(opts)), nil
 }
 
 // imageConfig is the image configuration as the flags spell it.

@@ -20,7 +20,7 @@ The worker runs on `core`, the operator's host, and the design assumes its facts
 - firewalld owns `inet firewalld`; NetworkManager manages links unless told otherwise. Every polkit action the design names is present: `org.freedesktop.machine1.{shell,manage-machines,login,open-pty}` and `org.freedesktop.systemd1.manage-units`.
 - Host configuration mill cannot ship — the storage volume, the machine template unit and its polkit rule, the nftables table, squid, the SELinux module, the credential delivered by `LoadCredential` — is homestead's, the operator's host-configuration project, and reaches `core` as roles there (§Sequencing across repositories).
 
-**The spike.** The experiments this design depends on — numbered E0 to E14 below — are run on `core` by a person, outside this repository, before the backend milestone starts; a section that names one records its result here when it is known, and until then the section states the design that the experiment decides.
+**The spike.** The experiments this design depends on — numbered E0 to E14 below — were run on `core` by a person and are written up in `docs/spikes/nspawn-per-run-sandbox.md`; a section that names one states what the experiment found, and the sections the backend is built on — §Provision, §Exec, §Step boundary, §Filesystem, §Destroy, §Privilege — keep no sentence the spike disproved.
 
 ## Terms
 
@@ -43,26 +43,26 @@ The worker runs on `core`, the operator's host, and the design assumes its facts
 
 ## Naming
 
-- Machine: `mill-<run-id>`. The reconciliation key; **MUST** be derivable from the run alone.
+- Machine: `mill-<id>`, where `<id>` is the run id in lower case (§Provision). The reconciliation key; **MUST** be derivable from the run alone.
 - Machine unit: `mill-machine@<run-id>.service` on the host, an instance of the root-owned template (§Privilege).
 - Step slice: `mill-step-<ordinal>.slice` inside the machine.
 - Exec unit: `mill-exec-<uuid>.service` inside the machine, under its step's slice.
 - Image subvolume: `/var/lib/machines/mill-image-<derived-digest>`.
 - Lineage: `/var/lib/mill/cache/<scope>/<name>/` where scope is `repo/<repo-id>` or `global`; generations are `gen-<n>` inside it; `manifest.json` beside them.
-- Run directory: `/var/lib/mill/runs/<run-id>/` containing `workspace/` and `cache/<name>/` (the run's writable snapshots).
+- Run directory: `/var/lib/mill/runs/<id>/` containing `workspace/`, `cache/<name>/` (the run's writable snapshots), `machine.json`, `run.json` and `environment.d/`.
 
 ## Sequence of a run
 
 Everything below is in this order. The order is the design: configuration is read before the thing it configures exists, and nothing persists except through promotion.
 
 1. **Claim.** The run exists in the ledger; the run directory is created.
-2. **Clone.** The worker clones the node's repository into the workspace dir on the host, with the worker's own forge credential. No session credential is involved.
+2. **Clone.** The worker clones the node's repository into the workspace dir on the host, with the worker's own forge credential, bound to no step. No session credential is involved; `Rotate` has not been called.
 3. **Read `mill.toml`** from the checkout. Absent is valid and means defaults. Invalid is a finding (§mill.toml), not a failure.
 4. **Resolve the base** digest from Harbor (`mill/base:latest` unless worker config pins a tag or digest). Compute the derived digest.
 5. **Ensure the image subvolume** (§Derived images). On build failure, fall back to base and record a finding.
 6. **Restore caches** (§Caching): a writable snapshot per lineage into the run directory.
-7. **Boot the machine** (§Provision) with the workspace, socket, skill and cache binds.
-8. **Wait for ready.**
+7. **Boot the machine** (§Provision): `machine.json` with the workspace, socket, skill, cache and proxy binds, then `systemctl start mill-machine@<id>`.
+8. **Wait for ready** — `is-system-running` inside — then start the socket and record the veth.
 9. **Toolchain step** (§Preparatory steps): `mise trust /work && mise install`.
 10. **Workflow steps**, each under its own slice; caches snapshotted at each evidence-closed step.
 11. **Finish**: promote the caches from the last evidence-closed step; record the result; destroy the machine; remove the run directory.
@@ -141,62 +141,97 @@ What the rules above leave open, `internal/workspace/machine/config` decides as 
 
 ### Provision
 
-The worker writes `/var/lib/mill/runs/<run-id>/machine.json` — the image subvolume, binds, limits and whether `nested` is granted — and starts `mill-machine@<run-id>.service` (§Privilege). The template's `ExecStart` reads that file and becomes:
+The worker writes `/var/lib/mill/runs/<id>/machine.json` and starts `mill-machine@<id>.service` with `systemctl start`, under polkit (§Privilege). It never runs `systemd-nspawn` itself: the template's `ExecStart` is homestead's helper, `/usr/libexec/mill-machine <id>`, which reads that file, refuses anything outside the schema below with the field named in `journalctl -u mill-machine@<id>`, applies the limits to the unit, and execs
 
 ```
-systemd-nspawn --boot --quiet \
-    --machine=mill-<run-id> \
+systemd-nspawn --boot --quiet --keep-unit \
+    --machine=mill-<id> \
     --directory=/var/lib/machines/mill-image-<derived-digest> --ephemeral \
     --private-users=pick --private-users-ownership=auto \
-    --network-veth \
-    --bind=/var/lib/mill/runs/<run-id>/workspace:/work \
-    --bind=/run/mill/<run-id>:/run/mill \
-    --bind-ro=<worker skill dir>:/home/agent/.claude/skills/mill \
-    --bind=/var/lib/mill/runs/<run-id>/cache/<name>:<path>   # one per cache
-    --settings=false
+    --network-veth --settings=false --notify-ready=yes \
+    --bind=<source>:<target>:idmap ...        # one per bind; --bind-ro when readonly
 ```
 
-with `MemoryMax=`, `CPUQuota=`, `TasksMax=` and `KillMode=mixed` on the unit (§Resource limits).
+- `<id>` is the run id in lower case: the helper's instance pattern is `^[a-z0-9-]+$` and a ULID's alphabet is upper case; base32 is case-insensitive, so nothing is lost. `exec`, `stop`, `terminate` and `shutdown` are the helper's verbs and cannot be ids. The machine is `mill-<id>`, the unit `mill-machine@<id>.service`, the run directory `runs/<id>`, the socket directory `/run/mill/<id>`.
+- `--ephemeral` **MUST** be used: the root is a btrfs snapshot of the image subvolume, `.#machine.mill-image-<digest>…` in `btrfs subvolume list`, discarded on exit.
+- `--keep-unit` keeps the machine's whole process tree in the unit's cgroup, `mill-machine@<id>.service/payload/`. Without it `--boot` registers the payload in a separate `mill-<id>.scope` that neither `KillMode=` nor the limits reach — the root cause of the spike's E0 orphan. Reconciliation and limits read the payload there, not in a scope.
+- `--notify-ready=yes` makes the unit's `Type=notify` mean the machine's systemd is up, so `systemctl start` returns once the machine can be entered, not once nspawn has forked.
+- `--private-users=pick` allocates a 64K uid range per machine; two machines never share one. It is the template's business, not the worker's.
+- `--private-users-ownership=auto` idmaps the root tree **only**. Every bind carries `:idmap` (the spike's E4), or a file written as uid 1000 inside is an offset uid on the host; the helper adds it to every bind it admits.
+- `--settings=false` stops `.nspawn` files on the host from altering the invocation; everything the machine is, is in `machine.json` and therefore in the ledger.
+- **Every bind a run needs is in `machine.json` before the unit starts.** `machinectl bind` refuses a user-namespaced machine, so nothing can be added later.
+- When `[machine].nested` is granted — worker configuration lists the origin under `nested` — `nested` is true in the manifest and three things change: `--private-users=<base>:1048576` instead of `pick`, the base hashed from the run id into a slot above pick's range; `agent` has passwordless `sudo` for everything, because root inside the user namespace is an unprivileged uid on the host and the namespace, not the uid, is the boundary; and the host's image subvolumes are bound read-only at `/var/lib/machines` so the inner suite boots them rather than building them. A request that is not granted is a finding for the first session and the machine boots without it. The host's btrfs **MUST** be mounted with `user_subvol_rm_allowed`, or inner teardown and eviction cannot delete subvolumes.
 
-- `--ephemeral` **MUST** be used: the root is a btrfs snapshot of the image subvolume, discarded on exit.
-- `--private-users=pick` allocates a 64K uid range per machine; two machines never share one.
-- `--settings=false` stops `.nspawn` files on the host from altering the invocation; everything the machine is, is on the command line and therefore in the ledger.
-- When `[machine].nested` is granted, three things change and nothing else: `--private-users=<base>:1048576` instead of `pick`, so an inner `--private-users=pick` has a range to choose from; `agent` has passwordless `sudo` for everything, because root inside the user namespace is an unprivileged uid on the host and the namespace, not the uid, is the boundary; and the host's image subvolumes are bind-mounted read-only at `/var/lib/machines` so the inner suite boots them rather than building them. The host's btrfs **MUST** be mounted with `user_subvol_rm_allowed`, or inner teardown and eviction cannot delete subvolumes.
-- Readiness: poll `machinectl show mill-<run-id> -p State` for `running`, then exec `systemctl is-system-running --wait`. Readiness **MUST** have a timeout; a machine that does not reach ready is destroyed and the run fails with that evidence.
+#### `machine.json`
+
+The schema is the helper's (homestead's `mill_machine` role, `/etc/mill-machine.json` its policy); `Manifest` in `internal/workspace/machine` is the Go type and carries exactly these keys. Every key but `image` is optional; an unknown key at any level is refused.
+
+```json
+{
+  "image": "3c9a…",
+  "binds": [
+    {"source": "/var/lib/mill/runs/<id>/workspace", "target": "/work"},
+    {"source": "/run/mill/<id>", "target": "/run/mill"},
+    {"source": "/home/ivy/.local/share/mill/skill", "target": "/home/agent/.claude/skills/mill", "readonly": true},
+    {"source": "/var/lib/mill/runs/<id>/cache/go-build", "target": "/home/agent/.cache/go-build"},
+    {"source": "/var/lib/mill/runs/<id>/environment.d/50-mill-proxy.conf", "target": "/etc/environment.d/50-mill-proxy.conf", "readonly": true}
+  ],
+  "limits": {"MemoryMax": "8G", "CPUQuota": "400%", "TasksMax": "4096"},
+  "nested": false
+}
+```
+
+| Key | Rule |
+|---|---|
+| `image` | `^[a-z0-9]+$`; `/var/lib/machines/mill-image-<image>` must exist. The worker writes the digest `image.Ensure` returned — the derived one, or base after a failed build. |
+| `binds[].source` | An absolute, normalised host path that exists. After symlinks are resolved it must be under `/var/lib/mill/runs/<id>/` or `/run/mill/<id>/`, or be one of the policy's read-only sources (the worker's skill directory), or — only when `nested` is true — one of its nested read-only sources (`/var/lib/machines`, the dagger checkout). The latter two groups must be declared `readonly`. |
+| `binds[].target` | An absolute, normalised path inside the machine, not `/`. |
+| `binds[].readonly` | Boolean, default `false`; `--bind-ro`. |
+| `limits.MemoryMax`, `limits.CPUQuota`, `limits.TasksMax` | Strings in the forms `systemd.resource-control(5)` accepts. A limit that is absent is reset to the unit's default on every start. |
+| `nested` | Boolean, default `false`. |
+
+The worker's binds are: the workspace at `/work`; the socket directory at `/run/mill`; the skill read-only at `/home/agent/.claude/skills/mill`; one per cache, `runs/<id>/cache/<name>` at the lineage's path; the proxy file read-only at `/etc/environment.d/50-mill-proxy.conf` (§Network); and, under `nested`, `/var/lib/machines` read-only. `Manifest.Check` applies the same rules before the unit is started, so a bind the helper would refuse fails in the worker with the field named rather than in the unit's journal. The validator is the authority: a field the worker needs that the schema lacks is a homestead change, not a divergent writer.
+
+#### Readiness
+
+`systemctl start` returning is the first signal; the worker then polls `machinectl show mill-<id> -p State` for `running` and execs `systemctl is-system-running --wait` inside the machine through the helper, under the slice `mill-step-ready.slice` — a step slice like any other, so the rule that no exec runs outside one holds for the one exec that precedes every step. `running` is ready; so is `degraded`, a machine that booted with a failed unit, because it is booted. A helper refusal (exit 78) ends the wait at once: no number of retries changes the helper's answer. Readiness has a timeout (`ReadyTimeout`, two minutes unless configured); a machine that does not reach it is destroyed by the unready path of §Destroy and the run fails with the timeout and the digest as evidence. On `core` a machine is ready 0.4 s after `Create` begins.
+
+Once ready, the worker records the host-side veth (`machinectl status` `Iface:`), records the boot against the image's manifest, and starts the workspace socket on `/run/mill/<id>/ws.sock` — short and fixed on the machine side at `/run/mill/ws.sock`; only the host side needs the existing length guard. `Attach` reads `runs/<id>/run.json`, asks machined for the machine, and reopens the socket; a machine machined no longer knows is a lost sandbox, and nothing boots a fresh one for a run that had one (§Reconciliation).
 
 ### Exec
 
-Every process a step runs, including checks mill runs itself:
+Every process a step runs, including checks mill runs itself, enters the machine through the root-owned helper under `sudo -n` — never through `systemd-run -M` as the operator, which opens the leader's namespaces itself and wants `CAP_SYS_ADMIN` whatever polkit says (the spike's E0):
 
 ```
-systemd-run --machine=mill-<run-id> --pipe --wait --quiet --collect \
-  --unit=mill-exec-<uuid> \
-  -p Slice=mill-step-<n>.slice \
-  -p WorkingDirectory=/work \
-  -p User=agent \
-  -p Environment=<k=v> ... \
-  -- <argv>
+sudo -n /usr/libexec/mill-machine exec mill-<id> --unit=mill-exec-<uuid> \
+    -p Slice=mill-step-<n>.slice -p WorkingDirectory=/work -p User=agent \
+    -p Environment=<k=v> ... -- <argv>
 ```
+
+The helper runs `systemd-run -M mill-<id> --pipe --wait --quiet --collect -p Delegate=yes -p KillMode=mixed` with those properties and streams stdio through.
 
 - `--pipe` connects the caller's stdin, stdout and stderr to the service. Mill **MUST** stream them.
-- `--wait` propagates the main process's exit status. That status is what `Workspace.Exec` returns and what evidence checks read.
+- `--wait` propagates the main process's exit status. That status is what `Workspace.Exec` returns and what evidence checks read. The helper's own refusals exit 78 before anything runs and are never the command's status.
 - `--quiet` keeps `systemd-run`'s own messages off the step's stderr. `--collect` unloads the unit when it ends.
-- `Slice=` is **REQUIRED**. An exec with no step slice is a bug.
-- Cancellation is `systemctl --machine=mill-<run-id> stop mill-exec-<uuid>.service`, or the slice. Killing the `systemd-run` client does not stop the unit.
-- The exec's `Environment=` is its only environment. There is no machine-wide environment for steps.
+- `Delegate=yes` on every exec unit, so `agent`'s podman can create sub-cgroups under it; `KillMode=mixed`, so what the exec leaves behind is SIGKILLed at once rather than after `TimeoutStopSec`, and the status `--wait` returns stays the main process's (the spike's E3).
+- `Slice=` is **REQUIRED** and **MUST** match `^mill-step-[a-z0-9-]+\.slice$`. An exec with no step slice is a bug. `Slice`, `WorkingDirectory`, `User` and `Environment` are the whole allow-list: a property that could load a unit file or run something on the host is refused by name.
+- Cancellation is the helper's `stop mill-<id> mill-exec-<uuid>.service`, or the slice. Killing the client does not stop the unit.
+- The exec's `Environment=` is its only environment. There is no machine-wide environment for steps; the one exception is `agent`'s user manager, which carries the proxy from boot (§Network).
+- On `core` today `/etc/sudoers.d/ivy` grants the operator `NOPASSWD: ALL`, so for that uid the helper is the *interface* the worker uses, not a boundary sudo enforces; `/etc/sudoers.d/mill-machine` is the boundary for any other uid, and it admits `exec`, `stop` and `terminate` and nothing else.
 
 ### Step boundary
 
-- A step **MUST** end with `systemctl --machine=mill-<run-id> stop mill-step-<n>.slice`. This kills everything the step started, daemons and containers included.
+- A step **MUST** end with the helper's `stop mill-<id> mill-step-<n>.slice`: `systemctl -M stop` of the slice, then `1` written to the slice's `cgroup.kill` on the host, because `systemctl stop <slice>` does not kill orphans of already-ended units and `cgroup.kill` does (the spike's E3). This kills everything the step started, daemons and containers included.
 - The next step's slice **MUST NOT** be created until the previous one reports inactive.
 - When a step closes on evidence, mill **MUST** take a read-only snapshot of each of the run's cache copies before stopping the slice. That snapshot is the promotion candidate; a later evidence-closed step replaces it. A step that is cancelled, times out, or dies leaves no candidate.
-- Podman containers inside the machine run under the step's slice (podman's systemd cgroup manager; `--cgroups=split` if the spike shows it necessary). A workflow that wants a container to outlive a step has misdesigned the step.
+- Podman containers inside the machine run under the step's slice only with `--cgroups=split`, which the base image's `containers.conf` pins; without it they land under `user@1000.service` and survive the slice stop. `podman ps` is not evidence after a kill. A workflow that wants a container to outlive a step has misdesigned the step.
 
 ### Destroy
 
-- `systemctl stop mill-machine@<run-id>.service`. `KillMode=mixed` lets nspawn shut the machine down, then kills the rest.
-- The ephemeral root is discarded by nspawn. The run directory — workspace, socket dir, cache copies — is the host's, and mill **MUST** remove it after promotion and after any evidence it needs from the workspace is recorded. Removing a cache copy is `btrfs subvolume delete`.
-- A run **MUST NOT** be marked finished while its machine is still registered.
+- **Never before ready.** A stop that lands before the machine's init has installed its signal handlers is lost: nspawn waits for a shutdown that never begins, the unit hangs for its whole stop timeout, and the payload survives (the spike's E0 addendum: a stop within ~200 ms of start). A machine that never reported ready — the readiness timeout's path — is not stopped; it is terminated (below), which ends a mid-boot machine in about a second with nothing left behind. `runs/<id>/run.json` records when the machine reported ready, so a worker that attaches knows which path applies.
+- **After ready**, `systemctl stop mill-machine@<id>.service` with a bound (`StopTimeout`, 90 s unless configured, above the unit's own `TimeoutStopSec=60`). The unit's `ExecStop` is the helper's `shutdown`: one SIGTERM asks nspawn to halt the machine, a quarter of a second once booted; a booted machine that will not halt gets nspawn's second SIGTERM after 20 s, which kills the machine and removes its snapshot and mount points itself. `KillMode=mixed` covers the rest. A SIGKILLed nspawn leaks the ephemeral snapshot, which is why the unit's final signal is SIGTERM and not SIGKILL.
+- **Then the truth from machined.** If `machinectl show mill-<id>` still knows the machine after the stop, the worker runs the helper's `terminate mill-<id>` — `machinectl terminate`, which under `--keep-unit` is only machined asking the unit to stop and one more signal init may lose, followed after a second by nspawn's second SIGTERM and then SIGKILL — and asks again. Only if the machine is registered after that does `Destroy` return an error naming it; a run **MUST NOT** be marked finished while its machine is registered, and the run directory stays with it for reconciliation.
+- Then promotion: the candidate from the last evidence-closed step becomes each lineage's next generation (§Promote), or nothing is promoted. Then the run directory — workspace, `machine.json`, `run.json`, the proxy file, the cache copies and candidates — is removed, a cache copy by `btrfs subvolume delete` through the driver as the worker's uid, and the socket directory under `/run/mill` with it. The ephemeral root is nspawn's to discard and is gone with the unit.
 
 ## Filesystem
 
@@ -205,13 +240,16 @@ systemd-run --machine=mill-<run-id> --pipe --wait --quiet --collect \
 | `/` | ephemeral snapshot of the image subvolume | rw | machine |
 | `/work` | `runs/<id>/workspace` on host | rw | run; mill deletes it |
 | `/run/mill` | `/run/mill/<id>` on host | socket only | run |
-| `/home/agent/.claude/skills/mill` | worker's skill dir | ro | worker version |
+| `/home/agent/.claude/skills/mill` | worker's skill dir (`skill-dir`, `~/.local/share/mill/skill` by default; the helper's policy names it) | ro | worker version |
 | cache paths | `runs/<id>/cache/<name>`, a writable snapshot of a generation | rw | run; promoted or deleted |
+| `/etc/environment.d/50-mill-proxy.conf` | `runs/<id>/environment.d/50-mill-proxy.conf` on host | ro | run |
+| `/var/lib/machines` | the host's image subvolumes; `nested` only | ro | run |
 | `/var/lib/containers` | ephemeral root | rw | machine |
 
-- The workspace is bind-mounted rather than cloned inside so the host can read evidence from it and keep it for a post-mortem when a run fails. `--private-users-ownership=auto` idmaps the bind so uid 1000 is uid 1000 on both sides.
+- The workspace is bind-mounted rather than cloned inside so the host can read evidence from it and keep it for a post-mortem when a run fails. The bind option `idmap` is what makes uid 1000 inside uid 1000 on the host — `--private-users-ownership=auto` idmaps the root tree only (the spike's E4) — and the helper puts it on every bind. A cache copy is therefore created as the worker's uid and never through `sudo`: a copy made as root is one `agent` cannot write, which is why the cache store has a driver of its own without `Commands.Sudo` while the image store's has it (§Storage).
 - Container storage is ephemeral. Podman's storage carries a database and locks and is not safely snapshottable under a running daemon; image pulls are made cheap by Harbor's proxy cache instead (§Network).
-- No other host path is mounted. Not `/dev/kvm`, not the host's podman socket, not the operator's `$HOME`, not the mill binary.
+- No other host path is mounted. Not `/dev/kvm`, not the host's podman socket, not the operator's `$HOME`, not the mill binary. The helper refuses a source outside the run directory, `/run/mill/<id>` and its policy's read-only sources, so the list above is enforced and not merely intended.
+- `/run/mill` on the host is the host's to create, owned by the worker's account; the worker cannot make a directory under `/run` and `Check` refuses before a claim when it is missing.
 
 ## Storage
 
@@ -295,7 +333,7 @@ Three mechanisms, applied in this order at each trigger.
 
 - The machine has a private network namespace on a host-side veth named `ve-mill-<run-id>` (truncated to the interface-name limit; mill **MUST** record the actual name). The host addresses it the way systemd's own `80-container-ve.network` does — a DHCP server on the host side of every `ve-mill*` link, no masquerade — with NetworkManager told to leave `ve-mill*` unmanaged.
 - The host's nftables table is **static**, because the worker is unprivileged and cannot add rules at run time: one `table inet mill` matching `iifname "ve-mill*"`, permitting DNS to the host resolver, TCP to the proxy and gateway ports on the host, and established/related; dropping everything else, including forwarding between `ve-mill*` links and to the LAN. Its own table and its own loader unit, never a `flush ruleset`, because firewalld owns `inet firewalld` on `core` (the pattern homestead's `thicket_nftables` role already uses).
-- Egress is a forward proxy on the host — squid, or something equally plain — listening on the host side of each machine's veth. It is **transparent in policy**: no allowlist, no interception, `CONNECT` passed through so the TLS a session sees is the origin's. Its job for now is to be the only path out, so the network architecture is settled and a smarter proxy can replace it without the machines noticing. `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY` are set in every exec's environment.
+- Egress is a forward proxy on the host — squid — at `http://10.99.255.1:3128` on the `mill-host` dummy link homestead's `mill_egress` role creates (`homestead#34`), reachable from every machine whatever /28 it was given; the worker's `proxy` and `no-proxy` keys carry that and `localhost,127.0.0.1` as defaults. It is **transparent in policy**: no allowlist, no interception, `CONNECT` passed through so the TLS a session sees is the origin's. Its job for now is to be the only path out, so the network architecture is settled and a smarter proxy can replace it without the machines noticing. `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY` are set in every exec's environment — and in `agent`'s user manager from boot, because podman's API service pulls with *its* environment, not the exec's (the spike's E6): `Create` writes `runs/<id>/environment.d/50-mill-proxy.conf` with both cases of the three names and `ANTHROPIC_BASE_URL` at the gateway, and binds it read-only at `/etc/environment.d/50-mill-proxy.conf` in `machine.json`.
 - The nftables drop is what makes the proxy mandatory, not the proxy itself. A session that ignores the environment and connects directly gets a timeout, not a bypass.
 - **The proxy variables MUST cross both environment floors.** The harness adapter (`envFloor`, `internal/harness/claude/environment.go`) and the sidecar (`ENVIRONMENT_PASSTHROUGH`, `sidecar/src/session.ts`) are allowlists of eleven names, and the SDK does not merge an exec's environment with them. Setting the variables on the exec alone leaves a session's shell with no proxy on a host that drops the direct path: every outbound call hangs to its timeout with nothing naming a proxy. They are copied past both floors the way `mill#50` copies the workspace-git variables — as decisions the workspace made, not values the host supplied — in both files, which already point at each other.
 - The session **MUST** be told. The mill skill and the session's system prompt (set by the harness adapter) state that all egress goes through the proxy named in the environment, so an agent debugging a failed connection reaches for the right explanation.
@@ -364,14 +402,15 @@ Budgets are the workflow's. A preparatory step and a check step each run under t
 
 ## Privilege
 
-The worker is not root. It runs as the operator's account, as a user unit — `contrib/systemd/mill.service`, deployed by homestead — because that account is mill's dagger principal and holds the forge token and the model credential, and none of that should be root. What needs root is starting a machine, and that is separated out the way `homestead-apply` already is: a system unit the operator's uid may drive through polkit.
+The worker is not root. It runs as the operator's account, as a user unit — `contrib/systemd/mill.service`, deployed by homestead — because that account is mill's dagger principal and holds the forge token and the model credential, and none of that should be root. What needs root is starting a machine and entering it, and both are separated out the way `homestead-apply` already is: root-owned pieces the operator's uid may drive, each admitting exactly what it names. The spike's E0 decided the shape; homestead's `mill_machine` role (`homestead#33`) deployed it.
 
-- `mill-machine@.service` is a root-owned template on the system manager. Its `ExecStart` is the `systemd-nspawn` invocation of §Provision, reading the run's declared binds and limits from `/var/lib/mill/runs/%i/machine.json`, which the worker writes. The worker starts and stops it with `systemctl start mill-machine@<run-id>` under a polkit rule granting its uid `org.freedesktop.systemd1.manage-units` for that template and nothing else — homestead's `homestead-apply` rule, copied not widened.
-- Exec into the machine is `systemd-run -M` as the operator's uid, under a polkit rule for `org.freedesktop.machine1.shell` and `manage-machines`. Whether machined's polkit path satisfies `systemd-run -M` for an unprivileged caller, or the namespace entry still wants `CAP_SYS_ADMIN`, is the spike's E0; it decides the shape of this section before anything else is built.
-- If E0 fails, the fallback keeps the pattern: a small root-owned helper unit with three verbs — start, exec, stop, by machine name — that the polkit rule admits the operator to. Still a system unit plus a polkit rule; the worker still never holds root.
+- **Start and stop are `systemctl` under polkit.** `mill-machine@.service` is a root-owned template on the system manager. Its `ExecStart` is the helper `/usr/libexec/mill-machine %i`, which validates `/var/lib/mill/runs/%i/machine.json` and execs the `systemd-nspawn` invocation of §Provision. The worker starts and stops it with `systemctl start|stop mill-machine@<id>` under `/etc/polkit-1/rules.d/50-mill-machine.rules`, which grants its uid `org.freedesktop.systemd1.manage-units` for `^mill-machine@.*\.service$` and nothing else, plus machined's `shell` and `manage-machines`. A unit outside the template — a new name or an existing one — is refused with polkit's interactive-auth prompt.
+- **Everything that enters a running machine is the helper under sudo.** `systemd-run -M` and `systemctl -M` as the operator fail with `Failed to open namespace of PID …: Permission denied` regardless of polkit, and `machinectl shell`, the one polkit-mediated entry, returns 0 for an exit status of 42 and merges stderr (the spike's E0). So exec, a stop inside the machine, and terminate are `sudo -n /usr/libexec/mill-machine exec|stop|terminate`, admitted by `/etc/sudoers.d/mill-machine` for those three verbs, `NOPASSWD`, no tty. The helper validates before anything privileged runs: `exec` admits `Slice`, `WorkingDirectory`, `User` and `Environment` and refuses every other property by name; `stop` admits a `mill-` machine and a `mill-step-*.slice` or `mill-exec-*.service`; `terminate` admits a machine whose unit is a `mill-machine@` instance. Refusals exit 78. The fourth verb, `shutdown`, is the unit's own `ExecStop` and is not in the sudoers rule.
+- The worker never runs `systemd-nspawn`, never holds root, and never reaches the helper except through the driver (`internal/workspace/machine/driver`), which is the one place `sudo` is spelled.
+- **On `core` today** `/etc/sudoers.d/ivy` grants the operator `NOPASSWD: ALL` (homestead-apply relies on it), so for uid 1000 the helper is the interface the worker uses, not a boundary sudo enforces; the sudoers deliverable adds no reach there. The boundary holds for any other uid, and the role's shape was proved from a throwaway user with the identical rule.
 - Every process inside the machine is unprivileged on the host through the user namespace, including root inside a `nested` machine.
+- The image directory is root's (§Storage), so the image store's subvolume verbs run through `sudo -n` too (`Commands.Sudo`); lineages and run directories are the worker's and never do.
 - Unprivileged nspawn through `systemd-nsresourced` (E7) would remove the template unit entirely. It is the more elegant answer and the less proven one; it stays a spike for repos without `nested`.
-- The polkit actions the rules name are present on `core` (§The host).
 
 ## SELinux
 
@@ -396,12 +435,12 @@ Reconciliation runs the sweeps on the same pass it reconciles machines. A suite 
 
 ## Reconciliation on resume
 
-The ledger records per run: machine name, machine unit, derived digest, veth name, current step slice, lineages restored, and the candidate snapshot's step.
+The ledger records per run: machine name, machine unit, derived digest, veth name, current step slice, lineages restored, and the candidate snapshot's step. The first five travel on the workspace handle as `workspace.Sandbox`, filled by `Create` and `Attach`; the run's own copy on the host is `runs/<id>/run.json`, which `Attach` reads before the ledger is asked anything and which also records when the machine reported ready.
 
 On worker start, in this order:
 
 1. `machinectl list --output=json` and compare with live runs:
-   - a machine with no live run is an **orphan** → stop its unit, delete its run directory, record the fact.
+   - a machine with no live run is an **orphan** → stop its unit (as §Destroy does: stop only if `run.json` says it was ready, else terminate), delete its run directory, record the fact.
    - a live run with no machine is a **lost sandbox** → the run fails with that as evidence. Nothing resumes into a fresh machine; the workspace's state is not the ledger's to reconstruct.
    - a live run with its machine present resumes at the ledger's step after stopping and recreating the current slice. Whatever was running when the worker died is not trusted to still be the step. The candidate snapshot from the last evidence-closed step is still valid and still promotes at finish.
 2. Delete `*.building` under `/var/lib/machines/` and any run directory with no live run.
@@ -417,9 +456,10 @@ Polling `machinectl` is sufficient at run cadence. If it is not, host-side D-Bus
 | Base digest unresolvable (Harbor down) | the pull fails at sequence step 4 | Use the last resolved digest (`/var/lib/mill/images/base.json`) if its subvolume exists, recording the fallback; else fail the run before boot |
 | Derived build fails or times out | `podman build` exit / budget | Boot base; finding to first session |
 | `mill.toml` invalid | parse/validate at step 3 | Defaults; finding to first session |
-| Machine never reaches ready | readiness timeout | Destroy, fail the run |
+| Machine never reaches ready | readiness timeout | Terminate (never stop), remove the run directory, fail the run with the timeout and the digest |
+| Helper refuses the readiness probe | exit 78 from the helper | Fail at once with the refusal: the worker's manifest or slice name is wrong, not the machine |
 | Toolchain step fails | exit ≠ 0 | Continue; finding to first session |
-| Exec unit fails to start (not the command) | `systemd-run` non-zero before the service runs | Retry once; then fail the step with stderr as evidence |
+| Exec unit fails to start (not the command) | the helper's `systemd-run` non-zero before the service runs | Retry once; then fail the step with stderr as evidence. A helper refusal (78) is not retried |
 | Command exits non-zero | `--wait` propagates | The step's contract decides |
 | Step exceeds its budget | mill's timer | Stop the slice; no candidate snapshot; fail the step |
 | Machine dies mid-step | exec returns a connection error; `machinectl show` reports none | Fail the run: lost sandbox. Candidate from an earlier closed step still promotes |

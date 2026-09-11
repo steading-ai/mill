@@ -9,7 +9,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
 
-	"github.com/ivy/mill/internal/workspace/machine"
+	"github.com/ivy/mill/internal/workspace/machine/driver"
 	"github.com/ivy/mill/internal/workspace/machine/image"
 )
 
@@ -20,7 +20,7 @@ import (
 var _ = Describe("mill image prune", Label("unit"), func() {
 	It("removes an image whose last boot is older than the expiry", func(ctx context.Context) {
 		now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
-		fake := machine.NewFake()
+		fake := driver.NewFake()
 		store := image.New(fake, image.Config{Root: GinkgoT().TempDir(), Machines: GinkgoT().TempDir(), Now: func() time.Time { return now }})
 		base := image.Digest("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 
@@ -40,8 +40,8 @@ var _ = Describe("mill image prune", Label("unit"), func() {
 		Expect(stdout.String()).To(ContainSubstring(old.Short()))
 		Expect(stdout.String()).To(ContainSubstring("removed"))
 		Expect(stdout.String()).NotTo(ContainSubstring(fresh.Short()))
-		Expect(fake.CallsTo(machine.DeleteSubvolume)).To(Equal([]machine.Call{
-			{Method: machine.DeleteSubvolume, Args: []any{store.Path(old), false}},
+		Expect(fake.CallsTo(driver.DeleteSubvolume)).To(Equal([]driver.Call{
+			{Method: driver.DeleteSubvolume, Args: []any{store.Path(old), false}},
 		}))
 		Expect(store.Path(old)).NotTo(BeAnExistingFile())
 		Expect(store.Path(fresh)).To(BeADirectory())

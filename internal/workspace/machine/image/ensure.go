@@ -9,7 +9,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/ivy/mill/internal/workspace/machine"
+	"github.com/ivy/mill/internal/workspace/machine/driver"
 )
 
 // The file capabilities `podman export` drops and the exported tree gets
@@ -90,7 +90,7 @@ func (s *Store) ensureLocked(ctx context.Context, base, digest Digest, packages 
 	}
 	defer unlock()
 
-	present, err := s.driver.Exists(ctx, s.Path(digest))
+	present, err := s.host.Exists(ctx, s.Path(digest))
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +129,7 @@ func (s *Store) buildOnHostOutsideAnyMachine(ctx context.Context, base, digest D
 	}
 
 	tag := builtTag(digest)
-	output, err := s.driver.BuildImageOnHost(budget, machine.ImageBuild{
+	output, err := s.host.BuildImageOnHost(budget, driver.ImageBuild{
 		Context:       contextDir,
 		Containerfile: containerfile,
 		Tags:          []string{tag},
@@ -140,20 +140,20 @@ func (s *Store) buildOnHostOutsideAnyMachine(ctx context.Context, base, digest D
 		}
 		return fail("build", Tail(output), err)
 	}
-	defer func() { _ = s.driver.RemoveImage(context.WithoutCancel(ctx), tag) }()
+	defer func() { _ = s.host.RemoveImage(context.WithoutCancel(ctx), tag) }()
 
 	building := s.building(digest)
-	if err := s.driver.CreateSubvolume(budget, building); err != nil {
+	if err := s.host.CreateSubvolume(budget, building); err != nil {
 		return fail("export", "", err)
 	}
-	cleanup := func() { _ = s.driver.DeleteSubvolume(context.WithoutCancel(ctx), building, false) }
+	cleanup := func() { _ = s.host.DeleteSubvolume(context.WithoutCancel(ctx), building, false) }
 
-	if err := s.driver.ExportImage(budget, tag, building); err != nil {
+	if err := s.host.ExportImage(budget, tag, building); err != nil {
 		cleanup()
 		return fail("export", "", err)
 	}
 	for _, restore := range restoredCapabilities {
-		if err := s.driver.Setcap(budget, restore.capability, filepath.Join(building, restore.path)); err != nil {
+		if err := s.host.Setcap(budget, restore.capability, filepath.Join(building, restore.path)); err != nil {
 			cleanup()
 			return fail("export", "", err)
 		}
@@ -162,7 +162,7 @@ func (s *Store) buildOnHostOutsideAnyMachine(ctx context.Context, base, digest D
 		cleanup()
 		return fail("export", "", err)
 	}
-	if err := s.driver.Rename(budget, building, s.Path(digest)); err != nil {
+	if err := s.host.Rename(budget, building, s.Path(digest)); err != nil {
 		cleanup()
 		_ = os.Remove(s.manifestPath(digest))
 		return fail("export", "", err)

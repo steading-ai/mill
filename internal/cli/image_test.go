@@ -12,7 +12,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/ivy/mill/internal/cli"
-	"github.com/ivy/mill/internal/workspace/machine"
+	"github.com/ivy/mill/internal/workspace/machine/driver"
 	"github.com/ivy/mill/internal/workspace/machine/image"
 )
 
@@ -38,7 +38,7 @@ var _ = Describe("mill image", Label("unit"), func() {
 		root = GinkgoT().TempDir()
 		machines = GinkgoT().TempDir()
 		now = time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
-		store = image.New(machine.NewFake(), image.Config{Root: root, Machines: machines, Now: func() time.Time { return now }})
+		store = image.New(driver.NewFake(), image.Config{Root: root, Machines: machines, Now: func() time.Time { return now }})
 		GinkgoT().Setenv("MILL_CONFIG", "")
 		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
 	})

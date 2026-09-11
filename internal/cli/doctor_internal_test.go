@@ -7,17 +7,17 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/workspace/machine"
+	"github.com/ivy/mill/internal/workspace/machine/driver"
 )
 
 var _ = Describe("The doctor's workspace probe", Label("unit"), func() {
 	var (
-		fake *machine.FakeDriver
+		fake *driver.FakeDriver
 		opts doctorOptions
 	)
 
 	BeforeEach(func() {
-		fake = machine.NewFake()
+		fake = driver.NewFake()
 		opts = doctorOptions{sandboxRoot: filepath.Join("/var", "lib", "mill")}
 	})
 
@@ -34,21 +34,21 @@ var _ = Describe("The doctor's workspace probe", Label("unit"), func() {
 
 	It("fails the machine backend on a sandbox root that is not btrfs, naming the filesystem it found", func() {
 		opts.workspace = "machine"
-		fake.Script(machine.Statfs, machine.Filesystem{Type: "xfs"})
+		fake.Script(driver.Statfs, driver.Filesystem{Type: "xfs"})
 
 		result := probeWorkspace(opts, fake)
 
 		Expect(result.OK).To(BeFalse())
 		Expect(result.Reason).To(HavePrefix("machine:"))
 		Expect(result.Reason).To(ContainSubstring("/var/lib/mill is xfs, not btrfs"))
-		Expect(fake.CallsTo(machine.Statfs)).To(Equal([]machine.Call{
-			{Method: machine.Statfs, Args: []any{"/var/lib/mill"}},
+		Expect(fake.CallsTo(driver.Statfs)).To(Equal([]driver.Call{
+			{Method: driver.Statfs, Args: []any{"/var/lib/mill"}},
 		}))
 	})
 
 	It("passes the machine backend on a btrfs sandbox root", func() {
 		opts.workspace = "machine"
-		fake.Script(machine.Statfs, machine.Filesystem{Type: machine.TypeBtrfs})
+		fake.Script(driver.Statfs, driver.Filesystem{Type: driver.TypeBtrfs})
 
 		result := probeWorkspace(opts, fake)
 
@@ -58,7 +58,7 @@ var _ = Describe("The doctor's workspace probe", Label("unit"), func() {
 
 	It("fails a sandbox root it cannot stat, with the reason", func() {
 		opts.workspace = "machine"
-		fake.Script(machine.Statfs, errors.New("statfs /var/lib/mill: no such file or directory"))
+		fake.Script(driver.Statfs, errors.New("statfs /var/lib/mill: no such file or directory"))
 
 		result := probeWorkspace(opts, fake)
 

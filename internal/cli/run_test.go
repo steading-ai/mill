@@ -288,8 +288,8 @@ var _ = Describe("mill run", func() {
 
 	// Scenario: The machine backend is chosen and honest about what it cannot do yet
 	//   Given workspace: machine
-	//   When a run is started
-	//   Then it fails before claiming with an error naming the node that builds the backend
+	//   When a run is started on a host with no sandbox root
+	//   Then it fails before claiming with an error naming what the host lacks
 	Describe("--workspace", Label("unit"), func() {
 		var stdout, stderr bytes.Buffer
 
@@ -304,27 +304,27 @@ var _ = Describe("mill run", func() {
 			Expect(os.WriteFile(path, []byte("workspace: machine\n"), 0o600)).To(Succeed())
 			GinkgoT().Setenv("MILL_CONFIG", path)
 
-			By("when a run is started")
+			By("when a run is started on a host with no sandbox root")
 			// Every socket named here is a path nothing listens on, so a
 			// command that reached the store, dagger or a lease would fail
-			// on one of them and say so.
+			// on one of them and say so. The sandbox root is a path that is
+			// not there, which is the preflight's first question.
 			exit := cli.Run([]string{
 				"run", "millspec#1",
 				"--project", "millspec",
 				"--workspace", "machine",
+				"--sandbox-root", filepath.Join(GinkgoT().TempDir(), "absent-sandbox"),
 				"--vcs-url", "https://gitlab.example.test/group/thing.git",
 				"--socket", "/nonexistent/mill.sock",
 				"--dagger-socket", "/nonexistent/dg.sock",
 			}, strings.NewReader(""), &stdout, &stderr)
 
-			By("then it fails before claiming with an error naming the node that builds the backend")
+			By("then it fails before claiming with an error naming what the host lacks")
 			Expect(exit).NotTo(BeZero())
 			Expect(stderr.String()).NotTo(ContainSubstring("nonexistent"),
 				"the refusal came before anything was read, claimed or leased")
 			Expect(stderr.String()).To(ContainSubstring("--workspace machine"))
-			Expect(stderr.String()).To(ContainSubstring("not built"))
-			Expect(stderr.String()).To(ContainSubstring("machine-lifecycle"))
-			Expect(stderr.String()).To(ContainSubstring("mill#61"))
+			Expect(stderr.String()).To(ContainSubstring("absent-sandbox"))
 		})
 
 		It("refuses a kind it does not know before claiming", func() {

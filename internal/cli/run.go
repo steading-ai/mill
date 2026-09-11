@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -31,6 +32,9 @@ import (
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/local"
 	"github.com/ivy/mill/internal/workspace/machine"
+	"github.com/ivy/mill/internal/workspace/machine/cache"
+	"github.com/ivy/mill/internal/workspace/machine/driver"
+	"github.com/ivy/mill/internal/workspace/machine/image"
 	"github.com/ivy/mill/internal/workspace/redact"
 )
 
@@ -153,6 +157,7 @@ type runOptions struct {
 	workspaceDir  string
 	workspace     string
 	sandboxRoot   string
+	sandbox       sandboxOptions
 	logDir        string
 	envMode       string
 	notifyCommand string
@@ -477,6 +482,74 @@ func tierNamed(name string) (millv1.Tier, error) {
 	return tier, nil
 }
 
+// sandboxOptions is what the machine backend reads from the configuration
+// file beyond --sandbox-root: nothing here has a flag, because none of it
+// changes between two runs of one worker. Empty means the backend's own
+// default, which is what homestead fixes on `core`.
+type sandboxOptions struct {
+	machinesDir     string
+	runStateDir     string
+	skillDir        string
+	imageRegistry   string
+	imageRepository string
+	baseImage       string
+	buildBudget     time.Duration
+	globalCap       uint64
+	repoCap         uint64
+	proxy           string
+	noProxy         string
+	nested          []string
+}
+
+// applySandboxConfig reads the machine backend's keys from the file.
+func applySandboxConfig(config Config, opts *sandboxOptions) error {
+	opts.machinesDir = config.MachinesDir
+	opts.runStateDir = config.RunStateDir
+	opts.skillDir = config.SkillDir
+	opts.imageRegistry = config.ImageRegistry
+	opts.imageRepository = config.ImageRepository
+	opts.baseImage = config.BaseImage
+	opts.proxy = config.Proxy
+	opts.noProxy = config.NoProxy
+	opts.nested = config.Nested
+	if config.ImageBuildBudget != "" {
+		budget, err := time.ParseDuration(config.ImageBuildBudget)
+		if err != nil {
+			return fmt.Errorf("image-build-budget: %w", err)
+		}
+		opts.buildBudget = budget
+	}
+	if config.CacheGlobalCap != "" {
+		size, err := parseSize(config.CacheGlobalCap)
+		if err != nil {
+			return fmt.Errorf("cache-global-cap: %w", err)
+		}
+		opts.globalCap = size
+	}
+	if config.CacheRepoCap != "" {
+		size, err := parseSize(config.CacheRepoCap)
+		if err != nil {
+			return fmt.Errorf("cache-repo-cap: %w", err)
+		}
+		opts.repoCap = size
+	}
+	return nil
+}
+
+// machineDriver is the host as a worker reaches it: every command through
+// the chokepoint, the image directory through sudo because it is root's
+// (docs/sandbox.md §Storage), and everything that enters a machine through
+// the root-owned helper (§Privilege).
+func machineDriver() driver.Driver {
+	return driver.NewSystemd(workspace.Spawner{}, driver.Commands{Sudo: "sudo"})
+}
+
+// cacheDriver is the same host as the worker alone: lineages are the
+// worker's subvolumes and never go through sudo (docs/sandbox.md §Caching).
+func cacheDriver() driver.Driver {
+	return driver.NewSystemd(workspace.Spawner{}, driver.Commands{})
+}
+
 // checkWorkspace is the backend's own preflight, asked before a node is
 // claimed. For the local backend it is the socket path: a workspace
 // directory whose run socket the kernel cannot bind fails on the bind, after
@@ -484,7 +557,7 @@ func tierNamed(name string) (millv1.Tier, error) {
 // For the machine backend it is whether this host can run one at all.
 func checkWorkspace(kind workspace.Kind, opts runOptions) error {
 	if kind == workspace.KindMachine {
-		if err := machine.Check(machineConfig(opts, nil, nil)); err != nil {
+		if err := machine.Check(machineDriver(), machineConfig(opts, nil, nil)); err != nil {
 			return fmt.Errorf("mill run: --workspace machine: %w", err)
 		}
 		return nil
@@ -533,13 +606,18 @@ func localWorkspaces(opts runOptions, f forge.Forge, redactor *redact.Redactor) 
 
 // machineWorkspaces makes a workspace in a machine of the run's own,
 // reattaching the machine this worker left behind before booting a new one.
-// The host is reached through the systemd driver, spawned through the same
-// chokepoint every other process is.
+// A run this host has a record of but no machine for is a lost sandbox,
+// and that is the error: nothing boots a fresh machine for it
+// (docs/sandbox.md §Reconciliation).
 func machineWorkspaces(opts runOptions, f forge.Forge, redactor *redact.Redactor) run.Workspaces {
 	return func(ctx context.Context, spec workspace.Spec) (run.Workspace, error) {
-		ws := machine.New(machine.NewSystemd(workspace.Spawner{}, machine.Commands{}), machineConfig(opts, f, redactor))
-		if _, err := ws.Attach(ctx, spec); err == nil {
+		ws := machine.New(machineDriver(), machineConfig(opts, f, redactor))
+		_, err := ws.Attach(ctx, spec)
+		if err == nil {
 			return ws, nil
+		}
+		if !errors.Is(err, machine.ErrNoRecord) {
+			return nil, err
 		}
 		if _, err := ws.Create(ctx, spec); err != nil {
 			return nil, err
@@ -548,16 +626,32 @@ func machineWorkspaces(opts runOptions, f forge.Forge, redactor *redact.Redactor
 	}
 }
 
-// machineConfig is the machine backend's configuration as the flags spell
-// it.
+// machineConfig is the machine backend's configuration as the flags and
+// the file spell it.
 func machineConfig(opts runOptions, f forge.Forge, redactor *redact.Redactor) machine.Config {
+	sandbox := opts.sandbox
 	return machine.Config{
 		Root:     opts.sandboxRoot,
+		Machines: sandbox.machinesDir,
+		RunState: sandbox.runStateDir,
+		Skill:    sandbox.skillDir,
 		Origin:   opts.origin,
 		Forge:    f,
 		Name:     opts.name,
 		Identity: opts.identity,
 		Redactor: redactor,
+		Log:      os.Stderr,
+		Images: image.Config{
+			Registry:    sandbox.imageRegistry,
+			Repository:  sandbox.imageRepository,
+			Pin:         sandbox.baseImage,
+			BuildBudget: sandbox.buildBudget,
+		},
+		Caches:      cache.Config{GlobalCap: sandbox.globalCap, RepoCap: sandbox.repoCap},
+		CacheDriver: cacheDriver(),
+		Proxy:       sandbox.proxy,
+		NoProxy:     sandbox.noProxy,
+		Nested:      sandbox.nested,
 	}
 }
 

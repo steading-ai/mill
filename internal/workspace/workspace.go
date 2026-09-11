@@ -311,6 +311,30 @@ type Handle struct {
 	Socket string
 	// Capabilities is the effective set, from the current step's token.
 	Capabilities []Capability
+	// Sandbox is the machine behind a `machine` workspace, as
+	// docs/sandbox.md §Reconciliation has the ledger record it. Nil for a
+	// workspace with no machine.
+	Sandbox *Sandbox
+}
+
+// Sandbox is what the ledger records of a run's machine, so a worker that
+// resumes the run can find it by name and a reconciliation pass can tell an
+// orphan from a live run (docs/sandbox.md §Reconciliation).
+type Sandbox struct {
+	// Machine is the machine's name, `mill-<id>`: the reconciliation key.
+	Machine string
+	// Unit is the host unit that owns it, `mill-machine@<id>.service`.
+	Unit string
+	// Image is the derived digest the machine booted from.
+	Image string
+	// Veth is the host side of the machine's network link as the host
+	// named it — truncated from `ve-mill-<id>`, so recorded rather than
+	// derived.
+	Veth string
+	// Lineages are the cache lineages restored into the run, each as
+	// `<scope>/<name>@<generation>`; generation 0 is a copy that started
+	// empty.
+	Lineages []string
 }
 
 // Entry is one name in a directory listing.

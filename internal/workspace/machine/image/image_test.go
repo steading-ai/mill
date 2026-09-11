@@ -12,7 +12,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/workspace/machine"
+	"github.com/ivy/mill/internal/workspace/machine/driver"
 	"github.com/ivy/mill/internal/workspace/machine/image"
 )
 
@@ -34,7 +34,7 @@ const dnfNoMatch = "STEP 2/2: RUN dnf install -y libfooo-devel && dnf clean all\
 // fixture is a store over the fake driver with a temporary root and
 // machines directory, and a clock the spec advances.
 type fixture struct {
-	fake     *machine.FakeDriver
+	fake     *driver.FakeDriver
 	store    *image.Store
 	root     string
 	machines string
@@ -44,7 +44,7 @@ type fixture struct {
 func newFixture(pin string) *fixture {
 	GinkgoHelper()
 	f := &fixture{
-		fake:     machine.NewFake(),
+		fake:     driver.NewFake(),
 		root:     GinkgoT().TempDir(),
 		machines: GinkgoT().TempDir(),
 		now:      time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC),
@@ -133,8 +133,8 @@ var _ = Describe("Ensuring an image subvolume", Label("unit"), func() {
 		Expect(errs).To(Equal([]error{nil, nil}))
 		Expect(findings).To(Equal([]*image.Finding{nil, nil}))
 		Expect(results).To(Equal([]image.Digest{digest, digest}))
-		Expect(f.fake.CallsTo(machine.BuildImageOnHost)).To(HaveLen(1), "one build for two callers")
-		Expect(f.fake.CallsTo(machine.Exists)).To(HaveLen(2), "each caller checked under the lock")
+		Expect(f.fake.CallsTo(driver.BuildImageOnHost)).To(HaveLen(1), "one build for two callers")
+		Expect(f.fake.CallsTo(driver.Exists)).To(HaveLen(2), "each caller checked under the lock")
 		Expect(f.store.Path(digest)).To(BeADirectory())
 		Expect(f.store.Path(digest) + image.BuildingSuffix).NotTo(BeAnExistingFile())
 	})
@@ -144,7 +144,7 @@ var _ = Describe("Ensuring an image subvolume", Label("unit"), func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(finding).To(BeNil())
 
-		build := f.fake.CallsTo(machine.BuildImageOnHost)[0].Args[0].(machine.ImageBuild)
+		build := f.fake.CallsTo(driver.BuildImageOnHost)[0].Args[0].(driver.ImageBuild)
 		Expect(build.Containerfile).NotTo(BeAnExistingFile(), "the build context is temporary and gone")
 		Expect(build.Tags).To(ConsistOf("localhost/mill/derived:" + string(digest)))
 		Expect(f.store.Containerfile(baseA, []string{"libpq-devel", "vips-devel"})).To(Equal(
@@ -153,14 +153,14 @@ var _ = Describe("Ensuring an image subvolume", Label("unit"), func() {
 		Expect(f.store.Containerfile(baseA, nil)).To(Equal("FROM harbor.example/mill/base@sha256:" + string(baseA) + "\n"))
 
 		building := f.store.Path(digest) + image.BuildingSuffix
-		Expect(f.fake.CallsTo(machine.CreateSubvolume)[0].Args).To(Equal([]any{building}))
-		Expect(f.fake.CallsTo(machine.ExportImage)[0].Args).To(Equal([]any{build.Tags[0], building}))
-		Expect(f.fake.CallsTo(machine.Setcap)).To(Equal([]machine.Call{
-			{Method: machine.Setcap, Args: []any{"cap_setuid=ep", filepath.Join(building, "usr/bin/newuidmap")}},
-			{Method: machine.Setcap, Args: []any{"cap_setgid=ep", filepath.Join(building, "usr/bin/newgidmap")}},
+		Expect(f.fake.CallsTo(driver.CreateSubvolume)[0].Args).To(Equal([]any{building}))
+		Expect(f.fake.CallsTo(driver.ExportImage)[0].Args).To(Equal([]any{build.Tags[0], building}))
+		Expect(f.fake.CallsTo(driver.Setcap)).To(Equal([]driver.Call{
+			{Method: driver.Setcap, Args: []any{"cap_setuid=ep", filepath.Join(building, "usr/bin/newuidmap")}},
+			{Method: driver.Setcap, Args: []any{"cap_setgid=ep", filepath.Join(building, "usr/bin/newgidmap")}},
 		}))
-		Expect(f.fake.CallsTo(machine.Rename)[0].Args).To(Equal([]any{building, f.store.Path(digest)}))
-		Expect(f.fake.CallsTo(machine.RemoveImage)[0].Args).To(Equal([]any{build.Tags[0]}), "the built image is not kept in container storage")
+		Expect(f.fake.CallsTo(driver.Rename)[0].Args).To(Equal([]any{building, f.store.Path(digest)}))
+		Expect(f.fake.CallsTo(driver.RemoveImage)[0].Args).To(Equal([]any{build.Tags[0]}), "the built image is not kept in container storage")
 
 		manifest, err := f.store.Manifest(digest)
 		Expect(err).NotTo(HaveOccurred())
@@ -175,12 +175,12 @@ var _ = Describe("Ensuring an image subvolume", Label("unit"), func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(finding).To(BeNil())
 		Expect(got).To(Equal(digest))
-		Expect(f.fake.CallsTo(machine.BuildImageOnHost)).To(BeEmpty())
+		Expect(f.fake.CallsTo(driver.BuildImageOnHost)).To(BeEmpty())
 	})
 
 	It("A package that does not exist degrades to base with a finding", func(ctx context.Context) {
 		By("given mill.toml declares libfooo-devel")
-		f.fake.Script(machine.BuildImageOnHost, machine.Output{Stdout: dnfNoMatch, Status: 1})
+		f.fake.Script(driver.BuildImageOnHost, driver.Output{Stdout: dnfNoMatch, Status: 1})
 
 		By("when the image is ensured")
 		digest, finding, err := f.store.Ensure(ctx, baseA, []string{"libfooo-devel"})
@@ -189,8 +189,8 @@ var _ = Describe("Ensuring an image subvolume", Label("unit"), func() {
 		By("then the run boots from base")
 		Expect(digest).To(Equal(baseA))
 		Expect(f.store.Path(baseA)).To(BeADirectory(), "the base subvolume was ensured for the fallback")
-		Expect(f.fake.CallsTo(machine.BuildImageOnHost)).To(HaveLen(2), "the derived build, then the base's export")
-		Expect(f.fake.CallsTo(machine.CreateSubvolume)).To(HaveLen(1), "no .building was made for the failed build")
+		Expect(f.fake.CallsTo(driver.BuildImageOnHost)).To(HaveLen(2), "the derived build, then the base's export")
+		Expect(f.fake.CallsTo(driver.CreateSubvolume)).To(HaveLen(1), "no .building was made for the failed build")
 		Expect(f.store.Path(image.Derived(baseA, []string{"libfooo-devel"})) + image.BuildingSuffix).NotTo(BeAnExistingFile())
 
 		By("and the first session receives a finding naming libfooo-devel and dnf's error")
@@ -204,7 +204,7 @@ var _ = Describe("Ensuring an image subvolume", Label("unit"), func() {
 	})
 
 	It("removes .building and degrades to base when the export fails after the build", func(ctx context.Context) {
-		f.fake.Script(machine.ExportImage, errors.New("podman export exited 125: no space left"))
+		f.fake.Script(driver.ExportImage, errors.New("podman export exited 125: no space left"))
 
 		digest, finding, err := f.store.Ensure(ctx, baseA, []string{"libpq-devel"})
 		Expect(err).NotTo(HaveOccurred())
@@ -213,10 +213,10 @@ var _ = Describe("Ensuring an image subvolume", Label("unit"), func() {
 		Expect(finding.Err).To(MatchError(ContainSubstring("no space left")))
 
 		derived := image.Derived(baseA, []string{"libpq-devel"})
-		Expect(f.fake.CallsTo(machine.DeleteSubvolume)[0].Args).To(Equal([]any{f.store.Path(derived) + image.BuildingSuffix, false}))
+		Expect(f.fake.CallsTo(driver.DeleteSubvolume)[0].Args).To(Equal([]any{f.store.Path(derived) + image.BuildingSuffix, false}))
 		Expect(f.store.Path(derived) + image.BuildingSuffix).NotTo(BeAnExistingFile())
 		Expect(f.store.Path(derived)).NotTo(BeAnExistingFile())
-		Expect(f.fake.CallsTo(machine.RemoveImage)).To(HaveLen(2), "the built image is removed on failure too")
+		Expect(f.fake.CallsTo(driver.RemoveImage)).To(HaveLen(2), "the built image is removed on failure too")
 	})
 
 	It("carries only the last twenty lines of the build in the finding", func(ctx context.Context) {
@@ -224,7 +224,7 @@ var _ = Describe("Ensuring an image subvolume", Label("unit"), func() {
 		for i := range 30 {
 			lines = append(lines, "line "+string(rune('a'+i)))
 		}
-		f.fake.Script(machine.BuildImageOnHost, machine.Output{Stdout: strings.Join(lines, "\n") + "\n", Status: 1})
+		f.fake.Script(driver.BuildImageOnHost, driver.Output{Stdout: strings.Join(lines, "\n") + "\n", Status: 1})
 
 		_, finding, err := f.store.Ensure(ctx, baseA, []string{"libpq-devel"})
 		Expect(err).NotTo(HaveOccurred())
@@ -233,7 +233,7 @@ var _ = Describe("Ensuring an image subvolume", Label("unit"), func() {
 	})
 
 	It("fails, rather than degrading, when the base itself cannot be exported", func(ctx context.Context) {
-		f.fake.Script(machine.BuildImageOnHost, errors.New("podman build exited 125: manifest unknown"))
+		f.fake.Script(driver.BuildImageOnHost, errors.New("podman build exited 125: manifest unknown"))
 
 		_, finding, err := f.store.Ensure(ctx, baseA, nil)
 		Expect(err).To(MatchError(image.ErrNoBase))
@@ -243,7 +243,7 @@ var _ = Describe("Ensuring an image subvolume", Label("unit"), func() {
 
 	It("gives up on the derived build at the budget and boots base", func(ctx context.Context) {
 		slow := image.New(f.fake, image.Config{Root: f.root, Machines: f.machines, BuildBudget: time.Nanosecond})
-		f.fake.Script(machine.BuildImageOnHost, context.DeadlineExceeded)
+		f.fake.Script(driver.BuildImageOnHost, context.DeadlineExceeded)
 
 		digest, finding, err := slow.Ensure(ctx, baseA, []string{"libpq-devel"})
 		Expect(err).NotTo(HaveOccurred())
@@ -258,18 +258,18 @@ var _ = Describe("Resolving the base", Label("unit"), func() {
 	BeforeEach(func() { f = newFixture("") })
 
 	It("pulls the latest tag from Harbor, reads its digest, and remembers it", func(ctx context.Context) {
-		f.fake.Script(machine.ImageDigest, "sha256:"+string(baseA))
+		f.fake.Script(driver.ImageDigest, "sha256:"+string(baseA))
 
 		base, err := f.store.ResolveBase(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(base).To(Equal(image.Base{Digest: baseA, Reference: "harbor.example/mill/base:latest"}))
-		Expect(f.fake.CallsTo(machine.PullImage)[0].Args).To(Equal([]any{"harbor.example/mill/base:latest"}))
+		Expect(f.fake.CallsTo(driver.PullImage)[0].Args).To(Equal([]any{"harbor.example/mill/base:latest"}))
 		Expect(filepath.Join(f.root, "images", "base.json")).To(BeAnExistingFile())
 	})
 
 	It("resolves a pinned tag from Harbor and a pinned digest from nowhere", func(ctx context.Context) {
 		tagged := newFixture("2026-09-01")
-		tagged.fake.Script(machine.ImageDigest, "sha256:"+string(baseA))
+		tagged.fake.Script(driver.ImageDigest, "sha256:"+string(baseA))
 		base, err := tagged.store.ResolveBase(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(base.Reference).To(Equal("harbor.example/mill/base:2026-09-01"))
@@ -284,13 +284,13 @@ var _ = Describe("Resolving the base", Label("unit"), func() {
 
 	It("falls back to the last resolved base when Harbor is unreachable and its subvolume exists", func(ctx context.Context) {
 		By("given a base resolved earlier whose subvolume is on the host")
-		f.fake.Script(machine.ImageDigest, "sha256:"+string(baseA))
+		f.fake.Script(driver.ImageDigest, "sha256:"+string(baseA))
 		_, err := f.store.ResolveBase(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		f.subvolume(baseA)
 
 		By("when Harbor does not answer")
-		f.fake.Script(machine.PullImage, errors.New("podman pull exited 125: dial tcp: no route to host"))
+		f.fake.Script(driver.PullImage, errors.New("podman pull exited 125: dial tcp: no route to host"))
 		base, err := f.store.ResolveBase(ctx)
 
 		By("then the provision uses it and records the fallback")
@@ -302,20 +302,20 @@ var _ = Describe("Resolving the base", Label("unit"), func() {
 	})
 
 	It("fails before any machine starts when Harbor is unreachable and no resolved base has a subvolume", func(ctx context.Context) {
-		f.fake.Script(machine.PullImage, errors.New("podman pull exited 125: dial tcp: no route to host"))
+		f.fake.Script(driver.PullImage, errors.New("podman pull exited 125: dial tcp: no route to host"))
 		_, err := f.store.ResolveBase(ctx)
 		Expect(err).To(MatchError(image.ErrNoBase))
 		Expect(err).To(MatchError(ContainSubstring("no base was resolved before")))
 
 		By("and likewise when the base was resolved but its subvolume is gone")
-		f.fake.Script(machine.ImageDigest, "sha256:"+string(baseA))
+		f.fake.Script(driver.ImageDigest, "sha256:"+string(baseA))
 		_, err = f.store.ResolveBase(ctx)
 		Expect(err).NotTo(HaveOccurred())
-		f.fake.Script(machine.PullImage, errors.New("podman pull exited 125: dial tcp: no route to host"))
+		f.fake.Script(driver.PullImage, errors.New("podman pull exited 125: dial tcp: no route to host"))
 		_, err = f.store.ResolveBase(ctx)
 		Expect(err).To(MatchError(image.ErrNoBase))
 		Expect(err).To(MatchError(ContainSubstring("has no subvolume")))
-		Expect(f.fake.CallsTo(machine.StartUnit)).To(BeEmpty())
+		Expect(f.fake.CallsTo(driver.StartUnit)).To(BeEmpty())
 	})
 })
 
@@ -367,7 +367,7 @@ var _ = Describe("Listing and pruning images", Label("unit"), func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(pruned).To(HaveLen(1))
 		Expect(pruned[0].Digest).To(Equal(old))
-		Expect(f.fake.CallsTo(machine.DeleteSubvolume)[0].Args).To(Equal([]any{f.store.Path(old), false}))
+		Expect(f.fake.CallsTo(driver.DeleteSubvolume)[0].Args).To(Equal([]any{f.store.Path(old), false}))
 		Expect(f.store.Path(old)).NotTo(BeAnExistingFile())
 		Expect(f.store.Path(fresh)).To(BeADirectory())
 
@@ -384,7 +384,7 @@ var _ = Describe("Building the base", Label("unit"), func() {
 	BeforeEach(func() { f = newFixture("") })
 
 	It("builds the context with the Harbor host as a build argument, tags the date and latest, and pushes when asked", func(ctx context.Context) {
-		f.fake.Script(machine.ImageDigest, "sha256:"+string(baseA))
+		f.fake.Script(driver.ImageDigest, "sha256:"+string(baseA))
 		robot := filepath.Join(GinkgoT().TempDir(), "harbor-robot")
 		Expect(os.WriteFile(robot, []byte("robot$mill+builder:s3cret\n"), 0o600)).To(Succeed())
 		credential, err := image.LoadRobot(robot)
@@ -397,22 +397,22 @@ var _ = Describe("Building the base", Label("unit"), func() {
 			Digest: baseA,
 			Pushed: true,
 		}))
-		Expect(f.fake.CallsTo(machine.BuildImageOnHost)[0].Args[0]).To(Equal(machine.ImageBuild{
+		Expect(f.fake.CallsTo(driver.BuildImageOnHost)[0].Args[0]).To(Equal(driver.ImageBuild{
 			Context: "images/base",
 			Tags:    result.Tags,
 			Args:    map[string]string{"HARBOR_HOST": "harbor.example"},
 		}))
-		Expect(f.fake.CallsTo(machine.Login)[0].Args).To(Equal([]any{"harbor.example", "robot$mill+builder"}))
-		Expect(f.fake.CallsTo(machine.PushImage)).To(HaveLen(2))
-		Expect(f.fake.CallsTo(machine.Logout)).To(HaveLen(1))
+		Expect(f.fake.CallsTo(driver.Login)[0].Args).To(Equal([]any{"harbor.example", "robot$mill+builder"}))
+		Expect(f.fake.CallsTo(driver.PushImage)).To(HaveLen(2))
+		Expect(f.fake.CallsTo(driver.Logout)).To(HaveLen(1))
 	})
 
 	It("builds without pushing by default and refuses a push with no credential", func(ctx context.Context) {
-		f.fake.Script(machine.ImageDigest, "sha256:"+string(baseA), "sha256:"+string(baseA))
+		f.fake.Script(driver.ImageDigest, "sha256:"+string(baseA), "sha256:"+string(baseA))
 		result, err := f.store.BuildBase(ctx, image.BaseBuild{Context: "images/base"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result.Pushed).To(BeFalse())
-		Expect(f.fake.CallsTo(machine.PushImage)).To(BeEmpty())
+		Expect(f.fake.CallsTo(driver.PushImage)).To(BeEmpty())
 
 		_, err = f.store.BuildBase(ctx, image.BaseBuild{Context: "images/base", Push: true})
 		Expect(err).To(MatchError(ContainSubstring("robot credential")))

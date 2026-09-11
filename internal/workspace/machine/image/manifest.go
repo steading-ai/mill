@@ -98,7 +98,7 @@ func (s *Store) List(ctx context.Context) ([]Manifest, error) {
 		if err != nil {
 			return nil, err
 		}
-		present, err := s.driver.Exists(ctx, s.Path(digest))
+		present, err := s.host.Exists(ctx, s.Path(digest))
 		if err != nil {
 			return nil, err
 		}
@@ -142,7 +142,7 @@ func (s *Store) remove(ctx context.Context, digest Digest) error {
 		return err
 	}
 	defer unlock()
-	if err := s.driver.DeleteSubvolume(ctx, s.Path(digest), false); err != nil {
+	if err := s.host.DeleteSubvolume(ctx, s.Path(digest), false); err != nil {
 		return err
 	}
 	if err := os.Remove(s.manifestPath(digest)); err != nil && !isNotExist(err) {

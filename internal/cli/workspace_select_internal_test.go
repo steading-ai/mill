@@ -12,7 +12,6 @@ import (
 
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/local"
-	"github.com/ivy/mill/internal/workspace/machine"
 	"github.com/ivy/mill/internal/workspace/redact"
 )
 
@@ -88,27 +87,29 @@ var _ = Describe("Choosing the workspace backend", Label("unit"), func() {
 
 	// The first half of the scenario the run refusal below completes: with
 	// `workspace: machine` the function the loop is handed is the machine
-	// backend, and what it makes says which node builds it.
-	It("chooses the machine backend under workspace: machine, and it says what it cannot do yet", func(ctx context.Context) {
+	// backend, over the real host: with no sandbox root to write a run
+	// directory under, making a workspace fails on that and touches no
+	// unit.
+	It("chooses the machine backend under workspace: machine", func(ctx context.Context) {
 		opts.workspace = "machine"
+		opts.sandboxRoot = filepath.Join(GinkgoT().TempDir(), "absent-sandbox")
 		kind, err := workspace.ParseKind(opts.workspace)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(kind).To(Equal(workspace.KindMachine))
 
 		workspaces := workspacesFor(kind, opts, nil, redact.New())
 
-		_, err = workspaces(ctx, workspace.Spec{RunID: "01SPECRUN0000000000000000B", NodeRef: "millspec#1"})
-		Expect(err).To(MatchError(machine.ErrNotBuilt))
-		Expect(err).To(MatchError(ContainSubstring(machine.LifecycleNode)))
-		Expect(err).To(MatchError(ContainSubstring("mill#61")))
+		_, err = workspaces(ctx, workspace.Spec{RunID: "01SPECRUN0000000000000000B", NodeRef: "millspec#1", Origin: "/nonexistent/origin.git"})
+		Expect(err).To(MatchError(ContainSubstring("absent-sandbox")))
 	})
 
-	It("refuses the machine backend before a claim, naming the node that builds it", func() {
+	It("refuses the machine backend before a claim on a host that cannot run it, naming the reason", func() {
+		opts.sandboxRoot = filepath.Join(GinkgoT().TempDir(), "absent-sandbox")
+
 		err := checkWorkspace(workspace.KindMachine, opts)
 
-		Expect(err).To(MatchError(machine.ErrNotBuilt))
 		Expect(err).To(MatchError(ContainSubstring("--workspace machine")))
-		Expect(err).To(MatchError(ContainSubstring(machine.LifecycleNode)))
+		Expect(err).To(MatchError(ContainSubstring("absent-sandbox")))
 	})
 
 	It("refuses a kind the tree does not know, and the remote one it has not built", func() {

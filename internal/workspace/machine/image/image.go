@@ -10,7 +10,7 @@
 // fails the run: the run boots from base and its first session receives a
 // [Finding] carrying what dnf said.
 //
-// Every host command goes through [machine.Driver]. The build is the one
+// Every host command goes through [driver.Driver]. The build is the one
 // place the worker runs a container outside a machine; the driver's
 // BuildImageOnHost and this package's buildOnHostOutsideAnyMachine are
 // named for it.
@@ -27,7 +27,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ivy/mill/internal/workspace/machine"
+	"github.com/ivy/mill/internal/workspace/machine/driver"
 )
 
 // Defaults for what the worker's configuration leaves unsaid.
@@ -120,11 +120,11 @@ func Packages(packages []string) []string {
 
 // Config is what the worker's configuration says about images.
 type Config struct {
-	// Root is the sandbox root, [machine.DefaultRoot] when empty. Locks,
+	// Root is the sandbox root, [driver.DefaultRoot] when empty. Locks,
 	// manifests and the last resolved base live under `<Root>/images`.
 	Root string
 	// Machines is the image subvolume directory,
-	// [machine.DefaultMachines] when empty.
+	// [driver.DefaultMachines] when empty.
 	Machines string
 	// Registry is the Harbor host, [DefaultRegistry] when empty.
 	Registry string
@@ -143,10 +143,10 @@ type Config struct {
 
 func (c Config) withDefaults() Config {
 	if c.Root == "" {
-		c.Root = machine.DefaultRoot
+		c.Root = driver.DefaultRoot
 	}
 	if c.Machines == "" {
-		c.Machines = machine.DefaultMachines
+		c.Machines = driver.DefaultMachines
 	}
 	if c.Registry == "" {
 		c.Registry = DefaultRegistry
@@ -166,13 +166,13 @@ func (c Config) withDefaults() Config {
 // Store is the images on one worker: the subvolumes under the machines
 // directory and the worker's records of them.
 type Store struct {
-	driver machine.Driver
+	host   driver.Driver
 	config Config
 }
 
 // New is a store over the host the driver reaches.
-func New(driver machine.Driver, config Config) *Store {
-	return &Store{driver: driver, config: config.withDefaults()}
+func New(host driver.Driver, config Config) *Store {
+	return &Store{host: host, config: config.withDefaults()}
 }
 
 // Config is the configuration in effect, defaults filled.

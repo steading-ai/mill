@@ -1,4 +1,4 @@
-package machine_test
+package driver_test
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/machine"
+	"github.com/ivy/mill/internal/workspace/machine/driver"
 )
 
 // floorMark is a variable only the spec's spawner carries on its floor. A
@@ -29,7 +29,7 @@ const floorMark = "MILL_SPEC_FLOOR"
 type host struct {
 	dir      string
 	spawner  workspace.Spawner
-	commands machine.Commands
+	commands driver.Commands
 }
 
 func newHost() *host {
@@ -39,10 +39,11 @@ func newHost() *host {
 	return &host{
 		dir:     dir,
 		spawner: workspace.Spawner{Floor: []string{"PATH=/usr/bin:/bin", floorMark + "=through-the-spawner"}},
-		commands: machine.Commands{
+		commands: driver.Commands{
 			Systemctl:  stub("systemctl"),
 			Machinectl: stub("machinectl"),
-			SystemdRun: stub("systemd-run"),
+			Helper:     "/usr/libexec/mill-machine",
+			HelperSudo: stub("sudo"),
 			Btrfs:      stub("btrfs"),
 			Podman:     stub("podman"),
 			Tar:        stub("tar"),
@@ -96,13 +97,13 @@ func drain(process *workspace.Process) (stdout, stderr string, result workspace.
 
 var _ = Describe("The systemd driver", Label("unit"), func() {
 	var (
-		h      *host
-		driver machine.Driver
+		h *host
+		d driver.Driver
 	)
 
 	BeforeEach(func() {
 		h = newHost()
-		driver = machine.NewSystemd(h.spawner, h.commands)
+		d = driver.NewSystemd(h.spawner, h.commands)
 	})
 
 	// Scenario: The driver is the only door to the host
@@ -118,7 +119,7 @@ var _ = Describe("The systemd driver", Label("unit"), func() {
 		Expect(os.Getenv(floorMark)).To(BeEmpty())
 
 		By("when it starts a unit")
-		Expect(driver.StartUnit(ctx, "mill-machine@01RUN.service")).To(Succeed())
+		Expect(d.StartUnit(ctx, "mill-machine@01RUN.service")).To(Succeed())
 
 		By("then the command goes through Spawner.Exec")
 		Expect(h.calls("systemctl")).To(Equal([]string{"start", "mill-machine@01RUN.service"}))
@@ -128,32 +129,53 @@ var _ = Describe("The systemd driver", Label("unit"), func() {
 	It("carries a failed command's exit status and what it said on stderr", func(ctx context.Context) {
 		h.stub("systemctl", `echo "Failed to start mill-machine@01RUN.service: Access denied" >&2; exit 4`)
 
-		err := driver.StartUnit(ctx, "mill-machine@01RUN.service")
+		err := d.StartUnit(ctx, "mill-machine@01RUN.service")
 
 		Expect(err).To(MatchError(ContainSubstring("exited 4")))
 		Expect(err).To(MatchError(ContainSubstring("Access denied")))
 	})
 
-	It("stops a unit on the host, or inside a machine when one is named", func(ctx context.Context) {
+	It("stops a unit on the host with systemctl, and inside a machine through the helper under sudo", func(ctx context.Context) {
 		h.stub("systemctl", "exit 0")
+		h.stub("sudo", "exit 0")
 
-		Expect(driver.StopUnit(ctx, "", "mill-machine@01RUN.service")).To(Succeed())
-		Expect(driver.StopUnit(ctx, "mill-01RUN", "mill-step-3.slice")).To(Succeed())
+		Expect(d.StopUnit(ctx, "", "mill-machine@01run.service")).To(Succeed())
+		Expect(d.StopUnit(ctx, "mill-01run", "mill-step-3.slice")).To(Succeed())
 
-		Expect(h.calls("systemctl")).To(Equal([]string{
-			"stop", "mill-machine@01RUN.service",
-			"--machine=mill-01RUN", "stop", "mill-step-3.slice",
+		Expect(h.calls("systemctl")).To(Equal([]string{"stop", "mill-machine@01run.service"}))
+		Expect(h.calls("sudo")).To(Equal([]string{
+			"-n", "/usr/libexec/mill-machine", "stop", "mill-01run", "mill-step-3.slice",
 		}))
+		Expect(h.floor("sudo")).To(Equal("through-the-spawner"))
+	})
+
+	It("terminates a machine through the helper under sudo, never machinectl", func(ctx context.Context) {
+		h.stub("sudo", "exit 0")
+
+		Expect(d.Terminate(ctx, "mill-01run")).To(Succeed())
+
+		Expect(h.calls("sudo")).To(Equal([]string{"-n", "/usr/libexec/mill-machine", "terminate", "mill-01run"}))
+		Expect(h.calls("machinectl")).To(BeEmpty())
+	})
+
+	It("reads a machine's host-side interfaces from machinectl status", func(ctx context.Context) {
+		h.stub("machinectl", `printf 'mill-01run(abc)\n\t   Since: now\n\t Service: systemd-nspawn; class container\n\t   Iface: ve-mill-01run\n\t    Unit: mill-machine@01run.service\n'`)
+
+		names, err := d.MachineInterfaces(ctx, "mill-01run")
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(names).To(Equal([]string{"ve-mill-01run"}))
+		Expect(h.calls("machinectl")).To(Equal([]string{"status", "--no-pager", "-n", "0", "mill-01run"}))
 	})
 
 	It("reads a machine as machined shows it", func(ctx context.Context) {
 		h.stub("machinectl", "printf 'Name=mill-01RUN\\nState=running\\nClass=container\\nService=systemd-nspawn\\n'")
 
-		shown, err := driver.ShowMachine(ctx, "mill-01RUN")
+		shown, err := d.ShowMachine(ctx, "mill-01RUN")
 
 		Expect(err).NotTo(HaveOccurred())
-		Expect(shown).To(Equal(machine.Machine{
-			Name: "mill-01RUN", State: machine.StateRunning, Class: "container", Service: "systemd-nspawn",
+		Expect(shown).To(Equal(driver.Machine{
+			Name: "mill-01RUN", State: driver.StateRunning, Class: "container", Service: "systemd-nspawn",
 		}))
 		Expect(h.calls("machinectl")[:2]).To(Equal([]string{"show", "mill-01RUN"}))
 	})
@@ -161,19 +183,19 @@ var _ = Describe("The systemd driver", Label("unit"), func() {
 	It("reports a machine machined does not know as ErrNoMachine", func(ctx context.Context) {
 		h.stub("machinectl", `echo "Could not get path to machine: No machine 'mill-01RUN' known" >&2; exit 1`)
 
-		_, err := driver.ShowMachine(ctx, "mill-01RUN")
+		_, err := d.ShowMachine(ctx, "mill-01RUN")
 
-		Expect(err).To(MatchError(machine.ErrNoMachine))
+		Expect(err).To(MatchError(driver.ErrNoMachine))
 		Expect(err).To(MatchError(ContainSubstring("mill-01RUN")))
 	})
 
 	It("lists the machines on the host from machinectl's columns", func(ctx context.Context) {
 		h.stub("machinectl", "printf 'mill-01RUN container systemd-nspawn fedora 44 -\\nqemu-1-guest vm libvirt-qemu - - -\\n'")
 
-		listed, err := driver.ListMachines(ctx)
+		listed, err := d.ListMachines(ctx)
 
 		Expect(err).NotTo(HaveOccurred())
-		Expect(listed).To(Equal([]machine.Machine{
+		Expect(listed).To(Equal([]driver.Machine{
 			{Name: "mill-01RUN", Class: "container", Service: "systemd-nspawn"},
 			{Name: "qemu-1-guest", Class: "vm", Service: "libvirt-qemu"},
 		}))
@@ -181,15 +203,16 @@ var _ = Describe("The systemd driver", Label("unit"), func() {
 	})
 
 	Describe("exec", func() {
-		// The stub is systemd-run as the driver sees it: it reports its
-		// arguments on stderr, copies its stdin to stdout, and exits as
-		// the command under it would — which is what `--pipe --wait` does.
+		// The stub is sudo as the driver sees it, standing in for the
+		// helper's systemd-run: it reports its arguments on stderr, copies
+		// its stdin to stdout, and exits as the command under it would —
+		// which is what `--pipe --wait` does.
 		BeforeEach(func() {
-			h.stub("systemd-run", `printf '%s\n' "$@" >&2; cat; exit 42`)
+			h.stub("sudo", `printf '%s\n' "$@" >&2; cat; exit 42`)
 		})
 
 		It("streams stdin, stdout and stderr and reports the command's exit status", func(ctx context.Context) {
-			process, err := driver.Exec(ctx, machine.ExecRequest{
+			process, err := d.Exec(ctx, driver.ExecRequest{
 				Machine: "mill-01RUN",
 				Unit:    "mill-exec-0001",
 				Slice:   "mill-step-2.slice",
@@ -216,34 +239,34 @@ var _ = Describe("The systemd driver", Label("unit"), func() {
 			Expect(out).To(Equal([]byte("piped in\n")))
 			By("the exit status is the command's own")
 			Expect(result).To(Equal(workspace.Result{Status: 42}))
-			By("the invocation is the one docs/sandbox.md §Exec names")
+			By("the invocation is the helper's exec verb under sudo -n, as docs/sandbox.md §Exec names it")
 			Expect(strings.Split(strings.TrimSpace(string(errOut)), "\n")).To(Equal([]string{
-				"--machine=mill-01RUN",
-				"--pipe", "--wait", "--quiet", "--collect",
-				"--property=Slice=mill-step-2.slice",
+				"-n", "/usr/libexec/mill-machine", "exec", "mill-01RUN",
 				"--unit=mill-exec-0001",
-				"--property=WorkingDirectory=/work",
-				"--property=User=agent",
-				"--setenv=HOME=/home/agent",
-				"--setenv=NO_PROXY=a b",
-				"--setenv=STEP_TOKEN=t",
+				"-p", "Slice=mill-step-2.slice",
+				"-p", "WorkingDirectory=/work",
+				"-p", "User=agent",
+				"-p", "Environment=HOME=/home/agent",
+				"-p", "Environment=NO_PROXY=a b",
+				"-p", "Environment=STEP_TOKEN=t",
 				"--",
 				"sh", "-c", "cat",
 			}))
+			Expect(h.floor("sudo")).To(Equal("through-the-spawner"))
 		})
 
 		It("refuses an exec under no step slice, because nothing would reap it", func(ctx context.Context) {
-			_, err := driver.Exec(ctx, machine.ExecRequest{Machine: "mill-01RUN", Argv: []string{"true"}})
+			_, err := d.Exec(ctx, driver.ExecRequest{Machine: "mill-01RUN", Argv: []string{"true"}})
 
 			Expect(err).To(MatchError(ContainSubstring("step slice")))
-			Expect(h.calls("systemd-run")).To(BeEmpty(), "nothing was run")
+			Expect(h.calls("sudo")).To(BeEmpty(), "nothing was run")
 		})
 
 		It("refuses an exec that names no machine or nothing to run", func(ctx context.Context) {
-			_, err := driver.Exec(ctx, machine.ExecRequest{Slice: "mill-step-1.slice", Argv: []string{"true"}})
+			_, err := d.Exec(ctx, driver.ExecRequest{Slice: "mill-step-1.slice", Argv: []string{"true"}})
 			Expect(err).To(MatchError(ContainSubstring("no machine")))
 
-			_, err = driver.Exec(ctx, machine.ExecRequest{Machine: "mill-01RUN", Slice: "mill-step-1.slice"})
+			_, err = d.Exec(ctx, driver.ExecRequest{Machine: "mill-01RUN", Slice: "mill-step-1.slice"})
 			Expect(err).To(MatchError(ContainSubstring("nothing to run")))
 		})
 	})
@@ -251,11 +274,11 @@ var _ = Describe("The systemd driver", Label("unit"), func() {
 	It("snapshots and deletes subvolumes with btrfs", func(ctx context.Context) {
 		h.stub("btrfs", "exit 0")
 
-		Expect(driver.Snapshot(ctx, "/var/lib/mill/cache/global/go-mod/gen-3", "/var/lib/mill/runs/01RUN/cache/go-mod", false)).To(Succeed())
-		Expect(driver.Snapshot(ctx, "/var/lib/mill/runs/01RUN/cache/go-mod", "/var/lib/mill/runs/01RUN/cache/go-mod.candidate", true)).To(Succeed())
-		Expect(driver.DeleteSubvolume(ctx, "/var/lib/mill/runs/01RUN/cache/go-mod", false)).To(Succeed())
-		Expect(driver.SetReadOnly(ctx, "/var/lib/mill/cache/global/go-mod/gen-1", false)).To(Succeed())
-		Expect(driver.DeleteSubvolume(ctx, "/var/lib/mill/cache/global/go-mod/gen-1", true)).To(Succeed())
+		Expect(d.Snapshot(ctx, "/var/lib/mill/cache/global/go-mod/gen-3", "/var/lib/mill/runs/01RUN/cache/go-mod", false)).To(Succeed())
+		Expect(d.Snapshot(ctx, "/var/lib/mill/runs/01RUN/cache/go-mod", "/var/lib/mill/runs/01RUN/cache/go-mod.candidate", true)).To(Succeed())
+		Expect(d.DeleteSubvolume(ctx, "/var/lib/mill/runs/01RUN/cache/go-mod", false)).To(Succeed())
+		Expect(d.SetReadOnly(ctx, "/var/lib/mill/cache/global/go-mod/gen-1", false)).To(Succeed())
+		Expect(d.DeleteSubvolume(ctx, "/var/lib/mill/cache/global/go-mod/gen-1", true)).To(Succeed())
 
 		Expect(h.calls("btrfs")).To(Equal([]string{
 			"subvolume", "snapshot", "/var/lib/mill/cache/global/go-mod/gen-3", "/var/lib/mill/runs/01RUN/cache/go-mod",
@@ -270,19 +293,19 @@ var _ = Describe("The systemd driver", Label("unit"), func() {
 	It("estimates a tree's size with du, in bytes", func(ctx context.Context) {
 		h.stub("du", `printf '2834100\t%s\n' "$2"`)
 
-		size, err := driver.DiskUsage(ctx, "/var/lib/mill/cache/repo/r/go-build/gen-2")
+		size, err := d.DiskUsage(ctx, "/var/lib/mill/cache/repo/r/go-build/gen-2")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(size).To(Equal(uint64(2834100 * 1024)))
 		Expect(h.calls("du")).To(Equal([]string{"-sk", "/var/lib/mill/cache/repo/r/go-build/gen-2"}))
 	})
 
 	It("reports the filesystem under a path by name, and nothing for a path that is not there", func() {
-		fs, err := driver.Statfs(GinkgoT().TempDir())
+		fs, err := d.Statfs(GinkgoT().TempDir())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(fs.Type).NotTo(BeEmpty())
 		Expect(fs.Total).To(BeNumerically(">", 0))
 
-		_, err = driver.Statfs(filepath.Join(GinkgoT().TempDir(), "absent"))
+		_, err = d.Statfs(filepath.Join(GinkgoT().TempDir(), "absent"))
 		Expect(err).To(MatchError(ContainSubstring("absent")))
 	})
 

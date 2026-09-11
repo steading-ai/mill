@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ivy/mill/internal/workspace/machine"
+	"github.com/ivy/mill/internal/workspace/machine/driver"
 )
 
 // The robot credential `mill image build-base --push` presents to Harbor:
@@ -105,7 +105,7 @@ func (s *Store) BuildBase(ctx context.Context, build BaseBuild) (BaseResult, err
 	repository := s.config.Registry + "/" + s.config.Repository
 	tags := []string{repository + ":" + date.Format(DateTagLayout), repository + ":" + DefaultTag}
 
-	output, err := s.driver.BuildImageOnHost(ctx, machine.ImageBuild{
+	output, err := s.host.BuildImageOnHost(ctx, driver.ImageBuild{
 		Context: build.Context,
 		Tags:    tags,
 		Args:    map[string]string{HarborHostArg: s.config.Registry},
@@ -113,7 +113,7 @@ func (s *Store) BuildBase(ctx context.Context, build BaseBuild) (BaseResult, err
 	if err != nil {
 		return BaseResult{}, fmt.Errorf("%w\n%s", err, Tail(output))
 	}
-	raw, err := s.driver.ImageDigest(ctx, tags[1])
+	raw, err := s.host.ImageDigest(ctx, tags[1])
 	if err != nil {
 		return BaseResult{}, err
 	}
@@ -128,12 +128,12 @@ func (s *Store) BuildBase(ctx context.Context, build BaseBuild) (BaseResult, err
 	if build.Robot.User == "" {
 		return result, fmt.Errorf("image: push needs the robot credential")
 	}
-	if err := s.driver.Login(ctx, s.config.Registry, build.Robot.User, build.Robot.Secret); err != nil {
+	if err := s.host.Login(ctx, s.config.Registry, build.Robot.User, build.Robot.Secret); err != nil {
 		return result, err
 	}
-	defer func() { _ = s.driver.Logout(context.WithoutCancel(ctx), s.config.Registry) }()
+	defer func() { _ = s.host.Logout(context.WithoutCancel(ctx), s.config.Registry) }()
 	for _, tag := range tags {
-		if err := s.driver.PushImage(ctx, tag); err != nil {
+		if err := s.host.PushImage(ctx, tag); err != nil {
 			return result, err
 		}
 	}

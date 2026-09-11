@@ -12,6 +12,7 @@ import (
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/machine"
 	"github.com/ivy/mill/internal/workspace/machine/cache"
+	"github.com/ivy/mill/internal/workspace/machine/driver"
 )
 
 // `mill cache` is the operator's side of docs/sandbox.md §Caching: which
@@ -209,6 +210,6 @@ func cacheStore(cmd *cobra.Command, opts *cacheOptions) (*cache.Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("--repo-cap: %w", err)
 	}
-	driver := machine.NewSystemd(workspace.Spawner{}, machine.Commands{})
-	return cache.New(driver, cache.Config{Root: opts.sandboxRoot, GlobalCap: globalCap, RepoCap: repoCap}), nil
+	host := driver.NewSystemd(workspace.Spawner{}, driver.Commands{})
+	return cache.New(host, cache.Config{Root: opts.sandboxRoot, GlobalCap: globalCap, RepoCap: repoCap}), nil
 }

@@ -11,9 +11,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/workspace/machine"
 	"github.com/ivy/mill/internal/workspace/machine/cache"
 	"github.com/ivy/mill/internal/workspace/machine/config"
+	"github.com/ivy/mill/internal/workspace/machine/driver"
 )
 
 // The lineage over the fake driver, where a subvolume is a directory and a
@@ -37,7 +37,7 @@ var (
 // fixture is a store over the fake driver under a temporary root, with a
 // clock the spec advances.
 type fixture struct {
-	fake  *machine.FakeDriver
+	fake  *driver.FakeDriver
 	store *cache.Store
 	root  string
 	now   time.Time
@@ -46,7 +46,7 @@ type fixture struct {
 func newFixture(configure ...func(*cache.Config)) *fixture {
 	GinkgoHelper()
 	f := &fixture{
-		fake: machine.NewFake(),
+		fake: driver.NewFake(),
 		root: GinkgoT().TempDir(),
 		now:  time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC),
 	}
@@ -138,8 +138,8 @@ var _ = Describe("Cache lineages", Label("unit"), func() {
 		Expect(restored).To(HaveLen(1))
 		Expect(restored[0].Generation).To(Equal(2))
 		Expect(files(f.store.CopyPath(runA, "go-build"))).To(ConsistOf("marker", "written-by-the-run"))
-		Expect(f.fake.CallsTo(machine.Snapshot)).To(Equal([]machine.Call{{
-			Method: machine.Snapshot,
+		Expect(f.fake.CallsTo(driver.Snapshot)).To(Equal([]driver.Call{{
+			Method: driver.Snapshot,
 			Args:   []any{f.store.GenerationPath(goBuild, 2), f.store.CopyPath(runA, "go-build"), false},
 		}}), "one writable snapshot of gen-2, whatever its size")
 
@@ -159,8 +159,8 @@ var _ = Describe("Cache lineages", Label("unit"), func() {
 		Expect(restored[0].Reason).To(Equal("no generation"))
 		Expect(f.store.CopyPath(runA, "go-build")).To(BeADirectory())
 		Expect(files(f.store.CopyPath(runA, "go-build"))).To(BeEmpty())
-		Expect(f.fake.CallsTo(machine.CreateSubvolume)).To(HaveLen(1))
-		Expect(f.fake.CallsTo(machine.Snapshot)).To(BeEmpty())
+		Expect(f.fake.CallsTo(driver.CreateSubvolume)).To(HaveLen(1))
+		Expect(f.fake.CallsTo(driver.Snapshot)).To(BeEmpty())
 		Expect(f.store.Dir(goBuild)).To(BeADirectory(), "the lineage exists from its first restore, so ls can show it")
 	})
 
@@ -230,7 +230,7 @@ var _ = Describe("Cache lineages", Label("unit"), func() {
 		Expect(manifest.Latest().Run).To(Equal(runA))
 		Expect(manifest.Latest().CreatedAt).To(Equal(f.now))
 		Expect(manifest.Latest().SizeBytes).To(Equal(uint64(2)), "du of the candidate: one two-byte file")
-		Expect(f.fake.CallsTo(machine.DiskUsage)).To(HaveLen(1), "measured once, at promotion")
+		Expect(f.fake.CallsTo(driver.DiskUsage)).To(HaveLen(1), "measured once, at promotion")
 	})
 
 	It("A later evidence-closed step replaces the candidate", func(ctx context.Context) {
@@ -245,9 +245,9 @@ var _ = Describe("Cache lineages", Label("unit"), func() {
 		record, err := f.store.Record(runA)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(record.Candidate.Step).To(Equal("step-2"))
-		Expect(f.fake.CallsTo(machine.SetReadOnly)).To(HaveLen(1), "step 1's snapshot was made writable to be deleted")
-		Expect(f.fake.CallsTo(machine.DeleteSubvolume)).To(HaveLen(1))
-		snapshots := f.fake.CallsTo(machine.Snapshot)
+		Expect(f.fake.CallsTo(driver.SetReadOnly)).To(HaveLen(1), "step 1's snapshot was made writable to be deleted")
+		Expect(f.fake.CallsTo(driver.DeleteSubvolume)).To(HaveLen(1))
+		snapshots := f.fake.CallsTo(driver.Snapshot)
 		Expect(snapshots).To(HaveLen(2))
 		Expect(snapshots[1].Args[2]).To(BeTrue(), "the candidate is read-only")
 
@@ -311,11 +311,11 @@ var _ = Describe("Cache lineages", Label("unit"), func() {
 		Expect(generations(f.store, goBuild)).To(Equal([]int{2, 3}))
 		Expect(f.store.GenerationPath(goBuild, 1)).NotTo(BeAnExistingFile())
 		Expect(files(f.store.GenerationPath(goBuild, 3))).To(ConsistOf("two", "three"))
-		Expect(f.fake.CallsTo(machine.SetReadOnly)).To(ContainElement(machine.Call{
-			Method: machine.SetReadOnly, Args: []any{f.store.GenerationPath(goBuild, 1), false},
+		Expect(f.fake.CallsTo(driver.SetReadOnly)).To(ContainElement(driver.Call{
+			Method: driver.SetReadOnly, Args: []any{f.store.GenerationPath(goBuild, 1), false},
 		}), "the read-only generation is made writable before its owner deletes it")
-		Expect(f.fake.CallsTo(machine.DeleteSubvolume)).To(ContainElement(machine.Call{
-			Method: machine.DeleteSubvolume, Args: []any{f.store.GenerationPath(goBuild, 1), true},
+		Expect(f.fake.CallsTo(driver.DeleteSubvolume)).To(ContainElement(driver.Call{
+			Method: driver.DeleteSubvolume, Args: []any{f.store.GenerationPath(goBuild, 1), true},
 		}), "the last deletion syncs the filesystem")
 	})
 
@@ -328,7 +328,7 @@ var _ = Describe("Cache lineages", Label("unit"), func() {
 		Expect(err).NotTo(HaveOccurred())
 		f.write(runA, "go-mod", "m3")
 		Expect(f.store.Candidate(ctx, runA, "toolchain")).To(Succeed())
-		f.fake.Script(machine.DiskUsage, uint64(2<<30))
+		f.fake.Script(driver.DiskUsage, uint64(2<<30))
 
 		By("when the run finishes")
 		promoted, err := f.store.Promote(ctx, runA)
@@ -360,7 +360,7 @@ var _ = Describe("Cache lineages", Label("unit"), func() {
 		Expect(err).NotTo(HaveOccurred())
 		f.write(runA, "go-build", "big")
 		Expect(f.store.Candidate(ctx, runA, "build")).To(Succeed())
-		f.fake.Script(machine.DiskUsage, uint64(2<<30))
+		f.fake.Script(driver.DiskUsage, uint64(2<<30))
 
 		promoted, err := f.store.Promote(ctx, runA)
 		Expect(err).NotTo(HaveOccurred())
@@ -433,7 +433,7 @@ var _ = Describe("Cache lineages", Label("unit"), func() {
 		Expect(errors.Is(err, cache.ErrOutsideRoot)).To(BeTrue(), "%v", err)
 		Expect(promoted).To(BeEmpty())
 		Expect(outer.Dir(goBuild)).NotTo(BeAnExistingFile())
-		Expect(f.fake.CallsTo(machine.Rename)).To(BeEmpty())
+		Expect(f.fake.CallsTo(driver.Rename)).To(BeEmpty())
 	})
 
 	It("The manifest is the worker's, and the ledger records only use", func(ctx context.Context) {
@@ -471,7 +471,7 @@ var _ = Describe("Cache lineages", Label("unit"), func() {
 		Expect(filepath.Join(f.store.RunDir(runA), "candidate")).NotTo(BeAnExistingFile())
 		_, err = f.store.Record(runA)
 		Expect(errors.Is(err, os.ErrNotExist)).To(BeTrue())
-		Expect(f.fake.CallsTo(machine.DeleteSubvolume)).To(HaveLen(4), "two candidates and two copies")
+		Expect(f.fake.CallsTo(driver.DeleteSubvolume)).To(HaveLen(4), "two candidates and two copies")
 		Expect(f.store.Discard(ctx, runA)).To(Succeed(), "and again is nothing")
 	})
 
