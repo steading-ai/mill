@@ -4,6 +4,7 @@ go 1.25.7
 
 require (
 	connectrpc.com/connect v1.20.0
+	github.com/BurntSushi/toml v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/onsi/ginkgo/v2 v2.32.1
 	github.com/onsi/gomega v1.43.0

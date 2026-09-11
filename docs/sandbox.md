@@ -122,6 +122,19 @@ nested = true                    # only for a repo whose tests boot machines; se
 - Authority: the repo declares *what* is cached and *which* packages; the worker owns policy — retention, size, watermarks, whether promotion is allowed, time budgets. Nothing in `mill.toml` can mount a host path, exceed a limit, or persist state except through promotion.
 - The mill skill (§Skill mount) documents this file; it is where an agent learns to write it.
 
+### Grammar
+
+What the rules above leave open, `internal/workspace/machine/config` decides as follows.
+
+- The file is read from `mill.toml` at the checkout root and nothing else; the ecosystem defaults come from `mise.toml` beside it, its `[tools]` table only, whatever shape each tool's value takes. A tool named through mise's `core:` backend counts as its bare name. No other mise config location is consulted, and no path is resolved through `mise env` or `go env`.
+- The tables are `[image]`, `[cache.<name>]` and `[machine]`. Any other key, at any depth, is a finding naming the outermost unknown key and is ignored.
+- `[image].packages` entries **MUST** match `^[A-Za-z0-9._+-]+$`; the list is sorted and deduplicated, and an entry that does not match is a finding and is dropped.
+- `<name>` in `[cache.<name>]` **MUST** match `^[A-Za-z0-9][A-Za-z0-9._-]*$`: it becomes a path component on the host. `~` in `path` expands to `/home/agent`; the path is cleaned before the rules apply, so `/work/../etc` is `/etc`. A relative path is a finding.
+- Scope is not declarable. A cache with a default's name keeps the default's scope (and its path, when the declaration omits `path`); a new name is `repo`-scoped, because the worker, not the repo, decides what is shared across repositories.
+- `key` entries are paths relative to the checkout root; an absolute path or one that escapes the checkout is a finding.
+- A `[cache.<name>]` with a finding is dropped whole; the rest of the file still applies. A file that does not parse is one finding carrying the parse error, and the run's configuration is the defaults.
+- A finding names the file, the key in dotted form (`cache.go-build.path`), and one sentence to act on.
+
 ## Lifecycle
 
 ### Provision
