@@ -20,6 +20,7 @@ import (
 
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/gen/mill/v1/millv1connect"
+	"github.com/ivy/mill/internal/testsupport"
 )
 
 // The mill half of the suite: the binary built from this tree, one `mill
@@ -47,19 +48,22 @@ var suite struct {
 }
 
 // The suite is set up once for the whole run, not once per process: one
-// build, one `mill serve`, one workflow push, however many processes the
-// scenarios are spread over. Each scenario still gets a scratch project, a
-// dagger project and a workspace root of its own, so they share the store
-// and nothing else.
+// build, one `mill serve`, one dagger, one workflow push, however many
+// processes the scenarios are spread over. Each scenario still gets a
+// scratch project, a dagger project and a workspace root of its own, so
+// they share the store and the dagger and nothing else.
 var _ = SynchronizedBeforeSuite(func(ctx SpecContext) []byte {
 	if !enabled() {
 		Skip("set " + EnabledVar + "=1 to run the acceptance suite; see docs/runbook.md for what it needs")
 	}
 	env = preflight()
+	if !env.ExternalDagger {
+		env.DaggerSocket = startDagger(ctx)
+	}
 	env.Mill = buildMill(ctx)
 	suite.service = startService()
 	pushWorkflow(ctx)
-	shared, err := json.Marshal(sharedSetup{Mill: env.Mill, Socket: suite.service.Socket})
+	shared, err := json.Marshal(sharedSetup{Mill: env.Mill, Socket: suite.service.Socket, DaggerSocket: env.DaggerSocket})
 	Expect(err).NotTo(HaveOccurred())
 	return shared
 }, func(shared []byte) {
@@ -70,14 +74,35 @@ var _ = SynchronizedBeforeSuite(func(ctx SpecContext) []byte {
 	var setup sharedSetup
 	Expect(json.Unmarshal(shared, &setup)).To(Succeed())
 	env.Mill = setup.Mill
+	env.DaggerSocket = setup.DaggerSocket
 	suite.service = connectService(setup.Socket)
 })
 
 // sharedSetup is what the first process hands the others: the binary it
-// built and the socket the service it started listens on.
+// built, the socket the service it started listens on, and the dagger every
+// scratch project goes in.
 type sharedSetup struct {
-	Mill   string `json:"mill"`
-	Socket string `json:"socket"`
+	Mill         string `json:"mill"`
+	Socket       string `json:"socket"`
+	DaggerSocket string `json:"dagger_socket"`
+}
+
+// startDagger brings up the suite's own dagger — a PostgreSQL in a
+// container, a database of its own on it, and `dg serve` on a socket in a
+// temporary directory — and returns the socket. All of it is torn down
+// with the suite, and a suite killed before then leaves its scratch
+// projects in a container the reaper removes rather than in the
+// operator's graph (docs/runbook.md §"What it leaves behind").
+//
+// The container's template is left unmigrated: nothing clones it. The
+// ledger's database is the one the environment names, because its rows are
+// the record of the run and are kept on purpose.
+func startDagger(ctx context.Context) string {
+	GinkgoHelper()
+	pg, err := testsupport.Start(ctx, nil)
+	Expect(err).NotTo(HaveOccurred(), "starting PostgreSQL for the suite's own dagger")
+	DeferCleanup(pg.Stop)
+	return pg.StartSuiteDagger(ctx).Socket
 }
 
 // buildMill compiles the binary under test from this tree. The suite tests

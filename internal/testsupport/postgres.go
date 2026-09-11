@@ -176,6 +176,15 @@ func (p *Postgres) Blank(ctx context.Context) string {
 	report := ginkgo.CurrentSpecReport()
 	gomega.Expect(report.Labels()).To(gomega.ContainElement(DBLabel),
 		"spec %q uses PostgreSQL and must be labelled %q", report.FullText(), DBLabel)
+	return p.blank(ctx)
+}
+
+// blank is [Postgres.Blank] without the label check, for a suite's own
+// setup node, which carries no labels and has already chosen to start the
+// container. The database is dropped by the cleanup of whichever node
+// called it.
+func (p *Postgres) blank(ctx context.Context) string {
+	ginkgo.GinkgoHelper()
 	gomega.Expect(p).NotTo(gomega.BeNil(), "PostgreSQL was not started for this suite")
 
 	name := "blank_" + randomSuffix()

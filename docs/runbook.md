@@ -1,7 +1,7 @@
 # Runbook — the acceptance suite
 
-`tests/acceptance` drives the whole mill against real dependencies: the
-deployed dagger, a real GitLab, the real sidecar, and a real Claude account.
+`tests/acceptance` drives the whole mill against real dependencies: a real
+dagger, a real GitLab, the real sidecar, and a real Claude account.
 It is the executable form of O0's done-when — a quick-fix node delivered by
 `mill run`, with every step's evidence in the ledger ([prd.md](prd.md) §8) —
 and of O1's: a `feature` node the run sized for itself, delivered through a
@@ -37,8 +37,8 @@ in. If it starts, it has what it needs.
 | `MILL_ACCEPTANCE_FORGE_NAMESPACE` | Required when the forge URL is set. The group scratch projects are created in, by numeric id or by full path. Nothing but the suite should live in it. |
 | `MILL_ACCEPTANCE_FORGE_USER` | The GitLab username the token belongs to. It is both the basic-auth username git is given and the identity the suite expects to see on `merged_by`. Defaults to `mill`. |
 | `MILL_ACCEPTANCE_DATABASE_URL` | PostgreSQL for the `mill serve` the suite starts. `make db-up` and the `DATABASE_URL` from `.env` will do on a development host. Migrations are applied by `mill serve` itself. |
-| `MILL_ACCEPTANCE_DAGGER_SOCKET` | The dagger to file nodes in. Defaults to `$DG_SOCKET`, then `/run/dagger/dg.sock`. |
-| `MILL_ACCEPTANCE_SECOND_DAGGER_CONFIG` | Optional. A `dg --config` file for a second dagger principal, used by the fencing scenario to take a node's lease. Without it the second claim is made by the same principal under a second agent ref, which fences the running worker just the same. |
+| `MILL_ACCEPTANCE_DAGGER_SOCKET` | Optional. An external dagger to file nodes in, for the deliberate case of exercising the deployed service. Unset, the suite starts a dagger of its own and files there; see [Which dagger](#which-dagger). `$DG_SOCKET` is not consulted: it names the operator's dagger, which the suite never files in unless told to. |
+| `MILL_ACCEPTANCE_SECOND_DAGGER_CONFIG` | Optional, and read only with `MILL_ACCEPTANCE_DAGGER_SOCKET`. A `dg --config` file for a second principal of that dagger, used by the fencing scenario to take a node's lease. Without it the second claim is made by the same principal under a second agent ref, which fences the running worker just the same. |
 | — | The sessions run on the account's own Claude Code login, `~/.claude/.credentials.json`. `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` are on the harness adapter's deny list and never reach a sidecar, so setting one does nothing; the preflight checks for the login instead. |
 
 `MILL_FORGE_TOKEN` and `MILL_FORGE_USER` are what `mill run` itself reads;
@@ -56,12 +56,51 @@ is `set -a; . ~/.config/mill/acceptance.env; set +a` and then
 - A Claude Code login for the account running the suite, under `$HOME`.
 - `sidecar/dist/main.js` built. `make test-acceptance` builds it; by hand it
   is `make sidecar-build`.
-- Something listening on the dagger socket.
-- Podman is *not* needed: the suite uses the database the environment names
-  rather than testcontainers.
+- For the suite's own dagger, the default: podman, for the PostgreSQL its
+  database lives in; `goose`, for dagger's migrations; and dagger's checkout
+  at `~/src/github.com/ivy/dagger` or wherever `MILL_DAGGER_REPO` points,
+  which is where the migrations are read from. `dg` itself is the one on
+  `PATH`. These are what `internal/testsupport` asks for, and the preflight
+  names whichever is missing.
+- With `MILL_ACCEPTANCE_DAGGER_SOCKET` set, something listening on it, and
+  none of the above: the ledger's database is the one the environment
+  names, so nothing needs a container.
 
 The `mill` binary is built by the suite from this checkout. It never reaches
 for one that happens to be installed.
+
+## Which dagger
+
+By default the suite files into a dagger it started for itself: one
+instance for the whole suite, `dg serve` from the `dg` on `PATH` against a
+database of its own in a testcontainers PostgreSQL, on a socket in a
+temporary directory, seeded with one principal — the account running the
+suite — and torn down when the suite ends. It is the same fixture the run
+loop's own specs use (`internal/testsupport/dagger.go`), for the same
+reason: fencing, leases and patches only behave like production against
+the real service, and the real service is cheap to start.
+
+The default is the disposable one because dagger has no delete. A project
+is archived, never removed, so every scratch project the suite ever made in
+the operator's dagger would be there for good, and a suite killed before
+its cleanup — a `SIGKILL`, a lost session, a host going down — would leave
+an unarchived one in the graph the operator and the harness read. A suite
+that misbehaves would be writing into that graph too. Against its own
+instance the suite can be killed at any point and the deployed graph is
+exactly as it was: the leftover is a row in a database the container takes
+with it. Two scenarios assert this — *The suite owns the dagger it files
+into* and *A killed suite leaves the operator's graph alone* — by reading
+the deployed dagger's project list before and after filing.
+
+`MILL_ACCEPTANCE_DAGGER_SOCKET` points the suite at an external dagger
+instead, for the deliberate case of exercising the deployed service — its
+version, its policy, its principals. Everything the suite does is the same;
+only the socket changes, and with it who cleans up: the suite archives its
+scratch projects at the end of each scenario, and a killed run leaves
+whichever it had not reached. The fencing scenario's second principal,
+`MILL_ACCEPTANCE_SECOND_DAGGER_CONFIG`, is a principal of that dagger and
+is read only in this mode; the suite's own dagger has one principal, and
+the scenario claims as it under a second agent ref.
 
 ## What it does
 
@@ -71,7 +110,9 @@ Each scenario stages a fixture and then drives it:
    the scratch namespace, merge method `merge` and squash disabled — or, for
    a fixture that never reaches a forge, a bare repository in a temporary
    directory ([Without a forge](#without-a-forge)).
-2. A scratch dagger project, and the fixture's node filed in it.
+2. A scratch dagger project in the suite's own dagger — or in the one
+   `MILL_ACCEPTANCE_DAGGER_SOCKET` named — and the fixture's node filed in
+   it.
 3. One `mill run` per attempt, as a subprocess, with that repository as its
    `--vcs-url` and `--origin`, and a workspace root and log directory of the
    scenario's own. The environment mode is the default, `inherit`, which is
@@ -79,7 +120,7 @@ Each scenario stages a fixture and then drives it:
    `contrib/systemd/mill.service` does (docs/architecture.md §"Skill steps:
    the harness adapter").
 
-Seven scenarios run, in parallel. Five of them deliver to a forge and skip
+Nine scenarios run, in parallel. Five of them deliver to a forge and skip
 when there is none:
 
 - **One node, delivered.** The happy path, end to end: the README's one word,
@@ -106,7 +147,7 @@ when there is none:
   gate a person answers, and merged. See
   [A feature is delivered through the gate](#a-feature-is-delivered-through-the-gate).
 
-Two need no forge and run on every host that can start the suite:
+Four need no forge and run on every host that can start the suite:
 
 - **The reviewer says no.** The seeded bad implementation, rejected on the
   record. It uses the forge when there is one, and a bare repository on this
@@ -117,6 +158,14 @@ Two need no forge and run on every host that can start the suite:
   forge-dependent scenario's skip names `MILL_ACCEPTANCE_FORGE_URL` and
   points at this document, and the reviewer scenario stages without
   reaching for a forge at all. It costs no session and no merge request.
+- **The suite owns the dagger it files into** and **A killed suite leaves
+  the operator's graph alone.** The suite's own discipline: with no socket
+  named, a scratch project lands in the dagger the suite started, and the
+  deployed dagger's project list is the same before and after — including
+  for a project whose archive never runs, which is what a kill leaves.
+  Both skip when `MILL_ACCEPTANCE_DAGGER_SOCKET` is set, because filing
+  there was the operator's decision. They cost no session and no merge
+  request.
 
 ### What it takes
 
@@ -134,7 +183,13 @@ against the homestead GitLab and one Claude account.
 | The reviewer says no | 6 min 33 s | $2.44 |
 | A feature is delivered through the gate | 9 min 11 s over its two passes | $2.22 |
 | The suite is honest about what it could not run | under a second | nothing |
+| The suite owns the dagger it files into | under a second | nothing |
+| A killed suite leaves the operator's graph alone | under a second | nothing |
 | **The whole suite** | **9–10 min** | **$6.85** |
+
+The suite's own dagger adds its container's start to the setup, before any
+scenario runs: a few seconds with the image pulled, up to the fixture's
+three-minute allowance without it.
 
 So the suite fits inside thirty minutes on this host with room to spare.
 Its wall clock is *A feature is delivered through the gate*, which is the
@@ -174,25 +229,39 @@ failed or interrupted scenario still tears down what it made.
 | Made | Cleaned up | How |
 |---|---|---|
 | Scratch GitLab project | Deleted | `DELETE /projects/:id` at the end of the scenario |
-| Scratch dagger project | Archived | `dg project archive`. Dagger has no delete: archiving makes a project read-only and takes every node in it out of every ready set, which is as gone as dagger goes. |
+| The suite's own dagger | Removed | `dg serve` killed, its database dropped and its socket's directory removed at the end of the suite; the PostgreSQL container terminated after them. Nothing of it is on the host afterwards. |
+| Scratch dagger project | Archived | `dg project archive` at the end of the scenario. In the suite's own dagger this is a courtesy, since the instance goes with the suite. Against an external dagger it is the only cleanup there is: dagger has no delete, and archiving — read-only, every node out of every ready set — is as gone as dagger goes. |
 | Workspaces, clones, step logs, bare local origins, the built binary | Removed | Temporary directories the suite owns |
 | `mill serve` | Killed | Its process group, at the end of the suite |
 | Rows in `MILL_ACCEPTANCE_DATABASE_URL` | **Kept** | The ledger is the record of the run and is worth reading after a failure |
 | Workflow versions a scenario derived | **Kept**, at project scope | A workflow is immutable and `mill workflow` has no unpush, so a derived definition is pushed into the scenario's own dagger project — where the next suite run's assessment cannot see it |
 
-A `SIGKILL` to the suite itself skips all of it. To clean up by hand:
+A `SIGKILL` to the suite itself skips all of it, with one exception that
+is the point of the suite's own dagger: its scratch projects are in a
+database of a container testcontainers' reaper removes a few minutes after
+the suite's process is gone. Nothing a killed run made reaches the
+operator's dagger; `dg project list` there is what it was before the run.
+What a kill does leave on this host is two orphaned servers — the suite's
+`dg serve` and its `mill serve`, each in a process group of its own so that
+a scenario's kill of a `mill run` cannot reach them — and the temporary
+directories. To clean up by hand:
 
 ```sh
 # Scratch projects on the forge.
 curl -sH "PRIVATE-TOKEN: $MILL_ACCEPTANCE_FORGE_TOKEN" \
   "$MILL_ACCEPTANCE_FORGE_URL/api/v4/groups/$MILL_ACCEPTANCE_FORGE_NAMESPACE/projects?search=mill-acceptance"
 
-# Scratch projects in dagger.
-dg project list | jq '.projects[] | select(.slug | startswith("mill-acceptance"))'
-dg project archive <slug>
+# Scratch projects in an external dagger, when MILL_ACCEPTANCE_DAGGER_SOCKET
+# pointed the run at one. The suite's own dagger needs nothing here.
+dg --socket "$MILL_ACCEPTANCE_DAGGER_SOCKET" project list \
+  | jq '.projects[] | select(.slug | startswith("mill-acceptance"))'
+dg --socket "$MILL_ACCEPTANCE_DAGGER_SOCKET" project archive <slug>
 
-# Whatever a killed run left on this host.
-rm -rf /tmp/mill-acceptance-*
+# The servers a killed run orphaned, then whatever else it left on this
+# host: workspaces, the binary, and the suite's dagger socket directory.
+pkill -f 'dg serve --socket /tmp/mill-dagger-'
+pkill -f 'mill serve --socket /tmp/mill-acceptance-svc-'
+rm -rf /tmp/mill-acceptance-* /tmp/mill-dagger-*
 
 # Workflows at org scope, which is what every assessment chooses between.
 mill workflow list --socket <socket>

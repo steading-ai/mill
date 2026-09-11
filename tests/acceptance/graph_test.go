@@ -34,11 +34,14 @@ type scratchGraph struct {
 	Slug string
 }
 
-// newScratchGraph creates a dagger project for one scenario.
+// newScratchGraph creates a dagger project for one scenario, in the dagger
+// the suite started for itself unless the environment named another.
 //
 // Dagger has no delete: a project is archived, which makes it read-only and
 // takes it out of every ready set, and that is what "cleaned up" means on
-// this side (dagger's docs/domain-model.md §Project).
+// this side (dagger's docs/domain-model.md §Project). In the suite's own
+// dagger the archive is a courtesy — the whole instance goes with the
+// suite — and it is the only cleanup an external dagger gets.
 func newScratchGraph(ctx context.Context, name string) *scratchGraph {
 	GinkgoHelper()
 	slug := "mill-acceptance-" + name + "-" + nonce()

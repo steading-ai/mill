@@ -86,14 +86,65 @@ type Dagger struct {
 // The spec must carry [DBLabel]; the database is the container's.
 func (p *Postgres) StartDagger(ctx context.Context) *Dagger {
 	ginkgo.GinkgoHelper()
+	requireAvailable()
+	return p.startDagger(ctx, p.Blank(ctx))
+}
+
+// StartSuiteDagger brings up one dagger service for a whole suite, from the
+// first function of a SynchronizedBeforeSuite: the same empty database,
+// migrations, seed and `dg serve` as [Postgres.StartDagger], torn down when
+// the suite ends rather than when a spec does. It is what a suite that
+// files real nodes uses instead of the operator's deployed dagger, so a
+// suite that is killed rather than finished leaves its leftovers in a
+// database the container takes with it and nothing in a graph anyone
+// reads (docs/runbook.md §"What it leaves behind").
+//
+// A suite setup node has no labels, so [DBLabel] is not asked for; the
+// suite that calls this has already decided to start the container.
+func (p *Postgres) StartSuiteDagger(ctx context.Context) *Dagger {
+	ginkgo.GinkgoHelper()
+	requireAvailable()
+	return p.startDagger(ctx, p.blank(ctx))
+}
+
+// DaggerUnavailable is why this host cannot start a dagger, or empty when
+// it can: the checkout the migrations are read from, the `dg` binary, and
+// `goose` to apply them. A suite that refuses before it spends anything
+// asks this in its preflight.
+func DaggerUnavailable() string {
+	var missing []string
+	if daggerRepo() == "" {
+		missing = append(missing, "no dagger checkout: set "+DaggerRepoEnv+" to a checkout of github.com/ivy/dagger")
+	}
+	if daggerBinary() == "" {
+		missing = append(missing, "`dg` is neither on PATH nor in the checkout")
+	}
+	if _, err := lookPath("goose"); err != nil {
+		missing = append(missing, "`goose` is not on PATH")
+	}
+	if len(missing) == 0 {
+		return ""
+	}
+	return "dagger cannot be started on this host: " + strings.Join(missing, "; ")
+}
+
+// requireAvailable skips the caller when this host cannot start a dagger,
+// naming what is missing.
+func requireAvailable() {
+	ginkgo.GinkgoHelper()
+	if reason := DaggerUnavailable(); reason != "" {
+		ginkgo.Skip(reason)
+	}
+}
+
+// startDagger migrates and seeds databaseURL and starts `dg serve` on a
+// socket of its own. Both are torn down by the cleanup of whichever node
+// called it.
+func (p *Postgres) startDagger(ctx context.Context, databaseURL string) *Dagger {
+	ginkgo.GinkgoHelper()
 	repo := daggerRepo()
 	binary := daggerBinary()
-	if repo == "" || binary == "" {
-		ginkgo.Skip("dagger is not available on this host: set " + DaggerRepoEnv +
-			" to a checkout of github.com/ivy/dagger and put `dg` on PATH")
-	}
 
-	databaseURL := p.Blank(ctx)
 	migrate, err := spawner.Exec(ctx, workspace.Command{
 		Path: "goose",
 		Args: []string{

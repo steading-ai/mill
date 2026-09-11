@@ -9,6 +9,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/ivy/mill/internal/testsupport"
 )
 
 // The variables the suite reads. Every one of them is documented in
@@ -34,12 +36,20 @@ const (
 	// DatabaseURLVar is the PostgreSQL the suite's own `mill serve` owns.
 	DatabaseURLVar = "MILL_ACCEPTANCE_DATABASE_URL"
 
-	// DaggerSocketVar is the deployed dagger the suite files its nodes in.
+	// DaggerSocketVar is an external dagger to file nodes in, for the
+	// deliberate case of exercising the deployed service. Unset, the suite
+	// starts a dagger of its own from internal/testsupport and files there,
+	// so nothing it makes reaches a graph anyone reads. It is the only
+	// variable that points the suite at a dagger: `DG_SOCKET` in the
+	// operator's shell names the deployed one and is ignored here on
+	// purpose.
 	DaggerSocketVar = "MILL_ACCEPTANCE_DAGGER_SOCKET"
 	// SecondDaggerConfigVar is a `dg --config` for a second principal, used
 	// by the fencing scenario to take the node's lease away from the mill.
 	// Optional: without it the scenario claims as the same principal under a
-	// second agent ref, which fences the running worker just the same.
+	// second agent ref, which fences the running worker just the same. It
+	// names a principal of the external dagger, so it is read only when
+	// DaggerSocketVar is set.
 	SecondDaggerConfigVar = "MILL_ACCEPTANCE_SECOND_DAGGER_CONFIG"
 
 	// credentialsPath is where the account's Claude Code login lives,
@@ -50,8 +60,10 @@ const (
 	credentialsPath = ".claude/.credentials.json"
 )
 
-// defaultDaggerSocket is where dagger listens when nothing says otherwise.
-const defaultDaggerSocket = "/run/dagger/dg.sock"
+// deployedDaggerSocket is where the operator's dagger listens. The suite
+// never files there unless DaggerSocketVar says so; the two scenarios about
+// the suite's own dagger read its project list to prove that.
+const deployedDaggerSocket = "/run/dagger/dg.sock"
 
 // Environment is everything the suite was given, resolved once.
 type Environment struct {
@@ -73,7 +85,13 @@ type Environment struct {
 
 	DatabaseURL string
 
-	DaggerSocket       string
+	// DaggerSocket is the dagger every scratch project is created in. It
+	// is DaggerSocketVar when that is set, and otherwise the socket of the
+	// dagger the suite started for itself, filled in by the BeforeSuite.
+	DaggerSocket string
+	// ExternalDagger reports whether DaggerSocket was named by the
+	// environment rather than started by the suite.
+	ExternalDagger     bool
 	SecondDaggerConfig string
 }
 
@@ -102,8 +120,15 @@ func preflight() Environment {
 		ForgeNamespace:     os.Getenv(ForgeNamespaceVar),
 		ForgeUser:          valueOr(os.Getenv(ForgeUserVar), "mill"),
 		DatabaseURL:        os.Getenv(DatabaseURLVar),
-		DaggerSocket:       valueOr(os.Getenv(DaggerSocketVar), valueOr(os.Getenv("DG_SOCKET"), defaultDaggerSocket)),
+		DaggerSocket:       os.Getenv(DaggerSocketVar),
+		ExternalDagger:     os.Getenv(DaggerSocketVar) != "",
 		SecondDaggerConfig: os.Getenv(SecondDaggerConfigVar),
+	}
+	if !resolved.ExternalDagger {
+		// A second principal is one the external dagger knows. The suite's
+		// own dagger seeds one principal, this process's uid, and the
+		// fencing scenario claims as it under a second agent ref.
+		resolved.SecondDaggerConfig = ""
 	}
 
 	var missing []string
@@ -117,8 +142,12 @@ func preflight() Environment {
 	} else if _, err := os.Stat(filepath.Join(home, credentialsPath)); err != nil {
 		missing = append(missing, "no Claude login at ~/"+credentialsPath+"; the sessions run on the account's own login, never on a credential in the environment")
 	}
-	if _, err := os.Stat(resolved.DaggerSocket); err != nil {
-		missing = append(missing, "nothing is listening on "+resolved.DaggerSocket+" ("+DaggerSocketVar+")")
+	if resolved.ExternalDagger {
+		if _, err := os.Stat(resolved.DaggerSocket); err != nil {
+			missing = append(missing, "nothing is listening on "+resolved.DaggerSocket+" ("+DaggerSocketVar+")")
+		}
+	} else if reason := testsupport.DaggerUnavailable(); reason != "" {
+		missing = append(missing, reason+"; or set "+DaggerSocketVar+" to an external dagger")
 	}
 	if _, err := os.Stat(resolved.Sidecar); err != nil {
 		missing = append(missing, resolved.Sidecar+" does not exist; run `make sidecar-build`")
