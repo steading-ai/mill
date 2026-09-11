@@ -163,6 +163,15 @@ message Start {
   string output_schema = 6;
   // Working directory for the session, inside the workspace's checkout.
   string cwd = 7;
+  // The step's `timeout`, in milliseconds: how long the session may run in
+  // all, and so how long a command it runs in the foreground may take.
+  // The sidecar sets the harness's default shell timeout from it, so a
+  // session waits for a test suite or a toolchain install in the turn that
+  // started it instead of having it backgrounded underneath it at the
+  // harness's own default (docs/architecture.md §"Skill steps: the harness
+  // adapter"). Required: a step without a budget is refused before the
+  // session starts, by the adapter and by the sidecar alike.
+  int32 timeout_ms = 8;
 }
 
 // Resume continues an existing session with a new prompt, so a `revise`
@@ -189,6 +198,15 @@ message Resume {
   string output_schema = 6;
   // Working directory for the session, inside the workspace's checkout.
   string cwd = 7;
+  // The step's `timeout`, in milliseconds: how long the session may run in
+  // all, and so how long a command it runs in the foreground may take.
+  // The sidecar sets the harness's default shell timeout from it, so a
+  // session waits for a test suite or a toolchain install in the turn that
+  // started it instead of having it backgrounded underneath it at the
+  // harness's own default (docs/architecture.md §"Skill steps: the harness
+  // adapter"). Required: a step without a budget is refused before the
+  // session starts, by the adapter and by the sidecar alike.
+  int32 timeout_ms = 8;
 }
 
 // Cancel stops a running session: SIGTERM, a grace window, SIGKILL. The

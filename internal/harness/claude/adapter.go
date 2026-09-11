@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"sync"
 	"syscall"
@@ -99,19 +100,12 @@ func WithEnvMode(mode EnvMode) Option {
 	return func(a *Adapter) { a.envMode = mode }
 }
 
-// WithTimeout sets the step's wall clock. Zero, the default, means the
-// adapter enforces none and the caller's context is the only bound.
-func WithTimeout(timeout time.Duration) Option {
-	return func(a *Adapter) { a.timeout = timeout }
-}
-
 // Adapter spawns one sidecar per turn and speaks harness.v1 to it.
 type Adapter struct {
 	execer  workspace.Execer
 	command string
 	args    []string
 	grace   time.Duration
-	timeout time.Duration
 	envMode EnvMode
 
 	mu   sync.Mutex
@@ -141,6 +135,10 @@ func (a *Adapter) Start(ctx context.Context, session harness.Session, prompt har
 	if err != nil {
 		return nil, err
 	}
+	timeout, err := wireTimeout(session)
+	if err != nil {
+		return nil, err
+	}
 	return a.begin(ctx, session, &harnessv1.Request{Id: requestID(), Body: &harnessv1.Request_Start{Start: &harnessv1.Start{
 		SessionId:    session.ID,
 		Prompt:       prompt.Text,
@@ -149,12 +147,17 @@ func (a *Adapter) Start(ctx context.Context, session harness.Session, prompt har
 		Workspace:    wireWorkspace(session),
 		OutputSchema: prompt.OutputSchema,
 		Cwd:          session.Cwd,
+		TimeoutMs:    timeout,
 	}}})
 }
 
 // Resume continues an existing session with a new prompt.
 func (a *Adapter) Resume(ctx context.Context, session harness.Session, prompt harness.Prompt, attachments []harness.Attachment) (*harness.Turn, error) {
 	settings, err := wireSettings(session)
+	if err != nil {
+		return nil, err
+	}
+	timeout, err := wireTimeout(session)
 	if err != nil {
 		return nil, err
 	}
@@ -166,6 +169,7 @@ func (a *Adapter) Resume(ctx context.Context, session harness.Session, prompt ha
 		Workspace:    wireWorkspace(session),
 		OutputSchema: prompt.OutputSchema,
 		Cwd:          session.Cwd,
+		TimeoutMs:    timeout,
 	}}})
 }
 
@@ -218,6 +222,7 @@ func (a *Adapter) begin(ctx context.Context, session harness.Session, request *h
 		process:   process,
 		sink:      session.Events,
 		grace:     a.grace,
+		timeout:   session.Timeout,
 		turn:      harness.NewTurn(),
 		exited:    make(chan struct{}),
 	}
@@ -274,7 +279,10 @@ type flight struct {
 	process   *workspace.Process
 	sink      harness.Sink
 	grace     time.Duration
-	turn      *harness.Turn
+	// timeout is the step's wall clock, after which the session is stopped
+	// with ReasonTimeout. Zero only for a Probe, which starts no session.
+	timeout time.Duration
+	turn    *harness.Turn
 
 	exited   chan struct{}
 	stopOnce sync.Once
@@ -303,8 +311,8 @@ func (s *flight) pump(ctx context.Context) {
 		s.readStderr()
 	}()
 
-	if s.adapter.timeout > 0 {
-		expired := time.AfterFunc(s.adapter.timeout, func() { s.stop(harness.ReasonTimeout) })
+	if s.timeout > 0 {
+		expired := time.AfterFunc(s.timeout, func() { s.stop(harness.ReasonTimeout) })
 		defer expired.Stop()
 	}
 
@@ -571,6 +579,25 @@ func wireSettings(session harness.Session) (*harnessv1.Settings, error) {
 		return nil, fmt.Errorf("claude: the step's options are not a JSON document: %w", err)
 	}
 	return &harnessv1.Settings{Options: options}, nil
+}
+
+// wireTimeout carries the step's budget to the sidecar as the session's
+// default shell timeout, in milliseconds. A step without one is refused
+// before anything is spawned: the budget is the workflow's to declare
+// (internal/workflow, Validate), and an adapter that filled one in would be
+// deciding how long a session may wait in the foreground, which is the
+// decision that lost sessions to poll loops (docs/sandbox.md §Preparatory
+// steps). The field is an int32, which holds a budget of over twenty days;
+// one past that is not a step.
+func wireTimeout(session harness.Session) (int32, error) {
+	if session.Timeout <= 0 {
+		return 0, fmt.Errorf("claude: session %s has no timeout; every step declares one", session.ID)
+	}
+	ms := session.Timeout.Milliseconds()
+	if ms > math.MaxInt32 {
+		return 0, fmt.Errorf("claude: session %s: a timeout of %s is longer than the wire carries", session.ID, session.Timeout)
+	}
+	return int32(ms), nil
 }
 
 func wireAttachments(attachments []harness.Attachment) []*harnessv1.Attachment {

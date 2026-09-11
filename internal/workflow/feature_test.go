@@ -207,6 +207,7 @@ var _ = Describe("The feature workflow", Label("unit"), func() {
 name: reaching
 steps:
   - name: implement
+    timeout: 10m
     kind: skill
     session: implement
     skill: ../../etc/implement

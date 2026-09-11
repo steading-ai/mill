@@ -127,8 +127,11 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 			Token:  token.GetToken(),
 			Env:    s.workspace.Environment(),
 		},
-		Cwd:    handle.Root,
-		Events: r.sessionEvents(ctx, s, sr, logSink(logFile, r.options.Redactor, r.options.Now)),
+		Cwd: handle.Root,
+		// The step's budget, which is also how long the session may wait
+		// in the foreground for anything it runs.
+		Timeout: step.GetTimeout().AsDuration(),
+		Events:  r.sessionEvents(ctx, s, sr, logSink(logFile, r.options.Redactor, r.options.Now)),
 	}
 
 	// The prompt heads the attempt's log. What a session was asked is the

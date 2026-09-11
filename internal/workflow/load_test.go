@@ -52,6 +52,7 @@ var _ = Describe("Loading a workflow directory", Label("unit"), func() {
 name: tiny
 steps:
   - name: implement
+    timeout: 10m
     kind: skill
     session: implement
     skill: implement
@@ -69,11 +70,54 @@ steps:
 		Expect(step(loaded, "implement").GetRetries()).To(BeNumerically("==", 3), "the documented default")
 	})
 
+	It("A step without a budget does not load", func() {
+		By("given a workflow definition with a step lacking timeout")
+		root := dir(`
+name: unbudgeted
+steps:
+  - name: gather-context
+    kind: skill
+    session: implement
+    skill: implement
+    evidence: artifact
+    timeout: 10m
+  - name: implement
+    kind: skill
+    session: implement
+    skill: implement
+    evidence: artifact
+`, map[string]string{"implement": "Make the change."})
+
+		By("when the loader reads it")
+		_, _, err := workflow.Load(root)
+
+		By("then loading fails and the error names the step")
+		Expect(err).To(HaveOccurred())
+		Expect(err).To(MatchError(ContainSubstring("workflow unbudgeted")))
+		Expect(err).To(MatchError(ContainSubstring("step implement: timeout is required")))
+		Expect(err.Error()).NotTo(ContainSubstring("step gather-context"), "the step with a budget is not named")
+	})
+
+	It("refuses a timeout that is not a positive duration", func() {
+		_, _, err := workflow.Load(dir(`
+name: tiny
+steps:
+  - name: implement
+    kind: skill
+    session: implement
+    skill: implement
+    evidence: artifact
+    timeout: 0s
+`, map[string]string{"implement": "Make the change."}))
+		Expect(err).To(MatchError(ContainSubstring("step implement: timeout: 0s is not a positive duration")))
+	})
+
 	It("refuses a key it does not understand", func() {
 		_, _, err := workflow.Load(dir(`
 name: tiny
 steps:
   - name: implement
+    timeout: 10m
     kind: skill
     session: implement
     skill: implement
@@ -88,6 +132,7 @@ steps:
 name: tiny
 steps:
   - name: implement
+    timeout: 10m
     kind: skill
     session: implement
     skill: implement
@@ -117,6 +162,7 @@ steps:
 name: tiny
 steps:
   - name: implement
+    timeout: 10m
     kind: skill
     session: implement
     skill: implement
@@ -138,6 +184,7 @@ steps:
 name: tiny
 steps:
   - name: implement
+    timeout: 10m
     kind: skill
     session: implement
     skill: implement
@@ -152,6 +199,7 @@ steps:
 name: tiny
 steps:
   - name: implement
+    timeout: 10m
     kind: skill
     session: implement
     skill: implement
@@ -171,6 +219,7 @@ steps:
 name: tiny
 steps:
   - name: implement
+    timeout: 10m
     kind: skill
     session: implement
     skill: implement
@@ -186,6 +235,7 @@ steps:
 name: tiny
 steps:
   - name: implement
+    timeout: 10m
     kind: skill
     session: implement
     skill: implement
@@ -204,6 +254,7 @@ steps:
 name: tiny
 steps:
   - name: implement
+    timeout: 10m
     kind: skill
     session: implement
     skill: implement
@@ -222,6 +273,7 @@ status:
   timeout: 30m
 steps:
   - name: implement
+    timeout: 10m
     kind: skill
     session: implement
     skill: implement
@@ -239,6 +291,7 @@ status:
   interval: soon
 steps:
   - name: implement
+    timeout: 10m
     kind: skill
     session: implement
     skill: implement
@@ -252,6 +305,7 @@ steps:
 name: tiny
 steps:
   - name: implement
+    timeout: 10m
     kind: skill
     session: implement
     skill: nonesuch
@@ -265,11 +319,13 @@ steps:
 name: tiny
 steps:
   - name: implement
+    timeout: 10m
     kind: skill
     session: implement
     skill: implement
     evidence: artifact
   - name: implement
+    timeout: 10m
     kind: check
     check: {command: [scripts/check]}
     evidence: exit
@@ -282,11 +338,13 @@ steps:
 name: tiny
 steps:
   - name: check
+    timeout: 10m
     kind: check
     check: {command: [scripts/check]}
     evidence: exit
     on_failure: revise implement
   - name: implement
+    timeout: 10m
     kind: skill
     session: implement
     skill: implement
@@ -302,6 +360,7 @@ steps:
 name: tiny
 steps:
   - name: implement
+    timeout: 10m
     kind: skill
     session: implement
     skill: implement
@@ -319,6 +378,7 @@ steps:
 name: tiny
 steps:
   - name: plan
+    timeout: 10m
     kind: skill
     session: implement
     skill: plan
@@ -327,6 +387,7 @@ steps:
       path: docs/plans/{{.Date}}-{{.NodeSlug}}.md
     capabilities: [read, write]
   - name: plan-approval
+    timeout: 10m
     kind: gate
     gate:
       ask:
@@ -341,6 +402,7 @@ steps:
 name: tiny
 steps:
   - name: plan
+    timeout: 10m
     kind: skill
     session: implement
     skill: plan
@@ -358,6 +420,7 @@ steps:
 name: tiny
 steps:
   - name: plan
+    timeout: 10m
     kind: skill
     session: implement
     skill: plan
@@ -374,12 +437,14 @@ steps:
 name: tiny
 steps:
   - name: implement
+    timeout: 10m
     kind: skill
     session: implement
     skill: implement
     evidence: artifact
     capabilities: [write]
   - name: merge
+    timeout: 10m
     kind: gate
     gate:
       ask:
@@ -395,18 +460,21 @@ steps:
 name: tiny
 steps:
   - name: implement
+    timeout: 10m
     kind: skill
     session: implement
     skill: implement
     evidence: artifact
     capabilities: [write]
   - name: pr
+    timeout: 10m
     kind: skill
     session: implement
     skill: pr
     evidence: url
     capabilities: [forge]
   - name: merge
+    timeout: 10m
     kind: gate
     gate:
       ask:
@@ -421,12 +489,14 @@ steps:
 name: tiny
 steps:
   - name: plan
+    timeout: 10m
     kind: skill
     session: implement
     skill: implement
     evidence: structured
     capabilities: [read]
   - name: approve-plan
+    timeout: 10m
     kind: gate
     gate:
       ask:
@@ -441,6 +511,7 @@ steps:
 name: tiny
 steps:
   - name: implement
+    timeout: 10m
     kind: skill
     session: implement
     skill: implement
@@ -453,6 +524,7 @@ steps:
 name: tiny
 steps:
   - name: implement
+    timeout: 10m
     kind: skill
     session: implement
     skill: implement
@@ -473,6 +545,7 @@ var _ = Describe("Hashing a workflow", Label("unit"), func() {
 name: tiny
 steps:
   - name: implement
+    timeout: 10m
     kind: skill
     session: implement
     skill: implement

@@ -179,6 +179,29 @@ var _ = Describe("A session that ends its turn with a task running", Label("unit
 		Expect(checked["toolu_plain"]).To(Equal("allowed"))
 	})
 
+	It("The shell waits as long as the step may", func() {
+		By("given a step with timeout 20m")
+		options := filepath.Join(GinkgoT().TempDir(), "options.json")
+		line := startRequest("budget-1", func(start *harnessv1.Start) {
+			start.TimeoutMs = 20 * 60 * 1000
+		})
+
+		By("when the sidecar starts its session")
+		s := run(fakeEntrypoint, map[string]string{
+			"MILL_FAKE_SCENARIO": "trivial",
+			"MILL_FAKE_OPTIONS":  options,
+		}, line)
+
+		By("then the session's default shell timeout is 20m")
+		env, ok := applied(options)["env"].(map[string]any)
+		Expect(ok).To(BeTrue(), "the harness was given no environment")
+		Expect(env).To(HaveKeyWithValue("BASH_DEFAULT_TIMEOUT_MS", "1200000"))
+		Expect(env).To(HaveKeyWithValue("BASH_MAX_TIMEOUT_MS", "1200000"), "the harness's own ceiling would clamp a budget past ten minutes")
+
+		By("and the sidecar's startup line reports the value it set")
+		Expect(s.stderr.String()).To(MatchRegexp(`(?m)^sidecar: session ` + sessionSeed + `: starting under a 20m step; BASH_DEFAULT_TIMEOUT_MS=1200000 BASH_MAX_TIMEOUT_MS=1200000$`))
+	})
+
 	It("gives every step the tools its wait needs, and a cap on a foreground command", func() {
 		By("given a step whose tool policy names neither task tool")
 		options := filepath.Join(GinkgoT().TempDir(), "options.json")
@@ -197,10 +220,10 @@ var _ = Describe("A session that ends its turn with a task running", Label("unit
 		Expect(applied["allowedTools"]).To(ContainElements("TaskOutput", "TaskStop"))
 		Expect(applied["disallowedTools"]).To(Equal([]any{"Write"}))
 
-		By("and the session's environment carries the foreground cap")
+		By("and the session's environment carries the step's budget as the foreground cap")
 		env, ok := applied["env"].(map[string]any)
 		Expect(ok).To(BeTrue(), "the harness was given no environment")
-		Expect(env).To(HaveKeyWithValue("BASH_DEFAULT_TIMEOUT_MS", "600000"))
+		Expect(env).To(HaveKeyWithValue("BASH_DEFAULT_TIMEOUT_MS", strconv.Itoa(stepTimeoutMs)))
 	})
 
 	It("leaves the task tools out when the step denies them", func() {

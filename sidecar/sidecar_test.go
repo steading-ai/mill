@@ -52,11 +52,16 @@ func applied(path string) map[string]any {
 	return options
 }
 
+// stepTimeoutMs is the budget the specs' steps run under: twenty minutes,
+// which is what the feature workflow gives gather-context.
+const stepTimeoutMs = 20 * 60 * 1000
+
 func startRequest(id string, mutate func(*harnessv1.Start)) string {
 	start := &harnessv1.Start{
 		SessionId: sessionSeed,
 		Prompt:    "Summarise the node body.",
 		Cwd:       ".",
+		TimeoutMs: stepTimeoutMs,
 	}
 	if mutate != nil {
 		mutate(start)
@@ -433,6 +438,23 @@ var _ = Describe("The sidecar", Label("unit"), func() {
 		Expect(s.terminal().GetStructuredOutput()).To(BeNil())
 		Expect(s.terminal().GetExit().GetStatus()).To(Equal(int32(1)))
 		Expect(s.terminal().GetExit().GetReason()).To(Equal(harnessv1.ExitReason_EXIT_REASON_UNSPECIFIED))
+	})
+
+	It("refuses a start that carries no timeout, before the harness is loaded", func() {
+		By("given a Start request whose step has no budget")
+		line := startRequest("no-budget", func(start *harnessv1.Start) {
+			start.TimeoutMs = 0
+		})
+
+		By("when the sidecar reads it")
+		s := run(fakeEntrypoint, map[string]string{"MILL_FAKE_SCENARIO": "trivial"}, line)
+
+		By("then it is refused in a terminal record that says so")
+		Expect(s.terminal().GetExit().GetStatus()).To(BeNumerically("==", -1))
+		Expect(s.terminal().GetExit().GetReason()).To(Equal(harnessv1.ExitReason_EXIT_REASON_REFUSED))
+		Expect(s.terminal().GetFinalMessage()).To(ContainSubstring("no timeout"))
+		Expect(s.events()).To(BeEmpty())
+		Expect(s.exitCode()).To(Equal(0))
 	})
 
 	It("answers a malformed frame with a refusal and no stack trace", func() {

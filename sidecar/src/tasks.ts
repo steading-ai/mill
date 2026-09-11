@@ -31,14 +31,18 @@ export const HEARTBEAT_MS = 180_000;
 // The last one does not ask: it kills.
 export const HEARTBEAT_STRIKES = 3;
 
-// BASH_TIMEOUT_MS is the foreground cap the session's shell runs under. The
-// harness backgrounds a foreground command that runs past it, and a
-// backgrounded test run is what taught sessions to poll. Ten minutes: this
-// repository's suite takes half a minute warm and a little over one cold.
-export const BASH_TIMEOUT_MS = "600000";
-
-// BASH_TIMEOUT_VAR is the name the harness reads that cap under.
+// BASH_TIMEOUT_VAR is the name the harness reads the foreground cap under:
+// how long a shell command runs in the turn that started it before the
+// harness backgrounds it and wakes the session when it ends. A backgrounded
+// test run is what taught sessions to poll, so the cap is the step's own
+// `timeout` (session.ts, `shellTimeout`): a session may wait in the
+// foreground for as long as its step may run, and nothing shorter.
 export const BASH_TIMEOUT_VAR = "BASH_DEFAULT_TIMEOUT_MS";
+
+// BASH_MAX_TIMEOUT_VAR is the name the harness reads the ceiling under: the
+// most a command may ask for by its own `timeout` argument. It is set to the
+// same value, so the harness's own ceiling never clamps the step's budget.
+export const BASH_MAX_TIMEOUT_VAR = "BASH_MAX_TIMEOUT_MS";
 
 // HEARTBEAT_MS_VAR shortens the wait between looks. The worker sets none —
 // the constant above is the contract — and it exists because a spec cannot

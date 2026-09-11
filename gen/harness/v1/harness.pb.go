@@ -531,7 +531,16 @@ type Start struct {
 	// step declares one. Empty when the step wants no structured output.
 	OutputSchema string `protobuf:"bytes,6,opt,name=output_schema,json=outputSchema,proto3" json:"output_schema,omitempty"`
 	// Working directory for the session, inside the workspace's checkout.
-	Cwd           string `protobuf:"bytes,7,opt,name=cwd,proto3" json:"cwd,omitempty"`
+	Cwd string `protobuf:"bytes,7,opt,name=cwd,proto3" json:"cwd,omitempty"`
+	// The step's `timeout`, in milliseconds: how long the session may run in
+	// all, and so how long a command it runs in the foreground may take.
+	// The sidecar sets the harness's default shell timeout from it, so a
+	// session waits for a test suite or a toolchain install in the turn that
+	// started it instead of having it backgrounded underneath it at the
+	// harness's own default (docs/architecture.md §"Skill steps: the harness
+	// adapter"). Required: a step without a budget is refused before the
+	// session starts, by the adapter and by the sidecar alike.
+	TimeoutMs     int32 `protobuf:"varint,8,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -615,6 +624,13 @@ func (x *Start) GetCwd() string {
 	return ""
 }
 
+func (x *Start) GetTimeoutMs() int32 {
+	if x != nil {
+		return x.TimeoutMs
+	}
+	return 0
+}
+
 // Resume continues an existing session with a new prompt, so a `revise`
 // returns to the implementing session and the model picks up its own prior
 // context. A step is never resumed mid-flight; a session is.
@@ -639,7 +655,16 @@ type Resume struct {
 	// step declares one.
 	OutputSchema string `protobuf:"bytes,6,opt,name=output_schema,json=outputSchema,proto3" json:"output_schema,omitempty"`
 	// Working directory for the session, inside the workspace's checkout.
-	Cwd           string `protobuf:"bytes,7,opt,name=cwd,proto3" json:"cwd,omitempty"`
+	Cwd string `protobuf:"bytes,7,opt,name=cwd,proto3" json:"cwd,omitempty"`
+	// The step's `timeout`, in milliseconds: how long the session may run in
+	// all, and so how long a command it runs in the foreground may take.
+	// The sidecar sets the harness's default shell timeout from it, so a
+	// session waits for a test suite or a toolchain install in the turn that
+	// started it instead of having it backgrounded underneath it at the
+	// harness's own default (docs/architecture.md §"Skill steps: the harness
+	// adapter"). Required: a step without a budget is refused before the
+	// session starts, by the adapter and by the sidecar alike.
+	TimeoutMs     int32 `protobuf:"varint,8,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -721,6 +746,13 @@ func (x *Resume) GetCwd() string {
 		return x.Cwd
 	}
 	return ""
+}
+
+func (x *Resume) GetTimeoutMs() int32 {
+	if x != nil {
+		return x.TimeoutMs
+	}
+	return 0
 }
 
 // Cancel stops a running session: SIGTERM, a grace window, SIGKILL. The
@@ -1580,7 +1612,7 @@ const file_harness_v1_harness_proto_rawDesc = "" +
 	"\x06source\x18\x02 \x01(\tR\x06source\x12\x1d\n" +
 	"\n" +
 	"media_type\x18\x03 \x01(\tR\tmediaType\x12\x18\n" +
-	"\acontent\x18\x04 \x01(\tR\acontent\"\x96\x02\n" +
+	"\acontent\x18\x04 \x01(\tR\acontent\"\xb5\x02\n" +
 	"\x05Start\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x16\n" +
@@ -1589,7 +1621,9 @@ const file_harness_v1_harness_proto_rawDesc = "" +
 	"\bsettings\x18\x04 \x01(\v2\x14.harness.v1.SettingsR\bsettings\x123\n" +
 	"\tworkspace\x18\x05 \x01(\v2\x15.harness.v1.WorkspaceR\tworkspace\x12#\n" +
 	"\routput_schema\x18\x06 \x01(\tR\foutputSchema\x12\x10\n" +
-	"\x03cwd\x18\a \x01(\tR\x03cwd\"\x97\x02\n" +
+	"\x03cwd\x18\a \x01(\tR\x03cwd\x12\x1d\n" +
+	"\n" +
+	"timeout_ms\x18\b \x01(\x05R\ttimeoutMs\"\xb6\x02\n" +
 	"\x06Resume\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x16\n" +
@@ -1598,7 +1632,9 @@ const file_harness_v1_harness_proto_rawDesc = "" +
 	"\bsettings\x18\x04 \x01(\v2\x14.harness.v1.SettingsR\bsettings\x123\n" +
 	"\tworkspace\x18\x05 \x01(\v2\x15.harness.v1.WorkspaceR\tworkspace\x12#\n" +
 	"\routput_schema\x18\x06 \x01(\tR\foutputSchema\x12\x10\n" +
-	"\x03cwd\x18\a \x01(\tR\x03cwd\"B\n" +
+	"\x03cwd\x18\a \x01(\tR\x03cwd\x12\x1d\n" +
+	"\n" +
+	"timeout_ms\x18\b \x01(\x05R\ttimeoutMs\"B\n" +
 	"\x06Cancel\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x19\n" +

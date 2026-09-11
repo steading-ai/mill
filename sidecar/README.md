@@ -26,10 +26,18 @@ words become the final message, and the record carries reason `stalled`, which
 the worker reads as a failed attempt. `src/tasks.ts` holds the constants and
 the prompt; `MILL_SIDECAR_HEARTBEAT_MS` shortens the interval for the specs,
 and nothing sets it in production. The session gets `TaskOutput` and `TaskStop`
-in its allowed tools unless the step denies them, a `BASH_DEFAULT_TIMEOUT_MS`
-of ten minutes so an ordinary command is not backgrounded behind its back, and
-a `PreToolUse` hook that refuses a shell loop polling with `pgrep -f` — the
-wait that matches its own shell and never ends (`src/hooks.ts`).
+in its allowed tools unless the step denies them, and a `PreToolUse` hook that
+refuses a shell loop polling with `pgrep -f` — the wait that matches its own
+shell and never ends (`src/hooks.ts`).
+
+A session waits in the foreground for as long as its step may run. The
+request's `timeout_ms` is the step's `timeout`, and the sidecar sets it as the
+session's `BASH_DEFAULT_TIMEOUT_MS` and `BASH_MAX_TIMEOUT_MS` through the
+SDK's `env` option — per step, never on the process — so a test suite or a
+toolchain install stays in the turn that started it instead of being
+backgrounded at the harness's own default and waited on. A request with no
+timeout is refused. The startup line on stderr names the value set, which is
+where a step's diagnostics keep it.
 
 Cancellation is not a request. It arrives as **SIGTERM**, because a sidecar
 mid-turn is not reading its stdin. The sidecar aborts the turn and answers

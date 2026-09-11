@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	harnessv1 "github.com/ivy/mill/gen/harness/v1"
 )
@@ -90,6 +91,15 @@ type Session struct {
 	Workspace Workspace
 	// Cwd is the working directory inside the workspace's checkout.
 	Cwd string
+	// Timeout is the step's `timeout`: the wall clock this turn runs under,
+	// and so the longest a command the session runs in the foreground may
+	// take. An adapter hands it to the harness as the session's default
+	// shell timeout, so a session waits for a test suite in the turn that
+	// started it rather than having it backgrounded underneath it at the
+	// harness's own default — the wait the heartbeat then has to watch.
+	// Every step declares one (internal/workflow, Validate), and an adapter
+	// refuses a session without one rather than guessing a budget.
+	Timeout time.Duration
 	// Events receives this turn's events as they arrive.
 	Events Sink
 }

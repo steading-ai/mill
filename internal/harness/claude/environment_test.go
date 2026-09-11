@@ -34,6 +34,7 @@ var _ = Describe("The sidecar's environment", Label("unit"), func() {
 			ID:        "b6f1e0a2-0000-4000-8000-000000000002",
 			Cwd:       GinkgoT().TempDir(),
 			Workspace: harness.Workspace{Socket: "/run/mill/ws.sock", Token: "step-token-1"},
+			Timeout:   20 * time.Minute,
 			Events:    log.sink(),
 		}
 		var cancel context.CancelFunc

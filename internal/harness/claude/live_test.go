@@ -42,12 +42,13 @@ var _ = Describe("The claude adapter against the real sidecar", Label("live"), f
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		DeferCleanup(cancel)
 		log := &recorder{}
-		adapter := New(WithEntrypoint("node", entrypoint), WithTimeout(4*time.Minute))
+		adapter := New(WithEntrypoint("node", entrypoint))
 
 		turn, err := adapter.Start(ctx, harness.Session{
-			ID:     newSessionID(),
-			Cwd:    GinkgoT().TempDir(),
-			Events: log.sink(),
+			Timeout: 4 * time.Minute,
+			ID:      newSessionID(),
+			Cwd:     GinkgoT().TempDir(),
+			Events:  log.sink(),
 		}, harness.Prompt{Text: "Reply with the single word: ready. Use no tools."}, nil)
 		Expect(err).NotTo(HaveOccurred())
 		log.watch(turn)
@@ -79,12 +80,13 @@ var _ = Describe("The claude adapter against the real sidecar", Label("live"), f
 			before := headOf(checkout)
 
 			log := &recorder{}
-			adapter := New(WithEntrypoint("node", entrypoint), WithEnvMode(mode), WithTimeout(8*time.Minute))
+			adapter := New(WithEntrypoint("node", entrypoint), WithEnvMode(mode))
 
 			By("when the commit skill's session runs under the default permission mode")
 			turn, err := adapter.Start(ctx, harness.Session{
-				ID:  newSessionID(),
-				Cwd: checkout,
+				Timeout: 8 * time.Minute,
+				ID:      newSessionID(),
+				Cwd:     checkout,
 				// No permission_mode: the default is the classifier, which
 				// is what this spec is about.
 				Options: map[string]any{
@@ -210,10 +212,11 @@ var _ = Describe("The review skill against the real sidecar", Label("live"), fun
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		DeferCleanup(cancel)
 
-		adapter := New(WithEntrypoint("node", entrypoint), WithTimeout(8*time.Minute))
+		adapter := New(WithEntrypoint("node", entrypoint))
 		turn, err := adapter.Start(ctx, harness.Session{
-			ID:  newSessionID(),
-			Cwd: checkout,
+			Timeout: 8 * time.Minute,
+			ID:      newSessionID(),
+			Cwd:     checkout,
 			Options: map[string]any{
 				"model":  "opus",
 				"effort": "high",
@@ -373,10 +376,11 @@ var _ = Describe("The build-workflow skill against the real sidecar", Label("liv
 		repo, err := filepath.Abs(filepath.Join("..", "..", ".."))
 		Expect(err).NotTo(HaveOccurred())
 
-		adapter := New(WithEntrypoint("node", entrypoint), WithTimeout(8*time.Minute))
+		adapter := New(WithEntrypoint("node", entrypoint))
 		turn, err := adapter.Start(ctx, harness.Session{
-			ID:  newSessionID(),
-			Cwd: repo,
+			Timeout: 8 * time.Minute,
+			ID:      newSessionID(),
+			Cwd:     repo,
 			Options: map[string]any{
 				"model":  "sonnet",
 				"effort": "medium",

@@ -12,6 +12,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	harnessv1 "github.com/ivy/mill/gen/harness/v1"
 	"github.com/ivy/mill/internal/harness"
@@ -41,6 +42,19 @@ func scratch(name string) string {
 	GinkgoHelper()
 
 	return filepath.Join(GinkgoT().TempDir(), name)
+}
+
+// readRequest decodes the one request line a stub kept, so a spec can
+// assert on what crossed the wire rather than on what the adapter meant to
+// send.
+func readRequest(path string) *harnessv1.Request {
+	GinkgoHelper()
+
+	raw, err := os.ReadFile(path) //nolint:gosec // a spec's own scratch file
+	Expect(err).NotTo(HaveOccurred())
+	request := &harnessv1.Request{}
+	Expect(protojson.Unmarshal([]byte(strings.TrimSpace(string(raw))), request)).To(Succeed())
+	return request
 }
 
 // recorder collects a turn's events as the worker's step log would, and

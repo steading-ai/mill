@@ -24,6 +24,12 @@ import (
 //   - Every step names the evidence that closes it. Evidence closes steps
 //     and agents do not (docs/core-principles.md §8), so a step with no
 //     evidence kind could never close.
+//   - Every step declares a `timeout`. Budgets are the workflow's
+//     (docs/sandbox.md §Preparatory steps): the step's wall clock is what
+//     bounds a check, a gate's wait, and a session — and a session's shell
+//     waits in the foreground for as long as its step may run, so there is
+//     no default that is right for a two-minute check and a cold toolchain
+//     install alike.
 //   - `revise` targets an earlier step. A revise supersedes every step from
 //     the target through the failing one, so a forward target would move
 //     current_step forward and skip work rather than redo it
@@ -71,6 +77,9 @@ func validateStep(step *millv1.Step) []error {
 	name := step.GetName()
 	if step.GetEvidence() == millv1.EvidenceKind_EVIDENCE_KIND_UNSPECIFIED {
 		errs = append(errs, fmt.Errorf("step %s: evidence is required; nothing else closes a step", name))
+	}
+	if step.GetTimeout().AsDuration() <= 0 {
+		errs = append(errs, fmt.Errorf("step %s: timeout is required; the step's budget is how long it may run, and how long its session may wait in the foreground", name))
 	}
 	errs = append(errs, validateArtifact(step)...)
 	errs = append(errs, validateOutputSchema(step)...)

@@ -39,6 +39,7 @@ var _ = Describe("The claude adapter", Label("unit"), func() {
 			Options:   map[string]any{"model": "claude-opus-5", "effort": "high"},
 			Cwd:       GinkgoT().TempDir(),
 			Workspace: harness.Workspace{Socket: "/run/mill/ws.sock", Token: "step-token-1"},
+			Timeout:   20 * time.Minute,
 			Events:    log.sink(),
 		}
 		var cancel context.CancelFunc
@@ -120,6 +121,48 @@ while :; do sleep 0.1; done
 		Expect(terminal.Exit.Signal).To(BeNumerically("==", 9))
 	})
 
+	It("carries the step's timeout to the sidecar as timeout_ms, on a start and on a resume", func() {
+		By("given a step with a 20m timeout and a stub sidecar that keeps its request")
+		kept := scratch("request.json")
+		script := stub(`
+head -n 1 > KEPT
+printf '%s\n' 'TERMINAL'
+`, "KEPT", kept, "TERMINAL", twoModels)
+		session.Timeout = 20 * time.Minute
+
+		By("when the adapter starts the session")
+		turn, err := adapter(script).Start(lifetime, session, harness.Prompt{Text: "implement"}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = turn.Wait(lifetime)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("then the start request carries the timeout in milliseconds")
+		Expect(readRequest(kept).GetStart().GetTimeoutMs()).To(Equal(int32(20 * 60 * 1000)))
+
+		By("and so does a resume")
+		turn, err = adapter(script).Resume(lifetime, session, harness.Prompt{Text: "revise"}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = turn.Wait(lifetime)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(readRequest(kept).GetResume().GetTimeoutMs()).To(Equal(int32(20 * 60 * 1000)))
+	})
+
+	It("refuses a step whose timeout is zero before spawning anything", func() {
+		By("given a session with no timeout")
+		session.Timeout = 0
+		script := stub(`printf '%s\n' 'TERMINAL'`, "TERMINAL", twoModels)
+
+		By("when the adapter is asked to start or resume it")
+		_, startErr := adapter(script).Start(lifetime, session, harness.Prompt{Text: "implement"}, nil)
+		_, resumeErr := adapter(script).Resume(lifetime, session, harness.Prompt{Text: "revise"}, nil)
+
+		By("then both are refused, naming the session, and no sidecar was spawned")
+		Expect(startErr).To(MatchError(ContainSubstring("no timeout")))
+		Expect(startErr).To(MatchError(ContainSubstring(session.ID)))
+		Expect(resumeErr).To(MatchError(ContainSubstring("no timeout")))
+		Expect(spawner.spawned()).To(BeEmpty())
+	})
+
 	It("cancels the session when the step's timeout elapses, and reports it as a timeout", func() {
 		script := stub(`
 trap '' TERM
@@ -129,7 +172,8 @@ while :; do sleep 0.1; done
 		grace := 500 * time.Millisecond
 
 		started := time.Now()
-		turn, err := adapter(script, WithTimeout(300*time.Millisecond), WithGrace(grace)).Start(
+		session.Timeout = 300 * time.Millisecond
+		turn, err := adapter(script, WithGrace(grace)).Start(
 			lifetime, session, harness.Prompt{Text: "implement"}, nil)
 		Expect(err).NotTo(HaveOccurred())
 		group := spawner.pid()
@@ -150,7 +194,8 @@ printf '%s\n' '{"event":{"usage":{"by_model":{"claude-opus-5":{"input":"6","outp
 while :; do sleep 0.1; done
 `)
 
-		turn, err := adapter(script, WithTimeout(300*time.Millisecond), WithGrace(300*time.Millisecond)).Start(
+		session.Timeout = 300 * time.Millisecond
+		turn, err := adapter(script, WithGrace(300*time.Millisecond)).Start(
 			lifetime, session, harness.Prompt{Text: "implement"}, nil)
 		Expect(err).NotTo(HaveOccurred())
 		terminal, err := turn.Wait(lifetime)

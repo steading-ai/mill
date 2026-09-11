@@ -339,7 +339,7 @@ The rule: a preparatory step **MUST NOT** fail the run. The circuit breaker exis
 Budgets are the workflow's. A preparatory step and a check step each run under the `timeout` the workflow definition gives them — `workflows/feature/workflow.yaml` already carries `20m`, `30m` and `168h` on its steps — not under any harness setting. Two consequences:
 
 - Every preparatory step **MUST** have an explicit `timeout`; there is no default that is right for both a warm `mise install` and a cold Rust toolchain.
-- **The sidecar MUST set the session's shell timeout to the step's budget.** It sets none today, so a session gets the SDK's default and a command over about two minutes is backgrounded — after which a session invents a poll loop and loses an hour, which is the failure the harness fixed for its own sessions (`mill#42`) but not for mill's. A session that can wait in the foreground never has a task to lose.
+- **The sidecar MUST set the session's shell timeout to the step's budget.** It does, from the `timeout_ms` the adapter puts on every `Start` and `Resume` (`docs/architecture.md` §"Skill steps: the harness adapter"). Without it a session gets the SDK's default and a command over about two minutes is backgrounded — after which a session invents a poll loop and loses an hour, which is the failure the harness fixed for its own sessions (`mill#42`) before mill's. A session that can wait in the foreground never has a task to lose.
 
 ## Resource limits
 

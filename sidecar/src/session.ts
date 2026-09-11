@@ -29,7 +29,7 @@ import { denyPollLoops } from "./hooks.js";
 import { DEFAULT_PERMISSION_MODE, PolicyError, TASK_TOOLS, parseOptions, type Env } from "./options.js";
 import type { Conversation, Options, QueryFn, SDKMessage, SDKUserMessage } from "./sdk.js";
 import {
-  BASH_TIMEOUT_MS,
+  BASH_MAX_TIMEOUT_VAR,
   BASH_TIMEOUT_VAR,
   HEARTBEAT_STRIKES,
   Tasks,
@@ -135,6 +135,9 @@ export interface Turn {
   workspace?: Workspace;
   outputSchema: string;
   cwd: string;
+  // timeoutMs is the step's budget: the session's wall clock, and the
+  // foreground cap its shell runs under.
+  timeoutMs: number;
   resume: boolean;
 }
 
@@ -150,6 +153,13 @@ export function turnOf(request: Request): Turn {
       if (value.sessionId === "") {
         throw new RefusedError(`${body.case} carries no session id`);
       }
+      if (value.timeoutMs <= 0) {
+        // The budget is the workflow's, and every step declares one. A
+        // sidecar that filled one in would be choosing how long a session
+        // may wait in the foreground, which is the choice that lost
+        // sessions to poll loops.
+        throw new RefusedError(`${body.case} carries no timeout; every step declares one`);
+      }
       return {
         requestId: request.id,
         sessionId: value.sessionId,
@@ -159,6 +169,7 @@ export function turnOf(request: Request): Turn {
         workspace: value.workspace,
         outputSchema: value.outputSchema,
         cwd: value.cwd,
+        timeoutMs: value.timeoutMs,
         resume: body.case === "resume",
       };
     }
@@ -203,12 +214,14 @@ export function renderPrompt(prompt: string, attachments: Attachment[], nonce = 
 // under `--env-mode strict` that is the floor plus the names the same key
 // told the adapter to carry, so the two halves of the carve-out are one line
 // in the workflow — and `env.set` sets literals over them. The workspace's
-// git and egress environment, the socket and the token go on last: they are
-// the session's whole grant, the identity it commits under and the way it
-// reaches out, and nothing a step asked for may shadow them.
+// git and egress environment, the shell's foreground cap, the socket and the
+// token go on last: they are the session's whole grant, the identity it
+// commits under, the way it reaches out and the time it has, and nothing a
+// step asked for may shadow them.
 export function sessionEnv(
   workspace: Workspace | undefined,
   hostEnv: Record<string, string | undefined>,
+  timeoutMs: number,
   carveOut?: Env,
 ): Record<string, string> {
   const env: Record<string, string> = {};
@@ -235,13 +248,49 @@ export function sessionEnv(
   for (const name of WORKSPACE_EGRESS_ENVIRONMENT) {
     copy(name);
   }
-  // The foreground cap. Above it the harness backgrounds the command and
-  // wakes the session when it ends, which is the wait the heartbeat watches
-  // (tasks.ts); below it an ordinary run stays in the turn that started it.
-  env[BASH_TIMEOUT_VAR] ??= BASH_TIMEOUT_MS;
+  // The foreground cap, which is the step's budget: a command the session
+  // runs stays in the turn that started it for as long as the step may run.
+  // Above the cap the harness backgrounds the command and wakes the session
+  // when it ends, which is the wait the heartbeat watches (tasks.ts) — and
+  // a step's wall clock ends the session before its shell gets there. The
+  // harness's ceiling is raised with it, so its own default never clamps a
+  // budget longer than that default. Set through the SDK's options and not
+  // the process environment, so the value is the step's and not the
+  // sidecar's.
+  const cap = shellTimeout(timeoutMs);
+  env[BASH_TIMEOUT_VAR] = cap;
+  env[BASH_MAX_TIMEOUT_VAR] = cap;
   env[WORKSPACE_SOCKET_VAR] = workspace?.socket ?? "";
   env[STEP_TOKEN_VAR] = workspace?.token ?? "";
   return env;
+}
+
+// shellTimeout is the foreground cap as the harness reads it: the step's
+// budget in milliseconds, as a whole number of them.
+export function shellTimeout(timeoutMs: number): string {
+  return String(Math.floor(timeoutMs));
+}
+
+// startupLine is what the sidecar says on its standard error as the session
+// starts: which session, and the foreground cap its shell was given. It is
+// the one place the value the sidecar actually set is written down where a
+// spec — and an operator reading a step's diagnostics — can read it back.
+export function startupLine(turn: Turn): string {
+  const cap = shellTimeout(turn.timeoutMs);
+  return `sidecar: session ${turn.sessionId}: ${turn.resume ? "resuming" : "starting"} under a ${describeMs(turn.timeoutMs)} step; ${BASH_TIMEOUT_VAR}=${cap} ${BASH_MAX_TIMEOUT_VAR}=${cap}`;
+}
+
+// describeMs renders a budget the way a workflow writes it — `20m`, `1h`,
+// `90s` — so the log line and the definition say the same thing.
+function describeMs(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  if (seconds > 0 && seconds % 3600 === 0) {
+    return `${seconds / 3600}h`;
+  }
+  if (seconds > 0 && seconds % 60 === 0) {
+    return `${seconds / 60}m`;
+  }
+  return `${ms % 1000 === 0 ? seconds : ms / 1000}s`;
 }
 
 function outputFormat(schema: string): Options["outputFormat"] {
@@ -304,7 +353,7 @@ export function buildOptions(
   const denied = [...(declared.tools?.deny ?? [])];
   const options: Options = {
     abortController,
-    env: sessionEnv(turn.workspace, hostEnv, declared.env),
+    env: sessionEnv(turn.workspace, hostEnv, turn.timeoutMs, declared.env),
     permissionMode: declared.permissionMode ?? DEFAULT_PERMISSION_MODE,
     settingSources: [],
   };

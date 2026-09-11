@@ -13,6 +13,7 @@ silenceBrokenPipe(process.stdout);
 const status = await run({
   stdin: process.stdin,
   stdout: process.stdout,
+  stderr: process.stderr,
   env: process.env,
   onCancel: (handler) => {
     process.on("SIGTERM", handler);

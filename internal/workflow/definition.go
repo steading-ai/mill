@@ -328,6 +328,9 @@ func (s stepYAML) toProto() (*millv1.Step, error) {
 		if err != nil {
 			return fail(fmt.Errorf("timeout: %w", err))
 		}
+		if d <= 0 {
+			return fail(fmt.Errorf("timeout: %s is not a positive duration", s.Timeout))
+		}
 		step.Timeout = durationpb.New(d)
 	}
 	return step, nil

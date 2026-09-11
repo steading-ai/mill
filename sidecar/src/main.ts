@@ -30,7 +30,7 @@ import {
 import { describe, neverRan } from "./exit.js";
 import { loadQuery, type QueryFn } from "./sdk.js";
 import { PolicyError } from "./options.js";
-import { buildOptions, runSession, turnOf, type Turn } from "./session.js";
+import { buildOptions, runSession, startupLine, turnOf, type Turn } from "./session.js";
 import { UsageAccumulator } from "./usage.js";
 
 // GRACE_MS_VAR names the environment variable the worker sets to say how
@@ -49,6 +49,9 @@ export const DEFAULT_GRACE_MS = 5000;
 export interface Io {
   stdin: AsyncIterable<string | Uint8Array>;
   stdout: { write(chunk: string, callback: () => void): unknown };
+  // stderr is the sidecar's own voice: the worker keeps it as a refused or
+  // failed step's diagnostics, and the startup line goes there.
+  stderr: { write(chunk: string): unknown };
   env: Record<string, string | undefined>;
   // onCancel registers the handler that runs when the worker asks the
   // session to stop.
@@ -136,6 +139,9 @@ export async function run(io: Io): Promise<number> {
     await writeTerminal(refusal(turn.requestId, reason, describe(err)));
     return 0;
   }
+  // The session is about to start under these options; say so, with the
+  // foreground cap the shell was given, where the step's diagnostics keep it.
+  io.stderr.write(`${startupLine(turn)}\n`);
 
   // The events are queued rather than awaited: a turn streams from the
   // harness and must not block on the worker's pipe mid-message. They are
@@ -225,6 +231,7 @@ export async function bootstrap(): Promise<void> {
   const status = await run({
     stdin: process.stdin,
     stdout: process.stdout,
+    stderr: process.stderr,
     env: process.env,
     onCancel: (handler) => {
       process.on("SIGTERM", handler);

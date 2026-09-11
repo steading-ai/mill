@@ -46,6 +46,7 @@ var _ = Describe("A live session", Label("live"), Serial, func() {
 			Id: "live-trivial",
 			Body: &harnessv1.Request_Start{Start: &harnessv1.Start{
 				SessionId: sessionID,
+				TimeoutMs: stepTimeoutMs,
 				Prompt:    "Reply with exactly the word READY and nothing else.",
 				Cwd:       workdir,
 				Settings:  settings(map[string]any{"tools": map[string]any{"deny": []any{"Bash", "Write", "Edit"}}}),
@@ -77,6 +78,7 @@ var _ = Describe("A live session", Label("live"), Serial, func() {
 			Id: "live-start",
 			Body: &harnessv1.Request_Start{Start: &harnessv1.Start{
 				SessionId: sessionID,
+				TimeoutMs: stepTimeoutMs,
 				Prompt:    "Remember this codeword: TANGERINE-4417. Reply with OK and nothing else.",
 				Cwd:       workdir,
 				Settings:  settings(map[string]any{"tools": map[string]any{"deny": []any{"Bash", "Write", "Edit"}}}),
@@ -90,6 +92,7 @@ var _ = Describe("A live session", Label("live"), Serial, func() {
 			Id: "live-resume",
 			Body: &harnessv1.Request_Resume{Resume: &harnessv1.Resume{
 				SessionId: sessionID,
+				TimeoutMs: stepTimeoutMs,
 				Prompt:    "What codeword did I give you earlier? Reply with the codeword and nothing else.",
 				Cwd:       workdir,
 				Settings:  settings(map[string]any{"tools": map[string]any{"deny": []any{"Bash", "Write", "Edit"}}}),
@@ -109,6 +112,7 @@ var _ = Describe("A live session", Label("live"), Serial, func() {
 			Id: "live-policy",
 			Body: &harnessv1.Request_Start{Start: &harnessv1.Start{
 				SessionId: sessionID,
+				TimeoutMs: stepTimeoutMs,
 				Prompt:    "Create the file " + target + " with the exact contents ESCAPED. If you cannot, say why.",
 				Cwd:       workdir,
 				Settings: settings(map[string]any{"tools": map[string]any{
@@ -162,6 +166,7 @@ var _ = Describe("A live session", Label("live"), Serial, func() {
 			Id: "live-egress",
 			Body: &harnessv1.Request_Start{Start: &harnessv1.Start{
 				SessionId: sessionID,
+				TimeoutMs: stepTimeoutMs,
 				Prompt:    "Run the shell command `env | sort` with the Bash tool, exactly once, then reply with exactly the word DONE and nothing else.",
 				Cwd:       workdir,
 				Settings: settings(map[string]any{"tools": map[string]any{
@@ -192,12 +197,67 @@ var _ = Describe("A live session", Label("live"), Serial, func() {
 		Expect(printed).NotTo(ContainSubstring(upstream))
 	})
 
+	It("A long foreground command is not backgrounded", func() {
+		By("given a session under a 20m step")
+		// Three minutes is past the harness's own two-minute default, which
+		// is where a foreground command used to be backgrounded underneath
+		// the session; the marker is what proves the output came back in
+		// the turn rather than through a task the session had to wait for.
+		// The command is a script that works for the three minutes rather
+		// than a `sleep`, which the harness refuses on sight: what is under
+		// test is a suite that takes that long, not a pause.
+		const marker = "FOREGROUND-WAITED-9b3e"
+		suite := filepath.Join(workdir, "slow-suite")
+		Expect(os.WriteFile(suite, []byte("#!/bin/sh\n"+
+			"end=$(( $(date +%s) + 180 ))\n"+
+			"while [ \"$(date +%s)\" -lt \"$end\" ]; do :; done\n"+
+			"echo "+marker+"\n"), 0o700)).To(Succeed()) //nolint:gosec // the spec's own script
+		line := request(&harnessv1.Request{
+			Id: "live-foreground",
+			Body: &harnessv1.Request_Start{Start: &harnessv1.Start{
+				SessionId: sessionID,
+				TimeoutMs: 20 * 60 * 1000,
+				Prompt: "Run the test suite `./slow-suite` with the Bash tool, exactly once, in the foreground: do not " +
+					"background it, do not pass a timeout, and do not read the script first. It takes a few minutes. " +
+					"When it has finished, reply with the one line of output it printed and nothing else.",
+				Cwd: workdir,
+				Settings: settings(map[string]any{"tools": map[string]any{
+					"allow": []any{"Bash"},
+					"deny":  []any{"Write", "Edit", "NotebookEdit", "Task", "WebFetch", "WebSearch"},
+				}}),
+			}},
+		})
+
+		By("when a command runs for three minutes in the foreground")
+		s := runFor(entrypoint, nil, line, 10*time.Minute)
+
+		By("then it completes in the foreground and its output is in the turn")
+		Expect(s.terminal().GetExit().GetStatus()).To(BeZero(), s.terminal().GetFinalMessage())
+		Expect(s.terminal().GetExit().GetReason()).To(Equal(harnessv1.ExitReason_EXIT_REASON_UNSPECIFIED))
+		var bashResults []string
+		for _, event := range s.events() {
+			if call := event.GetToolCall(); call != nil {
+				Expect(call.GetName()).NotTo(BeElementOf("TaskOutput", "TaskStop"), "the session waited on a task instead of its shell")
+			}
+			if result := event.GetToolResult(); result != nil {
+				bashResults = append(bashResults, result.GetContent())
+			}
+		}
+		Expect(bashResults).To(ContainElement(ContainSubstring(marker)), "the command's output did not come back as the tool's result")
+		Expect(bashResults).NotTo(ContainElement(ContainSubstring("background")), "the harness backgrounded the command")
+		Expect(s.terminal().GetFinalMessage()).To(ContainSubstring(marker))
+
+		By("and the sidecar's startup line says the shell was given the step's twenty minutes")
+		Expect(s.stderr.String()).To(ContainSubstring("BASH_DEFAULT_TIMEOUT_MS=1200000"))
+	})
+
 	It("carries structured output that validates against the step's schema", func() {
 		By("given a step that declares a reviewer's output schema")
 		line := request(&harnessv1.Request{
 			Id: "live-structured",
 			Body: &harnessv1.Request_Start{Start: &harnessv1.Start{
 				SessionId:    sessionID,
+				TimeoutMs:    stepTimeoutMs,
 				Prompt:       "Judge whether the criterion 'the CLI exits non-zero on an unknown flag' holds. You have no code to read; decide from the statement alone and answer in the required format.",
 				Cwd:          workdir,
 				OutputSchema: reviewSchema,
