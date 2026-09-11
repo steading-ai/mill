@@ -193,6 +193,123 @@ printf '%s\n' '{"terminal":{"exit":{"status":0}}}'
 		}
 	})
 
+	// The workspace's way out: docs/sandbox.md §Network and §Credentials.
+	// The five are the workspace's decisions and cross the floor the way its
+	// git identity does; the host's own model credentials still stop at the
+	// deny list, in either mode.
+	decided := map[string]string{
+		"HTTPS_PROXY":          "http://10.99.14.1:3128",
+		"HTTP_PROXY":           "http://10.99.14.1:3128",
+		"NO_PROXY":             "10.99.14.1",
+		"ANTHROPIC_BASE_URL":   "http://10.99.14.1:8081",
+		"ANTHROPIC_AUTH_TOKEN": "step-token-1",
+	}
+
+	It("The workspace's network decisions reach the session", func() {
+		By("given --env-mode strict")
+		adapter := New(WithExecer(spawner), WithEnvMode(EnvStrict))
+
+		By("and a workspace that decided a proxy and a gateway")
+		session.Workspace.Env = map[string]string{
+			"GIT_CONFIG_GLOBAL": "/run/mill/01J0RUN/gitconfig",
+			"GIT_AUTHOR_EMAIL":  "mill@example.test",
+		}
+		for name, value := range decided {
+			session.Workspace.Env[name] = value
+		}
+		// The host's own proxy is not the workspace's, and the mill's
+		// process carries things of its own besides.
+		carrying("HTTPS_PROXY", "http://laptop-proxy.test:3128")
+		carrying("GOFLAGS", "-mod=mod")
+
+		By("when the adapter composes a sidecar's environment")
+		env, _ := spawn(adapter)
+
+		By("then HTTPS_PROXY, HTTP_PROXY, NO_PROXY, ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN are present")
+		for name, value := range decided {
+			Expect(env).To(HaveKeyWithValue(name, value))
+		}
+
+		By("and no variable outside the floor and the workspace's decisions is")
+		Expect(spawner.spawned()).To(HaveLen(1))
+		spawned := spawner.spawned()[0]
+		Expect(spawned.ClearEnv).To(BeTrue())
+		allowed := append([]string{socketVar, tokenVar}, envFloor...)
+		for name := range session.Workspace.Env {
+			allowed = append(allowed, name)
+		}
+		for name := range spawned.Env {
+			Expect(allowed).To(ContainElement(name), "%s is outside the floor and the workspace decided it nowhere", name)
+		}
+		Expect(spawned.Env).NotTo(HaveKey("GOFLAGS"))
+		Expect(env).To(HaveKeyWithValue("GIT_CONFIG_GLOBAL", "/run/mill/01J0RUN/gitconfig"))
+	})
+
+	It("The host's model credentials still do not", func() {
+		By("given CLAUDE_CODE_OAUTH_TOKEN exported on the host")
+		carrying("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-not-a-real-token")
+		carrying("ANTHROPIC_API_KEY", "sk-ant-not-a-real-key")
+		session.Workspace.Env = map[string]string{}
+		for name, value := range decided {
+			session.Workspace.Env[name] = value
+		}
+
+		for _, mode := range []EnvMode{EnvInherit, EnvStrict} {
+			By("when a sidecar is spawned in " + string(mode) + " mode")
+			env, turn := spawn(New(WithExecer(&watching{Execer: workspace.Spawner{}}), WithEnvMode(mode)))
+
+			By("then it is absent from the sidecar's environment")
+			// The session's half of this Then clause is the spec of the
+			// same name in sidecar/sidecar_test.go.
+			Expect(env).NotTo(HaveKey("CLAUDE_CODE_OAUTH_TOKEN"), "mode %s", mode)
+			Expect(env).NotTo(HaveKey("ANTHROPIC_API_KEY"), "mode %s", mode)
+			Expect(turn.Environment.Stripped).To(ContainElements("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"))
+
+			By("and the only ANTHROPIC_* the sidecar holds are the workspace's gateway and its bearer")
+			for name := range env {
+				if strings.HasPrefix(name, "ANTHROPIC_") || strings.HasPrefix(name, "CLAUDE_CODE_") {
+					Expect(decided).To(HaveKey(name), "mode %s hands the session %s", mode, name)
+				}
+			}
+			Expect(env).To(HaveKeyWithValue("ANTHROPIC_BASE_URL", "http://10.99.14.1:8081"), "mode %s", mode)
+			Expect(env).To(HaveKeyWithValue("ANTHROPIC_AUTH_TOKEN", "step-token-1"), "mode %s", mode)
+		}
+	})
+
+	It("The auth token follows the step", func() {
+		adapter := New(WithExecer(spawner), WithEnvMode(EnvStrict))
+		session.Workspace.Env = map[string]string{"ANTHROPIC_BASE_URL": "http://10.99.14.1:8081"}
+
+		By("given step 1 ran with token A")
+		session.Workspace.Token = "token-a"
+		session.Workspace.Env["ANTHROPIC_AUTH_TOKEN"] = "token-a"
+		first, _ := spawn(adapter)
+		Expect(first).To(HaveKeyWithValue("ANTHROPIC_AUTH_TOKEN", "token-a"))
+
+		By("when the workspace rotates to token B for step 2")
+		// The run loop composes a session per step from the workspace's
+		// environment after it rotates (internal/run/execute.go), so what
+		// the adapter sees for step 2 is the rotated map.
+		session.Workspace.Token = "token-b"
+		session.Workspace.Env["ANTHROPIC_AUTH_TOKEN"] = "token-b"
+		second, _ := spawn(adapter)
+
+		By("then step 2's exec carries B")
+		Expect(second).To(HaveKeyWithValue("ANTHROPIC_AUTH_TOKEN", "token-b"))
+		Expect(second).To(HaveKeyWithValue(tokenVar, "token-b"))
+		Expect(spawner.spawned()).To(HaveLen(2))
+		Expect(spawner.spawned()[1].Env).To(HaveKeyWithValue("ANTHROPIC_AUTH_TOKEN", "token-b"))
+
+		By("and no process still carries A")
+		for name, value := range second {
+			Expect(value).NotTo(Equal("token-a"), "%s still carries step 1's token", name)
+		}
+		// Step 1's sidecar — the one process that was ever given A — is gone
+		// with its turn: the adapter spawns one sidecar per turn and waits
+		// for it.
+		Expect(gone(spawner.pids()[0])).To(BeTrue(), "step 1's sidecar is still running")
+	})
+
 	It("names the mode it was told about, and refuses one it has never heard of", func() {
 		Expect(ParseEnvMode("inherit")).To(Equal(EnvInherit))
 		Expect(ParseEnvMode("strict")).To(Equal(EnvStrict))

@@ -44,18 +44,23 @@ import { fromModelUsage, fromTurn, type UsageAccumulator } from "./usage.js";
 export const TOOL_RESULT_LIMIT = 4096;
 
 // ENVIRONMENT_PASSTHROUGH is what a session's tools inherit from the host
-// besides the workspace's two values: enough for a process to start and find
-// the account's own Claude Code login, and nothing that authenticates the
-// mill to anything else. The SDK does not merge this with `process.env`, so
-// what is not listed here is not present — no ANTHROPIC key, no forge token,
-// no dagger socket.
+// besides what the workspace decided: enough for a process to start, and
+// nothing that authenticates the mill to anything else. The SDK does not
+// merge this with `process.env`, so what is not listed here is not present —
+// no ANTHROPIC key, no forge token, no dagger socket. HOME is here for the
+// shell, the SDK's transcripts and the harness's own state, not for a login:
+// the model is reached on the account's login where there is one and through
+// the workspace's gateway where there is not.
 //
 // It is the same list as `envFloor` in internal/harness/claude/environment.go,
 // which answers the same question one hop earlier: what the sidecar itself is
 // spawned with under `--env-mode strict`. The two are stated separately
-// because they are two boundaries; change one and look at the other. A step
-// that needs more says so in its options, as `env.passthrough` or `env.set`,
-// where the workflow shows it.
+// because they are two boundaries; change one and look at the other. The
+// workspace's decisions — WORKSPACE_GIT_ENVIRONMENT and
+// WORKSPACE_EGRESS_ENVIRONMENT below — cross both the same way, past the
+// floor, and the same rule holds: they are named in both files. A step that
+// needs more says so in its options, as `env.passthrough` or `env.set`, where
+// the workflow shows it.
 const ENVIRONMENT_PASSTHROUGH = [
   "HOME",
   "LANG",
@@ -83,6 +88,24 @@ const WORKSPACE_GIT_ENVIRONMENT = [
   "GIT_COMMITTER_NAME",
   "GIT_CONFIG_GLOBAL",
   "GIT_CONFIG_SYSTEM",
+];
+
+// WORKSPACE_EGRESS_ENVIRONMENT is what the workspace decided about how the
+// session reaches anything outside it: the proxy every outbound connection
+// takes, and the gateway the model is reached through with the step token as
+// its bearer (internal/workspace, `Egress`; docs/sandbox.md §Network,
+// §Credentials). On a host that drops the direct path, a session's shell
+// with none of these hangs to its timeout with nothing naming a proxy. Like
+// the git identity they are copied past the step's carve-out: a step may
+// not choose its own way out. The bearer is the step's, not the session's:
+// each sidecar is spawned for one step with the token that step was issued,
+// so what is copied here is the token the gateway is checking against.
+const WORKSPACE_EGRESS_ENVIRONMENT = [
+  "HTTPS_PROXY",
+  "HTTP_PROXY",
+  "NO_PROXY",
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_AUTH_TOKEN",
 ];
 
 // WORKSPACE_SOCKET_VAR and STEP_TOKEN_VAR are the names a session finds its
@@ -176,9 +199,9 @@ export function renderPrompt(prompt: string, attachments: Attachment[], nonce = 
 // under `--env-mode strict` that is the floor plus the names the same key
 // told the adapter to carry, so the two halves of the carve-out are one line
 // in the workflow — and `env.set` sets literals over them. The workspace's
-// git environment, the socket and the token go on last: they are the
-// session's whole grant and the identity it commits under, and nothing a
-// step asked for may shadow them.
+// git and egress environment, the socket and the token go on last: they are
+// the session's whole grant, the identity it commits under and the way it
+// reaches out, and nothing a step asked for may shadow them.
 export function sessionEnv(
   workspace: Workspace | undefined,
   hostEnv: Record<string, string | undefined>,
@@ -200,9 +223,12 @@ export function sessionEnv(
   for (const [name, value] of Object.entries(carveOut?.set ?? {})) {
     env[name] = value;
   }
-  // The workspace's git, after the carve-out: a step may not choose who its
-  // commits are by.
+  // The workspace's git and egress, after the carve-out: a step may not
+  // choose who its commits are by, nor its own way out.
   for (const name of WORKSPACE_GIT_ENVIRONMENT) {
+    copy(name);
+  }
+  for (const name of WORKSPACE_EGRESS_ENVIRONMENT) {
     copy(name);
   }
   // The foreground cap. Above it the harness backgrounds the command and

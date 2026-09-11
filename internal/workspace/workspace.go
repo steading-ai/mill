@@ -176,6 +176,62 @@ type Spec struct {
 	// Ref is what to check out: the project's default branch for a new run,
 	// the run's own branch when a worker elsewhere recreates the workspace.
 	Ref string
+	// Egress is how the run's processes reach anything outside the
+	// workspace: a proxy for the world and a gateway for the model, or
+	// neither.
+	Egress Egress
+}
+
+// Egress is what the workspace decided about how a session's processes
+// reach anything outside it: the world through a forward proxy, the model
+// through a credential gateway (docs/sandbox.md §Network, §Credentials). The
+// zero value is the local backend's answer — the host's own route and the
+// account's own login — and the machine backend's is a proxy and a gateway
+// on the host side of its veth. Both reach a session the same way: as
+// variables the workspace sets on every process it or its harness spawns,
+// past every environment floor, beside the git identity it decides.
+type Egress struct {
+	// Proxy is the forward proxy every outbound connection goes through,
+	// named to a process as HTTPS_PROXY and HTTP_PROXY. Empty means no
+	// proxy was decided and the host's own routing stands.
+	Proxy string
+	// NoProxy is what bypasses the proxy, as NO_PROXY lists it. Read only
+	// when Proxy is set.
+	NoProxy string
+	// Gateway is the credential gateway the model is reached through,
+	// named as ANTHROPIC_BASE_URL. A session presents the step token to it
+	// as ANTHROPIC_AUTH_TOKEN, so the gateway sees the token the workspace
+	// last rotated in and refuses the one before it. Empty means the model
+	// is reached as the account, on the SDK's own login.
+	Gateway string
+}
+
+// The variables a workspace's network decisions are named to a process by.
+const (
+	HTTPSProxyVar        = "HTTPS_PROXY"
+	HTTPProxyVar         = "HTTP_PROXY"
+	NoProxyVar           = "NO_PROXY"
+	ModelGatewayVar      = "ANTHROPIC_BASE_URL"
+	ModelGatewayTokenVar = "ANTHROPIC_AUTH_TOKEN"
+)
+
+// Environment is the decisions as the variables a process is given, with
+// token as the step token it presents to the gateway. A decision that was
+// not made sets nothing: under `--env-mode inherit` that is what lets the
+// host's own proxy reach a session, and under `strict` it is what leaves the
+// session with the SDK's login rather than an empty bearer.
+func (n Egress) Environment(token string) map[string]string {
+	env := map[string]string{}
+	if n.Proxy != "" {
+		env[HTTPSProxyVar] = n.Proxy
+		env[HTTPProxyVar] = n.Proxy
+		env[NoProxyVar] = n.NoProxy
+	}
+	if n.Gateway != "" {
+		env[ModelGatewayVar] = n.Gateway
+		env[ModelGatewayTokenVar] = token
+	}
+	return env
 }
 
 // Handle is the workspace as the ledger records it. docs/domain-model.md

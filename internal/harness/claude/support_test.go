@@ -92,9 +92,10 @@ func (r *recorder) afterTerminal() int {
 type watching struct {
 	workspace.Execer
 
-	mu       sync.Mutex
-	commands []workspace.Command
-	last     *workspace.Process
+	mu        sync.Mutex
+	commands  []workspace.Command
+	processes []*workspace.Process
+	last      *workspace.Process
 }
 
 func (w *watching) Exec(ctx context.Context, command workspace.Command) (*workspace.Process, error) {
@@ -103,9 +104,22 @@ func (w *watching) Exec(ctx context.Context, command workspace.Command) (*worksp
 	defer w.mu.Unlock()
 	w.commands = append(w.commands, command)
 	if err == nil {
+		w.processes = append(w.processes, process)
 		w.last = process
 	}
 	return process, err
+}
+
+// pids are the process groups of every sidecar the adapter spawned, in
+// order.
+func (w *watching) pids() []int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	pids := make([]int, 0, len(w.processes))
+	for _, process := range w.processes {
+		pids = append(pids, process.Pid())
+	}
+	return pids
 }
 
 func (w *watching) spawned() []workspace.Command {

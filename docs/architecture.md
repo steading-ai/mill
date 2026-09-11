@@ -103,7 +103,7 @@ A **deny list** applies in both modes and is not configurable. It is never given
 
 | Name | Why |
 |---|---|
-| `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` | the login comes from `HOME`; a key in a session's environment is a key its `Bash` tool can print |
+| `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` | a key in a session's environment is a key its `Bash` tool can print. `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` are deliberately not here: they are how the workspace's model gateway is reached, and the workspace sets them after this filter (`docs/sandbox.md` §Credentials) |
 | `DATABASE_URL`, `MILL_*` | the mill's own store and credentials, the forge token among them |
 | `DG_*` | dagger's socket and project: a session reaches the work graph through nothing |
 | `CLAUDECODE`, `CLAUDE_CODE_*` | an interactive session's markers make the SDK think it is nested |
@@ -113,7 +113,7 @@ A **deny list** applies in both modes and is not configurable. It is never given
 
 | Variable | Why it is on the floor |
 |---|---|
-| `HOME` | the SDK finds the account's login (`~/.claude/.credentials.json`) and writes transcripts under `~/.claude/projects`. Not git's identity: the workspace's `GIT_CONFIG_GLOBAL` displaces the account's configuration on every session (§"The workspace") |
+| `HOME` | the shell, the SDK's transcripts under `~/.claude/projects`, and the harness's own state. Not a login: in a machine there is none, and the model is reached through the gateway the workspace names. Not git's identity: the workspace's `GIT_CONFIG_GLOBAL` displaces the account's configuration on every session (§"The workspace") |
 | `PATH` | the sidecar must find `node`, the SDK its `claude` binary, the session `git` and the project's toolchain |
 | `LANG`, `LC_ALL` | encoding; without them Node and git fall back to ASCII and mangle non-ASCII in bodies and diffs |
 | `LOGNAME`, `USER` | the account a tool reports itself running as |
@@ -123,11 +123,11 @@ A **deny list** applies in both modes and is not configurable. It is never given
 | `TZ` | timestamps in commits and logs match the host's |
 | `XDG_RUNTIME_DIR` | the sidecar's own sockets and the SDK's IPC live under it |
 
-The workspace socket, the step token and the workspace's git environment are added on top in both modes, last, so nothing a step asked for can shadow them: a step may widen what its session sees, and may not choose who its commits are by.
+The workspace socket, the step token and the workspace's own environment are added on top in both modes, last, so nothing a step asked for can shadow them: a step may widen what its session sees, and may not choose who its commits are by or its own way out. The workspace's environment is its git identity (§"The workspace") and its egress — `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` for the proxy every outbound connection takes, `ANTHROPIC_BASE_URL` for the gateway the model is reached through, and `ANTHROPIC_AUTH_TOKEN`, the step token as that gateway's bearer (`docs/sandbox.md` §Network, §Credentials). They are decisions the workspace made, never values inherited from the host: the local workspace decides none and sets none, the machine workspace decides a proxy and a gateway on the host side of its veth, and both reach a session by the same path. The token among them is rotated with the step, so a session's exec carries the bearer its step was issued and never the one before it.
 
 **The carve-out is the step's, where a reviewer can see it.** A step's `harness.claude` options may name `env.passthrough: [NAME, …]`, which copies those variables from the mill's process, and `env.set: {NAME: value}`, which sets literals. Both are the sidecar's schema; the adapter reads `env.passthrough` too, because what a child process is given is not the child's to decide. A step naming a deny-listed variable is refused before the sidecar is spawned, with a message naming the variable. In `inherit` mode `env.passthrough` is accepted and redundant; `env.set` applies in both. The attempt records what the step asked for and what was stripped (`step_runs.env_passthrough`, `step_runs.env_stripped`), and `mill inspect` shows both when either is non-empty. The floor is not widened to make a step work: the carve-out exists so that a workflow says what it needs.
 
-The sidecar applies the same shape one hop further along — the session's tools inherit that floor from the sidecar, plus the step's carve-out, plus the socket and the token — so `ENVIRONMENT_PASSTHROUGH` in `sidecar/src/session.ts` and `envFloor` in `internal/harness/claude/environment.go` are the same list stated at two boundaries.
+The sidecar applies the same shape one hop further along — the session's tools inherit that floor from the sidecar, plus the step's carve-out, plus the workspace's environment, the socket and the token — so `ENVIRONMENT_PASSTHROUGH` in `sidecar/src/session.ts` and `envFloor` in `internal/harness/claude/environment.go` are the same list stated at two boundaries, and the workspace's git and egress variables are named past the floor in both files.
 
 Codex, Pi, and a native Go Claude adapter are further implementations of the same interface. The adapter, not the workflow, translates a skill into whatever the harness wants; a skill is used as a *prompt*, never installed as a harness-native skill, so no harness's discovery rules leak into the workflow.
 

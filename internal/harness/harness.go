@@ -35,10 +35,13 @@ type Workspace struct {
 	Token string
 	// Env is what the workspace requires the session's own processes to run
 	// under: the run's commit identity and the mill's signing key
-	// (docs/architecture.md §"The workspace"). An adapter sets it last,
-	// with the socket and the token, so nothing a step asked for can shadow
-	// it — a session's `git commit` is the workspace's commit whether the
-	// session meant it to be or not.
+	// (docs/architecture.md §"The workspace"), and the proxy and the model
+	// gateway the session reaches out through, with the step token as the
+	// gateway's bearer (docs/sandbox.md §Network, §Credentials). An adapter
+	// sets it last, with the socket and the token, so nothing a step asked
+	// for can shadow it — a session's `git commit` is the workspace's commit
+	// whether the session meant it to be or not, and its way out is the
+	// workspace's route.
 	Env map[string]string
 }
 

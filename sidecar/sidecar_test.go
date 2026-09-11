@@ -264,6 +264,84 @@ var _ = Describe("The sidecar", Label("unit"), func() {
 		Expect(env).NotTo(HaveKey("MILL_SPEC_ABSENT"))
 	})
 
+	// The workspace's way out — docs/sandbox.md §Network, §Credentials —
+	// is set on the sidecar by the adapter as the workspace decided it, and
+	// the sidecar copies it past the step's carve-out to the session's
+	// tools. What the host exports about the model is another matter and
+	// stops at the adapter's deny list; here the sidecar is handed it
+	// directly, to prove that this boundary does not pass it either.
+	decided := map[string]string{
+		"HTTPS_PROXY":          "http://10.99.14.1:3128",
+		"HTTP_PROXY":           "http://10.99.14.1:3128",
+		"NO_PROXY":             "10.99.14.1",
+		"ANTHROPIC_BASE_URL":   "http://10.99.14.1:8081",
+		"ANTHROPIC_AUTH_TOKEN": "step-token-01JB",
+	}
+
+	// probed is what a session's `env` printed, through the fake harness's
+	// env-probe scenario, given the sidecar's own environment.
+	probed := func(env map[string]string) string {
+		GinkgoHelper()
+		spawned := map[string]string{
+			"MILL_FAKE_SCENARIO": "env-probe",
+			// A short PATH keeps the probe's output inside the limit the
+			// sidecar truncates a tool result at.
+			"PATH": "/usr/bin:/bin",
+		}
+		for name, value := range env {
+			spawned[name] = value
+		}
+		s := run(fakeEntrypoint, spawned, startRequest("env-3", func(start *harnessv1.Start) {
+			start.Workspace = &harnessv1.Workspace{Socket: "/run/mill/workspace-01JB.sock", Token: "step-token-01JB"}
+			start.Settings = settings(map[string]any{"env": map[string]any{
+				"set": map[string]any{"HTTPS_PROXY": "http://the-steps-own-proxy.test:3128"},
+			}})
+		}))
+		printed := ""
+		for _, event := range s.events() {
+			if result := event.GetToolResult(); result != nil {
+				printed += result.GetContent()
+			}
+		}
+		return printed
+	}
+
+	It("The workspace's network decisions reach the session", func() {
+		By("given a sidecar spawned with the proxy and the gateway the workspace decided")
+		By("when the session runs `env` through its exec tool")
+		printed := probed(decided)
+
+		By("then HTTPS_PROXY, HTTP_PROXY, NO_PROXY, ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN are present")
+		for name, value := range decided {
+			Expect(printed).To(ContainSubstring(name + "=" + value + "\n"))
+		}
+
+		By("and the step's own carve-out did not choose its way out")
+		Expect(printed).NotTo(ContainSubstring("the-steps-own-proxy"))
+	})
+
+	It("The host's model credentials still do not", func() {
+		By("given CLAUDE_CODE_OAUTH_TOKEN and ANTHROPIC_API_KEY on the sidecar's own process")
+		env := map[string]string{
+			"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-should-not-leak",
+			"ANTHROPIC_API_KEY":       "sk-ant-should-not-leak",
+		}
+		for name, value := range decided {
+			env[name] = value
+		}
+
+		By("when the session runs `env` through its exec tool")
+		printed := probed(env)
+
+		By("then neither is in the session's environment, and the workspace's five are")
+		Expect(printed).NotTo(ContainSubstring("CLAUDE_CODE_OAUTH_TOKEN"))
+		Expect(printed).NotTo(ContainSubstring("ANTHROPIC_API_KEY"))
+		Expect(printed).NotTo(ContainSubstring("should-not-leak"))
+		for name, value := range decided {
+			Expect(printed).To(ContainSubstring(name + "=" + value + "\n"))
+		}
+	})
+
 	It("gives the session the workspace's git identity, which the step cannot set aside", func() {
 		By("given a step that names an identity of its own")
 		options := filepath.Join(GinkgoT().TempDir(), "options.json")
@@ -428,11 +506,10 @@ var _ = Describe("The sidecar", Label("unit"), func() {
 			// The sidecar's own process is given a credential of each kind
 			// the mill holds, so the spec proves they stop at the sidecar
 			// rather than that the host happened not to have them.
-			"ANTHROPIC_API_KEY":    "sk-ant-should-not-leak",
-			"ANTHROPIC_AUTH_TOKEN": "should-not-leak",
-			"GITHUB_TOKEN":         "ghp-should-not-leak",
-			"GH_TOKEN":             "ghp-should-not-leak",
-			"DAGGER_SOCKET":        "/run/dagger.sock",
+			"ANTHROPIC_API_KEY": "sk-ant-should-not-leak",
+			"GITHUB_TOKEN":      "ghp-should-not-leak",
+			"GH_TOKEN":          "ghp-should-not-leak",
+			"DAGGER_SOCKET":     "/run/dagger.sock",
 			// A short PATH keeps the probe's output inside the limit the
 			// sidecar truncates a tool result at; this host's own PATH is
 			// longer than a tool result is allowed to be.

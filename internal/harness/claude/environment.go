@@ -57,19 +57,23 @@ func ParseEnvMode(name string) (EnvMode, error) {
 }
 
 // envFloor is what a sidecar keeps of the mill's environment in strict mode:
-// enough for a process to start, find the account's own Claude Code login,
-// and run git and the project's toolchain, and nothing that authenticates
-// the mill to anything else.
+// enough for a process to start and run git and the project's toolchain, and
+// nothing that authenticates the mill to anything else.
 //
 // It is the same list as ENVIRONMENT_PASSTHROUGH in sidecar/src/session.ts,
 // which is the same question one hop further along — what the session's
 // tools inherit from the sidecar. The two are stated separately because they
-// are two boundaries; change one and look at the other.
+// are two boundaries; change one and look at the other. What the workspace
+// decided is not part of either: the git identity, the proxy and the model
+// gateway are set past the floor in both files, from the workspace's
+// environment here and from the sidecar's own in session.ts.
 //
-//	HOME             the SDK finds ~/.claude/.credentials.json and writes
-//	                 transcripts under ~/.claude/projects. Not git's identity:
-//	                 the workspace's GIT_CONFIG_GLOBAL displaces the account's
-//	                 configuration on every session
+//	HOME             the shell, the SDK's transcripts under
+//	                 ~/.claude/projects, and the harness's own state. Not a
+//	                 login: in a machine there is none, and the model is
+//	                 reached through the gateway the workspace names. Not
+//	                 git's identity: the workspace's GIT_CONFIG_GLOBAL
+//	                 displaces the account's configuration on every session
 //	PATH             the sidecar finds node, the SDK its claude binary, the
 //	                 session git and the project's toolchain
 //	LANG, LC_ALL     encoding; without them Node and git fall back to ASCII
@@ -100,15 +104,19 @@ var envFloor = []string{
 //
 // The list is not configurable and is not meant to be. A credential in a
 // session's environment is a credential its Bash tool can print, and the
-// login the SDK needs comes from HOME rather than from a key. The Claude
-// Code markers are here for a different reason: an interactive session's
+// model is reached on the account's login or through the workspace's
+// gateway, never on a key of the host's. ANTHROPIC_BASE_URL and
+// ANTHROPIC_AUTH_TOKEN are deliberately not here: they are how a gateway is
+// reached, and the workspace sets them after this filter. The Claude Code
+// markers are here for a different reason: an interactive session's
 // variables make the SDK believe it is nested inside one. So is the host's
 // git configuration: what a session commits as is the workspace's answer,
 // and an inherited variable that overrode it would be the defect this list
 // exists to make impossible.
 var (
 	deniedNames = []string{
-		// The login comes from HOME. A key here is a key a tool can echo.
+		// A key here is a key a tool can echo. The step's own bearer to the
+		// gateway is the workspace's to set, and it is not either of these.
 		"ANTHROPIC_API_KEY",
 		"CLAUDE_CODE_OAUTH_TOKEN",
 		// The mill's own database.
@@ -151,9 +159,10 @@ func denied(name string) bool {
 }
 
 // environment is what the sidecar is spawned with, and the record of how it
-// was arrived at. The socket, the token and the workspace's git environment
-// are added last, so nothing a step asked for can shadow the session's only
-// grant or the identity it commits under.
+// was arrived at. The socket, the token and the workspace's own environment
+// — its git identity, its proxy, its model gateway — are added last, so
+// nothing a step asked for can shadow the session's only grant, the identity
+// it commits under, or the way it reaches out.
 //
 // A step asking for a deny-listed variable is refused here — before the
 // sidecar is spawned and in either mode — naming the variable, because the
@@ -191,10 +200,18 @@ func (a *Adapter) environment(session harness.Session) (map[string]string, harne
 
 	env[socketVar] = session.Workspace.Socket
 	env[tokenVar] = session.Workspace.Token
-	// The workspace's own variables go on with them: the run's commit
-	// identity and signing key are the workspace's to decide, so a step's
-	// carve-out and the account's `~/.gitconfig` alike are past having a
-	// say by the time the sidecar starts.
+	// The workspace's own variables go on with them, in both modes and
+	// after the deny filter: the run's commit identity and signing key
+	// (GIT_CONFIG_GLOBAL and the GIT_AUTHOR_*/GIT_COMMITTER_* four), the
+	// proxy every outbound connection takes (HTTPS_PROXY, HTTP_PROXY,
+	// NO_PROXY), and the gateway the model is reached through with the step
+	// token as its bearer (ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN). They
+	// are the workspace's to decide, so a step's carve-out and the host's
+	// own `~/.gitconfig` or proxy alike are past having a say by the time
+	// the sidecar starts. The token among them is the step's: the map is
+	// composed per step, after the workspace rotates, so each sidecar
+	// carries the bearer the gateway is checking against and never the one
+	// before it.
 	for name, value := range session.Workspace.Env {
 		env[name] = value
 	}

@@ -3,6 +3,7 @@ package local_test
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -322,9 +323,90 @@ var _ = Describe("The local workspace", Label("unit"), func() {
 		})
 	})
 
+	// The way out of the workspace — the proxy for the world, the gateway
+	// for the model — is decided by the spec, and reaches every process the
+	// workspace spawns beside the git identity: docs/sandbox.md §Network,
+	// §Credentials. The gateway's bearer is the step token, and the step
+	// token rotates.
+	Describe("the workspace's way out", func() {
+		decided := workspace.Egress{
+			Proxy:   "http://10.99.14.1:3128",
+			NoProxy: "10.99.14.1,127.0.0.1",
+			Gateway: "http://10.99.14.1:8081",
+		}
+
+		// printed runs `env` through the chokepoint and returns what the
+		// child saw, once it has exited.
+		printed := func(ctx context.Context) map[string]string {
+			GinkgoHelper()
+			process, err := ws.Exec(ctx, workspace.Command{Path: "/usr/bin/env"})
+			Expect(err).NotTo(HaveOccurred())
+			out, err := io.ReadAll(process.Stdout)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(process.Wait().Status).To(BeZero())
+			env := map[string]string{}
+			for _, line := range lines(string(out)) {
+				if name, value, ok := strings.Cut(line, "="); ok {
+					env[name] = value
+				}
+			}
+			return env
+		}
+
+		BeforeEach(func(ctx context.Context) {
+			made, err := ws.Create(ctx, workspace.Spec{RunID: "run-07", NodeRef: "mill#12", Origin: from, Egress: decided})
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func(ctx context.Context) { Expect(ws.Destroy(ctx)).To(Succeed()) })
+			handle = made
+		})
+
+		It("sets the proxy and the gateway on every exec, with the git identity", func(ctx context.Context) {
+			Expect(ws.Rotate(ctx, workspace.TokenFor(theBearer, workspace.Exec))).To(Succeed())
+
+			env := printed(ctx)
+
+			Expect(env).To(HaveKeyWithValue("HTTPS_PROXY", decided.Proxy))
+			Expect(env).To(HaveKeyWithValue("HTTP_PROXY", decided.Proxy))
+			Expect(env).To(HaveKeyWithValue("NO_PROXY", decided.NoProxy))
+			Expect(env).To(HaveKeyWithValue("ANTHROPIC_BASE_URL", decided.Gateway))
+			Expect(env).To(HaveKeyWithValue("ANTHROPIC_AUTH_TOKEN", theBearer))
+			Expect(env).To(HaveKeyWithValue("STEP_TOKEN", theBearer))
+			Expect(env).To(HaveKeyWithValue("GIT_CONFIG_GLOBAL", ws.GitEnvironment()["GIT_CONFIG_GLOBAL"]))
+			// And what the run loop hands a session is the same map.
+			Expect(ws.Environment()).To(HaveKeyWithValue("ANTHROPIC_AUTH_TOKEN", theBearer))
+			Expect(ws.Environment()).To(HaveKeyWithValue("HTTPS_PROXY", decided.Proxy))
+		})
+
+		It("The auth token follows the step", func(ctx context.Context) {
+			By("given step 1 ran with token A")
+			Expect(ws.Rotate(ctx, workspace.TokenFor("token-a", workspace.Exec))).To(Succeed())
+			first := printed(ctx)
+			Expect(first).To(HaveKeyWithValue("ANTHROPIC_AUTH_TOKEN", "token-a"))
+
+			By("when the workspace rotates to token B for step 2")
+			Expect(ws.Rotate(ctx, workspace.TokenFor("token-b", workspace.Exec))).To(Succeed())
+
+			By("then step 2's exec carries B")
+			second := printed(ctx)
+			Expect(second).To(HaveKeyWithValue("ANTHROPIC_AUTH_TOKEN", "token-b"))
+			Expect(second).To(HaveKeyWithValue("STEP_TOKEN", "token-b"))
+			Expect(ws.Environment()).To(HaveKeyWithValue("ANTHROPIC_AUTH_TOKEN", "token-b"))
+
+			By("and no process still carries A")
+			// Step 1's process has exited — printed waits for it — and
+			// nothing the workspace hands out names A any more.
+			for name, value := range second {
+				Expect(value).NotTo(Equal("token-a"), "%s still carries step 1's token", name)
+			}
+			for name, value := range ws.Environment() {
+				Expect(value).NotTo(Equal("token-a"), "%s still carries step 1's token", name)
+			}
+		})
+	})
+
 	// A session runs git in its own shell — the `commit` skill has it do
-	// exactly that — and it is handed HOME, because the SDK's login lives
-	// there. What it must not be handed is the account's git identity: who
+	// exactly that — and it is handed HOME, for the shell and the SDK's
+	// own state. What it must not be handed is the account's git identity: who
 	// a commit is by is the workspace's answer, and the `commit` verifier
 	// is checking that answer. docs/architecture.md §"The workspace".
 	Describe("the session's own git", func() {

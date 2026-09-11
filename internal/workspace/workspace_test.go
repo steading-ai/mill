@@ -20,6 +20,33 @@ var _ = Describe("The workspace's vocabulary", Label("unit"), func() {
 		Entry("no node at all", "", ""),
 	)
 
+	Describe("the egress decisions", func() {
+		It("become the five variables a process is given, with the step token as the gateway's bearer", func() {
+			decided := workspace.Egress{Proxy: "http://10.99.14.1:3128", NoProxy: "10.99.14.1", Gateway: "http://10.99.14.1:8081"}
+
+			Expect(decided.Environment("step-token-a")).To(Equal(map[string]string{
+				"HTTPS_PROXY":          "http://10.99.14.1:3128",
+				"HTTP_PROXY":           "http://10.99.14.1:3128",
+				"NO_PROXY":             "10.99.14.1",
+				"ANTHROPIC_BASE_URL":   "http://10.99.14.1:8081",
+				"ANTHROPIC_AUTH_TOKEN": "step-token-a",
+			}))
+		})
+
+		It("set nothing when nothing was decided, so the host's route and the account's login stand", func() {
+			Expect(workspace.Egress{}.Environment("step-token-a")).To(BeEmpty())
+		})
+
+		It("name a proxy without a gateway, and a gateway without a proxy", func() {
+			Expect(workspace.Egress{Proxy: "http://proxy:3128"}.Environment("t")).To(HaveLen(3))
+			Expect(workspace.Egress{Proxy: "http://proxy:3128"}.Environment("t")).NotTo(HaveKey("ANTHROPIC_AUTH_TOKEN"))
+			Expect(workspace.Egress{Gateway: "http://gateway:8081"}.Environment("t")).To(Equal(map[string]string{
+				"ANTHROPIC_BASE_URL":   "http://gateway:8081",
+				"ANTHROPIC_AUTH_TOKEN": "t",
+			}))
+		})
+	})
+
 	Describe("the step token", func() {
 		It("authenticates a bearer against the hash the store keeps", func() {
 			issued := workspace.TokenFor("the-bearer", workspace.Read)

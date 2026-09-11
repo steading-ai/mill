@@ -287,7 +287,7 @@ Three mechanisms, applied in this order at each trigger.
   - the gateway records `(step, model, input, output, cache read, cache write)` for every response — usage evidence from outside the session, beside the SDK's own report — and **MAY** refuse a request that would exceed the step's budget or names a model the workflow did not pin.
   - `mill doctor` records when the setup-token was minted and warns at eleven months, because the CLI's three-day expiry warning applies only to `/login` credentials.
   - Fallback, if E14 shows the upstream refuses a bearer subscription token forwarded this way: `CLAUDE_CODE_OAUTH_TOKEN` in the session's environment, with `ANTHROPIC_BASE_URL` still at the gateway for usage and budgets. A one-year, model-only, rotatable token in the session — short of principle 9, but not a refresh token.
-- `HOME` stays on the environment floor for the shell, transcripts and the harness's own state — not for a login. The comment in `environment.go` that says the SDK finds the login under `HOME` becomes false in a machine and is corrected in the same node.
+- `HOME` stays on the environment floor for the shell, transcripts and the harness's own state — not for a login; `envFloor` and `ENVIRONMENT_PASSTHROUGH` say so.
 - The clone at step 2 of the sequence uses the worker's forge credential on the host. No session is running; no session credential exists yet.
 
 ## Session identity
@@ -458,7 +458,6 @@ The credential gateway sits in step 4's critical path: a machine with no `creden
 
 Things this design found that are wrong or missing today, each a node of its own:
 
-- `envFloor` and `ENVIRONMENT_PASSTHROUGH` do not pass the proxy variables (§Network). Blocks the first machine run.
 - The sidecar sets no shell timeout (§Preparatory steps).
 - `run.Workspaces` has no selector; `KindContainer`'s comment describes the rejected design (§Self-hosting).
 - `tests/acceptance` defaults its dagger socket to the deployed graph (`mill#51`); the live sandbox suite must not inherit that (§Testing).

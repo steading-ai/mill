@@ -116,6 +116,7 @@ type Workspace struct {
 	token     workspace.Token
 	signer    *signing.Key
 	gitConfig string
+	egress    workspace.Egress
 }
 
 // keyMu serialises generating the mill's signing key, which every workspace
@@ -262,6 +263,7 @@ func (w *Workspace) open(ctx context.Context, dir string, spec workspace.Spec) (
 	w.mu.Lock()
 	w.handle = handle
 	w.gitConfig = config
+	w.egress = spec.Egress
 	w.mu.Unlock()
 
 	if err := w.server.Listen(handle.Socket); err != nil {
@@ -372,6 +374,40 @@ func (w *Workspace) GitEnvironment() map[string]string {
 	}
 }
 
+// Environment is everything the workspace decided for a process it or its
+// harness spawns: the git identity of [Workspace.GitEnvironment], and the
+// route to the world and to the model the spec named (workspace.Egress).
+// The gateway's bearer is the step token as it stands, so a call made after
+// Rotate carries the new token and the one it replaced is nowhere but in
+// processes that have already ended.
+//
+// It is read per step, not per run: the run loop asks for it as each session
+// is composed, which is what makes the token in a sidecar's environment the
+// token the socket is authenticating against.
+func (w *Workspace) Environment() map[string]string {
+	w.mu.RLock()
+	token := w.token
+	w.mu.RUnlock()
+	return w.environmentFor(token)
+}
+
+// environmentFor is [Workspace.Environment] for a token the caller has
+// already read, so that a child's STEP_TOKEN and its ANTHROPIC_AUTH_TOKEN
+// are one read and cannot straddle a rotation.
+func (w *Workspace) environmentFor(token workspace.Token) map[string]string {
+	env := w.GitEnvironment()
+	if env == nil {
+		env = map[string]string{}
+	}
+	w.mu.RLock()
+	egress := w.egress
+	w.mu.RUnlock()
+	for name, value := range egress.Environment(token.Value) {
+		env[name] = value
+	}
+	return env
+}
+
 // Close stops the socket and leaves the checkout where it is. It is what a
 // worker does when it releases a lease at a gate or shuts down: a run that is
 // waiting or parked keeps its workspace, so the worker that resumes it — or
@@ -433,9 +469,10 @@ func (w *Workspace) SigningKey() *signing.Key {
 
 // Exec runs a command inside the checkout. This is the chokepoint: cwd is the
 // clone, the account is the mill's own, and the environment is exactly the
-// socket path, the current step token and the run's git identity — nothing of
-// the mill's own process reaches the child, so a transcript that leaks holds
-// nothing reusable.
+// socket path, the current step token, the run's git identity and the route
+// the workspace decided to the world and the model — nothing of the mill's
+// own process reaches the child, so a transcript that leaks holds nothing
+// reusable.
 //
 // The command's own name is still resolved against the mill's PATH, because
 // resolution happens in the parent; what the child is given is the map below
@@ -457,10 +494,11 @@ func (w *Workspace) Exec(ctx context.Context, command workspace.Command) (*works
 		"STEP_TOKEN":       token.Value,
 	}
 	// A child that runs git commits as the run, signed with the mill's key,
-	// and reads no configuration of the account's. That is the workspace's
-	// decision wherever the git runs, so it is made here rather than left to
-	// whatever spawned the process.
-	for name, value := range w.GitEnvironment() {
+	// and reads no configuration of the account's; a child that reaches out
+	// goes through the proxy and the gateway the run was given. Those are
+	// the workspace's decisions wherever the process runs, so they are made
+	// here rather than left to whatever spawned it.
+	for name, value := range w.environmentFor(token) {
 		env[name] = value
 	}
 	return w.execer.Exec(ctx, workspace.Command{

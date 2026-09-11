@@ -125,7 +125,7 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 		Workspace: harness.Workspace{
 			Socket: handle.Socket,
 			Token:  token.GetToken(),
-			Env:    s.workspace.GitEnvironment(),
+			Env:    s.workspace.Environment(),
 		},
 		Cwd:    handle.Root,
 		Events: r.sessionEvents(ctx, s, sr, logSink(logFile, r.options.Redactor, r.options.Now)),
