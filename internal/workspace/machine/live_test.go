@@ -1,15 +1,18 @@
 package machine_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -319,6 +322,200 @@ var _ = Describe("A machine on a real host", Label("live"), Serial, Ordered, fun
 			host("btrfs", "property", "set", "-ts", filepath.Join(liveRoot, name), "ro", "false")
 			host("btrfs", "subvolume", "delete", filepath.Join(liveRoot, name))
 		}
+	})
+
+	// Scenario: Stdout, stderr and the exit code come back intact and streamed
+	It("Stdout, stderr and the exit code come back intact and streamed", func(ctx context.Context) {
+		id := "acceptance-exec-" + nonce
+		DeferCleanup(func() { sweep(id) })
+		ws := machine.New(real, config)
+		_, err := ws.Create(ctx, workspace.Spec{RunID: id, NodeRef: "mill#62"})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func(ctx context.Context) { Expect(ws.Destroy(ctx)).To(Succeed()) })
+
+		By("when mill execs a command that writes to both streams and exits 42")
+		Expect(ws.BeginStep(ctx, 1)).To(Succeed())
+		process, err := ws.Exec(ctx, workspace.Command{Path: "/bin/sh", Args: []string{"-c", "echo out; echo err >&2; exit 42"}})
+		Expect(err).NotTo(HaveOccurred())
+		stdout, stderr, result := drainProcess(process)
+
+		By("then the streams arrive separately and the exit code is 42")
+		Expect(strings.TrimSpace(stdout)).To(Equal("out"))
+		Expect(strings.TrimSpace(stderr)).To(Equal("err"))
+		Expect(result.Status).To(BeEquivalentTo(42))
+
+		By("and a process that prints, sleeps five seconds, then prints delivers the first line before the second")
+		Expect(ws.EndStep(ctx, 1, false)).To(Succeed())
+		Expect(ws.BeginStep(ctx, 2)).To(Succeed())
+		streamed, err := ws.Exec(ctx, workspace.Command{Path: "/bin/sh", Args: []string{"-c", "echo first; sleep 5; echo second"}})
+		Expect(err).NotTo(HaveOccurred())
+		reader := bufio.NewReader(streamed.Stdout)
+		start := time.Now()
+		line, err := reader.ReadString('\n')
+		Expect(err).NotTo(HaveOccurred())
+		Expect(strings.TrimSpace(line)).To(Equal("first"))
+		Expect(time.Since(start)).To(BeNumerically("<", 4*time.Second), "the first line arrived before the sleep ended")
+		_, _ = io.ReadAll(reader)
+		_, _ = io.ReadAll(streamed.Stderr)
+		streamed.Wait()
+		Expect(ws.EndStep(ctx, 2, false)).To(Succeed())
+
+		By("and an exec's working directory, user and environment are its own")
+		Expect(ws.BeginStep(ctx, 3)).To(Succeed())
+		marked, err := ws.Exec(ctx, workspace.Command{Path: "/bin/sh", Args: []string{"-c", "pwd; id -u; echo ${MARK:-unset}"}, Dir: "/work", Env: map[string]string{"MARK": "1"}})
+		Expect(err).NotTo(HaveOccurred())
+		out, _, res := drainProcess(marked)
+		Expect(res.Status).To(BeEquivalentTo(0))
+		Expect(strings.Fields(out)).To(Equal([]string{"/work", "1000", "1"}))
+		unmarked, err := ws.Exec(ctx, workspace.Command{Path: "/bin/sh", Args: []string{"-c", "echo ${MARK:-unset}"}})
+		Expect(err).NotTo(HaveOccurred())
+		out, _, _ = drainProcess(unmarked)
+		Expect(strings.TrimSpace(out)).To(Equal("unset"), "the next exec's environment does not carry the previous one's MARK")
+		Expect(ws.EndStep(ctx, 3, false)).To(Succeed())
+	})
+
+	// Scenario: An exec without a step slice is refused
+	It("An exec without a step slice is refused before any command runs", func(ctx context.Context) {
+		id := "acceptance-noslice-" + nonce
+		DeferCleanup(func() { sweep(id) })
+		ws := machine.New(real, config)
+		_, err := ws.Create(ctx, workspace.Spec{RunID: id, NodeRef: "mill#62"})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func(ctx context.Context) { Expect(ws.Destroy(ctx)).To(Succeed()) })
+
+		_, err = ws.Exec(ctx, workspace.Command{Path: "/bin/true"})
+		Expect(err).To(MatchError(ContainSubstring("no step slice")))
+	})
+
+	// Scenario: Cancellation stops the unit, not the client
+	It("Cancellation stops the unit, not the client", func(ctx context.Context) {
+		id := "acceptance-cancel-" + nonce
+		DeferCleanup(func() { sweep(id) })
+		ws := machine.New(real, config)
+		_, err := ws.Create(ctx, workspace.Spec{RunID: id, NodeRef: "mill#62"})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func(ctx context.Context) { Expect(ws.Destroy(ctx)).To(Succeed()) })
+		name := "mill-" + id
+
+		By("given an exec of sleep 300 in flight")
+		Expect(ws.BeginStep(ctx, 1)).To(Succeed())
+		execCtx, cancel := context.WithCancel(ctx)
+		process, err := ws.Exec(execCtx, workspace.Command{Path: "/bin/sh", Args: []string{"-c", "sleep 300"}})
+		Expect(err).NotTo(HaveOccurred())
+		done := make(chan struct{})
+		go func() { defer close(done); _, _, _ = drainProcess(process) }()
+		Eventually(func() int {
+			out, _ := inMachine(name, "", "sh", "-c", "pgrep -c -x sleep || true")
+			n, _ := strconv.Atoi(strings.TrimSpace(out))
+			return n
+		}, 30*time.Second, 200*time.Millisecond).Should(BeNumerically(">", 0), "the sleep is running in the machine")
+
+		By("when the exec is cancelled")
+		cancel()
+		Eventually(done, 30*time.Second).Should(BeClosed(), "the client returned once the unit stopped")
+
+		By("then the unit is inactive and no sleep remains")
+		Eventually(func() string {
+			out, _ := inMachine(name, "", "sh", "-c", "pgrep -x sleep || echo none")
+			return strings.TrimSpace(out)
+		}, 20*time.Second, 200*time.Millisecond).Should(Equal("none"))
+		Expect(ws.EndStep(ctx, 1, false)).To(Succeed())
+	})
+
+	// Scenario: A background process does not survive its step
+	It("A background process does not survive its step", func(ctx context.Context) {
+		id := "acceptance-reap-" + nonce
+		DeferCleanup(func() { sweep(id) })
+		ws := machine.New(real, config)
+		_, err := ws.Create(ctx, workspace.Spec{RunID: id, NodeRef: "mill#62"})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func(ctx context.Context) { Expect(ws.Destroy(ctx)).To(Succeed()) })
+		name := "mill-" + id
+
+		By("given step 1 started a process with nohup and a detached container")
+		Expect(ws.BeginStep(ctx, 1)).To(Succeed())
+		bg, err := ws.Exec(ctx, workspace.Command{Path: "/bin/sh", Args: []string{"-c", "nohup sleep 3600 >/dev/null 2>&1 & echo backgrounded"}})
+		Expect(err).NotTo(HaveOccurred())
+		out, _, res := drainProcess(bg)
+		Expect(res.Status).To(BeEquivalentTo(0), out)
+		container, err := ws.Exec(ctx, workspace.Command{Path: "/bin/sh", Args: []string{"-c",
+			"podman run -d --name lingering --entrypoint sleep quay.io/podman/hello 3600"}})
+		Expect(err).NotTo(HaveOccurred())
+		cout, cerr, res := drainProcess(container)
+		Expect(res.Status).To(BeEquivalentTo(0), "podman run: %s%s", cout, cerr)
+
+		By("and the container's cgroup is under the step's slice (--cgroups=split; the spike's E3)")
+		// systemd-cgls shows the machine's tree; with --cgroups=split the
+		// container payload sits in a sub-cgroup of the exec unit, itself
+		// under mill-step-1.slice. That the slice reaps the container when
+		// it stops — the pgrep below after EndStep — is the proof it was
+		// under the slice and not under agent's user manager, which the
+		// slice stop would not reach.
+		Eventually(func() string {
+			cgls, _, _ := host("sudo", "-n", "systemd-cgls", "-M", name, "--no-pager")
+			return cgls
+		}, 20*time.Second, 200*time.Millisecond).Should(MatchRegexp(`mill-step-1\.slice(?s:.*)sleep`),
+			"the container's sleep runs under the step's slice")
+
+		By("when step 1 ends")
+		Expect(ws.EndStep(ctx, 1, false)).To(Succeed())
+
+		By("then neither the process nor the container exists in the machine, under step 2's slice")
+		Expect(ws.BeginStep(ctx, 2)).To(Succeed())
+		// One pgrep covers both: the nohup and the container each run a
+		// `sleep`, so none remaining is both gone. `podman ps` is stale
+		// after a slice kill (the spike's E3), so it is not the evidence.
+		Eventually(func() string {
+			out, _ := inMachine(name, "", "sh", "-c", "pgrep -x sleep || echo none")
+			return strings.TrimSpace(out)
+		}, 20*time.Second, 200*time.Millisecond).Should(Equal("none"))
+
+		By("and step 2's slice was not created until step 1's was inactive")
+		active, _, _ := host("sudo", "-n", "systemctl", "--machine="+name, "is-active", "mill-step-1.slice")
+		Expect(strings.TrimSpace(active)).NotTo(Equal("active"))
+		Expect(ws.EndStep(ctx, 2, false)).To(Succeed())
+	})
+
+	// Scenario: An evidence-closed step leaves a candidate
+	It("An evidence-closed step leaves a candidate", func(ctx context.Context) {
+		id := "acceptance-candidate-" + nonce
+		DeferCleanup(func() { sweep(id) })
+		local := config
+		ws := machine.New(real, local)
+		origin := filepath.Join(GinkgoT().TempDir(), "cache-origin")
+		Expect(os.MkdirAll(origin, 0o700)).To(Succeed())
+		git(origin, "init", "--quiet", "--initial-branch=main")
+		Expect(os.WriteFile(filepath.Join(origin, "mise.toml"), []byte("[tools]\ngo = \"1.25\"\n"), 0o600)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(origin, "mill.toml"), []byte("[cache.go-build]\npath = \"/home/agent/.cache/go-build\"\n"), 0o600)).To(Succeed())
+		git(origin, "add", "--all")
+		git(origin, "commit", "--quiet", "--no-gpg-sign", "--message", "seed")
+		local.Origin = origin
+
+		_, err := ws.Create(ctx, workspace.Spec{RunID: id, NodeRef: "mill#62", Origin: origin})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func(ctx context.Context) { Expect(ws.Destroy(ctx)).To(Succeed()) })
+		name := "mill-" + id
+
+		By("given step 1 wrote to the run's cache path")
+		Expect(ws.BeginStep(ctx, 1)).To(Succeed())
+		wrote, err := ws.Exec(ctx, workspace.Command{Path: "/bin/sh", Args: []string{"-c", "mkdir -p /home/agent/.cache/go-build && echo built > /home/agent/.cache/go-build/marker"}})
+		Expect(err).NotTo(HaveOccurred())
+		_, stderr, res := drainProcess(wrote)
+		Expect(res.Status).To(BeEquivalentTo(0), stderr)
+
+		By("when step 1 closes on evidence")
+		Expect(ws.EndStep(ctx, 1, true)).To(Succeed())
+
+		By("then a read-only snapshot of the run's cache copy exists as the candidate")
+		candidate := filepath.Join(liveRoot, "runs", id, "candidate", "go-build")
+		Expect(candidate).To(BeADirectory())
+		Expect(filepath.Join(candidate, "marker")).To(BeAnExistingFile())
+		roOut := must("btrfs", "property", "get", "-ts", candidate, "ro")
+		Expect(strings.TrimSpace(roOut)).To(HaveSuffix("ro=true"))
+
+		By("and it was taken before the slice stopped")
+		active, _, _ := host("sudo", "-n", "systemctl", "--machine="+name, "is-active", "mill-step-1.slice")
+		Expect(strings.TrimSpace(active)).NotTo(Equal("active"))
 	})
 })
 

@@ -550,6 +550,34 @@ type CacheCandidate interface {
 	Candidate(ctx context.Context, step string) error
 }
 
+// StepBoundary is what a workspace whose steps run inside a reapable unit
+// implements beside [Workspace]: the run loop calls BeginStep before a step
+// runs and EndStep after it, so every process the step spawned — daemons and
+// containers included — is reaped when the step ends and nothing outlives it
+// (docs/sandbox.md §"Step boundary"). The machine backend runs each step
+// under its own systemd slice, `mill-step-<ordinal>.slice`, and reaps the
+// step by stopping the slice; the local backend has no such boundary and
+// does not implement it, so the loop asks nothing of it.
+//
+// EndStep carries whether the step closed on evidence, because a step that
+// did leaves a promotion candidate — a snapshot of the run's cache copies
+// taken before the slice stops — and one that was cancelled, timed out or
+// failed leaves none (docs/sandbox.md §Promote). The candidate is therefore
+// this interface's when a workspace implements it: a workspace that carries
+// both [CacheCandidate] and StepBoundary takes the candidate in EndStep, and
+// the loop leaves its CacheCandidate hook alone.
+type StepBoundary interface {
+	// BeginStep names the slice the step's execs will run under; the next
+	// step's slice is not begun until the previous one reports inactive,
+	// which EndStep waits for.
+	BeginStep(ctx context.Context, ordinal int) error
+	// EndStep stops the step's slice, reaping everything it spawned, after
+	// taking the promotion candidate when the step closed on evidence. It
+	// waits for the slice to report inactive before it returns, so the next
+	// BeginStep may proceed.
+	EndStep(ctx context.Context, ordinal int, closedOnEvidence bool) error
+}
+
 // BranchFor is the run's working branch, derived from the node ref: `mill/`
 // and the ref with everything git forbids in a branch name replaced. A node
 // ref of `mill#12` becomes `mill/mill-12`. A node ref with nothing usable in

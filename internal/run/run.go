@@ -299,6 +299,15 @@ type state struct {
 	// paid for, oldest first and across every step, which is what the park
 	// gate's body is written from (internal/run/breaker.go).
 	span []attempt
+	// boundary is the workspace's step boundary when it has one — the
+	// machine backend, which runs each step under its own slice and reaps
+	// the step by stopping it (docs/sandbox.md §"Step boundary"). Nil for a
+	// backend with no boundary, such as the local one.
+	boundary workspace.StepBoundary
+	// ordinal counts the steps this worker has begun, so each gets a slice
+	// of its own, `mill-step-<ordinal>.slice`. It advances per attempt: a
+	// retry is a fresh slice, because the previous attempt's was reaped.
+	ordinal int
 }
 
 // processContext is the context of the process the run is in.
@@ -527,6 +536,9 @@ func (r *Runner) openWorkspace(ctx context.Context, s *state) error {
 		return fmt.Errorf("run %s: workspace: %w", s.run.GetId(), err)
 	}
 	s.workspace = ws
+	if boundary, ok := ws.(workspace.StepBoundary); ok {
+		s.boundary = boundary
+	}
 	return nil
 }
 

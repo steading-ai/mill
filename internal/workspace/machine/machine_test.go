@@ -496,13 +496,11 @@ var _ = Describe("The machine workspace", Label("unit"), func() {
 		Expect(ws.Findings()).To(BeEmpty())
 	})
 
-	It("answers exec and the session's git and forge verbs with ErrNotBuilt naming the node that builds them", func(ctx context.Context) {
+	It("answers the session's git and forge verbs with ErrNotBuilt naming the node that builds them", func(ctx context.Context) {
 		ws := f.workspace()
-		_, err := ws.Exec(ctx, workspace.Command{Path: "true"})
+		_, err := ws.Git().Status(ctx)
 		Expect(err).To(MatchError(machine.ErrNotBuilt))
-		Expect(err).To(MatchError(ContainSubstring(machine.ExecNode)))
-		_, err = ws.Git().Status(ctx)
-		Expect(err).To(MatchError(machine.ErrNotBuilt))
+		Expect(err).To(MatchError(ContainSubstring(machine.VerbsNode)))
 		_, err = ws.Forge().Push(ctx, workspace.PushRequest{})
 		Expect(err).To(MatchError(machine.ErrNotBuilt))
 	})

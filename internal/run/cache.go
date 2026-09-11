@@ -19,6 +19,12 @@ import (
 // the evidence is recorded, the run goes on, and the run promotes from the
 // last candidate it did take, or nothing.
 func (r *Runner) cacheCandidate(ctx context.Context, s *state, step *millv1.Step) {
+	// A workspace with a step boundary takes the candidate in EndStep,
+	// before it stops the step's slice (docs/sandbox.md §"Step boundary").
+	// This hook is for a backend that carries lineages without one.
+	if _, ok := s.workspace.(workspace.StepBoundary); ok {
+		return
+	}
 	candidates, ok := s.workspace.(workspace.CacheCandidate)
 	if !ok {
 		return

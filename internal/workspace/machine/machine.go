@@ -66,9 +66,10 @@ const (
 	DefaultStopTimeout = 90 * time.Second
 )
 
-// ExecNode builds exec under a step slice and the step boundary that reaps
-// everything (docs/sandbox.md §Exec, §"Step boundary"). The verbs it owns
-// answer [ErrNotBuilt] naming it until it lands.
+// ExecNode built exec under a step slice and the step boundary that reaps
+// everything (docs/sandbox.md §Exec, §"Step boundary"). It is named here
+// because [VerbsNode], which follows it, refers to it in the error a
+// not-yet-built git or forge verb returns.
 const ExecNode = "machine-exec (mill#62)"
 
 // VerbsNode is what builds the session-facing git and forge verbs of a
@@ -97,7 +98,7 @@ func (e *NotBuiltError) Error() string {
 // Unwrap makes errors.Is(err, ErrNotBuilt) true.
 func (e *NotBuiltError) Unwrap() error { return ErrNotBuilt }
 
-func notBuilt(verb, node string) error { return &NotBuiltError{Verb: verb, Node: node} }
+func notBuilt(verb string) error { return &NotBuiltError{Verb: verb, Node: VerbsNode} }
 
 // ErrNotCreated is a verb called before Create or Attach.
 var ErrNotCreated = errors.New("machine: workspace not created")
@@ -319,6 +320,10 @@ type Workspace struct {
 	token  workspace.Token
 	egress workspace.Egress
 	record *Record
+	// slice is the step slice execs run under, set by BeginStep and
+	// cleared by EndStep. An exec with none is refused: nothing would reap
+	// what it spawns (docs/sandbox.md §Exec).
+	slice string
 }
 
 // New returns a workspace for one run, reaching the host through host.
@@ -475,11 +480,6 @@ func (w *Workspace) Candidate(ctx context.Context, step string) error {
 	return w.caches.Candidate(ctx, record.ID, step)
 }
 
-// Exec is not built; the exec node builds it on the driver.
-func (w *Workspace) Exec(context.Context, workspace.Command) (*workspace.Process, error) {
-	return nil, notBuilt("exec", ExecNode)
-}
-
 // Read reads a file in the checkout.
 func (w *Workspace) Read(_ context.Context, path string) ([]byte, error) {
 	resolved, err := w.resolve(path)
@@ -603,37 +603,38 @@ func within(root, path string) bool {
 type gitVerbs struct{}
 
 func (gitVerbs) Status(context.Context) (workspace.Status, error) {
-	return workspace.Status{}, notBuilt("git.status", VerbsNode)
+	return workspace.Status{}, notBuilt("git.status")
 }
 
 func (gitVerbs) Diff(context.Context, workspace.DiffRequest) (string, error) {
-	return "", notBuilt("git.diff", VerbsNode)
+	return "", notBuilt("git.diff")
 }
 
 func (gitVerbs) Log(context.Context, workspace.LogRequest) ([]workspace.CommitInfo, error) {
-	return nil, notBuilt("git.log", VerbsNode)
+	return nil, notBuilt("git.log")
 }
 
 func (gitVerbs) Commit(context.Context, workspace.CommitRequest) (workspace.CommitInfo, error) {
-	return workspace.CommitInfo{}, notBuilt("git.commit", VerbsNode)
+	return workspace.CommitInfo{}, notBuilt("git.commit")
 }
 
 type forgeVerbs struct{}
 
 func (forgeVerbs) Push(context.Context, workspace.PushRequest) (workspace.PushResult, error) {
-	return workspace.PushResult{}, notBuilt("git.push", VerbsNode)
+	return workspace.PushResult{}, notBuilt("git.push")
 }
 
 func (forgeVerbs) PR(context.Context, workspace.PRRequest) (forge.PullRequest, error) {
-	return forge.PullRequest{}, notBuilt("forge.pr", VerbsNode)
+	return forge.PullRequest{}, notBuilt("forge.pr")
 }
 
 func (forgeVerbs) Checks(context.Context, workspace.ChecksRequest) (workspace.ChecksResult, error) {
-	return workspace.ChecksResult{}, notBuilt("forge.checks", VerbsNode)
+	return workspace.ChecksResult{}, notBuilt("forge.checks")
 }
 
 // The workspace satisfies the interfaces the run loop wants of one.
 var (
 	_ workspace.Workspace      = (*Workspace)(nil)
 	_ workspace.CacheCandidate = (*Workspace)(nil)
+	_ workspace.StepBoundary   = (*Workspace)(nil)
 )
