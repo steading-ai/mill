@@ -391,13 +391,6 @@ func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, 
 	if err != nil {
 		return nil, err
 	}
-	harnesses := harness.NewRegistry()
-	if err := harnesses.Register(run.DefaultHarness,
-		claude.New(
-			claude.WithEntrypoint(claude.DefaultCommand, opts.sidecar),
-			claude.WithEnvMode(envMode))); err != nil {
-		return nil, err
-	}
 
 	tier, err := tierNamed(opts.tier)
 	if err != nil {
@@ -441,7 +434,7 @@ func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, 
 		Dagger:         client,
 		Workspaces:     workspacesFor(kind, opts, f, redactor),
 		Forges:         func(context.Context) (forge.Forge, error) { return f, nil },
-		Harnesses:      harnesses,
+		Harnesses:      harnessesFor(kind, opts, envMode),
 		WorkerRef:      worker,
 		Workflow:       opts.workflow,
 		Tier:           tier,
@@ -495,6 +488,7 @@ type sandboxOptions struct {
 	machinesDir     string
 	runStateDir     string
 	skillDir        string
+	sidecarDir      string
 	imageRegistry   string
 	imageRepository string
 	baseImage       string
@@ -522,6 +516,7 @@ func applySandboxConfig(config Config, opts *sandboxOptions) error {
 	opts.machinesDir = config.MachinesDir
 	opts.runStateDir = config.RunStateDir
 	opts.skillDir = config.SkillDir
+	opts.sidecarDir = config.SidecarDir
 	opts.imageRegistry = config.ImageRegistry
 	opts.imageRepository = config.ImageRepository
 	opts.baseImage = config.BaseImage
@@ -644,6 +639,12 @@ func checkWorkspace(kind workspace.Kind, opts runOptions) error {
 		if err := skill.Materialise(config.SkillDir(), version.String()); err != nil {
 			return fmt.Errorf("mill run: --workspace machine: %w", err)
 		}
+		// The sidecar rides in beside the skill: this binary's, materialised
+		// where the helper's policy admits a read-only bind from, refreshed
+		// only when the version differs (docs/sandbox.md §"Skill mount").
+		if err := skill.MaterialiseSidecar(sidecarSourceDir(opts.sidecar), config.SidecarDir(), version.String()); err != nil {
+			return fmt.Errorf("mill run: --workspace machine: %w", err)
+		}
 		if err := machine.Check(machineDriver(), config); err != nil {
 			return fmt.Errorf("mill run: --workspace machine: %w", err)
 		}
@@ -653,6 +654,60 @@ func checkWorkspace(kind workspace.Kind, opts runOptions) error {
 		return fmt.Errorf("mill run: --workspace-dir: %w", err)
 	}
 	return nil
+}
+
+// harnessesFor builds the adapter table for one run, given the workspace it
+// works in (docs/sandbox.md §Exec, §"Skill mount"). The choice is the
+// backend's: the local backend spawns the sidecar on the host, exactly as it
+// did before this node; the machine backend spawns it inside the run's
+// machine through that workspace's Exec, so the session lives under the step
+// slice, sees `/work` as `agent`, reaches the socket at its in-machine path,
+// and dies with the step.
+func harnessesFor(kind workspace.Kind, opts runOptions, envMode claude.EnvMode) run.HarnessesFor {
+	return func(ws run.Workspace) (*harness.Registry, error) {
+		registry := harness.NewRegistry()
+		if err := registry.Register(run.DefaultHarness, claudeAdapter(kind, opts, envMode, ws)); err != nil {
+			return nil, err
+		}
+		return registry, nil
+	}
+}
+
+// claudeAdapter is the claude adapter as each backend needs it. The machine
+// backend hands it the run's workspace as its execer and the in-machine
+// entrypoint, and tells it the sidecar enters a sandbox that supplies its own
+// HOME and PATH; the local backend is built exactly as it was before this
+// node, spawned on the host at the configured entrypoint.
+func claudeAdapter(kind workspace.Kind, opts runOptions, envMode claude.EnvMode, ws run.Workspace) *claude.Adapter {
+	if kind == workspace.KindMachine {
+		return claude.New(
+			claude.WithEntrypoint(machine.SidecarNode, inMachineSidecar(opts.sidecar)),
+			claude.WithEnvMode(envMode),
+			claude.WithExecer(ws),
+			claude.WithSandbox())
+	}
+	return claude.New(
+		claude.WithEntrypoint(claude.DefaultCommand, opts.sidecar),
+		claude.WithEnvMode(envMode))
+}
+
+// sidecarSourceDir is the built sidecar directory the worker materialises
+// from: the parent of the entrypoint's directory, `<...>/sidecar` for the
+// `<...>/sidecar/dist/main.js` the flag and homestead name. It holds `dist`
+// and `node_modules`, which is the whole of what rides into a machine.
+func sidecarSourceDir(sidecar string) string {
+	return filepath.Dir(filepath.Dir(sidecar))
+}
+
+// inMachineSidecar is the entrypoint inside the machine: the materialised
+// sidecar is bound at [machine.SidecarMount], so the in-machine path mirrors
+// the host layout under it — `dist/main.js` for the standard build.
+func inMachineSidecar(sidecar string) string {
+	rel, err := filepath.Rel(sidecarSourceDir(sidecar), sidecar)
+	if err != nil {
+		rel = skill.SidecarEntrypoint
+	}
+	return filepath.Join(machine.SidecarMount, rel)
 }
 
 // workspacesFor is the selector: the backend the configuration named, as
@@ -722,6 +777,7 @@ func machineConfig(opts runOptions, f forge.Forge, redactor *redact.Redactor) ma
 		Machines: sandbox.machinesDir,
 		RunState: sandbox.runStateDir,
 		Skill:    sandbox.skillDir,
+		Sidecar:  sandbox.sidecarDir,
 		Origin:   opts.origin,
 		Forge:    f,
 		Name:     opts.name,

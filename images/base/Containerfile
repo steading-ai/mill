@@ -46,6 +46,13 @@ RUN useradd -u 1000 -m agent \
 RUN mkdir -p /home/agent/.claude/skills/mill \
     && chown -R agent:agent /home/agent/.claude
 
+# The mount point of the mill sidecar, made as agent's ahead of the bind, for
+# the same reason the skill's is: nspawn makes a missing mount point as root,
+# and the worker binds the sidecar read-only here at provision — it is not
+# baked in (docs/sandbox.md §"Skill mount"). The image's node runs it.
+RUN mkdir -p /home/agent/.local/share/mill/sidecar \
+    && chown -R agent:agent /home/agent/.local
+
 # Node for the harness's runtime, installed globally through mise so a
 # session's own mise.toml can still choose another.
 RUN MISE_DATA_DIR=/usr/local/share/mise MISE_CACHE_DIR=/tmp/mise-cache \

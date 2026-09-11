@@ -176,6 +176,15 @@ func (a *Adapter) environment(session harness.Session) (map[string]string, harne
 		}
 	}
 
+	// A sandboxed sidecar takes none of the mill's own environment as a
+	// floor: the machine it enters is where HOME, PATH and the rest come
+	// from (docs/sandbox.md §Exec, §"Session identity"). Only what the step
+	// explicitly named is copied from the host, deny-listed names never, and
+	// the session's grant, identity and egress are set over it below.
+	if a.sandbox {
+		return a.sandboxEnvironment(session, asked)
+	}
+
 	env := map[string]string{}
 	var stripped []string
 	seen := map[string]bool{}
@@ -216,6 +225,27 @@ func (a *Adapter) environment(session harness.Session) (map[string]string, harne
 		env[name] = value
 	}
 	return env, harness.Environment{Passthrough: asked, Stripped: stripped}, nil
+}
+
+// sandboxEnvironment is the environment a sidecar entering a sandbox is
+// spawned with: none of the mill's own, so the machine's HOME, PATH and
+// XDG_RUNTIME_DIR stand. The step's `env.passthrough` still copies the
+// named host variables — the one thing a step asked for by name — and the
+// session's socket, token, identity and egress are set last, exactly as they
+// are for a host sidecar, so nothing a step named can shadow them.
+func (a *Adapter) sandboxEnvironment(session harness.Session, asked []string) (map[string]string, harness.Environment, error) {
+	env := map[string]string{}
+	for _, name := range asked {
+		if value, ok := os.LookupEnv(name); ok {
+			env[name] = value
+		}
+	}
+	env[socketVar] = session.Workspace.Socket
+	env[tokenVar] = session.Workspace.Token
+	for name, value := range session.Workspace.Env {
+		env[name] = value
+	}
+	return env, harness.Environment{Passthrough: asked}, nil
 }
 
 // passthroughOf is the variables a step's options asked to have carried from

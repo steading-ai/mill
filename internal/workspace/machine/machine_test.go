@@ -40,6 +40,7 @@ type fixture struct {
 	machines string
 	runState string
 	skill    string
+	sidecar  string
 	stubs    string
 	events   string
 	forge    *workerForge
@@ -54,10 +55,11 @@ func newFixture(originURL string) *fixture {
 		machines: filepath.Join(tmp, "machines"),
 		runState: filepath.Join(tmp, "run"),
 		skill:    filepath.Join(tmp, "skill"),
+		sidecar:  filepath.Join(tmp, "sidecar"),
 		stubs:    filepath.Join(tmp, "stubs"),
 		events:   filepath.Join(tmp, "stubs", "events"),
 	}
-	for _, dir := range []string{f.root, f.machines, f.runState, f.skill, f.stubs} {
+	for _, dir := range []string{f.root, f.machines, f.runState, f.skill, f.sidecar, f.stubs} {
 		Expect(os.MkdirAll(dir, 0o755)).To(Succeed())
 	}
 	Expect(os.Mkdir(filepath.Join(f.machines, image.Prefix+string(base)), 0o755)).To(Succeed())
@@ -68,6 +70,7 @@ func newFixture(originURL string) *fixture {
 		Machines:     f.machines,
 		RunState:     f.runState,
 		Skill:        f.skill,
+		Sidecar:      f.sidecar,
 		Origin:       originURL,
 		Forge:        f.forge,
 		Git:          gitStub(f.stubs),
@@ -176,7 +179,7 @@ var _ = Describe("The machine workspace", Label("unit"), func() {
 		m := f.manifest()
 		By("every bind's host side is under the run directory, the socket directory or the skill")
 		allowed := func(source string) bool {
-			for _, root := range []string{f.runDir(), f.socketDir(), f.skill} {
+			for _, root := range []string{f.runDir(), f.socketDir(), f.skill, f.sidecar} {
 				if source == root || strings.HasPrefix(source, root+"/") {
 					return true
 				}
@@ -192,6 +195,7 @@ var _ = Describe("The machine workspace", Label("unit"), func() {
 		Expect(targets["/work"].Source).To(Equal(filepath.Join(f.runDir(), "workspace")))
 		Expect(targets["/run/mill"].Source).To(Equal(f.socketDir()))
 		Expect(targets["/home/agent/.claude/skills/mill"]).To(Equal(machine.Bind{Source: f.skill, Target: "/home/agent/.claude/skills/mill", ReadOnly: true}))
+		Expect(targets["/home/agent/.local/share/mill/sidecar"]).To(Equal(machine.Bind{Source: f.sidecar, Target: "/home/agent/.local/share/mill/sidecar", ReadOnly: true}))
 		By("one bind per cache, at the lineage's path")
 		Expect(targets["/home/agent/.cache/go-build"].Source).To(Equal(filepath.Join(f.runDir(), "cache", "go-build")))
 		Expect(targets["/home/agent/go/pkg/mod"].Source).To(Equal(filepath.Join(f.runDir(), "cache", "go-mod")))
@@ -211,7 +215,7 @@ var _ = Describe("The machine workspace", Label("unit"), func() {
 		Expect(string(body)).To(ContainSubstring("http_proxy=" + machine.DefaultProxy + "\n"))
 		Expect(string(body)).To(ContainSubstring("NO_PROXY=" + machine.DefaultNoProxy + "\n"))
 		Expect(string(body)).To(ContainSubstring("ANTHROPIC_BASE_URL=" + machine.DefaultGateway + "\n"))
-		Expect(m.Check(map[string]bool{f.runDir(): false, f.socketDir(): false, f.skill: true})).To(Succeed())
+		Expect(m.Check(map[string]bool{f.runDir(): false, f.socketDir(): false, f.skill: true, f.sidecar: true})).To(Succeed())
 	})
 
 	// Scenario: Configuration is read from the checkout before the machine exists

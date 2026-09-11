@@ -5,11 +5,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/ivy/mill/internal/harness/claude"
 	"github.com/ivy/mill/internal/skill"
 	"github.com/ivy/mill/internal/version"
 	"github.com/ivy/mill/internal/workspace"
@@ -45,6 +47,18 @@ func seedOrigin() string {
 	git("add", "README.md")
 	git("commit", "--quiet", "--no-gpg-sign", "--message", "seed")
 	return dir
+}
+
+// builtSidecar stands in for `make sidecar-build`'s output at dir: the
+// entrypoint and a scrap of node_modules. It returns the entrypoint, as the
+// --sidecar flag names it.
+func builtSidecar(dir string) string {
+	GinkgoHelper()
+	entrypoint := filepath.Join(dir, skill.SidecarEntrypoint)
+	Expect(os.MkdirAll(filepath.Dir(entrypoint), 0o755)).To(Succeed())
+	Expect(os.WriteFile(entrypoint, []byte("//\n"), 0o600)).To(Succeed())
+	Expect(os.MkdirAll(filepath.Join(dir, "node_modules"), 0o755)).To(Succeed())
+	return entrypoint
 }
 
 var _ = Describe("Choosing the workspace backend", Label("unit"), func() {
@@ -106,8 +120,14 @@ var _ = Describe("Choosing the workspace backend", Label("unit"), func() {
 	})
 
 	It("refuses the machine backend before a claim on a host that cannot run it, naming the reason", func() {
-		opts.sandboxRoot = filepath.Join(GinkgoT().TempDir(), "absent-sandbox")
-		opts.sandbox.skillDir = filepath.Join(GinkgoT().TempDir(), "skill")
+		tmp := GinkgoT().TempDir()
+		opts.sandboxRoot = filepath.Join(tmp, "absent-sandbox")
+		// The skill and the sidecar are materialised into directories of the
+		// spec's own, from a built sidecar of the spec's own, so the
+		// preflight writes nothing under the real share root.
+		opts.sandbox.skillDir = filepath.Join(tmp, "skill")
+		opts.sandbox.sidecarDir = filepath.Join(tmp, "sidecar")
+		opts.sidecar = builtSidecar(filepath.Join(tmp, "src", "sidecar"))
 
 		err := checkWorkspace(workspace.KindMachine, opts)
 
@@ -117,6 +137,45 @@ var _ = Describe("Choosing the workspace backend", Label("unit"), func() {
 		By("and the skill every machine would mount was written first, with this binary's version beside it")
 		Expect(filepath.Join(opts.sandbox.skillDir, "SKILL.md")).To(BeAnExistingFile())
 		Expect(skill.Version(opts.sandbox.skillDir)).To(Equal(version.String()))
+
+		By("and the sidecar beside it, copied from the entrypoint's build, at the same version")
+		Expect(filepath.Join(opts.sandbox.sidecarDir, skill.SidecarEntrypoint)).To(BeAnExistingFile())
+		Expect(skill.Version(opts.sandbox.sidecarDir)).To(Equal(version.String()))
+	})
+
+	It("refuses the machine backend when the sidecar the flag names is not a built one", func() {
+		tmp := GinkgoT().TempDir()
+		opts.sandbox.skillDir = filepath.Join(tmp, "skill")
+		opts.sandbox.sidecarDir = filepath.Join(tmp, "sidecar")
+		opts.sidecar = filepath.Join(tmp, "src", "sidecar", skill.SidecarEntrypoint)
+		Expect(os.MkdirAll(filepath.Dir(opts.sidecar), 0o755)).To(Succeed())
+
+		err := checkWorkspace(workspace.KindMachine, opts)
+
+		Expect(err).To(MatchError(ContainSubstring("not a built sidecar")))
+		Expect(opts.sandbox.sidecarDir).NotTo(BeADirectory())
+	})
+
+	// Scenario: The local backend is untouched
+	//   Given a run with the local backend
+	//   When the adapter is built
+	//   Then its options are exactly what they were before this node
+	It("The local backend is untouched", func() {
+		opts.sidecar = "sidecar/dist/main.js"
+
+		By("when the adapter is built for the local backend")
+		got := claudeAdapter(workspace.KindLocal, opts, claude.EnvStrict, nil)
+
+		By("then it is exactly the adapter this command built before this node")
+		want := claude.New(
+			claude.WithEntrypoint(claude.DefaultCommand, opts.sidecar),
+			claude.WithEnvMode(claude.EnvStrict))
+		Expect(reflect.DeepEqual(got, want)).To(BeTrue(),
+			"the local adapter's options changed:\n got %+v\nwant %+v", got, want)
+
+		By("and the machine backend's adapter is a different thing: its execer is the run's workspace")
+		machineAdapter := claudeAdapter(workspace.KindMachine, opts, claude.EnvStrict, nil)
+		Expect(reflect.DeepEqual(got, machineAdapter)).To(BeFalse())
 	})
 
 	It("refuses a kind the tree does not know, and the remote one it has not built", func() {

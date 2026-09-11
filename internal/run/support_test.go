@@ -269,7 +269,7 @@ func (f *fixture) runner(options ...func(*run.Options)) *run.Runner {
 		Dagger:      f.client,
 		Workspaces:  f.workspaces(),
 		Forges:      func(context.Context) (forge.Forge, error) { return f.forge, nil },
-		Harnesses:   registry,
+		Harnesses:   func(run.Workspace) (*harness.Registry, error) { return registry, nil },
 		WorkerRef:   f.worker,
 		Workflow:    "quick-fix",
 		WorkflowDir: mustAbs(workflowDir),
@@ -998,7 +998,7 @@ func withHarness(adapter harness.Harness) func(*run.Options) {
 	return func(o *run.Options) {
 		registry := harness.NewRegistry()
 		Expect(registry.Register(run.DefaultHarness, adapter)).To(Succeed())
-		o.Harnesses = registry
+		o.Harnesses = func(run.Workspace) (*harness.Registry, error) { return registry, nil }
 	}
 }
 

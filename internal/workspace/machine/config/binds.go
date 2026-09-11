@@ -27,11 +27,20 @@ type Mounts struct {
 	Socket string
 	// Skill is the worker's skill directory, mounted read-only.
 	Skill string
+	// Sidecar is the worker's materialised sidecar directory, mounted
+	// read-only at the path the image owns (docs/sandbox.md §"Skill mount").
+	Sidecar string
 }
 
 // SkillPath is where the mill skill is mounted inside the machine
 // (docs/sandbox.md §"Skill mount").
 const SkillPath = Home + "/.claude/skills/mill"
+
+// SidecarPath is where the worker's sidecar is mounted read-only inside the
+// machine — the mount point the base image owns (docs/sandbox.md §"Skill
+// mount"). The harness adapter's in-machine entrypoint is under it, and the
+// image's `node` runs it.
+const SidecarPath = Home + "/.local/share/mill/sidecar"
 
 // Binds derives a run's bind mounts from its configuration. Every host
 // side is under the run directory, the socket directory or the skill
@@ -43,6 +52,7 @@ func Binds(config Config, mounts Mounts) []Bind {
 		{Host: filepath.Join(mounts.Run, "workspace"), Machine: Work},
 		{Host: mounts.Socket, Machine: RunDir},
 		{Host: mounts.Skill, Machine: SkillPath, ReadOnly: true},
+		{Host: mounts.Sidecar, Machine: SidecarPath, ReadOnly: true},
 	}
 	for _, cache := range config.Caches {
 		binds = append(binds, Bind{

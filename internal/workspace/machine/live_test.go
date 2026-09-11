@@ -12,8 +12,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -132,12 +134,13 @@ func (failingProbe) Exec(ctx context.Context, _ driver.ExecRequest) (*workspace.
 
 var _ = Describe("A machine on a real host", Label("live"), Serial, Ordered, func() {
 	var (
-		real     driver.Driver
-		base     image.Digest
-		skillDir string
-		origin   string
-		config   machine.Config
-		nonce    string
+		real       driver.Driver
+		base       image.Digest
+		skillDir   string
+		sidecarDir string
+		origin     string
+		config     machine.Config
+		nonce      string
 	)
 
 	BeforeAll(func(ctx context.Context) {
@@ -155,6 +158,17 @@ var _ = Describe("A machine on a real host", Label("live"), Serial, Ordered, fun
 		// internal/cli/run.go checkWorkspace).
 		skillDir = machine.Config{}.SkillDir()
 		Expect(skill.Materialise(skillDir, version.String())).To(Succeed())
+		// The sidecar rides in beside the skill: this binary's, copied from
+		// the built tree where the worker keeps it (internal/skill,
+		// internal/cli/run.go checkWorkspace). It must be built — `make
+		// sidecar-build`, which the acceptance suite runs (docs/runbook.md).
+		// The copy is gated on the version breadcrumb, and a development
+		// binary's version does not change with its build, so the tree is
+		// removed first: the suite then stands where a worker with a new
+		// binary version does, and what rides in is this checkout's build.
+		sidecarDir = machine.Config{}.SidecarDir()
+		Expect(os.RemoveAll(sidecarDir)).To(Succeed())
+		Expect(skill.MaterialiseSidecar(filepath.Join(repoRoot(), "sidecar"), sidecarDir, version.String())).To(Succeed())
 
 		By("building the base from images/base and exporting it where machines boot from")
 		images := image.New(real, image.Config{Root: liveRoot, Machines: liveMachines, BuildBudget: 15 * time.Minute})
@@ -174,6 +188,7 @@ var _ = Describe("A machine on a real host", Label("live"), Serial, Ordered, fun
 			Machines:     liveMachines,
 			RunState:     liveRunState,
 			Skill:        skillDir,
+			Sidecar:      sidecarDir,
 			Images:       image.Config{Pin: string(base)},
 			CacheDriver:  driver.NewSystemd(workspace.Spawner{}, driver.Commands{}),
 			Limits:       machine.Limits{MemoryMax: "4G", CPUQuota: "400%", TasksMax: "4096"},
@@ -366,6 +381,189 @@ var _ = Describe("A machine on a real host", Label("live"), Serial, Ordered, fun
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(gexec.CleanupBuildArtifacts)
 		Expect(strings.TrimSpace(must(binary, "version"))).To(Equal("mill version " + strings.TrimSpace(out)))
+	})
+
+	// Scenario: The sidecar rides in read-only
+	It("The sidecar rides in read-only", func(ctx context.Context) {
+		id := "acceptance-sidecar-ro-" + nonce
+		DeferCleanup(func() { sweep(id) })
+
+		By("given the worker started with a new binary version")
+		// The sidecar under the share root is this binary's, materialised in
+		// BeforeAll and gated on the version breadcrumb.
+		Expect(skill.Version(sidecarDir)).To(Equal(version.String()))
+
+		By("when the first machine boots")
+		ws := machine.New(real, config)
+		_, err := ws.Create(ctx, workspace.Spec{RunID: id, NodeRef: "mill#82"})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func(ctx context.Context) { Expect(ws.Destroy(ctx)).To(Succeed()) })
+		name := "mill-" + id
+
+		By("then the sidecar under the share root matches the binary and is mounted read-only at its fixed path")
+		out, status := inMachine(name, "agent", "findmnt", "-no", "OPTIONS", machineconfig.SidecarPath)
+		Expect(status).To(BeZero(), out)
+		Expect(out).To(ContainSubstring("ro"))
+		out, status = inMachine(name, "agent", "sh", "-c", "echo scribble > "+machineconfig.SidecarPath+"/scribble")
+		Expect(status).NotTo(BeZero())
+		Expect(out).To(ContainSubstring("Read-only file system"))
+		shipped, err := os.ReadFile(filepath.Join(sidecarDir, "dist", "main.js"))
+		Expect(err).NotTo(HaveOccurred())
+		out, status = inMachine(name, "agent", "cat", machineconfig.SidecarPath+"/dist/main.js")
+		Expect(status).To(BeZero(), out)
+		Expect(out).To(Equal(string(shipped)), "the mounted sidecar is the worker's, byte for byte")
+	})
+
+	// hostOutsideMachine is the node processes matching pattern on the host
+	// that are not under the machine's step slice, each with its command
+	// name and cgroup: the exec is one like any other, so nothing the
+	// session runs escapes the machine's cgroup. The helper's own client —
+	// `sudo mill-machine exec … node …` and the `systemd-run --pipe` it
+	// holds open — carries the argv on the host too; it is the exec's
+	// conduit, not a sidecar, and is told apart by its command name.
+	hostOutsideMachine := func(pattern string) []string {
+		GinkgoHelper()
+		out, _, _ := host("pgrep", "-f", pattern)
+		var outside []string
+		for _, pid := range strings.Fields(out) {
+			comm, _, _ := host("cat", "/proc/"+pid+"/comm")
+			if strings.TrimSpace(comm) != "node" {
+				continue
+			}
+			cg, _, _ := host("cat", "/proc/"+pid+"/cgroup")
+			if !strings.Contains(cg, "mill-step-") {
+				outside = append(outside, pid+" "+strings.TrimSpace(comm)+" "+strings.TrimSpace(cg))
+			}
+		}
+		return outside
+	}
+
+	// sidecarMain is the sidecar entrypoint inside a machine: the in-machine
+	// node running the mounted sidecar, exactly as the harness adapter spawns
+	// it. Started with no stdin it loads and waits for its request, so it
+	// stays alive under the step slice for the spec to observe — which is the
+	// lifecycle a real session has while its turn runs.
+	sidecarArgs := []string{machine.SidecarNode, machineconfig.SidecarPath + "/dist/main.js"}
+	sidecarPattern := machineconfig.SidecarPath + "/dist/main.js"
+
+	// sidecarInside is the pids of the sidecar's node inside the machine.
+	// pgrep runs directly through the helper, not under a shell, so the only
+	// command line carrying the pattern is pgrep's own, which it excludes.
+	sidecarInside := func(name string) []string {
+		GinkgoHelper()
+		out, _ := inMachine(name, "", "pgrep", "-f", sidecarPattern)
+		return strings.Fields(out)
+	}
+
+	// startSidecar execs the sidecar through the workspace and drains what it
+	// says, so a sidecar that exits instead of waiting for its request
+	// explains itself in the failure. The returned func is its output so far.
+	startSidecar := func(ctx context.Context, ws *machine.Workspace) func() string {
+		GinkgoHelper()
+		process, err := ws.Exec(ctx, workspace.Command{Path: sidecarArgs[0], Args: sidecarArgs[1:]})
+		Expect(err).NotTo(HaveOccurred())
+		var mu sync.Mutex
+		var said bytes.Buffer
+		drain := func(r io.Reader) {
+			defer GinkgoRecover()
+			buf := make([]byte, 4096)
+			for {
+				n, err := r.Read(buf)
+				mu.Lock()
+				said.Write(buf[:n])
+				mu.Unlock()
+				if err != nil {
+					return
+				}
+			}
+		}
+		go drain(process.Stdout)
+		go drain(process.Stderr)
+		// Stdin stays open and unwritten: the sidecar blocks on its request,
+		// as a real session's does while its turn runs, until the step's
+		// slice stops and reaps it.
+		return func() string {
+			mu.Lock()
+			defer mu.Unlock()
+			return said.String()
+		}
+	}
+
+	// cgroups is the machine's control-group tree with nothing ellipsized,
+	// so a command line as long as the sidecar's is shown whole.
+	cgroups := func(name string) string {
+		GinkgoHelper()
+		out, _, _ := host("sudo", "-n", "systemd-cgls", "--full", "--no-pager", "-M", name)
+		return out
+	}
+
+	// Scenario: The session is an exec inside the machine
+	It("The session is an exec inside the machine", func(ctx context.Context) {
+		id := "acceptance-session-exec-" + nonce
+		DeferCleanup(func() { sweep(id) })
+
+		By("given a run with the machine backend")
+		ws := machine.New(real, config)
+		_, err := ws.Create(ctx, workspace.Spec{RunID: id, NodeRef: "mill#82"})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func(ctx context.Context) { Expect(ws.Destroy(ctx)).To(Succeed()) })
+		name := "mill-" + id
+
+		By("when a session step starts")
+		Expect(ws.BeginStep(ctx, 1)).To(Succeed())
+		said := startSidecar(ctx, ws)
+
+		By("then the sidecar is started through the workspace under the step slice as agent in /work")
+		var pids []string
+		Eventually(func() []string {
+			pids = sidecarInside(name)
+			return pids
+		}, 30*time.Second, 300*time.Millisecond).ShouldNot(BeEmpty(), "the sidecar's node runs inside the machine: %s", said())
+		pid := pids[0]
+		Expect(cgroups(name)).To(MatchRegexp(`mill-step-1\.slice(?s:.*)mill-exec-[0-9a-f]+\.service(?s:.*)`+regexp.QuoteMeta(sidecarPattern)),
+			"the sidecar runs under the step's slice: %s", said())
+		owner, _ := inMachine(name, "", "stat", "-c", "%U", "/proc/"+pid)
+		Expect(strings.TrimSpace(owner)).To(Equal(machine.SessionUser), "the sidecar said: %s", said())
+		cwd, _ := inMachine(name, "", "readlink", "/proc/"+pid+"/cwd")
+		Expect(strings.TrimSpace(cwd)).To(Equal("/work"))
+
+		By("and nothing is spawned on the host")
+		Expect(hostOutsideMachine(sidecarPattern)).To(BeEmpty(), "the sidecar is only under the machine's step slice")
+
+		Expect(ws.EndStep(ctx, 1, false)).To(Succeed())
+	})
+
+	// Scenario: The session dies with its step
+	It("The session dies with its step", func(ctx context.Context) {
+		id := "acceptance-session-dies-" + nonce
+		DeferCleanup(func() { sweep(id) })
+
+		By("given a session running inside the machine")
+		ws := machine.New(real, config)
+		_, err := ws.Create(ctx, workspace.Spec{RunID: id, NodeRef: "mill#82"})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func(ctx context.Context) { Expect(ws.Destroy(ctx)).To(Succeed()) })
+		name := "mill-" + id
+
+		Expect(ws.BeginStep(ctx, 1)).To(Succeed())
+		said := startSidecar(ctx, ws)
+		Eventually(func() []string { return sidecarInside(name) },
+			30*time.Second, 300*time.Millisecond).ShouldNot(BeEmpty(), "the sidecar said: %s", said())
+
+		By("when the step ends")
+		Expect(ws.EndStep(ctx, 1, false)).To(Succeed())
+
+		By("then no sidecar process remains")
+		Expect(ws.BeginStep(ctx, 2)).To(Succeed())
+		Eventually(func() []string { return sidecarInside(name) },
+			20*time.Second, 300*time.Millisecond).Should(BeEmpty())
+
+		By("and the next step starts its own")
+		said = startSidecar(ctx, ws)
+		Eventually(func() string { return cgroups(name) },
+			30*time.Second, 300*time.Millisecond).Should(MatchRegexp(`mill-step-2\.slice(?s:.*)`+regexp.QuoteMeta(sidecarPattern)),
+			"the fresh session runs under step 2's slice: %s", said())
+		Expect(ws.EndStep(ctx, 2, false)).To(Succeed())
 	})
 
 	// Scenario: Stdout, stderr and the exit code come back intact and streamed

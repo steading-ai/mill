@@ -92,6 +92,30 @@ type Workspace interface {
 // left one behind, cloned from the run's branch when it did not.
 type Workspaces func(ctx context.Context, spec workspace.Spec) (Workspace, error)
 
+// inMachineSession is a workspace whose sessions run inside a sandbox, so
+// the paths a session's sidecar uses are the sandbox's and not the host's:
+// the socket's in-machine mount rather than the host path the worker serves
+// on, and the checkout at `/work` rather than the host directory the worker
+// keeps it in (docs/sandbox.md §Naming, §"Session identity"). The machine
+// backend implements it; a workspace whose sessions run on the host — the
+// local one — does not, and the handle's own socket and root stand.
+type inMachineSession interface {
+	SessionSocket() string
+	SessionCwd() string
+}
+
+// HarnessesFor builds the adapter table for one run, given the workspace it
+// works in. It is a function of the workspace, not a fixed table, because a
+// skill step's sidecar runs *inside* the run's workspace when that workspace
+// is a machine: the adapter's execer is the run's own [Workspace], so the
+// session lives under the step slice and dies with it (docs/sandbox.md §Exec,
+// §"Skill mount"). The local backend ignores the workspace and builds the
+// same adapter every run, spawned on the host.
+//
+// It is called once per run, after the workspace is opened, so two runs a
+// worker drives at once never share an adapter or its execer.
+type HarnessesFor func(ws Workspace) (*harness.Registry, error)
+
 // Forges resolves the project's forge. It is a function rather than a value
 // because a run that never reaches a `forge` step should never need one.
 type Forges func(ctx context.Context) (forge.Forge, error)
@@ -107,9 +131,11 @@ type Options struct {
 	Workspaces Workspaces
 	// Forges resolves the project's forge.
 	Forges Forges
-	// Harnesses is the adapter table a skill step's harness name is looked
-	// up in.
-	Harnesses *harness.Registry
+	// Harnesses builds the adapter table a skill step's harness name is
+	// looked up in, for the run's workspace: on the machine backend a
+	// session's sidecar runs inside that workspace's machine, so the table
+	// is a function of the run and not fixed for the worker.
+	Harnesses HarnessesFor
 	// WorkerRef is this worker, recorded on the run and on every attempt.
 	WorkerRef string
 	// Workflow is the workflow name to select when a run has none. The
@@ -257,6 +283,11 @@ type state struct {
 	run       *millv1.Run
 	workflow  *millv1.Workflow
 	workspace Workspace
+	// harnesses is the adapter table for this run's workspace, built once
+	// the workspace is opened (Options.Harnesses). A machine-backed run's
+	// sidecar runs inside its machine, so the table is the run's, not the
+	// worker's.
+	harnesses *harness.Registry
 	// beat is the heartbeat, which owns the step's context.
 	beat *heartbeat
 	// stopping is closed when the process the run is in has been asked to
@@ -547,6 +578,14 @@ func (r *Runner) openWorkspace(ctx context.Context, s *state) error {
 		return fmt.Errorf("run %s: workspace: %w", s.run.GetId(), err)
 	}
 	s.workspace = ws
+	// The adapter table is built for this workspace: a machine-backed run
+	// spawns its sidecar inside the machine, so the execer is the run's own
+	// workspace (docs/sandbox.md §Exec, §"Skill mount").
+	harnesses, err := r.options.Harnesses(ws)
+	if err != nil {
+		return fmt.Errorf("run %s: harnesses: %w", s.run.GetId(), err)
+	}
+	s.harnesses = harnesses
 	if boundary, ok := ws.(workspace.StepBoundary); ok {
 		s.boundary = boundary
 		if resumer, ok := ws.(workspace.StepResumer); ok {

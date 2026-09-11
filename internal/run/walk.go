@@ -39,7 +39,7 @@ func (r *Runner) requireHarnessesOf(s *state, w *millv1.Workflow) error {
 		}
 		sort.Strings(names)
 		for _, name := range names {
-			if _, err := r.options.Harnesses.Lookup(name); err != nil {
+			if _, err := s.harnesses.Lookup(name); err != nil {
 				return fmt.Errorf("run %s: workflow %s step %s: %w",
 					s.run.GetId(), w.GetName(), step.GetName(), err)
 			}

@@ -31,6 +31,7 @@ import (
 	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/machine/cache"
+	"github.com/ivy/mill/internal/workspace/machine/config"
 	"github.com/ivy/mill/internal/workspace/machine/driver"
 	"github.com/ivy/mill/internal/workspace/machine/image"
 	"github.com/ivy/mill/internal/workspace/redact"
@@ -55,6 +56,16 @@ const (
 	// NestedRoot is the sandbox root of a worker inside a machine
 	// (docs/sandbox.md §Self-hosting).
 	NestedRoot = driver.NestedRoot
+	// SidecarMount is where the worker's sidecar is bound read-only inside
+	// every machine (docs/sandbox.md §"Skill mount"): the mount point the
+	// base image owns, under which the harness adapter's in-machine
+	// entrypoint sits.
+	SidecarMount = config.SidecarPath
+	// SidecarNode is the node the image runs the sidecar with, named by its
+	// absolute path so the entrypoint does not depend on the machine's PATH
+	// (docs/sandbox.md §"Skill mount"). The base image symlinks it to the
+	// node mise pins.
+	SidecarNode = "/usr/local/bin/node"
 )
 
 // The network the host's mill_egress role fixes for every machine
@@ -134,6 +145,12 @@ type Config struct {
 	// machine (docs/sandbox.md §"Skill mount"). It must be one of the
 	// read-only sources the helper's policy names.
 	Skill string
+	// Sidecar is the worker's materialised sidecar directory, bound
+	// read-only into every machine at the path the image owns
+	// (docs/sandbox.md §"Skill mount"). Like the skill it must be under one
+	// of the helper's read-only sources — the worker's share root — and the
+	// worker writes this binary's sidecar there before [Check].
+	Sidecar string
 	// Origin is the repository to clone when a spec does not name one.
 	Origin string
 	// Forge is where the run delivers, and whose credential the clone
@@ -227,6 +244,11 @@ func (c Config) withDefaults() Config {
 			c.Skill = filepath.Join(home, ".local", "share", "mill", "skill")
 		}
 	}
+	if c.Sidecar == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			c.Sidecar = filepath.Join(home, ".local", "share", "mill", "sidecar")
+		}
+	}
 	if c.Name == "" {
 		c.Name = "mill"
 	}
@@ -280,6 +302,11 @@ func (c Config) runDir(id string) string { return filepath.Join(c.runsDir(), id)
 // into before [Check] asks whether it is there (internal/skill).
 func (c Config) SkillDir() string { return c.withDefaults().Skill }
 
+// SidecarDir is the directory bound read-only into every machine as the
+// worker's sidecar, with the default applied: what the worker materialises
+// the sidecar into before [Check] asks whether it is there (internal/skill).
+func (c Config) SidecarDir() string { return c.withDefaults().Sidecar }
+
 // socketDir is `<run state>/<id>`, bound into the machine at `/run/mill`.
 func (c Config) socketDir(id string) string { return filepath.Join(c.RunState, id) }
 
@@ -315,6 +342,9 @@ func Check(host driver.Driver, c Config) error {
 	}
 	if info, err := os.Stat(c.Skill); err != nil || !info.IsDir() {
 		return fmt.Errorf("machine: skill directory %s is not a directory the machine can bind", c.Skill)
+	}
+	if info, err := os.Stat(c.Sidecar); err != nil || !info.IsDir() {
+		return fmt.Errorf("machine: sidecar directory %s is not a directory the machine can bind", c.Sidecar)
 	}
 	return socket.CheckPath(filepath.Join(c.socketDir(strings.Repeat("0", 26)), SocketName))
 }
@@ -527,6 +557,19 @@ func (w *Workspace) Rotate(_ context.Context, token workspace.Token) error {
 
 // Handle is the workspace as it stands, or nil before Create or Attach.
 func (w *Workspace) Handle() *workspace.Handle { return w.snapshot() }
+
+// SessionSocket is the socket path a session inside the machine reaches the
+// workspace on: the socket directory is bound at [config.RunDir], so the
+// machine sees the socket at a fixed short path there, not at the host path
+// the worker serves on (docs/sandbox.md §Naming, §Provision). The run loop
+// hands this to a session's sidecar, which runs inside the machine.
+func (w *Workspace) SessionSocket() string { return filepath.Join(config.RunDir, SocketName) }
+
+// SessionCwd is the working directory a session runs in inside the machine:
+// the checkout's mount at `/work`, not the host path the worker keeps it at
+// (docs/sandbox.md §"Session identity"). The run loop hands it to a
+// session's sidecar, which runs inside the machine.
+func (w *Workspace) SessionCwd() string { return config.Work }
 
 // Record is the run's record as it stands, or nil before Create or Attach.
 func (w *Workspace) Record() *Record {

@@ -65,16 +65,167 @@ func Materialise(dir, version string) error {
 		if err != nil {
 			return err
 		}
-		return place(target, body)
+		return place(target, body, 0o644)
 	})
 	if err != nil {
 		return fmt.Errorf("skill: %w", err)
 	}
 	wanted[VersionFile] = true
-	if err := place(filepath.Join(dir, VersionFile), []byte(version+"\n")); err != nil {
+	if err := place(filepath.Join(dir, VersionFile), []byte(version+"\n"), 0o644); err != nil {
 		return fmt.Errorf("skill: %w", err)
 	}
 	return prune(dir, wanted)
+}
+
+// MaterialiseSidecar copies the built sidecar at source into dest and writes
+// the version breadcrumb, so the worker's sidecar rides into every machine
+// beside the skill (docs/sandbox.md §"Skill mount"). Unlike the skill the
+// sidecar is not embedded — its node_modules is far too large to carry in
+// the binary — so it is copied from where the worker built it rather than
+// written from an embedded tree. What rides is the built tree and nothing
+// else: [SidecarEntrypoint] and the rest of `dist`, and `node_modules`. A
+// source with no entrypoint is not a built sidecar and is refused before
+// anything is written, so a misnamed source cannot leave a tree of the wrong
+// thing under the share root.
+//
+// It is gated on the breadcrumb: a dest already carrying this version is left
+// untouched, so the common startup — an unchanged binary — walks nothing.
+// When the version differs the whole tree is refreshed by rename, each file
+// landing atomically and an unchanged one keeping its inode, and whatever an
+// earlier version left that this one does not have is pruned. That is what
+// "refreshed when the binary's version differs and left alone when it does
+// not" means.
+func MaterialiseSidecar(source, dest, version string) error {
+	if version == "" || strings.ContainsAny(version, "\n\r") {
+		return fmt.Errorf("skill: sidecar version %q is not one line", version)
+	}
+	if info, err := os.Stat(source); err != nil || !info.IsDir() {
+		return fmt.Errorf("skill: sidecar source %s is not a directory to materialise from", source)
+	}
+	if info, err := os.Stat(filepath.Join(source, SidecarEntrypoint)); err != nil || !info.Mode().IsRegular() {
+		return fmt.Errorf("skill: sidecar source %s is not a built sidecar: it has no %s", source, SidecarEntrypoint)
+	}
+	if current, err := Version(dest); err == nil && current == version {
+		return nil
+	}
+	if err := os.MkdirAll(dest, 0o755); err != nil { //nolint:gosec // bound read-only into every machine; nothing secret
+		return fmt.Errorf("skill: %w", err)
+	}
+	wanted := map[string]bool{}
+	err := filepath.WalkDir(source, func(name string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(source, name)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		if !rides(rel) {
+			if entry.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		wanted[filepath.ToSlash(rel)] = true
+		target := filepath.Join(dest, rel)
+		switch {
+		case entry.IsDir():
+			return os.MkdirAll(target, 0o755) //nolint:gosec // as above
+		case entry.Type()&fs.ModeSymlink != 0:
+			// pnpm's node_modules is a tree of relative symlinks into
+			// `.pnpm`, and a link is copied as a link so the tree resolves
+			// the same inside the machine's mount. One that leaves the
+			// source names something a machine does not have and is
+			// refused: the copy would be broken where it matters.
+			pointer, err := os.Readlink(name)
+			if err != nil {
+				return err
+			}
+			if !within(source, filepath.Join(filepath.Dir(name), pointer)) {
+				return fmt.Errorf("sidecar link %s points outside the sidecar, to %s", rel, pointer)
+			}
+			return link(target, pointer)
+		case entry.Type().IsRegular():
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			body, err := os.ReadFile(name) //nolint:gosec // the worker's own build output
+			if err != nil {
+				return err
+			}
+			// The mode rides too, so `.bin` shims and any bundled binary
+			// stay executable, made world-readable as the bind is.
+			return place(target, body, info.Mode().Perm()|0o444)
+		default:
+			return fmt.Errorf("sidecar source %s is a %s, which cannot ride into a machine", rel, entry.Type())
+		}
+	})
+	if err != nil {
+		return fmt.Errorf("skill: %w", err)
+	}
+	wanted[VersionFile] = true
+	if err := place(filepath.Join(dest, VersionFile), []byte(version+"\n"), 0o644); err != nil {
+		return fmt.Errorf("skill: %w", err)
+	}
+	return prune(dest, wanted)
+}
+
+// within reports whether path, resolved lexically, is under root.
+func within(root, path string) bool {
+	rel, err := filepath.Rel(root, filepath.Clean(path))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// link makes path a symlink to pointer by rename, leaving a link that
+// already says so untouched. What stood at path that was not a link is
+// removed first: a rename cannot replace a directory.
+func link(path, pointer string) error {
+	if current, err := os.Readlink(path); err == nil && current == pointer {
+		return nil
+	}
+	if err := clearForRename(path); err != nil {
+		return err
+	}
+	tmp := filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+".link")
+	_ = os.Remove(tmp)
+	if err := os.Symlink(pointer, tmp); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// clearForRename removes a directory standing where a file or link is about
+// to be renamed in; anything else a rename replaces on its own.
+func clearForRename(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+	return os.RemoveAll(path)
+}
+
+// SidecarEntrypoint is the sidecar's entrypoint relative to its directory:
+// what the harness adapter runs, on the host or inside a machine, and the
+// one file a directory must carry to count as a built sidecar.
+const SidecarEntrypoint = "dist/main.js"
+
+// sidecarTrees is what rides into a machine: the bundle and its dependencies.
+// The sidecar's sources, specs and package metadata stay on the host.
+var sidecarTrees = []string{"dist", "node_modules"}
+
+// rides reports whether a path relative to the sidecar's source is part of
+// the built tree that is copied.
+func rides(rel string) bool {
+	for _, tree := range sidecarTrees {
+		if rel == tree || strings.HasPrefix(rel, tree+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // Version reads the breadcrumb a materialised directory carries.
@@ -89,23 +240,28 @@ func Version(dir string) (string, error) {
 // place writes body to path atomically: a sibling temporary file, then a
 // rename over the target. A file already holding body is left alone, so an
 // unchanged skill keeps its inode and a bound machine sees nothing move.
-func place(path string, body []byte) error {
-	if current, err := os.ReadFile(path); err == nil && string(current) == string(body) { //nolint:gosec // the worker's own directory
-		return nil
+func place(path string, body []byte, mode fs.FileMode) error {
+	if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() && info.Mode().Perm() == mode {
+		if current, err := os.ReadFile(path); err == nil && string(current) == string(body) { //nolint:gosec // the worker's own directory
+			return nil
+		}
+	}
+	if err := clearForRename(path); err != nil {
+		return err
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
 	if err != nil {
 		return err
 	}
 	defer func() { _ = os.Remove(tmp.Name()) }()
-	if err := write(tmp, body); err != nil {
+	if err := write(tmp, body, mode); err != nil {
 		return err
 	}
 	return os.Rename(tmp.Name(), path)
 }
 
-// write fills a temporary file, makes it world-readable, and closes it.
-func write(tmp *os.File, body []byte) (err error) {
+// write fills a temporary file, gives it its mode, and closes it.
+func write(tmp *os.File, body []byte, mode fs.FileMode) (err error) {
 	defer func() {
 		if closeErr := tmp.Close(); err == nil {
 			err = closeErr
@@ -114,7 +270,7 @@ func write(tmp *os.File, body []byte) (err error) {
 	if _, err := tmp.Write(body); err != nil {
 		return err
 	}
-	return tmp.Chmod(0o644) //nolint:gosec // bound read-only into every machine; nothing secret
+	return tmp.Chmod(mode) //nolint:gosec // bound read-only into every machine; nothing secret
 }
 
 // prune removes what is under dir that the skill does not hold: an earlier

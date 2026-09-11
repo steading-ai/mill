@@ -99,7 +99,7 @@ func stepContext(ctx context.Context, step *millv1.Step) (context.Context, conte
 // nothing.
 func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, detail *millv1.InspectResponse, token *millv1.StepToken, feedback, brief string) (result, error) {
 	name, settings := harnessFor(step)
-	adapter, err := r.options.Harnesses.Lookup(name)
+	adapter, err := s.harnesses.Lookup(name)
 	if err != nil {
 		return result{}, err
 	}
@@ -108,6 +108,17 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 		return result{}, err
 	}
 	handle := s.workspace.Handle()
+
+	// Where a session's sidecar connects and works. For a sidecar that runs
+	// inside a machine these are the machine-side paths — the socket's
+	// in-machine mount and the checkout at `/work` — not the host paths the
+	// worker serves and keeps the checkout at (docs/sandbox.md §Naming,
+	// §"Session identity"). A workspace whose sessions run on the host does
+	// not implement this and the handle's own socket and root stand.
+	sessionSocket, sessionCwd := handle.Socket, handle.Root
+	if inMachine, ok := s.workspace.(inMachineSession); ok {
+		sessionSocket, sessionCwd = inMachine.SessionSocket(), inMachine.SessionCwd()
+	}
 
 	// The step's own credential is registered with the redactor before the
 	// session is handed it, so a bearer that finds its way into a tool's
@@ -129,11 +140,11 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 		// still reaches the harness that has (docs/domain-model.md §Step).
 		Options: settings.GetOptions().AsMap(),
 		Workspace: harness.Workspace{
-			Socket: handle.Socket,
+			Socket: sessionSocket,
 			Token:  token.GetToken(),
 			Env:    s.workspace.Environment(),
 		},
-		Cwd: handle.Root,
+		Cwd: sessionCwd,
 		// The step's budget, which is also how long the session may wait
 		// in the foreground for anything it runs.
 		Timeout: step.GetTimeout().AsDuration(),

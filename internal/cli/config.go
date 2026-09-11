@@ -78,7 +78,12 @@ type Config struct {
 	// directories are made under, and the proxy every machine leaves
 	// through and what bypasses it. Each has the default homestead fixes
 	// on `core`.
-	SkillDir    string `yaml:"skill-dir"`
+	SkillDir string `yaml:"skill-dir"`
+	// SidecarDir is where the worker materialises this binary's sidecar,
+	// bound read-only into every machine beside the skill (docs/sandbox.md
+	// §"Skill mount"). It defaults, like the skill, to the worker's share
+	// root, the one the helper's policy admits.
+	SidecarDir  string `yaml:"sidecar-dir"`
 	RunStateDir string `yaml:"run-state-dir"`
 	Proxy       string `yaml:"proxy"`
 	NoProxy     string `yaml:"no-proxy"`

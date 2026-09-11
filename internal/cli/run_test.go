@@ -300,8 +300,19 @@ var _ = Describe("mill run", func() {
 
 		It("The machine backend is chosen and honest about what it cannot do yet", func() {
 			By("given workspace: machine")
-			path := filepath.Join(GinkgoT().TempDir(), "config.yaml")
-			Expect(os.WriteFile(path, []byte("workspace: machine\n"), 0o600)).To(Succeed())
+			// The skill and the sidecar are materialised into directories of
+			// the spec's own, and the sidecar is copied from a built tree of
+			// the spec's own, so the preflight touches nothing under the real
+			// home and fails on the one thing the host lacks.
+			tmp := GinkgoT().TempDir()
+			entrypoint := filepath.Join(tmp, "src", "sidecar", "dist", "main.js")
+			Expect(os.MkdirAll(filepath.Dir(entrypoint), 0o755)).To(Succeed())
+			Expect(os.WriteFile(entrypoint, []byte("//\n"), 0o600)).To(Succeed())
+			path := filepath.Join(tmp, "config.yaml")
+			Expect(os.WriteFile(path, []byte(
+				"workspace: machine\n"+
+					"skill-dir: "+filepath.Join(tmp, "skill")+"\n"+
+					"sidecar-dir: "+filepath.Join(tmp, "sidecar")+"\n"), 0o600)).To(Succeed())
 			GinkgoT().Setenv("MILL_CONFIG", path)
 
 			By("when a run is started on a host with no sandbox root")
@@ -313,7 +324,8 @@ var _ = Describe("mill run", func() {
 				"run", "millspec#1",
 				"--project", "millspec",
 				"--workspace", "machine",
-				"--sandbox-root", filepath.Join(GinkgoT().TempDir(), "absent-sandbox"),
+				"--sandbox-root", filepath.Join(tmp, "absent-sandbox"),
+				"--sidecar", entrypoint,
 				"--vcs-url", "https://gitlab.example.test/group/thing.git",
 				"--socket", "/nonexistent/mill.sock",
 				"--dagger-socket", "/nonexistent/dg.sock",

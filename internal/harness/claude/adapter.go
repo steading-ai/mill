@@ -83,6 +83,22 @@ func WithExecer(execer workspace.Execer) Option {
 	return func(a *Adapter) { a.execer = execer }
 }
 
+// WithSandbox marks the execer a sandbox that supplies its own base
+// environment — the machine backend, whose [workspace.Execer] enters a
+// systemd-nspawn machine where `agent`'s HOME, PATH and the rest are the
+// machine's, not the host's (docs/sandbox.md §Exec, §"Session identity").
+//
+// A sandboxed sidecar is handed only the session's own grant — its socket
+// and step token — the workspace's egress and identity, and whatever the
+// step's `env` carved out; the host floor is never copied in, because the
+// host's HOME and PATH name nothing inside a machine. Without it a session
+// would run with `HOME=/home/<operator>` and a PATH of host directories the
+// machine does not have, and `~/.claude` would resolve to a home that is not
+// there.
+func WithSandbox() Option {
+	return func(a *Adapter) { a.sandbox = true }
+}
+
 // WithEntrypoint sets the command the sidecar is spawned as.
 func WithEntrypoint(command string, args ...string) Option {
 	return func(a *Adapter) { a.command, a.args = command, args }
@@ -107,6 +123,9 @@ type Adapter struct {
 	args    []string
 	grace   time.Duration
 	envMode EnvMode
+	// sandbox is set when the execer enters a sandbox that supplies its own
+	// base environment, so the host floor is never copied in (WithSandbox).
+	sandbox bool
 
 	mu   sync.Mutex
 	live map[string]*flight

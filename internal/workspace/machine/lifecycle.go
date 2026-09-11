@@ -277,16 +277,17 @@ func (w *Workspace) writeProxyFile(runDir string, egress workspace.Egress) (stri
 }
 
 // manifest is machine.json for a run: the configuration's binds — the
-// workspace, the socket directory, the skill read-only, one per cache —
+// workspace, the socket directory, the skill and the sidecar read-only, one
 // plus the proxy file read-only, and under nested the host's image
 // subvolumes read-only so an inner suite boots them rather than building
 // them, and the dagger checkout read-only for its test fixture. Nothing
 // else differs between a nested and a flat provision.
 func (w *Workspace) manifest(declared config.Config, id, digest, proxyFile string, nested bool) Manifest {
 	binds := config.Binds(declared, config.Mounts{
-		Run:    w.config.runDir(id),
-		Socket: w.config.socketDir(id),
-		Skill:  w.config.Skill,
+		Run:     w.config.runDir(id),
+		Socket:  w.config.socketDir(id),
+		Skill:   w.config.Skill,
+		Sidecar: w.config.Sidecar,
 	})
 	m := Manifest{Image: digest, Limits: w.config.Limits, Nested: nested}
 	for _, bind := range binds {
@@ -302,7 +303,7 @@ func (w *Workspace) manifest(declared config.Config, id, digest, proxyFile strin
 }
 
 // allowedBindRoots is the helper's policy as this worker knows it: the run
-// directory and the socket directory read-write, the skill read-only, and
+// directory and the socket directory read-write, the skill and sidecar
 // under nested — only then — the image directory and the dagger checkout
 // read-only.
 func (w *Workspace) allowedBindRoots(id string, nested bool) map[string]bool {
@@ -310,6 +311,7 @@ func (w *Workspace) allowedBindRoots(id string, nested bool) map[string]bool {
 		w.config.runDir(id):    false,
 		w.config.socketDir(id): false,
 		w.config.Skill:         true,
+		w.config.Sidecar:       true,
 	}
 	if nested {
 		roots[w.config.Machines] = true

@@ -271,9 +271,10 @@ path = "/etc"
 			Expect(err).NotTo(HaveOccurred())
 
 			mounts := config.Mounts{
-				Run:    "/var/lib/mill/runs/01RUN",
-				Socket: "/run/mill/01RUN",
-				Skill:  "/opt/mill/skill",
+				Run:     "/var/lib/mill/runs/01RUN",
+				Socket:  "/run/mill/01RUN",
+				Skill:   "/opt/mill/skill",
+				Sidecar: "/opt/mill/sidecar",
 			}
 			binds := config.Binds(cfg, mounts)
 			Expect(binds).NotTo(BeEmpty())
@@ -282,6 +283,7 @@ path = "/etc"
 					HavePrefix(mounts.Run+"/"),
 					Equal(mounts.Socket),
 					Equal(mounts.Skill),
+					Equal(mounts.Sidecar),
 				), "host side %q of %q", bind.Host, bind.Machine)
 				Expect(bind.Host).NotTo(ContainSubstring(".."))
 			}
@@ -289,6 +291,7 @@ path = "/etc"
 				config.Bind{Host: "/var/lib/mill/runs/01RUN/workspace", Machine: "/work"},
 				config.Bind{Host: "/run/mill/01RUN", Machine: "/run/mill"},
 				config.Bind{Host: "/opt/mill/skill", Machine: "/home/agent/.claude/skills/mill", ReadOnly: true},
+				config.Bind{Host: "/opt/mill/sidecar", Machine: "/home/agent/.local/share/mill/sidecar", ReadOnly: true},
 				config.Bind{Host: "/var/lib/mill/runs/01RUN/cache/x", Machine: "/work/x"},
 				config.Bind{Host: "/var/lib/mill/runs/01RUN/cache/go-build", Machine: "/home/agent/.cache/gb"},
 			))
