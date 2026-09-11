@@ -18,7 +18,10 @@ in a machine with an empty `~/.claude` answers through
 `spikes/nspawn/gateway.py` on the host. E5, E6, E11 and E12 follow it:
 egress through squid behind an nftables table (`spikes/nspawn/squid.conf`,
 `spikes/nspawn/egress.nft`), the db suite inside a machine, pulls through
-Harbor's proxy cache, and the `dnf` shim (`spikes/nspawn/dnf`).
+Harbor's proxy cache, and the `dnf` shim (`spikes/nspawn/dnf`). E9 and
+E10 close the file: a cache lineage restored and promoted by snapshot, and a
+derived image built under a lock by `spikes/nspawn/build-derived.sh`, booted,
+and failed on purpose; their four scenarios are `spikes/nspawn/cache_test.go`.
 
 ## What was under test
 
@@ -63,6 +66,8 @@ Summary of verdicts, one line each; the detail is in the sections.
 | E6 | pass | 231 db specs pass inside on `/run/user/1000/podman/podman.sock`, ryuk on; 43.9 s cold / 20.5 s warm against 19.2 s on the host; the proxy must reach `agent`'s user manager or podman cannot pull |
 | E11 | pass | every `CONNECT` of a pull is to Harbor, none to an upstream registry; 2.4 s from a fresh machine; `RepoDigests` keeps the `docker.io` name by podman's design |
 | E12 | pass | `dnf install -y vips-devel` as `agent` ends in the three-line hint; `sudo dnf remove` is `a password is required`; `--setopt=proxy=` goes after `install` for the sudoers pattern |
+| E9 | pass | restore 1 ms, promote 52 ms for a 2.8G / 3.0G lineage; the run's `-tags e9` link output is in gen-2 and not gen-1; gen-1 deleted under the live run without effect; no `sudo` for create/snapshot/delete, but a read-only snapshot must be made writable before its owner can delete it, and `subvolume sync` needs root and is not what moves `df` — `filesystem sync` is |
+| E10 | pass | `rpm -q libpq-devel` inside the derived machine; the second builder slept in `locks_lock_inode` and found the image `present`; the missing package leaves `rc=1`, no `.building`, and `No match for argument: no-such-package-e10`; build 4.3 s, export 0.8 s; 1005M against the base's 1020M, nothing shared |
 
 ---
 
@@ -2825,3 +2830,635 @@ AVC during the session.
   `--setopt=proxy=` after `install`; the hint is the three `mill:` lines
   above; the report is a `curl --unix-socket` POST to a socket in a directory
   bound at boot.
+
+---
+
+## E9 — Cache lineage: restore, promote, and what it costs
+
+Run 2026-09-11 06:27 – 06:32 PDT on the same host. The image subvolume from
+the boot spike was still present (`ID 298 … mill-image-spike`; the work order
+allowed for its absence), so no rebuild. Homestead's
+`/etc/systemd/system/mill-machine@.service` (1640 bytes, `Sep 11 01:03`),
+its `mill-nftables.service`, squid, the `mill-host` link and the
+`mill-image-e7`/`mill-image-e8` subvolumes of other nodes were left alone.
+Machines were booted directly with `systemd-run --unit=mill-run-e*`, E1's
+line plus `:idmap` on every bind.
+
+Every `btrfs` command below runs as the operator (uid 1000) with no `sudo`
+unless the prompt shows one; `/var/lib/mill` is the operator's and is mounted
+`user_subvol_rm_allowed` (§What was under test).
+
+### The fill, on the host
+
+Squid on this host is homestead's now, and its `squid.conf` (Fedora's
+default, `-rw-r----- root squid 1171 Sep 11 04:03`, an empty
+`/etc/squid/conf.d/`) has no `machines` ACL: it admits `localhost` only, so
+a machine cannot fetch through it. The probe, from a non-loopback source on
+the host:
+
+```
+$ curl -sS -o /dev/null -w "%{http_code}\n" -x http://10.99.255.1:3128 --interface 10.99.255.1 https://proxy.golang.org/; sudo tail -1 /var/log/squid/access.log
+curl: (56) CONNECT tunnel failed, response 403
+000
+1789133238.531      0 10.99.255.1 TCP_DENIED/403 3367 CONNECT proxy.golang.org:443 - HIER_NONE/- text/html
+```
+
+That is a finding against the network landing, not this node's; per the work
+order the fill ran on the host with the same `GOCACHE`, and the second build
+inside the machine used the host's Go toolchain bound read-only at `/opt/go`
+with `GOPROXY=off` (the module cache is in the lineage, so nothing is
+fetched). The subvolume, created as the operator:
+
+```
+$ date +%T; id -u; btrfs subvolume create /var/lib/mill/cache-e9-target; echo rc=$?; ls -ld /var/lib/mill/cache-e9-target
+06:27:18
+1000
+Create subvolume '/var/lib/mill/cache-e9-target'
+rc=0
+drwxr-xr-x 1 ivy ivy 0 Sep 11 06:27 /var/lib/mill/cache-e9-target
+```
+
+The work order's fill — one `go build ./...` and `go test -run xxx ./...` —
+is 704M for this repository, so the cache was grown to "a few gigabytes"
+with builds that produce distinct cache entries: `-race`, and `GOARCH=arm64`,
+`riscv64`, `386` (a `darwin` build was tried too; it fails on a
+linux-specific type, which is fine for filling a cache). The `go:
+downloading` lines are elided.
+
+```
+$ cd /home/ivy/src/github.com/ivy/mill; time (GOCACHE=/var/lib/mill/cache-e9-target GOMODCACHE=/var/lib/mill/cache-e9-target/mod GOTOOLCHAIN=local go build ./... && GOCACHE=/var/lib/mill/cache-e9-target GOMODCACHE=/var/lib/mill/cache-e9-target/mod GOTOOLCHAIN=local go test -count=1 -run xxx ./... 2>&1 | tail -5)
+go: downloading google.golang.org/protobuf v1.36.12
+[… 66 more]
+ok  	github.com/ivy/mill/internal/workspace/socket	0.004s [no tests to run]
+ok  	github.com/ivy/mill/proto/contract	0.002s [no tests to run]
+ok  	github.com/ivy/mill/sidecar	0.002s [no tests to run]
+ok  	github.com/ivy/mill/spikes/nspawn	0.002s [no tests to run]
+ok  	github.com/ivy/mill/tests/acceptance	0.023s [no tests to run]
+
+real	0m11.603s
+user	1m33.510s
+sys	0m12.515s
+$ du -sh /var/lib/mill/cache-e9-target; du -s /var/lib/mill/cache-e9-target; find /var/lib/mill/cache-e9-target -type f | wc -l
+704M	/var/lib/mill/cache-e9-target
+720876	/var/lib/mill/cache-e9-target
+15633
+$ cd /home/ivy/src/github.com/ivy/mill; export GOCACHE=/var/lib/mill/cache-e9-target GOMODCACHE=/var/lib/mill/cache-e9-target/mod GOTOOLCHAIN=local; time (go build -race ./... && go test -race -count=1 -run xxx ./... >/dev/null && GOARCH=arm64 go build ./... && GOARCH=arm64 go test -count=1 -run xxx -exec /bin/true ./... >/dev/null; GOARCH=arm64 go vet ./... >/dev/null 2>&1; go vet ./... >/dev/null 2>&1; GOOS=darwin GOARCH=arm64 go build ./... ; GOOS=darwin GOARCH=arm64 go test -count=1 -run xxx -exec /bin/true ./... > /dev/null); du -sh /var/lib/mill/cache-e9-target
+go: downloading github.com/ebitengine/purego v0.10.1
+# github.com/ivy/mill/internal/workspace/machine
+internal/workspace/machine/systemd.go:208:25: cannot use stat.Type (variable of type uint32) as int64 value in argument to filesystemName
+# github.com/ivy/mill/internal/workspace/machine
+internal/workspace/machine/systemd.go:208:25: cannot use stat.Type (variable of type uint32) as int64 value in argument to filesystemName
+
+real	0m37.915s
+user	4m57.832s
+sys	0m39.706s
+2.0G	/var/lib/mill/cache-e9-target
+$ cd /home/ivy/src/github.com/ivy/mill; export GOCACHE=/var/lib/mill/cache-e9-target GOMODCACHE=/var/lib/mill/cache-e9-target/mod GOTOOLCHAIN=local; time (GOARCH=riscv64 go build ./... && GOARCH=riscv64 go test -count=1 -run xxx -exec /bin/true ./... >/dev/null; GOARCH=386 go build ./... && GOARCH=386 go test -count=1 -run xxx -exec /bin/true ./... >/dev/null); du -sh /var/lib/mill/cache-e9-target; du -s /var/lib/mill/cache-e9-target; find /var/lib/mill/cache-e9-target -type f | wc -l; df -h /var/lib/mill
+# github.com/ivy/mill/internal/workspace/machine
+internal/workspace/machine/systemd.go:208:25: cannot use stat.Type (variable of type int32) as int64 value in argument to filesystemName
+
+real	0m16.449s
+user	2m31.636s
+sys	0m18.625s
+2.8G	/var/lib/mill/cache-e9-target
+2834100	/var/lib/mill/cache-e9-target
+31604
+Filesystem        Size  Used Avail Use% Mounted on
+/dev/mapper/mill  932G  1.4G  929G   1% /var/lib/mill
+```
+
+2.8G apparent (`du`), 31 604 files; `df` moved 767M → 1.4G because the
+filesystem is `compress=zstd:1` and a Go build cache compresses about 2:1.
+Both numbers matter to `mill#67`: `du -s` is the estimate §Promote records,
+and it overstates what eviction gets back by about half on this filesystem.
+
+### Promote gen-1, restore the run's copy
+
+```
+$ btrfs subvolume snapshot -r /var/lib/mill/cache-e9-target /var/lib/mill/cache-e9-gen-1; echo rc=$?
+Create readonly snapshot of '/var/lib/mill/cache-e9-target' in '/var/lib/mill/cache-e9-gen-1'
+rc=0
+$ time btrfs subvolume snapshot /var/lib/mill/cache-e9-gen-1 /var/lib/mill/run-e9-target; echo rc=$?
+Create snapshot of '/var/lib/mill/cache-e9-gen-1' in '/var/lib/mill/run-e9-target'
+
+real	0m0.001s
+user	0m0.001s
+sys	0m0.000s
+rc=0
+$ du -s /var/lib/mill/cache-e9-gen-1; du -sh /var/lib/mill/cache-e9-gen-1; btrfs subvolume show /var/lib/mill/cache-e9-gen-1 | grep -E "Flags|Parent UUID|Received"; btrfs subvolume show /var/lib/mill/run-e9-target | grep -E "Flags|Parent UUID"; ls -ld /var/lib/mill/run-e9-target; df -h /var/lib/mill
+2834100	/var/lib/mill/cache-e9-gen-1
+2.8G	/var/lib/mill/cache-e9-gen-1
+ERROR: Could not search B-tree: Operation not permitted
+ERROR: Could not search B-tree: Operation not permitted
+drwxr-xr-x 1 ivy ivy 1058 Sep 11 06:27 /var/lib/mill/run-e9-target
+Filesystem        Size  Used Avail Use% Mounted on
+/dev/mapper/mill  932G  1.6G  929G   1% /var/lib/mill
+```
+
+**Restore: 1 ms** for 2.8G. The generation's size estimate is `du -s` =
+`2834100` KiB. `btrfs subvolume show` is the first thing that wanted root:
+it walks the tree with a search ioctl that needs `CAP_SYS_ADMIN`. It is
+informational and nothing in §Caching needs it — `btrfs subvolume list`
+is the same (below) — but `mill cache ls` cannot use either; it lists
+directories and reads its own `manifest.json`.
+
+### The run, on the restored copy
+
+Booted with the checkout at `/work`, the run's snapshot at `/work/.cache/go`
+and the host's Go at `/opt/go`, every bind `:idmap`. The mount point
+`/work/.cache/go` was created in the checkout beforehand (nspawn would
+otherwise create it, as root, inside the operator's tree).
+
+```
+$ date +%T.%N; sudo systemd-run --unit=mill-run-e9 --collect -p KillMode=mixed systemd-nspawn --boot --quiet --machine=mill-e9 --directory=/var/lib/machines/mill-image-spike --ephemeral --private-users=pick --private-users-ownership=auto --network-veth --settings=false --bind=/home/ivy/src/github.com/ivy/mill:/work:idmap --bind=/var/lib/mill/run-e9-target:/work/.cache/go:idmap --bind-ro=/home/ivy/.local/share/mise/installs/go/1.25.7:/opt/go:idmap; until sudo systemd-run -M mill-e9 --pipe --wait --quiet --collect -- true 2>/dev/null; do sleep 0.2; done; date +%T.%N; sudo systemd-run -M mill-e9 --pipe --wait --quiet --collect -- systemctl is-system-running --wait
+06:29:20.936734212
+Running as unit: mill-run-e9.service; invocation ID: cba5ce369b914174a511dce42f5397fb
+06:29:21.211297210
+running
+$ sudo systemd-run -M mill-e9 --pipe --wait --quiet --collect -p User=agent -p WorkingDirectory=/work -- sh -c "id; ls -ld /work /work/.cache/go /opt/go; findmnt -no SOURCE,FSTYPE,OPTIONS /work/.cache/go; touch /work/.cache/go/.e9-probe && echo writable && rm /work/.cache/go/.e9-probe; /opt/go/bin/go version"
+uid=1000(agent) gid=1000(agent) groups=1000(agent)
+drwxr-xr-x. 10 agent agent 4096 Feb  7  2026 /opt/go
+drwxr-xr-x. 18 agent agent 4096 Sep 11 06:29 /work
+drwxr-xr-x   1 agent agent 1058 Sep 11 06:27 /work/.cache/go
+/dev/mapper/mill[/@mill/run-e9-target] btrfs rw,noatime,idmapped,seclabel,compress=zstd:1,ssd,discard=async,space_cache=v2,user_subvol_rm_allowed,subvolid=399,subvol=/@mill/run-e9-target
+writable
+go version go1.25.7 linux/amd64
+$ time sudo systemd-run -M mill-e9 --pipe --wait --quiet --collect -p User=agent -p WorkingDirectory=/work -p Environment=GOCACHE=/work/.cache/go -p Environment=GOMODCACHE=/work/.cache/go/mod -p Environment=GOTOOLCHAIN=local -p Environment=GOPROXY=off -p Environment=GOFLAGS=-mod=mod -p Environment=HOME=/home/agent -- sh -c "/opt/go/bin/go build ./... && /opt/go/bin/go test -count=1 -run xxx ./... | tail -3 && /opt/go/bin/go build -tags e9 -o /tmp/mill-e9 ./cmd/mill && ls -l /tmp/mill-e9"; echo rc=$?
+ok  	github.com/ivy/mill/sidecar	0.002s [no tests to run]
+ok  	github.com/ivy/mill/spikes/nspawn	0.002s [no tests to run]
+ok  	github.com/ivy/mill/tests/acceptance	0.005s [no tests to run]
+-rwxr-xr-x. 1 agent agent 34520315 Sep 11 06:29 /tmp/mill-e9
+
+real	0m7.856s
+user	0m0.007s
+sys	0m0.007s
+rc=0
+```
+
+A subvolume binds like any directory: `--bind=…:idmap` and nothing else —
+it shows up inside as its own btrfs mount (`subvol=/@mill/run-e9-target`,
+`idmapped`), owned by `agent`, writable. The whole build plus every test
+binary, warm from the lineage and with no network, is 7.9 s (11.6 s cold on
+the host with a hot module cache, 43.9 s cold inside in E6). The
+`-tags e9` link is the guaranteed new write: Go's build cache is
+content-addressed and a warm rebuild writes only what it has not seen.
+
+### Promote gen-2, and the file that proves the generations apart
+
+```
+$ find /var/lib/mill/run-e9-target -type f -newer /var/lib/mill/cache-e9-gen-1 | wc -l; find /var/lib/mill/run-e9-target -type f -newer /var/lib/mill/cache-e9-gen-1 -size +1M | head -3; du -sh /var/lib/mill/run-e9-target; df -h /var/lib/mill
+19567
+/var/lib/mill/run-e9-target/00/009539ba8564ed2c6bb0378076fbcbebe4772d49b9a22c69fdce210cedd5aa4a-d
+/var/lib/mill/run-e9-target/01/01071e4df980d7435f53b4c2b89cd53dc093fbd41635d65481ba52f029c74048-d
+/var/lib/mill/run-e9-target/01/0145c7c8ec91fcca3ecbc864ec0bbcf1e2c049c08a1ce16cfc0dad953fd11e0a-d
+3.0G	/var/lib/mill/run-e9-target
+Filesystem        Size  Used Avail Use% Mounted on
+/dev/mapper/mill  932G  1.6G  929G   1% /var/lib/mill
+$ time btrfs subvolume snapshot -r /var/lib/mill/run-e9-target /var/lib/mill/cache-e9-gen-2; echo rc=$?
+Create readonly snapshot of '/var/lib/mill/run-e9-target' in '/var/lib/mill/cache-e9-gen-2'
+
+real	0m0.052s
+user	0m0.000s
+sys	0m0.013s
+rc=0
+```
+
+**Promote: 52 ms** for 3.0G (the run's copy grew 2.8G → 3.0G). The 19 567
+"newer" files are mostly mtime touches — Go bumps the mtime of every entry it
+uses, for its own trimming — so mtime does not tell the two generations
+apart; the set difference of their file lists does:
+
+```
+$ cd /var/lib/mill; comm -13 <(cd cache-e9-gen-1 && find . -type f | sort) <(cd cache-e9-gen-2 && find . -type f | sort) > /tmp/spike-out/e9/new-in-gen-2; wc -l < /tmp/spike-out/e9/new-in-gen-2; f=$(grep -- "-d$" /tmp/spike-out/e9/new-in-gen-2 | xargs -I{} sh -c "printf \"%s %s\n\" \$(stat -c %s cache-e9-gen-2/{}) {}" | sort -n | tail -1 | cut -d" " -f2); echo "file: $f"; ls -l cache-e9-gen-2/$f; ls -l cache-e9-gen-1/$f; ls -l run-e9-target/$f; sha256sum cache-e9-gen-2/$f run-e9-target/$f
+2563
+file: ./1f/1fdbddf5258525e97a22e79417038cf9c75f39885417b4d8b2001b4754a620f6-d
+-rw-r--r--. 1 ivy ivy 22348106 Sep 11 06:29 cache-e9-gen-2/./1f/1fdbddf5258525e97a22e79417038cf9c75f39885417b4d8b2001b4754a620f6-d
+ls: cannot access 'cache-e9-gen-1/./1f/1fdbddf5258525e97a22e79417038cf9c75f39885417b4d8b2001b4754a620f6-d': No such file or directory
+-rw-r--r--. 1 ivy ivy 22348106 Sep 11 06:29 run-e9-target/./1f/1fdbddf5258525e97a22e79417038cf9c75f39885417b4d8b2001b4754a620f6-d
+1fdbddf5258525e97a22e79417038cf9c75f39885417b4d8b2001b4754a620f6  cache-e9-gen-2/./1f/1fdbddf5258525e97a22e79417038cf9c75f39885417b4d8b2001b4754a620f6-d
+1fdbddf5258525e97a22e79417038cf9c75f39885417b4d8b2001b4754a620f6  run-e9-target/./1f/1fdbddf5258525e97a22e79417038cf9c75f39885417b4d8b2001b4754a620f6-d
+```
+
+2 563 files are in gen-2 and not in gen-1. The largest,
+`1f/1fdbddf5…-d` (22 MB, the `-tags e9` link output, written at 06:29 by
+the machine), is in gen-2 and the run's copy with the same SHA and absent
+from gen-1.
+
+### Delete gen-1 under the live run
+
+Three things came out of this step that the work order did not expect, all
+about what an unprivileged owner may do with `user_subvol_rm_allowed`:
+
+```
+$ df -h /var/lib/mill; btrfs subvolume delete /var/lib/mill/cache-e9-gen-1; echo rc=$?; df -h /var/lib/mill; time btrfs subvolume sync /var/lib/mill; df -h /var/lib/mill
+Filesystem        Size  Used Avail Use% Mounted on
+/dev/mapper/mill  932G  1.7G  928G   1% /var/lib/mill
+ERROR: Could not destroy subvolume/snapshot: Read-only file system
+Delete subvolume 398 (no-commit): '/var/lib/mill/cache-e9-gen-1'
+rc=1
+Filesystem        Size  Used Avail Use% Mounted on
+/dev/mapper/mill  932G  1.7G  928G   1% /var/lib/mill
+ERROR: Could not search B-tree: Operation not permitted
+
+real	0m0.001s
+user	0m0.000s
+sys	0m0.001s
+Filesystem        Size  Used Avail Use% Mounted on
+/dev/mapper/mill  932G  1.7G  928G   1% /var/lib/mill
+```
+
+1. **A read-only snapshot cannot be deleted by its unprivileged owner**:
+   `EROFS`. `user_subvol_rm_allowed` lets the owner delete a subvolume it
+   may write; a `-r` snapshot is not writable, so the check fails before the
+   ownership matters. The owner may flip the flag first, and then the delete
+   goes through:
+
+```
+$ btrfs property get -ts /var/lib/mill/cache-e9-gen-1 ro; btrfs property set -ts /var/lib/mill/cache-e9-gen-1 ro false; echo rc=$?; btrfs property get -ts /var/lib/mill/cache-e9-gen-1 ro; btrfs subvolume delete /var/lib/mill/cache-e9-gen-1; echo rc=$?; df -h /var/lib/mill; time btrfs subvolume sync /var/lib/mill; echo rc=$?; df -h /var/lib/mill
+ro=true
+rc=0
+ro=false
+Delete subvolume 398 (no-commit): '/var/lib/mill/cache-e9-gen-1'
+rc=0
+Filesystem        Size  Used Avail Use% Mounted on
+/dev/mapper/mill  932G  1.7G  928G   1% /var/lib/mill
+ERROR: Could not search B-tree: Operation not permitted
+rc=1
+Filesystem        Size  Used Avail Use% Mounted on
+/dev/mapper/mill  932G  1.7G  928G   1% /var/lib/mill
+```
+
+2. **`btrfs subvolume sync` needs root** — it polls the deleted-subvolume
+   list with the same tree search `show` and `list` use. Without it, and
+   without `sudo`, the deletion still completes: the kernel's cleaner had
+   dropped gen-1 before the `sudo` sync below ran, which found nothing to
+   wait for.
+
+3. The run was undisturbed. The file above still reads with the same SHA
+   from inside, the mount is still `subvolid=399`, and a rebuild reproduces
+   the same binary from the cache in a second:
+
+```
+$ sudo systemd-run -M mill-e9 --pipe --wait --quiet --collect -p User=agent -p WorkingDirectory=/work -- sh -c 'sha256sum /work/.cache/go/./1f/1fdbddf5258525e97a22e79417038cf9c75f39885417b4d8b2001b4754a620f6-d; findmnt -no OPTIONS /work/.cache/go | tr , "\n" | grep subvol'
+1fdbddf5258525e97a22e79417038cf9c75f39885417b4d8b2001b4754a620f6  /work/.cache/go/./1f/1fdbddf5258525e97a22e79417038cf9c75f39885417b4d8b2001b4754a620f6-d
+user_subvol_rm_allowed
+subvolid=399
+subvol=/@mill/run-e9-target
+$ time sudo systemd-run -M mill-e9 --pipe --wait --quiet --collect -p User=agent -p WorkingDirectory=/work -p Environment=GOCACHE=/work/.cache/go -p Environment=GOMODCACHE=/work/.cache/go/mod -p Environment=GOTOOLCHAIN=local -p Environment=GOPROXY=off -p Environment=GOFLAGS=-mod=mod -p Environment=HOME=/home/agent -- sh -c "/opt/go/bin/go build ./... && /opt/go/bin/go build -tags e9 -o /tmp/mill-e9b ./cmd/mill && cmp /tmp/mill-e9 /tmp/mill-e9b && echo same-binary"; echo rc=$?
+same-binary
+
+real	0m1.002s
+user	0m0.007s
+sys	0m0.005s
+rc=0
+$ btrfs subvolume list /var/lib/mill 2>&1; sudo btrfs subvolume list /var/lib/mill | grep e9
+ERROR: can't perform the search: Operation not permitted
+ID 397 gen 581 top level 256 path cache-e9-target
+ID 398 gen 581 top level 256 path cache-e9-gen-1
+ID 399 gen 584 top level 256 path run-e9-target
+ID 401 gen 584 top level 256 path cache-e9-gen-2
+$ time sudo btrfs subvolume sync /var/lib/mill; echo rc=$?; sudo btrfs subvolume list /var/lib/mill | grep e9; df -h /var/lib/mill; sudo btrfs filesystem du -s /var/lib/mill/cache-e9-target /var/lib/mill/run-e9-target /var/lib/mill/cache-e9-gen-2
+
+real	0m0.043s
+user	0m0.004s
+sys	0m0.006s
+rc=0
+ID 397 gen 581 top level 256 path cache-e9-target
+ID 399 gen 586 top level 256 path run-e9-target
+ID 401 gen 584 top level 256 path cache-e9-gen-2
+Filesystem        Size  Used Avail Use% Mounted on
+/dev/mapper/mill  932G  1.7G  928G   1% /var/lib/mill
+     Total   Exclusive  Set shared  Filename
+   2.61GiB       0.00B   792.20MiB  /var/lib/mill/cache-e9-target
+   2.89GiB       0.00B   864.84MiB  /var/lib/mill/run-e9-target
+   2.89GiB       0.00B   864.84MiB  /var/lib/mill/cache-e9-gen-2
+```
+
+(The `subvolume list` still showing gen-1 was taken between the delete and
+the cleaner's pass; the sync's listing after it does not.) `df` did not move
+on gen-1's deletion, and could not: every extent of gen-1 is shared with
+`cache-e9-target`, the run's copy and gen-2 — `Exclusive 0.00B` all round —
+so nothing was freed. The work order's "free space moves only after
+`subvolume sync`" needs data only one subvolume holds. A writable snapshot
+of gen-2 with 512M of `/dev/urandom` in it, deleted three ways:
+
+```
+$ btrfs subvolume snapshot /var/lib/mill/cache-e9-gen-2 /var/lib/mill/run-e9-scratch && dd if=/dev/urandom of=/var/lib/mill/run-e9-scratch/unique bs=1M count=512 status=none && sync && echo "before delete: $(df -h --output=used,avail /var/lib/mill | tail -1)"; btrfs subvolume delete /var/lib/mill/run-e9-scratch; echo rc=$?; echo "after delete:  $(df -h --output=used,avail /var/lib/mill | tail -1)"; time sudo btrfs subvolume sync /var/lib/mill; echo "after sync:    $(df -h --output=used,avail /var/lib/mill | tail -1)"
+Create snapshot of '/var/lib/mill/cache-e9-gen-2' in '/var/lib/mill/run-e9-scratch'
+before delete:  2.2G  928G
+Delete subvolume 402 (no-commit): '/var/lib/mill/run-e9-scratch'
+rc=0
+after delete:   2.2G  928G
+Waiting for 1 subvolume
+Subvolume id 402 is gone (1/1)
+
+real	0m1.026s
+user	0m0.006s
+sys	0m0.004s
+after sync:     2.2G  928G
+$ sleep 5; df -h --output=used,avail /var/lib/mill | tail -1; sync; sleep 30; df -h --output=used,avail /var/lib/mill | tail -1
+ 2.2G  928G
+ 1.7G  928G
+$ btrfs subvolume snapshot /var/lib/mill/cache-e9-gen-2 /var/lib/mill/run-e9-scratch && dd if=/dev/urandom of=/var/lib/mill/run-e9-scratch/unique bs=1M count=512 status=none && sync && echo "before delete:       $(df -h --output=used /var/lib/mill | tail -1)"; btrfs subvolume delete /var/lib/mill/run-e9-scratch >/dev/null; echo "after delete:        $(df -h --output=used /var/lib/mill | tail -1)"; sudo btrfs subvolume sync /var/lib/mill >/dev/null; echo "after subvol sync:   $(df -h --output=used /var/lib/mill | tail -1)"; sync; echo "after sync(1):       $(df -h --output=used /var/lib/mill | tail -1)"; btrfs filesystem sync /var/lib/mill; echo "after fs sync:       $(df -h --output=used /var/lib/mill | tail -1)"
+Create snapshot of '/var/lib/mill/cache-e9-gen-2' in '/var/lib/mill/run-e9-scratch'
+before delete:        2.2G
+after delete:         2.2G
+after subvol sync:    2.2G
+after sync(1):        1.7G
+after fs sync:        1.7G
+$ btrfs subvolume snapshot /var/lib/mill/cache-e9-gen-2 /var/lib/mill/run-e9-scratch >/dev/null && dd if=/dev/urandom of=/var/lib/mill/run-e9-scratch/unique bs=1M count=512 status=none && sync && echo "before delete:            $(df -h --output=used /var/lib/mill | tail -1)"; id -u; time btrfs subvolume delete --commit-after /var/lib/mill/run-e9-scratch; echo rc=$?; echo "after delete --commit-after: $(df -h --output=used /var/lib/mill | tail -1)"; for i in 1 2 3 4 5 6; do sleep 5; echo "+$((i*5))s: $(df -h --output=used /var/lib/mill | tail -1)"; done; btrfs filesystem sync /var/lib/mill; echo rc=$?; echo "after fs sync:            $(df -h --output=used /var/lib/mill | tail -1)"
+before delete:             2.2G
+1000
+Delete subvolume 404 (commit): '/var/lib/mill/run-e9-scratch'
+
+real	0m0.026s
+user	0m0.000s
+sys	0m0.025s
+rc=0
+after delete --commit-after:  2.2G
++5s:  2.2G
++10s:  2.2G
++15s:  2.2G
++20s:  2.2G
++25s:  2.2G
++30s:  2.2G
+rc=0
+after fs sync:             1.7G
+```
+
+So: `df` does not move on `delete`, nor on `--commit-after`, nor for 30 s
+of waiting, nor on `subvolume sync` reporting the subvolume gone; it moves
+when the next transaction commits, which `sync` or `btrfs filesystem sync`
+forces — and `btrfs filesystem sync`, unlike `subvolume sync`, ran as the
+operator (`rc=0`, uid 1000). The unprivileged recipe for §Eviction is
+therefore `btrfs subvolume delete`, then `btrfs filesystem sync`, then
+`statfs`.
+
+```
+$ time sudo systemctl stop mill-run-e9; sudo machinectl list --no-pager | grep -c mill-e9; sudo ausearch -m avc -ts 06:27:00 2>&1 | tail -2
+
+real	0m0.231s
+user	0m0.006s
+sys	0m0.005s
+0
+<no matches>
+```
+
+**Verdict: E9 passes. Restore is 1 ms and promote 52 ms for a 2.8G / 3.0G lineage (`du -s` estimate 2 834 100 KiB); `1f/1fdbddf5…-d` is in gen-2 and the run's copy and not in gen-1; deleting gen-1 under the live run changed nothing inside it; the bind needed only `:idmap`. Every `create`, `snapshot`, `snapshot -r`, `delete` and `filesystem sync` ran as the operator without `sudo`. Two commands did not: deleting a read-only snapshot fails with `EROFS` until its owner clears `ro` with `btrfs property set`, and `btrfs subvolume sync` (like `show` and `list`) needs root and is not needed — free space follows a transaction commit, which `btrfs filesystem sync` forces unprivileged.**
+
+---
+
+## E10 — Derived image: build, export, boot, and the fallback
+
+Run 2026-09-11 06:33 – 06:39 PDT. The pipeline is
+`spikes/nspawn/build-derived.sh`: digest from `sha256sum <<<"<base> <packages>"`,
+one `flock` per digest in `/var/lib/mill`, `podman build` from a generated
+Containerfile, `podman export | tar` into `mill-image-<digest>.building`,
+the E2 `setcap` pair, `mv` into place; a `trap` removes `.building` (and the
+export container) on any failure. `/var/lib/machines` is root's, so the
+subvolume steps are `sudo`; the lock is the operator's.
+
+### First form, and the AVC it caused
+
+The first form of the script was the work order's — the whole body inside
+`flock <file> sh -c '…'`. It built, blocked and fell back correctly, but
+every build logged one denial:
+
+```
+type=AVC msg=audit(1789133660.280:126227): avc:  denied  { read } for  pid=3855857 comm="pasta" path="/var/lib/mill/image-599b7919d9a115b9.lock" dev="dm-2" ino=2790 scontext=unconfined_u:unconfined_r:pasta_t:s0-s0:c0.c1023 tcontext=unconfined_u:object_r:mill_var_lib_t:s0 tclass=file permissive=0
+```
+
+`flock <file>` opens the lock on fd 3 and the command inherits it; podman
+hands every open fd to `pasta`, its rootless network helper, which is
+confined (`pasta_t`) and may not read `mill_var_lib_t`. Harmless — pasta
+never wanted the file — but a denial per build is noise `homestead#35`
+would have to explain. The committed script holds the lock on fd 9 and
+closes it for each podman (`9<&-`); six denials from the first form, none
+after it (`ausearch -m avc -ts 06:37:37`: `<no matches>`). The runs below
+are the committed script's.
+
+### Two builds of one digest, together
+
+`[A]` starts first; `[B]` two seconds later; four seconds in, `ps` shows
+who holds and who waits.
+
+```
+$ digest=$(sha256sum <<<"mill-base-spike libpq-devel" | cut -c1-16); echo "digest=$digest"; ls -l /var/lib/mill/image-*.lock 2>&1; sudo ls /var/lib/machines
+digest=599b7919d9a115b9
+ls: cannot access '/var/lib/mill/image-*.lock': No such file or directory
+mill-image-e8
+mill-image-e8.tpmstate
+mill-image-spike
+mill-image-spike.tpmstate
+$ cd /home/ivy/src/github.com/ivy/mill; ( spikes/nspawn/build-derived.sh mill-base-spike libpq-devel 2>&1 | sed "s/^/[A] /" ) & sleep 2; ( echo "[B] starting $(date +%T.%N | cut -c1-12)"; spikes/nspawn/build-derived.sh mill-base-spike libpq-devel 2>&1 | sed "s/^/[B] /"; echo "[B] done $(date +%T.%N | cut -c1-12)" ) & sleep 2; echo "--- 4 s in: who holds and who waits"; ps -o pid,etimes,stat,wchan:16,comm -C flock; sudo lsof /var/lib/mill/image-599b7919d9a115b9.lock | tail -n +2 | awk "{print \$1, \$2, \$4}"; wait; echo "[done $(date +%T.%N | cut -c1-12)]"
+[B] starting 06:37:39.789
+--- 4 s in: who holds and who waits
+    PID ELAPSED STAT WCHAN            COMMAND
+3865800       2 S    locks_lock_inode flock
+bash 3865584 9w
+bash 3865795 9w
+flock 3865800 9w
+[A] built: /var/lib/machines/mill-image-599b7919d9a115b9 (build 4.282404082s, export .837798632s)
+[B] present: /var/lib/machines/mill-image-599b7919d9a115b9
+[B] done 06:37:42.986
+[done 06:37:42.986]
+```
+
+`[A]`'s `flock 9` has returned (its `bash 3865584` holds fd 9 and is in the
+build); `[B]`'s `flock` (`3865800`) is asleep in `locks_lock_inode`, waiting
+on the same inode. `[A]` builds in 4.3 s and exports in 0.8 s; `[B]` wakes,
+finds the subvolume and prints `present` at 06:37:42.99, 3.2 s after it
+started — it built nothing. (The 4 s build is `dnf` with warm repository
+metadata; the base spike's setup measured 18.7 s for the base's much longer
+package list including the registry pull. A first derived build on a cold
+`dnf` cache pays the metadata download, ~50 MB here, on top.)
+
+### Boot from the derived subvolume
+
+```
+$ sudo systemd-run --unit=mill-run-e10 --collect -p KillMode=mixed systemd-nspawn --boot --quiet --machine=mill-e10 --directory=/var/lib/machines/mill-image-599b7919d9a115b9 --ephemeral --private-users=pick --private-users-ownership=auto --network-veth --settings=false; until sudo systemd-run -M mill-e10 --pipe --wait --quiet --collect -- true 2>/dev/null; do sleep 0.2; done; sudo systemd-run -M mill-e10 --pipe --wait --quiet --collect -- systemctl is-system-running --wait; sudo systemd-run -M mill-e10 --pipe --wait --quiet --collect -p User=agent -- sh -c "id -un; rpm -q libpq-devel; ls /usr/include/libpq-fe.h"; echo rc=$?; sudo systemctl stop mill-run-e10; sudo machinectl list --no-pager | grep -c mill-e10
+Running as unit: mill-run-e10.service; invocation ID: a10709f6785343f3b8054935303b683f
+running
+agent
+libpq-devel-18.0-4.fc44.x86_64
+/usr/include/libpq-fe.h
+rc=0
+0
+```
+
+(The first form's boot also checked `pkg-config --modversion libpq` →
+`18beta1` and `getcap /usr/bin/newuidmap` → `cap_setuid=ep` inside: the
+export's `setcap` survives the boot.)
+
+### The size of a flat export
+
+```
+$ sudo du -sh /var/lib/machines/mill-image-spike /var/lib/machines/mill-image-599b7919d9a115b9; sudo du -sm /var/lib/machines/mill-image-spike/usr /var/lib/machines/mill-image-599b7919d9a115b9/usr /var/lib/machines/mill-image-spike/var/log /var/lib/machines/mill-image-599b7919d9a115b9/var/log; sudo btrfs filesystem du -s /var/lib/machines/mill-image-spike /var/lib/machines/mill-image-599b7919d9a115b9; podman image inspect -f "{{.Size}}" mill-base-spike mill-derived-599b7919d9a115b9
+1020M	/var/lib/machines/mill-image-spike
+1005M	/var/lib/machines/mill-image-599b7919d9a115b9
+982	/var/lib/machines/mill-image-spike/usr
+983	/var/lib/machines/mill-image-599b7919d9a115b9/usr
+18	/var/lib/machines/mill-image-spike/var/log
+2	/var/lib/machines/mill-image-599b7919d9a115b9/var/log
+     Total   Exclusive  Set shared  Filename
+ 983.61MiB       0.00B   589.77MiB  /var/lib/machines/mill-image-spike
+ 968.56MiB   968.56MiB       0.00B  /var/lib/machines/mill-image-599b7919d9a115b9
+1033579598
+1052349636
+```
+
+The derived subvolume is **1005M against the base's 1020M** — base plus
+the package, where the package is 1 MB of `/usr` and podman's layer for it
+19 MB (`1052349636 − 1033579598`, the rpm database rewritten). The base
+subvolume is 15 MB *larger* because somebody booted it non-ephemerally at
+some point and it carries 18 MB of journal under `/var/log`; a fresh export
+of the base would be ~1005M too. The flat-export cost §Images defers is
+therefore exactly what it says: a derived image is a whole second copy of
+the base, ~1 GB, sharing no extents with it (`Exclusive 968.56MiB`, `Set
+shared 0.00B`) — one gigabyte per distinct package list, on `/var/lib/mill`
+with `compress=zstd:1`. Exporting into a snapshot of the base and
+overlaying only the new layer would share the gigabyte, and is the
+optimisation to reach for if the number of derived images ever matters.
+
+### A package that does not exist
+
+```
+$ cd /home/ivy/src/github.com/ivy/mill; time spikes/nspawn/build-derived.sh mill-base-spike no-such-package-e10 2>/tmp/spike-out/e10/fail.stderr; echo rc=$?; echo "--- stderr:"; cat /tmp/spike-out/e10/fail.stderr; sudo ls /var/lib/machines; sudo btrfs subvolume list /var/lib/machines | grep -c building; podman images --format "{{.Repository}}" | grep mill-derived
+
+real	0m4.354s
+user	0m3.654s
+sys	0m0.311s
+rc=1
+--- stderr:
+build failed for mill-base-spike + no-such-package-e10; dnf said:
+No match for argument: no-such-package-e10
+You can try to add to command line:
+  --skip-unavailable to skip unavailable packages
+mill-image-599b7919d9a115b9
+mill-image-e8
+mill-image-e8.tpmstate
+mill-image-spike
+mill-image-spike.tpmstate
+0
+localhost/mill-derived-599b7919d9a115b9
+```
+
+`rc=1`, no `.building`, no image for the failed digest, and `dnf`'s last
+three lines on stderr. The raw build log ends with podman's own line,
+`Error: building at STEP "RUN dnf install -y no-such-package-e10 && dnf clean all": while running runtime: exit status 1`;
+the script drops that one so the three lines are `dnf`'s — the first form
+printed a literal `tail -3` and got two of dnf's and one of podman's, which
+is not the finding a session can act on. For the record, dnf's full tail:
+
+```
+Failed to resolve the transaction:
+No match for argument: no-such-package-e10
+You can try to add to command line:
+  --skip-unavailable to skip unavailable packages
+```
+
+A `dnf` failure happens before `.building` exists, so it does not exercise
+the `trap`. A failure after it does, forced with a `podman` shim whose
+`export` dies mid-stream:
+
+```
+$ cd /home/ivy/src/github.com/ivy/mill; PATH=/tmp/spike-out/e10/fakebin:$PATH spikes/nspawn/build-derived.sh mill-base-spike libpq-devel ncurses; echo rc=$?; sudo ls /var/lib/machines | grep -c building; podman ps -a --format "{{.Image}}" | grep -c mill-derived; podman rmi mill-derived-1de6411ca553779e >/dev/null
+fake podman: export failed
+rc=1
+0
+0
+```
+
+No `.building`, no leftover container. (The first form of the trap did
+leave the `podman create`d container behind; the committed one removes it.)
+
+**Verdict: E10 passes. `rpm -q libpq-devel` → `libpq-devel-18.0-4.fc44.x86_64` as `agent` in a machine booted from `mill-image-599b7919d9a115b9`; the second build slept in `locks_lock_inode` on the lock and printed `present` without building; the missing package fails with `rc=1`, no `.building`, and `No match for argument: no-such-package-e10` as the first of dnf's three lines. Build 4.3 s, export 0.8 s; the derived subvolume is 1005M against the base's 1020M, a whole unshared copy.**
+
+### Teardown (E9–E10)
+
+```
+$ df -h /var/lib/mill; for s in /var/lib/mill/cache-e9-* /var/lib/mill/run-e9-*; do btrfs property set -ts "$s" ro false 2>/dev/null; btrfs subvolume delete "$s"; done; df -h /var/lib/mill; sudo btrfs subvolume sync /var/lib/mill; df -h /var/lib/mill; btrfs filesystem sync /var/lib/mill; df -h /var/lib/mill
+Filesystem        Size  Used Avail Use% Mounted on
+/dev/mapper/mill  932G  2.3G  928G   1% /var/lib/mill
+Delete subvolume 401 (no-commit): '/var/lib/mill/cache-e9-gen-2'
+Delete subvolume 397 (no-commit): '/var/lib/mill/cache-e9-target'
+Delete subvolume 399 (no-commit): '/var/lib/mill/run-e9-target'
+Filesystem        Size  Used Avail Use% Mounted on
+/dev/mapper/mill  932G  2.3G  928G   1% /var/lib/mill
+Waiting for 3 subvolumes
+Subvolume id 397 is gone (1/3)
+Subvolume id 399 is gone (2/3)
+Subvolume id 401 is gone (3/3)
+Filesystem        Size  Used Avail Use% Mounted on
+/dev/mapper/mill  932G  2.3G  928G   1% /var/lib/mill
+Filesystem        Size  Used Avail Use% Mounted on
+/dev/mapper/mill  932G  1.4G  929G   1% /var/lib/mill
+$ sudo btrfs subvolume delete /var/lib/machines/mill-image-599b7919d9a115b9; sudo rm -f /var/lib/mill/image-*.lock; podman rmi mill-derived-599b7919d9a115b9 >/dev/null; rmdir /home/ivy/src/github.com/ivy/mill/.cache/go /home/ivy/src/github.com/ivy/mill/.cache; sudo btrfs subvolume list /var/lib/mill; sudo btrfs subvolume list /var/lib/machines; ls /var/lib/mill; sudo machinectl list --no-pager; systemctl list-units "mill-run-e*" --all --no-legend; ls -l /etc/systemd/system/mill-machine@.service; podman images --format "{{.Repository}}" | grep mill
+Delete subvolume 410 (no-commit): '/var/lib/machines/mill-image-599b7919d9a115b9'
+ID 256 gen 606 top level 5 path @mill
+ID 257 gen 605 top level 5 path @machines
+ID 298 gen 566 top level 257 path @machines/mill-image-spike
+ID 395 gen 560 top level 256 path mill-image-e7
+ID 396 gen 577 top level 257 path @machines/mill-image-e8
+ID 256 gen 606 top level 5 path @mill
+ID 257 gen 605 top level 5 path @machines
+ID 298 gen 566 top level 257 path mill-image-spike
+ID 395 gen 560 top level 256 path @mill/mill-image-e7
+ID 396 gen 577 top level 257 path mill-image-e8
+dagger
+mill-image-e7
+runs
+MACHINE        CLASS SERVICE      OS VERSION ADDRESSES
+qemu-1-omarchy vm    libvirt-qemu -  -       -
+
+1 machines listed.
+-rw-r--r--. 1 root root 1640 Sep 11 01:03 /etc/systemd/system/mill-machine@.service
+localhost/mill-base-spike
+```
+
+The same picture once more, at teardown: 2.3G used before and after the
+deletes and after `subvolume sync`, 1.4G after `filesystem sync`. No
+`cache-e9-*`, `run-e9-*` or `mill-image-599b…` subvolume, no lock, no
+`mill-e*` machine, no `mill-run-e*` unit. `mill-image-spike`,
+`mill-image-e7`, `mill-image-e8`, `/var/lib/mill/{dagger,runs}` and
+homestead's unit are other nodes' and untouched. The `.cache` mount point
+created in the checkout for the bind is gone.
+
+### What the design takes from E9–E10
+
+- **§Caching.** The claims hold: restore 1 ms, promote 52 ms, for ~3 GB.
+  A subvolume binds with `--bind=…:idmap` like any directory, and the
+  operator's `btrfs subvolume create`/`snapshot`/`delete` need no `sudo`.
+  The size estimate §Promote records (`du -s` of the read-only generation)
+  is apparent size; on this `compress=zstd:1` filesystem a Go cache takes
+  about half that on disk, so `mill#67` ranks victims by `du` but must
+  expect `statfs` to move by less.
+- **§Promote.** A generation made with `snapshot -r` cannot be deleted by
+  its owner until `btrfs property set -ts <gen> ro false`; pruning to the
+  two newest generations, and eviction, do that first. `mill#60` and
+  `mill#67` own this.
+- **§Eviction.** "`btrfs subvolume sync` before re-reading free space" is
+  wrong twice over: it needs root, and it returns before free space moves.
+  The unprivileged sequence that works is `btrfs subvolume delete`, then
+  `btrfs filesystem sync <mountpoint>` (or `sync`), then `statfs`.
+  `--commit-after` on the delete is not enough on its own.
+- **§Images.** The build-export-rename under `flock` works as written, and
+  `spikes/nspawn/build-derived.sh` is its shape for `mill#59`, with two
+  additions: the lock fd is closed for podman (else `pasta_t` logs a denial
+  per build), and the export's container is removed on failure. The `dnf`
+  tail to attach is the three lines before podman's `Error: building at
+  STEP`. A derived image is a full ~1 GB copy sharing nothing with the base;
+  fine at a handful of package lists, and the thing to change (export onto a
+  snapshot of the base) if `mill image ls` ever shows dozens.
+- **§Network / `homestead#34`.** The squid that landed admits `localhost`
+  only (`TCP_DENIED/403` from `10.99.255.1`); the `machines` ACL of
+  `spikes/nspawn/squid.conf` is missing from `/etc/squid/squid.conf`. Until
+  it is there no machine can fetch anything.
+- **§Testing.** The four scenarios run live in
+  `spikes/nspawn/cache_test.go` under the same `MILL_SANDBOX_HOST=1` gate:
+  the lineage pair fills a 2.4G cache from this repository in a minute and
+  measured restore 1.7 ms / promote 1.6 ms; the image pair drives
+  `build-derived.sh` twice at once and once with the missing package.
+- **Tooling.** `btrfs subvolume show`, `list` and `sync` all need
+  `CAP_SYS_ADMIN`; the worker lists lineages and generations from the
+  directory tree and its manifests, never from btrfs.
