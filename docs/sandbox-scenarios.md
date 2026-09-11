@@ -540,7 +540,7 @@ Feature: Eviction
   Scenario: Eviction waits for space to be freed before re-checking
     Given free space is below the high watermark
     When eviction deletes a subvolume
-    Then it runs "btrfs subvolume sync" before reading free space again
+    Then it runs "btrfs filesystem sync" before reading free space again
 
   @live
   Scenario: Global lineages are not evicted by watermark

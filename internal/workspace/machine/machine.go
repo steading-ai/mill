@@ -188,8 +188,13 @@ type Config struct {
 	// Images configures the image store; Root and Machines are filled from
 	// this configuration when empty.
 	Images image.Config
-	// Caches configures the cache store; Root is filled when empty.
+	// Caches configures the cache store; Root is filled when empty. Its
+	// expiry and watermarks are the eviction policy (docs/sandbox.md
+	// §Eviction).
 	Caches cache.Config
+	// ImageExpiry is how long an image goes unbooted before eviction
+	// deletes it; zero is the caches' expiry.
+	ImageExpiry time.Duration
 	// CacheDriver is the driver the cache store reaches the host through.
 	// Lineages and a run's copies are the worker's own subvolumes and are
 	// created, snapshotted and deleted as its uid, never through sudo — a

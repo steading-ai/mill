@@ -74,7 +74,7 @@ func (s *Store) promote(ctx context.Context, run, step string, lineage Lineage, 
 		return Promoted{}, fmt.Errorf("cache: size of %s candidate: %w", lineage, err)
 	}
 	promoted := Promoted{Lineage: lineage, SizeBytes: size}
-	if lineage.Scope.IsGlobal() && size > s.config.GlobalCap {
+	if lineage.Scope.IsGlobal() && size > s.config.Cap(lineage) {
 		return s.reset(ctx, run, step, lineage, candidate, manifest, size)
 	}
 
@@ -96,6 +96,7 @@ func (s *Store) promote(ctx context.Context, run, step string, lineage Lineage, 
 		KeyHash:   lineage.KeyHash,
 	})
 	manifest.Reset = nil
+	manifest.Evicted = nil
 	if err := s.writeManifest(lineage, manifest); err != nil {
 		return Promoted{}, err
 	}
@@ -139,7 +140,8 @@ func (s *Store) move(ctx context.Context, candidate, generation string) error {
 // reset is the promotion a global cap refuses: the candidate goes, every
 // generation goes, and the manifest says why.
 func (s *Store) reset(ctx context.Context, run, step string, lineage Lineage, candidate string, manifest Manifest, size uint64) (Promoted, error) {
-	reason := fmt.Sprintf("candidate from run %s step %s estimated at %d bytes exceeds the global cap of %d bytes", run, step, size, s.config.GlobalCap)
+	limit := s.config.Cap(lineage)
+	reason := fmt.Sprintf("candidate from run %s step %s estimated at %d bytes exceeds the global cap of %d bytes", run, step, size, limit)
 	promoted := Promoted{Lineage: lineage, SizeBytes: size, Reset: true, Reason: reason}
 	if err := s.deleteReadOnly(ctx, candidate, false); err != nil {
 		return Promoted{}, fmt.Errorf("cache: reset %s: %w", lineage, err)
@@ -157,7 +159,7 @@ func (s *Store) reset(ctx context.Context, run, step string, lineage Lineage, ca
 		Run:       run,
 		Step:      step,
 		SizeBytes: size,
-		Cap:       s.config.GlobalCap,
+		Cap:       limit,
 		Reason:    reason,
 	}
 	if err := s.writeManifest(lineage, manifest); err != nil {

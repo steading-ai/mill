@@ -22,6 +22,7 @@ import (
 	"github.com/ivy/mill/internal/notify"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/machine"
+	"github.com/ivy/mill/internal/workspace/machine/cache"
 	"github.com/ivy/mill/internal/workspace/machine/driver"
 	"github.com/ivy/mill/internal/workspace/signing"
 )
@@ -79,6 +80,11 @@ type doctorOptions struct {
 	// credentialMinted is the configuration file's model_credential_minted,
 	// which has no flag: it is a fact about a deployment's credential.
 	credentialMinted string
+	// highWatermark and lowWatermark are the eviction watermarks the
+	// space probe reads free space against, from the configuration file;
+	// zero is the default.
+	highWatermark cache.Watermark
+	lowWatermark  cache.Watermark
 }
 
 func newDoctorCommand() *cobra.Command {
@@ -98,6 +104,9 @@ func newDoctorCommand() *cobra.Command {
   notify    the configured notify command runs and accepts a probe notice
   workspace the workspace kind in effect and, for machine, whether the
             sandbox root is btrfs
+  space     free space on the sandbox volume against the eviction
+            watermarks: a warning below the low one, a failure below the
+            high one
   gateway   the credential gateway's upstream answers one token count
             through it, and a warning once the credential is eleven
             months old
@@ -154,6 +163,10 @@ func runDoctor(cmd *cobra.Command, opts doctorOptions) error {
 	}
 	applyGatewayConfig(cmd, config, &opts.gateway)
 	opts.credentialMinted = config.ModelCredentialMinted
+	var expiry time.Duration
+	if err := applyEvictionConfig(config, &expiry, &opts.highWatermark, &opts.lowWatermark); err != nil {
+		return err
+	}
 	probes := doctor(cmd.Context(), opts)
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	healthy := true
@@ -190,6 +203,7 @@ func doctor(ctx context.Context, opts doctorOptions) []probe {
 		probeForge(ctx, opts),
 		probeNotify(ctx, opts),
 		probeWorkspace(opts, driver.NewSystemd(workspace.Spawner{}, driver.Commands{})),
+		probeSpace(opts, driver.NewSystemd(workspace.Spawner{}, driver.Commands{})),
 		probeGateway(ctx, opts, time.Now()),
 	}
 }
@@ -438,6 +452,49 @@ func probeWorkspace(opts doctorOptions, host driver.Driver) probe {
 			kind, opts.sandboxRoot, fs.Type, driver.TypeBtrfs)
 	}
 	return pass("workspace", "%s: sandbox root %s is %s", kind, opts.sandboxRoot, fs.Type)
+}
+
+// probeSpace reads free space on the sandbox volume against the eviction
+// watermarks (docs/sandbox.md §Eviction): below the high one eviction runs
+// at every trigger and the host is short of space, which fails; between
+// the two it has been evicting, which warns; above the low one is health.
+// The local backend has no sandbox volume and nothing to watch.
+func probeSpace(opts doctorOptions, host driver.Driver) probe {
+	kind, err := workspace.ParseKind(opts.workspace)
+	if err != nil {
+		return fail("space", "%v", err)
+	}
+	if kind != workspace.KindMachine {
+		return pass("space", "%s: no sandbox volume to watch", kind)
+	}
+	fs, err := host.Statfs(opts.sandboxRoot)
+	if err != nil {
+		return fail("space", "sandbox root %s: %v", opts.sandboxRoot, err)
+	}
+	high, low := opts.highWatermark, opts.lowWatermark
+	if high.IsZero() {
+		high = cache.DefaultHighWatermark
+	}
+	if low.IsZero() {
+		low = cache.DefaultLowWatermark
+	}
+	highBytes, lowBytes := high.Of(fs), low.Of(fs)
+	if lowBytes < highBytes {
+		return fail("space", "the low watermark %s is below the high watermark %s; eviction would stop before it started", low, high)
+	}
+	free := cache.FormatSize(fs.Free)
+	summary := fmt.Sprintf("%s free of %s on %s; watermarks high %s (%s), low %s (%s)",
+		free, cache.FormatSize(fs.Total), opts.sandboxRoot, high, cache.FormatSize(highBytes), low, cache.FormatSize(lowBytes))
+	switch {
+	case fs.Free < highBytes:
+		return fail("space", "%s: below the high watermark, eviction runs at every promotion", summary)
+	case fs.Free < lowBytes:
+		result := pass("space", "%s", summary)
+		result.Warning = "below the low watermark: eviction has been running"
+		return result
+	default:
+		return pass("space", "%s", summary)
+	}
 }
 
 // firstLine is a message trimmed to one line, for a probe's reason.

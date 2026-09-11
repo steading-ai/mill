@@ -500,7 +500,11 @@ type sandboxOptions struct {
 	baseImage       string
 	buildBudget     time.Duration
 	globalCap       uint64
+	globalCaps      map[string]uint64
 	repoCap         uint64
+	cacheExpiry     time.Duration
+	highWatermark   cache.Watermark
+	lowWatermark    cache.Watermark
 	proxy           string
 	noProxy         string
 	nestedRepos     []string
@@ -548,18 +552,66 @@ func applySandboxConfig(config Config, opts *sandboxOptions) error {
 		opts.buildBudget = budget
 	}
 	if config.CacheGlobalCap != "" {
-		size, err := parseSize(config.CacheGlobalCap)
+		size, err := cache.ParseSize(config.CacheGlobalCap)
 		if err != nil {
 			return fmt.Errorf("cache-global-cap: %w", err)
 		}
 		opts.globalCap = size
 	}
 	if config.CacheRepoCap != "" {
-		size, err := parseSize(config.CacheRepoCap)
+		size, err := cache.ParseSize(config.CacheRepoCap)
 		if err != nil {
 			return fmt.Errorf("cache-repo-cap: %w", err)
 		}
 		opts.repoCap = size
+	}
+	caps, err := parseGlobalCaps(config.CacheGlobalCaps)
+	if err != nil {
+		return err
+	}
+	opts.globalCaps = caps
+	return applyEvictionConfig(config, &opts.cacheExpiry, &opts.highWatermark, &opts.lowWatermark)
+}
+
+// parseGlobalCaps reads the per-lineage global caps.
+func parseGlobalCaps(raw map[string]string) (map[string]uint64, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	caps := make(map[string]uint64, len(raw))
+	for name, text := range raw {
+		size, err := cache.ParseSize(text)
+		if err != nil {
+			return nil, fmt.Errorf("cache-global-caps: %s: %w", name, err)
+		}
+		caps[name] = size
+	}
+	return caps, nil
+}
+
+// applyEvictionConfig reads the eviction policy's keys from the file into
+// what the caller left zero (docs/sandbox.md §Eviction).
+func applyEvictionConfig(config Config, expiry *time.Duration, high, low *cache.Watermark) error {
+	if config.CacheExpiry != "" && *expiry == 0 {
+		window, err := parseWindow(config.CacheExpiry)
+		if err != nil {
+			return fmt.Errorf("cache-expiry: %q is not a window such as 720h or 30d", config.CacheExpiry)
+		}
+		*expiry = window
+	}
+	if config.CacheHighWatermark != "" && high.IsZero() {
+		mark, err := cache.ParseWatermark(config.CacheHighWatermark)
+		if err != nil {
+			return fmt.Errorf("cache-high-watermark: %w", err)
+		}
+		*high = mark
+	}
+	if config.CacheLowWatermark != "" && low.IsZero() {
+		mark, err := cache.ParseWatermark(config.CacheLowWatermark)
+		if err != nil {
+			return fmt.Errorf("cache-low-watermark: %w", err)
+		}
+		*low = mark
 	}
 	return nil
 }
@@ -682,7 +734,15 @@ func machineConfig(opts runOptions, f forge.Forge, redactor *redact.Redactor) ma
 			Pin:         sandbox.baseImage,
 			BuildBudget: sandbox.buildBudget,
 		},
-		Caches:         cache.Config{GlobalCap: sandbox.globalCap, RepoCap: sandbox.repoCap},
+		Caches: cache.Config{
+			GlobalCap:     sandbox.globalCap,
+			GlobalCaps:    sandbox.globalCaps,
+			RepoCap:       sandbox.repoCap,
+			Expiry:        sandbox.cacheExpiry,
+			HighWatermark: sandbox.highWatermark,
+			LowWatermark:  sandbox.lowWatermark,
+		},
+		ImageExpiry:    sandbox.imageExpiry,
 		CacheDriver:    cacheDriver(),
 		Proxy:          sandbox.proxy,
 		NoProxy:        sandbox.noProxy,

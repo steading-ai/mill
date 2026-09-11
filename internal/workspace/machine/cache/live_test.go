@@ -364,6 +364,95 @@ var _ = Describe("Cache lineages on the sandbox volume", Label("live"), Serial, 
 			Expect(store.Discard(ctx, run)).To(Succeed())
 		}
 	})
+	// Eviction on the real volume, with a clock the spec sets: the store
+	// is the same one, so its Now is the wall clock, and the age of a
+	// lineage is written into its manifest the way a worker a month ago
+	// would have left it.
+	It("Unused lineages expire", func(ctx context.Context) {
+		By("given a repo lineage last restored 31 days ago and an expiry of 30")
+		stale := cache.Lineage{Scope: repo, Name: "expired"}
+		seed(ctx, store, stale, "marker")
+		manifest, err := store.Manifest(stale)
+		Expect(err).NotTo(HaveOccurred())
+		manifest.LastRestoredAt = time.Now().Add(-31 * 24 * time.Hour)
+		manifest.Generations[0].CreatedAt = manifest.LastRestoredAt
+		Expect(writeManifest(store, stale, manifest)).To(Succeed())
+		fresh := cache.Lineage{Scope: repo, Name: "fresh"}
+		seed(ctx, store, fresh, "marker")
+		Expect(readOnly(store.GenerationPath(stale, 1))).To(BeTrue())
+
+		By("when eviction runs")
+		policy := store.Policy(nil)
+		policy.Expiry = 30 * 24 * time.Hour
+		// Expiry alone: the volume's real free space is not this spec's
+		// to act on.
+		policy.High = cache.Watermark{}
+		report, err := store.Evict(ctx, policy)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("then the lineage is deleted and the report names it")
+		Expect(report.Deleted).To(HaveLen(1))
+		Expect(report.Deleted[0].Name()).To(Equal(stale.String()))
+		Expect(report.Deleted[0].Pass).To(Equal(cache.PassExpiry))
+		Expect(report.Deleted[0].Generations).To(Equal([]int{1}))
+		Expect(store.GenerationPath(stale, 1)).NotTo(BeAnExistingFile(), "the read-only generation went, ro cleared first")
+		Expect(store.GenerationPath(fresh, 1)).To(BeADirectory())
+		Expect(isSubvolume(store.GenerationPath(fresh, 1))).To(BeTrue())
+	})
+
+	// Scenario: Evicting a lineage does not affect a run that restored from it
+	//   Given a run restored generation 2 of lineage "target"
+	//   When eviction deletes lineage "target"
+	//   Then the run's copy is intact
+	//   And the run promotes into a fresh lineage
+	// Deleting the parent generation of an in-flight snapshot is safe on
+	// btrfs — the snapshot is independent (the spike's E9) — and this spec
+	// does it rather than avoiding it.
+	It("A run in flight is untouched", func(ctx context.Context) {
+		By("given a run restored generation 2 of a lineage")
+		lineage := cache.Lineage{Scope: repo, Name: "target"}
+		seed(ctx, store, lineage, "older", "marker")
+		restored, err := store.Restore(ctx, "01INFLIGHT", []cache.Lineage{lineage})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(restored[0].Generation).To(Equal(2))
+		copyPath := store.CopyPath("01INFLIGHT", "target")
+		Expect(os.WriteFile(filepath.Join(copyPath, "written"), []byte("by the run"), 0o644)).To(Succeed())
+
+		By("when eviction deletes the lineage")
+		fs, err := driver.NewSystemd(workspace.Spawner{}, driver.Commands{}).Statfs(root)
+		Expect(err).NotTo(HaveOccurred())
+		// Watermarks in bytes that put the volume below the high one
+		// whatever its size, so the pass takes the lineage from under the
+		// run's copy.
+		policy := store.Policy(nil).WatermarkOnly()
+		policy.High = cache.Watermark{Bytes: fs.Total}
+		policy.Low = cache.Watermark{Bytes: fs.Total}
+		report, err := store.Evict(ctx, policy)
+		Expect(err).NotTo(HaveOccurred())
+		var deleted []string
+		for _, d := range report.Deleted {
+			deleted = append(deleted, d.Name())
+		}
+		Expect(deleted).To(ContainElement(lineage.String()))
+		Expect(store.GenerationPath(lineage, 2)).NotTo(BeAnExistingFile())
+
+		By("then the run's copy is intact")
+		Expect(isSubvolume(copyPath)).To(BeTrue())
+		Expect(files(copyPath)).To(ConsistOf("older", "marker", "written"))
+		Expect(os.WriteFile(filepath.Join(copyPath, "after"), []byte("still writable"), 0o644)).To(Succeed())
+
+		By("and the run promotes into a fresh lineage")
+		Expect(store.Candidate(ctx, "01INFLIGHT", "build")).To(Succeed())
+		promoted, err := store.Promote(ctx, "01INFLIGHT")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(promoted).To(HaveLen(1))
+		Expect(promoted[0].Generation).To(Equal(1))
+		Expect(isSubvolume(store.GenerationPath(lineage, 1))).To(BeTrue())
+		Expect(readOnly(store.GenerationPath(lineage, 1))).To(BeTrue())
+		Expect(files(store.GenerationPath(lineage, 1))).To(ConsistOf("older", "marker", "written", "after"))
+		Expect(store.Discard(ctx, "01INFLIGHT")).To(Succeed())
+	})
+
 })
 
 // The nested half of docs/sandbox.md §Caching's "a nested run never promotes
@@ -433,4 +522,5 @@ var _ = Describe("A nested run's lineages", Label("live"), Serial, func() {
 		Expect(other.Discard(ctx, "01ELSEWHERE")).To(Succeed())
 		sweep(other.Config().Root)
 	})
+
 })

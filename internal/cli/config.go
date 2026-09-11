@@ -59,11 +59,19 @@ type Config struct {
 	BaseImage        string `yaml:"base-image"`
 	ImageBuildBudget string `yaml:"image-build-budget"`
 	ImageExpiry      string `yaml:"image-expiry"`
-	// The cache lineages (docs/sandbox.md §Caching): the size estimate past
-	// which a global lineage is reset at promotion, and past which a
-	// repo-scoped one is flagged. Sizes such as `20G`.
-	CacheGlobalCap string `yaml:"cache-global-cap"`
-	CacheRepoCap   string `yaml:"cache-repo-cap"`
+	// The cache lineages (docs/sandbox.md §Caching, §Eviction): the size
+	// estimate past which a global lineage is reset at promotion — for
+	// all of them, and per lineage name — and past which a repo-scoped one
+	// is flagged, sizes such as `20G`; how long a repo lineage goes
+	// unrestored before eviction deletes it, a window such as `30d`; and
+	// the free-space watermarks eviction starts below and stops above,
+	// each a share such as `10%` or a size such as `50G`.
+	CacheGlobalCap     string            `yaml:"cache-global-cap"`
+	CacheGlobalCaps    map[string]string `yaml:"cache-global-caps"`
+	CacheRepoCap       string            `yaml:"cache-repo-cap"`
+	CacheExpiry        string            `yaml:"cache-expiry"`
+	CacheHighWatermark string            `yaml:"cache-high-watermark"`
+	CacheLowWatermark  string            `yaml:"cache-low-watermark"`
 	// The machine backend's host facts (docs/sandbox.md §Provision,
 	// §Network, §"Skill mount"): the worker's skill directory bound
 	// read-only into every machine, the run-state directory the socket

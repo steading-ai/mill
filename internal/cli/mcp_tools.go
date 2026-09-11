@@ -620,7 +620,7 @@ func workspaceFields(row *millv1.Run, info *local.Info) map[string]any {
 // doctorOptions is what the server's flags mean to the doctor tool.
 func (s *mcpServer) doctorOptions() doctorOptions {
 	config := deploymentConfig()
-	return doctorOptions{
+	opts := doctorOptions{
 		socket:        s.opts.socket,
 		daggerSocket:  s.opts.daggerSocket,
 		project:       s.opts.project,
@@ -640,6 +640,9 @@ func (s *mcpServer) doctorOptions() doctorOptions {
 		},
 		credentialMinted: config.ModelCredentialMinted,
 	}
+	var expiry time.Duration
+	_ = applyEvictionConfig(config, &expiry, &opts.highWatermark, &opts.lowWatermark)
+	return opts
 }
 
 // orDefault is a configured value, or the default when the file says

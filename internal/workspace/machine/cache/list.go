@@ -19,12 +19,16 @@ type Summary struct {
 	// LastRestoredAt is when a run last restored the lineage; zero when
 	// none has.
 	LastRestoredAt time.Time
+	// LastUsed is [Manifest.LastUsed]: what eviction ranks by.
+	LastUsed time.Time
 	// OverCap says the latest generation's estimate exceeds the scope's
 	// cap: a global lineage at the edge of a reset, a repo lineage worth a
 	// look (docs/sandbox.md §Eviction).
 	OverCap bool
 	// Reset is the reset that last emptied the lineage, if one did.
 	Reset *Reset
+	// Evicted is the eviction that last emptied the lineage, if one did.
+	Evicted *Evicted
 }
 
 // List is every lineage under the lineage root — global first, then by
@@ -58,11 +62,11 @@ func (s *Store) List() ([]Summary, error) {
 		if err != nil {
 			return nil, err
 		}
-		summary := Summary{Lineage: lineage, Latest: manifest.Latest(), LastRestoredAt: manifest.LastRestoredAt, Reset: manifest.Reset}
+		summary := Summary{Lineage: lineage, Latest: manifest.Latest(), LastRestoredAt: manifest.LastRestoredAt, LastUsed: manifest.LastUsed(), Reset: manifest.Reset, Evicted: manifest.Evicted}
 		for _, generation := range manifest.Generations {
 			summary.Generations = append(summary.Generations, generation.Number)
 		}
-		if summary.Latest != nil && summary.Latest.SizeBytes > s.config.Cap(lineage.Scope) {
+		if summary.Latest != nil && summary.Latest.SizeBytes > s.config.Cap(lineage) {
 			summary.OverCap = true
 		}
 		out = append(out, summary)

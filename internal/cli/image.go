@@ -11,6 +11,7 @@ import (
 
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/machine"
+	"github.com/ivy/mill/internal/workspace/machine/cache"
 	"github.com/ivy/mill/internal/workspace/machine/driver"
 	"github.com/ivy/mill/internal/workspace/machine/image"
 )
@@ -41,7 +42,9 @@ type imageOptions struct {
 	baseImage      string
 	imageExpiryRaw string
 	// prune
-	dryRun bool
+	dryRun        bool
+	highWatermark string
+	lowWatermark  string
 }
 
 // defaultImageSudo is how the image verbs reach the image directory, which
@@ -211,74 +214,117 @@ func newImagePruneCommand(opts *imageOptions) *cobra.Command {
 		Short: "Remove the image subvolumes nothing has booted within the expiry",
 		Long: `Delete every image subvolume whose last boot — or its build, when nothing
 has booted it — is older than the expiry: 30 days unless --expiry or the
-configuration's image-expiry says otherwise (docs/sandbox.md §Eviction).
+configuration's image-expiry says otherwise; then, while free space on the
+sandbox volume is below the high watermark, the least recently booted
+until it is above the low one (docs/sandbox.md §Eviction). Images only;
+"mill cache prune" is the same eviction over lineages and images both.
 
-Expiry only. Free-space watermarks are the eviction node's. A running
-machine's ephemeral root is a snapshot of its own and is untouched by the
-source subvolume going.
+A running machine's ephemeral root is a snapshot of its own and is
+untouched by the source subvolume going. Each removal is printed with its
+reason.
 
-"--dry-run" lists what would go and removes nothing.`,
+"--dry-run" lists what expiry would take and removes nothing.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			store, err := imageStore(cmd, opts)
 			if err != nil {
 				return err
 			}
-			expiry, err := parseWindow(opts.imageExpiryRaw)
+			policy, err := imagePolicy(cmd, opts)
 			if err != nil {
-				return fmt.Errorf("--expiry: %q is not a window such as 720h or 30d", opts.imageExpiryRaw)
+				return err
 			}
-			return runImagePrune(cmd, store, expiry, opts.dryRun)
+			caches := cache.New(driver.NewSystemd(workspace.Spawner{}, driver.Commands{}), cache.Config{Root: opts.sandboxRoot})
+			return runImagePrune(cmd, caches, store, policy, opts.dryRun)
 		},
 	}
 	cmd.Flags().StringVar(&opts.imageExpiryRaw, "expiry", "30d", "remove images not booted for longer than this, such as 30d")
+	cmd.Flags().StringVar(&opts.highWatermark, "high-watermark", cache.DefaultHighWatermark.String(), "free space below which the least recently booted images go: a share of the volume such as 10%, or a size such as 50G")
+	cmd.Flags().StringVar(&opts.lowWatermark, "low-watermark", cache.DefaultLowWatermark.String(), "free space at which eviction stops, above the high watermark")
 	cmd.Flags().BoolVar(&opts.dryRun, "dry-run", false, "list what would be removed and remove nothing")
 	return cmd
 }
 
-func runImagePrune(cmd *cobra.Command, store *image.Store, expiry time.Duration, dryRun bool) error {
+// imagePolicy is the eviction `image prune` runs: images only, with the
+// expiry and watermarks the flags and the file describe.
+func imagePolicy(cmd *cobra.Command, opts *imageOptions) (cache.Policy, error) {
+	config, err := LoadConfig(opts.config)
+	if err != nil {
+		return cache.Policy{}, err
+	}
+	for name, target := range map[string]*string{"high-watermark": &opts.highWatermark, "low-watermark": &opts.lowWatermark} {
+		value := map[string]string{"high-watermark": config.CacheHighWatermark, "low-watermark": config.CacheLowWatermark}[name]
+		if value != "" && unset(cmd, name) {
+			*target = value
+		}
+	}
+	policy := cache.Policy{ImagesOnly: true}
+	if policy.Expiry, err = parseWindow(opts.imageExpiryRaw); err != nil {
+		return cache.Policy{}, fmt.Errorf("--expiry: %q is not a window such as 720h or 30d", opts.imageExpiryRaw)
+	}
+	if policy.High, err = cache.ParseWatermark(opts.highWatermark); err != nil {
+		return cache.Policy{}, fmt.Errorf("--high-watermark: %w", err)
+	}
+	if policy.Low, err = cache.ParseWatermark(opts.lowWatermark); err != nil {
+		return cache.Policy{}, fmt.Errorf("--low-watermark: %w", err)
+	}
+	return policy, nil
+}
+
+// runImagePrune runs the policy over the image store — or, for a dry run,
+// lists what its expiry would take — and prints each image with the
+// reason it went.
+func runImagePrune(cmd *cobra.Command, caches *cache.Store, store *image.Store, policy cache.Policy, dryRun bool) error {
 	ctx := cmd.Context()
-	var pruned []image.Manifest
+	policy.Images, policy.ImagesOnly = store, true
+	out := cmd.OutOrStdout()
+	var report cache.Report
 	var err error
 	if dryRun {
-		pruned, err = expired(ctx, store, expiry)
+		report, err = wouldExpire(ctx, policy, caches.Config().Now())
 	} else {
-		pruned, err = store.Prune(ctx, expiry)
+		report, err = caches.Evict(ctx, policy)
+	}
+	if err != nil && len(report.Deleted) == 0 {
+		return fmt.Errorf("image prune: %w", err)
+	}
+	if len(report.Deleted) == 0 {
+		_, _ = fmt.Fprintf(out, "nothing to remove under %s\n", store.Config().Machines)
+	} else {
+		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+		_, _ = fmt.Fprintln(w, "DIGEST\tPACKAGES\tLAST BOOT\tACTION\tREASON")
+		for _, d := range report.Deleted {
+			action := "removed"
+			if dryRun {
+				action = "would remove"
+			}
+			m := d.Image
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", m.Digest.Short(), packagesText(m.Packages), bootText(m), action, d.Reason)
+		}
+		_ = w.Flush()
 	}
 	if err != nil {
 		return fmt.Errorf("image prune: %w", err)
 	}
-	out := cmd.OutOrStdout()
-	if len(pruned) == 0 {
-		_, _ = fmt.Fprintf(out, "nothing to remove under %s\n", store.Config().Machines)
-		return nil
-	}
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "DIGEST\tPACKAGES\tLAST BOOT\tACTION")
-	for _, m := range pruned {
-		action := "removed"
-		if dryRun {
-			action = "would remove"
-		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", m.Digest.Short(), packagesText(m.Packages), bootText(m), action)
-	}
-	return w.Flush()
+	return nil
 }
 
-// expired is what prune would take, for a dry run.
-func expired(ctx context.Context, store *image.Store, expiry time.Duration) ([]image.Manifest, error) {
-	manifests, err := store.List(ctx)
+// wouldExpire is what the expiry pass would take, for a dry run.
+func wouldExpire(ctx context.Context, policy cache.Policy, now time.Time) (cache.Report, error) {
+	manifests, err := policy.Images.List(ctx)
 	if err != nil {
-		return nil, err
+		return cache.Report{}, err
 	}
-	cutoff := store.Config().Now().Add(-expiry)
-	var out []image.Manifest
+	var report cache.Report
 	for _, m := range manifests {
-		if m.LastUsed().Before(cutoff) {
-			out = append(out, m)
+		if m.LastUsed().Before(now.Add(-policy.Expiry)) {
+			report.Deleted = append(report.Deleted, cache.Deletion{
+				Kind: cache.KindImage, Image: m, LastUsed: m.LastUsed(), Pass: cache.PassExpiry,
+				Reason: cache.ExpiredReason(now.Sub(m.LastUsed()), policy.Expiry),
+			})
 		}
 	}
-	return out, nil
+	return report, nil
 }
 
 // imageStore is the store the flags describe, over the systemd driver:

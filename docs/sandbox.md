@@ -325,13 +325,23 @@ Three mechanisms, applied in this order at each trigger.
 2. **Expiry**: a repo-scoped lineage or an image subvolume not restored or booted for 30 days (worker config) is deleted.
 3. **Watermarks**: when free space on the cache filesystem — `statfs`, the truth — is below the high watermark, delete repo-scoped lineages and image subvolumes in order of least recent use until free space exceeds the low watermark. Two thresholds so eviction does not run at every promotion. Global lineages are not evicted by watermark; they are bounded by their caps (§Promote).
 
-- After each `btrfs subvolume delete`, `btrfs filesystem sync` on the volume before re-reading free space; deletion frees space asynchronously and an eviction loop that does not wait over-evicts. `subvolume sync` needs root and does not move `statfs`; `filesystem sync` is the unprivileged commit that does (the spike's E9). The driver's `DeleteSubvolume` takes a `sync` flag for it.
-- Do not enable qgroups for this. Per-lineage sizes are estimates for ranking victims; free space decides whether to evict.
+- The sequence is delete → `btrfs filesystem sync <mount>` → `statfs`. Deletion frees space asynchronously, and an eviction loop that does not wait over-evicts. `btrfs subvolume sync` needs root and does not move `statfs` anyway; `filesystem sync` is the unprivileged commit that does (the spike's E9). The driver's `DeleteSubvolume` takes a `sync` flag for it, and eviction sets it on every deletion. A read-only generation has its `ro` property cleared before the delete.
+- Do not enable qgroups for this. Per-lineage sizes are estimates for ranking victims; free space decides whether to evict. `du -s` overstates on-disk use about 2:1 on a `compress=zstd:1` volume, so the watermarks read `statfs` and the size `mill cache ls` shows is the manifest's estimate, never a fresh `du`.
 - A lineage under eviction may be the parent of an in-flight run's writable snapshot. That is safe: btrfs snapshots are independent. A run whose lineage was evicted mid-run promotes into a fresh lineage.
-- Triggers: after each promotion; at worker start, with reconciliation; on a systemd timer for expiry.
+- Triggers: after each promotion, the watermark pass alone — the cheap check; at worker start, after reconciliation, both passes; and `mill cache prune`, both passes, which `contrib/systemd/mill-cache-prune.timer` runs daily so a host with no runs still expires what it holds.
 - A per-lineage cap on repo scope is a number `mill cache ls` flags, not a gate on promotion. A project whose build state is naturally large is still cached; the watermark decides.
-- Operator tools: `mill cache ls`, `mill cache prune`, `mill image ls`, `mill image prune`. The image pair is in `docs/tools.md`; `prune` is expiry alone until the eviction node adds watermarks.
+- Operator tools: `mill cache ls`, `mill cache prune`, `mill image ls`, `mill image prune`, all in `docs/tools.md`. `image prune` is the same eviction with images as the only victims. `mill doctor`'s `space` probe reads free space against the watermarks.
 - Later, not now: consult dagger's ready set so repos with pending work are protected from eviction. LRU first.
+
+### Decided
+
+What the rules above leave open, `internal/workspace/machine/cache`'s `Evict` decides as follows.
+
+- **Policy.** Worker configuration: `cache-expiry` (a window, 30 days unless set) for repo lineages, `image-expiry` for images when it differs; `cache-high-watermark` and `cache-low-watermark`, each a share of the volume such as `10%` or a size such as `50G` — `10%` and `20%` unless set. Eviction starts when free space is below the high watermark and stops once it is above the low one, so the low watermark is the larger amount of free space: the names say how full the volume is, the numbers say what is free. A low watermark below the high one is refused. `cache-global-caps` names a cap per global lineage, over `cache-global-cap` for the ones named.
+- **Last use.** A lineage's is the later of its last restore and its latest generation's promotion; an image's is its last boot, or its build when nothing has booted it. Victims are ranked ascending on it, lineages and images together, whole lineages at a time.
+- **Victims.** Repo-scoped lineages with at least one generation, and image subvolumes. Never a global lineage, in either pass; never anything under `runs/<id>`. A lineage's eviction holds its lock, so a restore or promotion in flight waits and sees the tree as it is.
+- **What stays.** An evicted lineage keeps its directory, lock and manifest — the manifest with no generations and an `evicted` note (when, which generations, why), which `mill cache ls` shows as the `evicted` flag until the next promotion clears it. Deleting the directory would leave a run waiting on the lock with no directory to promote into; a fresh lineage is `gen-1` in the directory that is there.
+- **The report.** Every deletion names its kind, the lineage or image, when it was last used, which pass took it and one sentence why; then free space against the watermarks. The worker prints it at start, `mill cache prune` and `mill image prune` print it, and the promotion trigger logs it. Eviction that fails part way is a log line at the promotion trigger and at start, never a failed run or a worker that does not start.
 
 ## Network
 

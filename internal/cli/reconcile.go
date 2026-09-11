@@ -14,22 +14,16 @@ import (
 	"github.com/ivy/mill/internal/sweep"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/machine"
-	"github.com/ivy/mill/internal/workspace/machine/image"
 )
-
-// defaultImageExpiry is how long an unbooted image lives when nothing
-// configures it (docs/sandbox.md §Eviction).
-const defaultImageExpiry = 30 * 24 * time.Hour
 
 // machineStartup is what a machine worker does before its first claim
 // (run.Startup): docs/sandbox.md §Reconciliation's pass over the host,
-// recorded in the ledger, then eviction — expiry of unbooted images today;
-// the watermarks are the eviction node's.
+// recorded in the ledger, then eviction — expiry, then the watermarks —
+// over the lineages and images (§Eviction).
 type machineStartup struct {
 	reconciler *machine.Reconciler
 	ledger     machine.Ledger
-	images     *image.Store
-	expiry     time.Duration
+	config     machine.Config
 	out        io.Writer
 }
 
@@ -53,15 +47,10 @@ func workerStartup(kind workspace.Kind, opts runOptions, project, workerRef stri
 		externals = append(externals, sweep.Forge(gitlab.NewScratch(repo.BaseURL, opts.sandbox.scratchNamespace,
 			forge.Static(envOr(forgeUserEnv, defaultForgeUser), os.Getenv(forgeTokenEnv)))))
 	}
-	expiry := opts.sandbox.imageExpiry
-	if expiry <= 0 {
-		expiry = defaultImageExpiry
-	}
 	return &machineStartup{
 		reconciler: machine.NewReconciler(machineDriver(), config, externals...),
 		ledger:     run.NewLedger(storeClient(opts.socket), workerRef),
-		images:     image.New(machineDriver(), config.Images),
-		expiry:     expiry,
+		config:     config,
 		out:        out,
 	}, nil
 }
@@ -79,11 +68,12 @@ func (s *machineStartup) Reconcile(ctx context.Context) error {
 	return nil
 }
 
-// Evict removes the image subvolumes nothing has booted within the expiry.
+// Evict runs eviction over the host and prints what it deleted, one line
+// each.
 func (s *machineStartup) Evict(ctx context.Context) error {
-	pruned, err := s.images.Prune(ctx, s.expiry)
-	for _, manifest := range pruned {
-		_, _ = fmt.Fprintf(s.out, "evict: image %s, last used %s\n", manifest.Digest.Short(), manifest.LastUsed().Format(time.RFC3339))
+	report, err := machine.Evict(ctx, machineDriver(), cacheDriver(), s.config)
+	for _, d := range report.Deleted {
+		_, _ = fmt.Fprintf(s.out, "evict: %s %s, last used %s: %s\n", d.Kind, d.Name(), d.LastUsed.UTC().Format(time.RFC3339), d.Reason)
 	}
 	return err
 }

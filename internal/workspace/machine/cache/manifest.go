@@ -31,6 +31,9 @@ type Manifest struct {
 	// Reset is the last promotion that reset the lineage instead, and why;
 	// nil when none has.
 	Reset *Reset `json:"reset,omitempty"`
+	// Evicted is the eviction that last emptied the lineage, and why; nil
+	// when none has, and cleared by the next promotion.
+	Evicted *Evicted `json:"evicted,omitempty"`
 }
 
 // Generation is one read-only snapshot in a lineage.
@@ -64,6 +67,29 @@ type Reset struct {
 	Cap       uint64 `json:"cap"`
 	// Reason is the sentence `mill cache ls` shows.
 	Reason string `json:"reason"`
+}
+
+// Evicted is an eviction that deleted every generation of a lineage
+// (docs/sandbox.md §Eviction). The directory and its lock stay, so a run
+// that restored the lineage before promotes into it as a fresh one.
+type Evicted struct {
+	// At is when.
+	At time.Time `json:"at"`
+	// Generations are what went.
+	Generations []int `json:"generations"`
+	// Reason is the sentence the eviction report carries.
+	Reason string `json:"reason"`
+}
+
+// LastUsed is when the lineage was last restored, or when its latest
+// generation was promoted if that is later or the restore was never
+// recorded: what expiry and the watermark pass rank by.
+func (m Manifest) LastUsed() time.Time {
+	last := m.LastRestoredAt
+	if latest := m.Latest(); latest != nil && latest.CreatedAt.After(last) {
+		last = latest.CreatedAt
+	}
+	return last
 }
 
 // Latest is the newest generation, or nil when the lineage has none.

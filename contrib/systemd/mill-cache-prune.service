@@ -1,0 +1,22 @@
+# Evicts what the sandbox volume no longer needs: docs/sandbox.md §Eviction.
+# A user unit beside mill.service, run daily by mill-cache-prune.timer and
+# on demand with `systemctl --user start mill-cache-prune`. Install with
+#
+#   install -Dm644 contrib/systemd/mill-cache-prune.service ~/.config/systemd/user/mill-cache-prune.service
+#   install -Dm644 contrib/systemd/mill-cache-prune.timer ~/.config/systemd/user/mill-cache-prune.timer
+#   systemctl --user enable --now mill-cache-prune.timer
+#
+# The pass is the worker's own: expired repo lineages and images first, then
+# least recently used under the free-space watermarks. The expiry, the
+# watermarks and the sandbox root come from ~/.config/mill/config.yaml
+# (cache-expiry, image-expiry, cache-high-watermark, cache-low-watermark,
+# sandbox-root) when they are not the defaults. Image subvolumes are root's
+# on the host, so their side of the pass goes through sudo, as the worker's
+# does.
+
+[Unit]
+Description=mill: evict expired and least recently used caches and images
+
+[Service]
+Type=oneshot
+ExecStart=mill cache prune

@@ -61,6 +61,18 @@ const (
 	// a repo-scoped lineage; never a gate on promotion (docs/sandbox.md
 	// §Eviction).
 	DefaultRepoCap = 10 << 30
+	// DefaultExpiry is how long a repo-scoped lineage goes unrestored, or
+	// an image unbooted, before eviction deletes it whatever the free
+	// space (docs/sandbox.md §Eviction).
+	DefaultExpiry = 30 * 24 * time.Hour
+)
+
+// The default watermarks, as shares of the sandbox filesystem: eviction
+// starts when less than a tenth of it is free and stops once a fifth is
+// (docs/sandbox.md §Eviction).
+var (
+	DefaultHighWatermark = Watermark{Percent: 10}
+	DefaultLowWatermark  = Watermark{Percent: 20}
 )
 
 // Scope is who shares a lineage, as its directory under the lineage root
@@ -190,9 +202,21 @@ type Config struct {
 	// promotion; over it, the lineage is reset. [DefaultGlobalCap] when
 	// zero.
 	GlobalCap uint64
+	// GlobalCaps are caps for particular global lineages by name, over
+	// GlobalCap for the ones named.
+	GlobalCaps map[string]uint64
 	// RepoCap is the size estimate past which a repo-scoped lineage is
 	// flagged by `mill cache ls`. [DefaultRepoCap] when zero.
 	RepoCap uint64
+	// Expiry is how long a repo-scoped lineage or an image goes unused
+	// before eviction deletes it. [DefaultExpiry] when zero.
+	Expiry time.Duration
+	// HighWatermark is the free space below which eviction runs, and
+	// LowWatermark the free space it stops at; each a share of the
+	// filesystem or a number of bytes. [DefaultHighWatermark] and
+	// [DefaultLowWatermark] when zero.
+	HighWatermark Watermark
+	LowWatermark  Watermark
 	// Now is the clock manifests are stamped by; nil is time.Now.
 	Now func() time.Time
 }
@@ -207,18 +231,31 @@ func (c Config) withDefaults() Config {
 	if c.RepoCap == 0 {
 		c.RepoCap = DefaultRepoCap
 	}
+	if c.Expiry == 0 {
+		c.Expiry = DefaultExpiry
+	}
+	if c.HighWatermark.IsZero() {
+		c.HighWatermark = DefaultHighWatermark
+	}
+	if c.LowWatermark.IsZero() {
+		c.LowWatermark = DefaultLowWatermark
+	}
 	if c.Now == nil {
 		c.Now = time.Now
 	}
 	return c
 }
 
-// Cap is the cap that applies to a scope.
-func (c Config) Cap(scope Scope) uint64 {
-	if scope.IsGlobal() {
-		return c.GlobalCap
+// Cap is the cap that applies to a lineage: the repo cap, or for a global
+// lineage the cap named for it, else the global cap.
+func (c Config) Cap(lineage Lineage) uint64 {
+	if !lineage.Scope.IsGlobal() {
+		return c.RepoCap
 	}
-	return c.RepoCap
+	if limit, ok := c.GlobalCaps[lineage.Name]; ok && limit > 0 {
+		return limit
+	}
+	return c.GlobalCap
 }
 
 // Store is the lineages on one worker, reached through the driver.

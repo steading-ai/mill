@@ -429,6 +429,19 @@ func (w *Workspace) Destroy(ctx context.Context) error {
 		w.logf("promoted %s to gen-%d (%d bytes)", p.Lineage, p.Generation, p.SizeBytes)
 	}
 	w.removeRunDirectory(ctx, record.ID)
+	if len(promoted) > 0 {
+		// The trigger after a promotion is the cheap one: free space
+		// against the watermarks, no expiry pass (docs/sandbox.md
+		// §Eviction). What it cannot evict is a log line, never the run's
+		// failure.
+		report, err := w.caches.Evict(ctx, w.caches.Policy(w.images).WatermarkOnly())
+		for _, d := range report.Deleted {
+			w.logf("evicted %s %s: %s", d.Kind, d.Name(), d.Reason)
+		}
+		if err != nil {
+			w.logf("eviction after promotion: %v", err)
+		}
+	}
 	return closeErr
 }
 

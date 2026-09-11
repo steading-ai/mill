@@ -9,6 +9,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
 
+	"github.com/ivy/mill/internal/workspace/machine/cache"
 	"github.com/ivy/mill/internal/workspace/machine/driver"
 	"github.com/ivy/mill/internal/workspace/machine/image"
 )
@@ -35,13 +36,16 @@ var _ = Describe("mill image prune", Label("unit"), func() {
 		cmd := &cobra.Command{}
 		cmd.SetContext(ctx)
 		cmd.SetOut(&stdout)
-		Expect(runImagePrune(cmd, store, image.DefaultExpiry, false)).To(Succeed())
+		caches := cache.New(fake, cache.Config{Root: GinkgoT().TempDir(), Now: func() time.Time { return now }})
+		fake.Script(driver.Statfs, driver.Filesystem{Type: driver.TypeBtrfs, Total: 100 << 30, Free: 50 << 30})
+		Expect(runImagePrune(cmd, caches, store, cache.Policy{Expiry: image.DefaultExpiry, High: cache.DefaultHighWatermark, Low: cache.DefaultLowWatermark}, false)).To(Succeed())
 
 		Expect(stdout.String()).To(ContainSubstring(old.Short()))
 		Expect(stdout.String()).To(ContainSubstring("removed"))
+		Expect(stdout.String()).To(ContainSubstring("past the expiry of 30d"), "the reason is printed")
 		Expect(stdout.String()).NotTo(ContainSubstring(fresh.Short()))
 		Expect(fake.CallsTo(driver.DeleteSubvolume)).To(Equal([]driver.Call{
-			{Method: driver.DeleteSubvolume, Args: []any{store.Path(old), false}},
+			{Method: driver.DeleteSubvolume, Args: []any{store.Path(old), true}},
 		}))
 		Expect(store.Path(old)).NotTo(BeAnExistingFile())
 		Expect(store.Path(fresh)).To(BeADirectory())

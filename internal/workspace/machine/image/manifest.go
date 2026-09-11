@@ -129,7 +129,7 @@ func (s *Store) Prune(ctx context.Context, expiry time.Duration) ([]Manifest, er
 		if !manifest.LastUsed().Before(cutoff) {
 			continue
 		}
-		if err := s.remove(ctx, manifest.Digest); err != nil {
+		if err := s.Remove(ctx, manifest.Digest, false); err != nil {
 			return pruned, err
 		}
 		pruned = append(pruned, manifest)
@@ -137,14 +137,16 @@ func (s *Store) Prune(ctx context.Context, expiry time.Duration) ([]Manifest, er
 	return pruned, nil
 }
 
-// remove deletes one image under its lock: the subvolume, then the record.
-func (s *Store) remove(ctx context.Context, digest Digest) error {
+// Remove deletes one image under its build lock: the subvolume, then the
+// record. With sync the deletion is committed before it returns, so a
+// caller re-reading free space sees it go (docs/sandbox.md §Eviction).
+func (s *Store) Remove(ctx context.Context, digest Digest, sync bool) error {
 	unlock, err := s.lock(ctx, digest)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	if err := s.host.DeleteSubvolume(ctx, s.Path(digest), false); err != nil {
+	if err := s.host.DeleteSubvolume(ctx, s.Path(digest), sync); err != nil {
 		return err
 	}
 	if err := os.Remove(s.manifestPath(digest)); err != nil && !isNotExist(err) {

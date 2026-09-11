@@ -39,9 +39,10 @@ knows either.
 | `rerun <run> --from <step>` | Redo from a step, keeping the generation and the sessions |
 | `workspace clean` | Remove the checkouts of runs that have ended |
 | `image ls` | Which image subvolumes this host holds, from what, and when last booted |
-| `image prune` | Remove the image subvolumes nothing has booted within the expiry |
+| `image prune` | Evict image subvolumes: expired, then least recently booted under the watermarks |
 | `image build-base` | Build the base image machines boot from, and push it |
 | `cache ls` | Which cache lineages this worker holds, their generations, size and last restore |
+| `cache prune` | Evict: expired lineages and images, then least recently used under the free-space watermarks |
 
 A run is named by its node reference — `mill#18` — or by the run id `status`
 prints. Anything carrying a `#` is a node reference; anything else is a run
@@ -338,7 +339,7 @@ unchanged`.
 
 ## doctor
 
-Nine probes, one line of reason each. Every probe is reported; the command
+Ten probes, one line of reason each. Every probe is reported; the command
 exits non-zero when any of them failed. A probe that passed with something
 still worth looking at is marked `warn` and does not fail the command.
 
@@ -352,6 +353,7 @@ fail  signing    no signing key under ~/.local/state/mill/workspaces/signing
 fail  forge      no repository to probe: pass --vcs-url or set MILL_VCS_URL
 pass  notify     contrib/notify/thicket-send.sh accepts a probe notice
 pass  workspace  local: a clone under the mill's account
+pass  space      local: no sandbox volume to watch
 warn  gateway    https://api.anthropic.com answers a token count through the gateway with credential:774fdbe2; the credential was minted 2025-09-30, more than 11 months ago; a setup-token lasts a year — mint a new one
 ```
 
@@ -365,6 +367,7 @@ warn  gateway    https://api.anthropic.com answers a token count through the gat
 | `forge` | The forge accepts the credential |
 | `notify` | The configured notify command runs and accepts a probe notice |
 | `workspace` | Which workspace backend a run works in, and for `machine` whether the sandbox root is btrfs |
+| `space` | For `machine`, free space on the sandbox volume against the eviction watermarks (`cache-high-watermark`, `cache-low-watermark`): pass above the low one, warn between, fail below the high one — eviction runs at every promotion and the host is short of space |
 | `gateway` | The credential gateway's upstream answers one token count through it with the configured credential, and the credential's age against `model_credential_minted` |
 
 The sidecar probe sends a `cancel` request on stdin. Cancellation reaches a
@@ -600,25 +603,29 @@ not shown. The subvolume directory is root's, so the check goes through
 
 ## image prune
 
-Remove the image subvolumes whose last boot — or build, when nothing has
-booted them — is older than the expiry: 30 days, or `--expiry`, or the
-configuration's `image-expiry`. Expiry only; free-space watermarks arrive
-with eviction.
+Eviction with images as the only victims (`docs/sandbox.md` §Eviction):
+remove the image subvolumes whose last boot — or build, when nothing has
+booted them — is older than the expiry (30 days, or `--expiry`, or the
+configuration's `image-expiry`); then, while free space on the sandbox
+volume is below the high watermark, the least recently booted until it is
+above the low one. Each removal is printed with its reason.
 
 ```
 $ mill image prune --dry-run
-DIGEST        PACKAGES     LAST BOOT             ACTION
-599b7919d9a1  libpq-devel  2026-08-01T06:35:20Z  would remove
+DIGEST        PACKAGES     LAST BOOT             ACTION        REASON
+599b7919d9a1  libpq-devel  2026-08-01T06:35:20Z  would remove  unused for 41d, past the expiry of 30d
 
 $ mill image prune
-DIGEST        PACKAGES     LAST BOOT             ACTION
-599b7919d9a1  libpq-devel  2026-08-01T06:35:20Z  removed
+DIGEST        PACKAGES     LAST BOOT             ACTION   REASON
+599b7919d9a1  libpq-devel  2026-08-01T06:35:20Z  removed  unused for 41d, past the expiry of 30d
 ```
 
-Each removal holds the image's build lock, so a provision ensuring the
-same digest either finds the subvolume or rebuilds it. A running machine's
-root is an ephemeral snapshot of its own and is untouched by the source
-going.
+`--dry-run` lists what expiry would take; the watermark pass reads free
+space and cannot be rehearsed. Each removal holds the image's build lock,
+so a provision ensuring the same digest either finds the subvolume or
+rebuilds it. A running machine's root is an ephemeral snapshot of its own
+and is untouched by the source going. `mill cache prune` is the same
+eviction over lineages and images both.
 
 ## image build-base
 
@@ -660,9 +667,53 @@ repo/gitlab.com-ivy-mill-1a2b3c4d  go-build  7,8          2.7G         2026-09-1
 
 The listing is the directory tree under `<sandbox-root>/cache` and each
 lineage's `manifest.json`, never `btrfs subvolume list`, which needs root.
-The caps are `--global-cap` and `--repo-cap`, or `cache-global-cap` and
-`cache-repo-cap` in the configuration file; the global one is what a
-promotion is measured against, the repo one is only the flag.
+The caps are `--global-cap` and `--repo-cap`, or `cache-global-cap`,
+`cache-global-caps` (per global lineage name) and `cache-repo-cap` in the
+configuration file; the global ones are what a promotion is measured
+against, the repo one is only the flag — `over-cap` on a repo lineage is
+advisory, and nothing acts on it. `evicted` marks a repo lineage eviction
+emptied; the flag clears at its next promotion.
+
+## cache prune
+
+Eviction (`docs/sandbox.md` §Eviction), the pass the worker runs at start
+and — the watermarks alone — after each promotion, for
+`contrib/systemd/mill-cache-prune.timer` to run daily. Two passes, in
+order:
+
+1. **Expiry.** Every repo-scoped lineage not restored within the expiry
+   (`--expiry`, or `cache-expiry`, 30 days) and every image subvolume not
+   booted within it (`--image-expiry`, or `image-expiry`, else the same)
+   is deleted whatever the free space.
+2. **Watermarks.** When free space on the sandbox volume — `statfs`, the
+   truth; never the manifests' size estimates — is below the high
+   watermark, repo-scoped lineages and images are deleted least recently
+   used first until free space is above the low watermark. After each
+   deletion the volume is synced and free space re-read, so eviction
+   stops as soon as it can. The watermarks are `--high-watermark` and
+   `--low-watermark`, or `cache-high-watermark` and `cache-low-watermark`
+   in the configuration file — a share of the volume such as `10%` or a
+   size such as `50G`; `10%` and `20%` unless set. Eviction starts below
+   the high one and stops above the low one, so the low watermark is the
+   larger amount of free space.
+
+Global lineages are bounded by their caps and never evicted. A run in
+flight is never affected: its copies are snapshots of their own, and one
+whose lineage was evicted promotes into a fresh lineage.
+
+```
+$ mill cache prune
+KIND     NAME                                                  LAST USED             PASS       REASON
+lineage  repo/gitlab.com-ivy-oldrepo-9f8e7d6c/go-build gen-3,4  2026-08-01T06:35:20Z  expiry     unused for 41d, past the expiry of 30d
+image    599b7919d9a1                                          2026-08-02T11:02:44Z  expiry     unused for 40d, past the expiry of 30d
+lineage  repo/gitlab.com-ivy-mill-1a2b3c4d/go-build gen-7,8    2026-09-01T06:35:20Z  watermark  free space 9.1G below the high watermark 10% (12G of 120G); least recently used
+free 26.4G of 120G (high watermark 12G, low 24G)
+```
+
+Nothing to evict prints `nothing to evict under <sandbox-root>/cache` and
+the free-space line. The image side goes through `sudo`, as `image prune`
+does; `--sudo none` on a host where the image directory is the caller's.
+An eviction that fails part way prints what it deleted before the error.
 
 ## Identity
 

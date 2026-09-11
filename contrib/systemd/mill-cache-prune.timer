@@ -1,0 +1,14 @@
+# Runs mill-cache-prune.service daily, so a lineage nothing restores and an
+# image nothing boots expire on a host with no run to trigger eviction. A
+# missed run — the host was off — happens at the next boot.
+
+[Unit]
+Description=mill: daily cache eviction
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target

@@ -50,7 +50,7 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 			"--project", "", "--vcs-url", "")
 		Expect(err).To(HaveOccurred(), "a failed probe is a non-zero exit")
 
-		for _, name := range []string{"socket", "schema", "dagger", "sidecar", "signing", "forge", "notify", "workspace", "gateway"} {
+		for _, name := range []string{"socket", "schema", "dagger", "sidecar", "signing", "forge", "notify", "workspace", "space", "gateway"} {
 			verdict, reason := probe(out, name)
 			Expect(verdict).To(BeElementOf("pass", "fail"), "probe %s: %s", name, out)
 			Expect(reason).NotTo(BeEmpty(), "probe %s carries no reason", name)
