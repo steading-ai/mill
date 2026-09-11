@@ -37,9 +37,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/ivy/mill/internal/workspace"
 )
+
+// generateMu serialises Generate: two runs starting at once under one
+// directory would otherwise both find no key and both run ssh-keygen at
+// the same path. Workers on the same host in different processes are not
+// a case MVP has: one mill runs per account.
+var generateMu sync.Mutex
 
 // Filenames the mill keeps its signing material under, inside a directory
 // only its own account can read.
@@ -75,6 +82,8 @@ func Generate(ctx context.Context, execer workspace.Execer, dir, name, identity 
 	if identity == "" {
 		return nil, fmt.Errorf("signing: no identity to generate a key for")
 	}
+	generateMu.Lock()
+	defer generateMu.Unlock()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("signing: create %s: %w", dir, err)
 	}

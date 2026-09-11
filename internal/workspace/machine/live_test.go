@@ -20,6 +20,8 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
 
+	"github.com/ivy/mill/internal/forge"
+	"github.com/ivy/mill/internal/forge/gitlab"
 	"github.com/ivy/mill/internal/skill"
 	"github.com/ivy/mill/internal/version"
 	"github.com/ivy/mill/internal/workspace"
@@ -763,6 +765,133 @@ var _ = Describe("A machine on a real host", Label("live"), Serial, Ordered, fun
 		Expect(res.Status).NotTo(BeEquivalentTo(0), out)
 		Expect(out).To(ContainSubstring("not installed"))
 		Expect(second.EndStep(ctx, 1, false)).To(Succeed())
+	})
+
+	// The verbs run on the host against the workspace bind, so what a
+	// session wrote as agent inside is what the worker stages and signs
+	// outside (docs/sandbox.md §Verbs).
+	//
+	// Scenario: A commit is signed on the host for work done inside
+	//   Given a session inside a machine that wrote a file in /work
+	//   When the workspace commits through its verb
+	//   Then the commit verifies with the mill's key on the host and its tree holds the file
+	It("A commit is signed on the host for work done inside", func(ctx context.Context) {
+		id := "acceptance-commit-" + nonce
+		DeferCleanup(func() { sweep(id) })
+		signed := config
+		signed.SigningDir = filepath.Join(GinkgoT().TempDir(), "signing")
+		signed.Name, signed.Identity = "mill", "mill@core.test"
+		ws := machine.New(real, signed)
+
+		By("given a session inside a machine that wrote a file in /work")
+		handle, err := ws.Create(ctx, workspace.Spec{RunID: id, NodeRef: "mill#81"})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func(ctx context.Context) { Expect(ws.Destroy(ctx)).To(Succeed()) })
+		Expect(ws.BeginStep(ctx, 1)).To(Succeed())
+		wrote, err := ws.Exec(ctx, workspace.Command{Path: "/bin/sh", Args: []string{"-c", "printf 'written inside\\n' > /work/INSIDE.md && id -un"}})
+		Expect(err).NotTo(HaveOccurred())
+		out, stderr, res := drainProcess(wrote)
+		Expect(res.Status).To(BeEquivalentTo(0), stderr)
+		Expect(strings.TrimSpace(out)).To(Equal("agent"))
+		Expect(ws.EndStep(ctx, 1, false)).To(Succeed())
+
+		By("when the workspace commits through its verb")
+		committed, err := ws.Git().Commit(ctx, workspace.CommitRequest{Message: "mill#81: written inside, signed outside"})
+		Expect(err).NotTo(HaveOccurred())
+
+		By("then the commit verifies with the mill's key on the host")
+		workspaceDir := filepath.Join(liveRoot, "runs", id, "workspace")
+		Expect(handle.Root).To(Equal(workspaceDir))
+		key := ws.SigningKey()
+		Expect(key).NotTo(BeNil())
+		_, stderrOut, status := host("git", "-C", workspaceDir, "-c", "gpg.ssh.allowedSignersFile="+key.AllowedSigners, "verify-commit", "HEAD")
+		Expect(status).To(BeZero(), stderrOut)
+		Expect(stderrOut).To(ContainSubstring("Good \"git\" signature for mill@core.test"))
+		Expect(strings.TrimSpace(must("git", "-C", workspaceDir, "show", "--no-patch", "--format=%an <%ae>", "HEAD"))).To(Equal(ws.Committer().String()))
+		Expect(committed.Author).To(Equal("mill <mill@core.test>"))
+
+		By("and its tree holds the file")
+		Expect(must("git", "-C", workspaceDir, "show", "HEAD:INSIDE.md")).To(Equal("written inside\n"))
+		Expect(strings.TrimSpace(must("git", "-C", workspaceDir, "rev-parse", "HEAD"))).To(Equal(committed.SHA))
+		inside, status := inMachine("mill-"+id, "agent", "git", "-C", "/work", "rev-parse", "HEAD")
+		Expect(status).To(BeZero(), inside)
+		Expect(strings.TrimSpace(inside)).To(Equal(committed.SHA), "the same tree on both sides")
+	})
+
+	// No git credential, signing key or forge token is readable inside the
+	// machine: the paths a credential would live at, and the environment a
+	// session's exec is given, as agent.
+	It("No git credential, signing key or forge token is readable inside the machine", func(ctx context.Context) {
+		id := "acceptance-nocred-" + nonce
+		DeferCleanup(func() { sweep(id) })
+		signed := config
+		signed.SigningDir = filepath.Join(GinkgoT().TempDir(), "signing")
+		ws := machine.New(real, signed)
+		_, err := ws.Create(ctx, workspace.Spec{RunID: id, NodeRef: "mill#81"})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func(ctx context.Context) { Expect(ws.Destroy(ctx)).To(Succeed()) })
+		Expect(ws.Rotate(ctx, workspace.TokenFor("step-token-"+nonce, workspace.Forge))).To(Succeed())
+		Expect(ws.BeginStep(ctx, 1)).To(Succeed())
+		DeferCleanup(func(ctx context.Context) { Expect(ws.EndStep(ctx, 1, false)).To(Succeed()) })
+
+		assertNoCredentialInside(ctx, ws, ws.SigningKey())
+	})
+
+	// Scenario: Push and PR reach the forge without the machine
+	//   Given a committed change in a machine-backed run
+	//   When the workspace pushes and opens a PR
+	//   Then the scratch project shows the branch and the merge request
+	//   And nothing inside the machine held a forge credential
+	It("Push and PR reach the forge without the machine", func(ctx context.Context) {
+		api := scratchForge()
+		id := "acceptance-push-" + nonce
+		DeferCleanup(func() { sweep(id) })
+
+		By("given a scratch project on the forge, swept by name afterwards")
+		project := api.createProject(ctx, "mill-acceptance-push-"+nonce)
+		DeferCleanup(func(ctx context.Context) { api.sweepByName(ctx, project.Name) })
+		client := gitlab.New(forge.Repo{Kind: forge.KindGitLab, BaseURL: api.url, Path: project.Path, CloneURL: project.CloneURL}, forge.Static(api.user, api.token))
+		delivering := config
+		delivering.Origin = project.CloneURL
+		delivering.Forge = client
+		delivering.SigningDir = filepath.Join(GinkgoT().TempDir(), "signing")
+		ws := machine.New(real, delivering)
+
+		By("and a committed change in a machine-backed run")
+		handle, err := ws.Create(ctx, workspace.Spec{RunID: id, NodeRef: "mill#81"})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func(ctx context.Context) { Expect(ws.Destroy(ctx)).To(Succeed()) })
+		Expect(ws.Rotate(ctx, workspace.TokenFor("step-token-"+nonce, workspace.Forge))).To(Succeed())
+		Expect(ws.BeginStep(ctx, 1)).To(Succeed())
+		DeferCleanup(func(ctx context.Context) { Expect(ws.EndStep(ctx, 1, false)).To(Succeed()) })
+		wrote, err := ws.Exec(ctx, workspace.Command{Path: "/bin/sh", Args: []string{"-c", "printf 'pushed from a machine\\n' > /work/PUSHED.md"}})
+		Expect(err).NotTo(HaveOccurred())
+		_, stderr, res := drainProcess(wrote)
+		Expect(res.Status).To(BeEquivalentTo(0), stderr)
+		committed, err := ws.Git().Commit(ctx, workspace.CommitRequest{Message: "mill#81: pushed from a machine"})
+		Expect(err).NotTo(HaveOccurred())
+
+		By("when the workspace pushes and opens a PR")
+		pushed, err := ws.Forge().Push(ctx, workspace.PushRequest{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pushed).To(Equal(workspace.PushResult{Branch: handle.Branch, SHA: committed.SHA, Remote: project.CloneURL}))
+		pr, err := ws.Forge().PR(ctx, workspace.PRRequest{Title: "mill#81: pushed from a machine", Target: project.DefaultBranch})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pr.Number).NotTo(BeZero())
+		checks, err := ws.Forge().Checks(ctx, workspace.ChecksRequest{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(checks.SHA).To(Equal(committed.SHA))
+		Expect(checks.Status).To(BeElementOf(forge.Success, forge.Pending), "a project with no pipeline reads as success")
+
+		By("then the scratch project shows the branch and the merge request")
+		Expect(api.branchHead(ctx, project, handle.Branch)).To(Equal(committed.SHA))
+		Expect(api.mergeRequestBranches(ctx, project)).To(ContainElement(handle.Branch))
+
+		By("and nothing inside the machine held a forge credential")
+		assertNoCredentialInside(ctx, ws, ws.SigningKey())
+		env, status := inMachine("mill-"+id, "agent", "sh", "-c", "env; cat /work/.git/config")
+		Expect(status).To(BeZero(), env)
+		Expect(env).NotTo(ContainSubstring(api.token), "the forge token reached neither the environment nor the checkout's remote")
 	})
 })
 

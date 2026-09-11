@@ -216,7 +216,7 @@ func (w *Workspace) create(ctx context.Context, spec workspace.Spec, record *Rec
 	if err := writeRecord(runDir, *record); err != nil {
 		return nil, errors.Join(err, w.teardownReady(context.WithoutCancel(ctx), record))
 	}
-	handle, err := w.open(record, spec)
+	handle, err := w.open(ctx, record, spec)
 	if err != nil {
 		return nil, errors.Join(err, w.teardownReady(context.WithoutCancel(ctx), record))
 	}
@@ -225,13 +225,13 @@ func (w *Workspace) create(ctx context.Context, spec workspace.Spec, record *Rec
 
 // checkoutBranch puts the run's branch in place and returns it.
 func (w *Workspace) checkoutBranch(ctx context.Context, checkout string, spec workspace.Spec) (string, error) {
-	current, err := w.branchOf(ctx, checkout)
+	current, err := w.verbs.Host.BranchOf(ctx, checkout)
 	if err != nil {
 		return "", err
 	}
 	branch := workspace.BranchFor(spec.NodeRef)
 	if branch != "" && current != branch {
-		if _, err := w.gitWith(ctx, checkout, nil, "checkout", "-B", branch); err != nil {
+		if _, err := w.verbs.Host.Run(ctx, checkout, nil, "checkout", "-B", branch); err != nil {
 			return "", err
 		}
 		current = branch

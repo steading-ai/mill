@@ -726,8 +726,12 @@ func machineConfig(opts runOptions, f forge.Forge, redactor *redact.Redactor) ma
 		Forge:    f,
 		Name:     opts.name,
 		Identity: opts.identity,
-		Redactor: redactor,
-		Log:      os.Stderr,
+		// The account's one signing key, where the local backend keeps it
+		// and `mill doctor` looks for it: a machine-backed run signs on
+		// the host with the same key a local one does.
+		SigningDir: filepath.Join(opts.workspaceDir, "signing"),
+		Redactor:   redactor,
+		Log:        os.Stderr,
 		Images: image.Config{
 			Registry:    sandbox.imageRegistry,
 			Repository:  sandbox.imageRepository,

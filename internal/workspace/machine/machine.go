@@ -34,7 +34,9 @@ import (
 	"github.com/ivy/mill/internal/workspace/machine/driver"
 	"github.com/ivy/mill/internal/workspace/machine/image"
 	"github.com/ivy/mill/internal/workspace/redact"
+	"github.com/ivy/mill/internal/workspace/signing"
 	"github.com/ivy/mill/internal/workspace/socket"
+	"github.com/ivy/mill/internal/workspace/verbs"
 )
 
 // The host's layout, as the driver names it (docs/sandbox.md §Storage).
@@ -76,40 +78,6 @@ const (
 	// one the helper's terminate finishes (docs/sandbox.md §Destroy).
 	DefaultStopTimeout = 90 * time.Second
 )
-
-// ExecNode built exec under a step slice and the step boundary that reaps
-// everything (docs/sandbox.md §Exec, §"Step boundary"). It is named here
-// because [VerbsNode], which follows it, refers to it in the error a
-// not-yet-built git or forge verb returns.
-const ExecNode = "machine-exec (mill#62)"
-
-// VerbsNode is what builds the session-facing git and forge verbs of a
-// machine workspace, which follow exec: a session in a machine reaches its
-// checkout through the socket exactly as one on the local backend does,
-// once there is a session in a machine to do so.
-const VerbsNode = "the machine verbs node, after " + ExecNode
-
-// ErrNotBuilt is a verb the machine backend does not do yet. Every error a
-// verb returns wraps it and names the node that builds the verb; see
-// [NotBuiltError].
-var ErrNotBuilt = errors.New("machine: not built")
-
-// NotBuiltError is [ErrNotBuilt] with the verb and the node attached.
-type NotBuiltError struct {
-	// Verb is what was asked for, such as `exec`.
-	Verb string
-	// Node is the node that builds it.
-	Node string
-}
-
-func (e *NotBuiltError) Error() string {
-	return fmt.Sprintf("machine: %s is not built yet; %s builds it", e.Verb, e.Node)
-}
-
-// Unwrap makes errors.Is(err, ErrNotBuilt) true.
-func (e *NotBuiltError) Unwrap() error { return ErrNotBuilt }
-
-func notBuilt(verb string) error { return &NotBuiltError{Verb: verb, Node: VerbsNode} }
 
 // ErrNotCreated is a verb called before Create or Attach.
 var ErrNotCreated = errors.New("machine: workspace not created")
@@ -174,9 +142,20 @@ type Config struct {
 	// Identity is the address the mill commits under; Name the name.
 	Identity string
 	Name     string
+	// Signer is the mill's commit signing key. Nil means the one under
+	// SigningDir, generated there if it is not yet.
+	Signer *signing.Key
+	// SigningDir is where the mill account's signing key lives: the same
+	// directory the local backend keeps it in, `<workspace-dir>/signing`,
+	// because it is the account's one key and every project's
+	// allowed_signers names it (docs/architecture.md §"Identity and
+	// credentials"). `<root>/signing` when empty. Never bound into a
+	// machine.
+	SigningDir string
 	// Git is the git binary on the host; `git` when empty.
 	Git string
-	// Execer spawns git. Nil means a spawner with an empty floor.
+	// Execer spawns git and ssh-keygen on the host. Nil means a spawner
+	// with an empty floor.
 	Execer workspace.Execer
 	// Redactor is scrubbed through before anything is logged. Nil means
 	// one of this workspace's own.
@@ -253,6 +232,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.Identity == "" {
 		c.Identity = "mill@localhost"
+	}
+	if c.SigningDir == "" {
+		c.SigningDir = filepath.Join(c.Root, "signing")
 	}
 	if c.Images.Root == "" {
 		c.Images.Root = c.Root
@@ -363,6 +345,7 @@ type Workspace struct {
 	config   Config
 	redactor *redact.Redactor
 	execer   workspace.Execer
+	verbs    verbs.Verbs
 	server   *socket.Server
 	images   *image.Store
 	caches   *cache.Store
@@ -372,6 +355,10 @@ type Workspace struct {
 	token  workspace.Token
 	egress workspace.Egress
 	record *Record
+	// signer is the mill's key once open has arranged it: what the commit
+	// verb signs with on the host, and whose name and address every
+	// commit carries (docs/sandbox.md §Verbs).
+	signer *signing.Key
 	// slice is the step slice execs run under, set by BeginStep and
 	// cleared by EndStep. An exec with none is refused: nothing would reap
 	// what it spawns (docs/sandbox.md §Exec).
@@ -388,13 +375,22 @@ type Workspace struct {
 // Nothing exists until Create or Attach.
 func New(host driver.Driver, c Config) *Workspace {
 	c = c.withDefaults()
-	w := &Workspace{host: host, config: c, redactor: c.Redactor, execer: c.Execer}
+	w := &Workspace{host: host, config: c, redactor: c.Redactor, execer: c.Execer, signer: c.Signer}
 	if w.redactor == nil {
 		w.redactor = redact.New()
 	}
 	if w.execer == nil {
 		// An empty floor: git sees exactly what this package names for it.
 		w.execer = workspace.Spawner{Floor: []string{}}
+	}
+	// The verbs run on the host against the run's workspace directory,
+	// through the same execer the clone goes through and never through
+	// the helper: the machine is where the session works, the host is
+	// where the mill signs (docs/sandbox.md §Verbs).
+	w.verbs = verbs.Verbs{
+		Host:     verbs.Host{Git: c.Git, Execer: w.execer, Redactor: w.redactor},
+		Forge:    c.Forge,
+		Checkout: w.checkout,
 	}
 	w.images = image.New(host, c.Images)
 	cacheHost := c.CacheDriver
@@ -448,12 +444,47 @@ func (w *Workspace) Attach(ctx context.Context, spec workspace.Spec) (*workspace
 		w.recreate = record.Ordinal
 		w.mu.Unlock()
 	}
-	return w.open(&record, spec)
+	return w.open(ctx, &record, spec)
+}
+
+// arrangeSigner finds or makes the key every commit is signed with, under
+// SigningDir on the host. It is the mill account's key and not this run's,
+// and it is never bound into the machine.
+func (w *Workspace) arrangeSigner(ctx context.Context) error {
+	w.mu.RLock()
+	signer := w.signer
+	w.mu.RUnlock()
+	if signer != nil {
+		return nil
+	}
+	key, err := signing.Generate(ctx, w.execer, w.config.SigningDir, w.config.Name, w.config.Identity)
+	if err != nil {
+		return err
+	}
+	w.mu.Lock()
+	w.signer = key
+	w.mu.Unlock()
+	return nil
+}
+
+// checkout is the run's checkout as the verbs see it at each call: the
+// workspace directory on the host, the run's branch, the mill's key and
+// the live step token.
+func (w *Workspace) checkout() (verbs.Checkout, error) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if w.handle == nil {
+		return verbs.Checkout{}, ErrNotCreated
+	}
+	return verbs.Checkout{Dir: w.handle.Root, Branch: w.handle.Branch, Signer: w.signer, Token: w.token}, nil
 }
 
 // open installs the record and the handle and starts the socket: the half
 // Create and Attach share.
-func (w *Workspace) open(record *Record, spec workspace.Spec) (*workspace.Handle, error) {
+func (w *Workspace) open(ctx context.Context, record *Record, spec workspace.Spec) (*workspace.Handle, error) {
+	if err := w.arrangeSigner(ctx); err != nil {
+		return nil, err
+	}
 	handle := &workspace.Handle{
 		RunID:   spec.RunID,
 		Kind:    workspace.KindMachine,
@@ -548,34 +579,58 @@ func (w *Workspace) Installs() []workspace.Install {
 	return installs
 }
 
-// Committer is the identity the workspace's commits carry.
+// Committer is the identity every commit this workspace makes carries: the
+// signing key's name and address once one is arranged, the configuration's
+// until then.
 func (w *Workspace) Committer() workspace.Committer {
+	w.mu.RLock()
+	signer := w.signer
+	w.mu.RUnlock()
+	if signer != nil {
+		return workspace.Committer{Name: signer.Name, Email: signer.Identity}
+	}
 	return workspace.Committer{Name: w.config.Name, Email: w.config.Identity}
+}
+
+// SigningKey is the key commits are signed with, so a deployment can
+// publish its allowed_signers line. Nil before Create or Attach.
+func (w *Workspace) SigningKey() *signing.Key {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.signer
 }
 
 // Environment is what a process the workspace or its harness spawns must
 // run under: the route to the world and to the model the machine decided
-// (workspace.Egress), with the step token as the gateway's bearer. A
-// machine's git identity is the exec node's to decide, because the
-// session's git runs inside the machine where no host path reaches.
+// (workspace.Egress), with the step token as the gateway's bearer, and the
+// mill's identity as git's author and committer. The four identity
+// variables are what a session's own `git commit` inside the machine is
+// attributed by — no host path reaches inside, so there is no
+// configuration file to point it at — and they carry no key: such a commit
+// is unsigned, and the push verb refuses it (docs/sandbox.md §Verbs).
 func (w *Workspace) Environment() map[string]string {
 	w.mu.RLock()
 	token, egress := w.token, w.egress
 	w.mu.RUnlock()
-	return egress.Environment(token.Value)
+	identity := w.Committer()
+	env := map[string]string{
+		"GIT_AUTHOR_NAME":     identity.Name,
+		"GIT_AUTHOR_EMAIL":    identity.Email,
+		"GIT_COMMITTER_NAME":  identity.Name,
+		"GIT_COMMITTER_EMAIL": identity.Email,
+	}
+	for name, value := range egress.Environment(token.Value) {
+		env[name] = value
+	}
+	return env
 }
 
 // Redact registers values the workspace scrubs from every log line.
 func (w *Workspace) Redact(values ...string) { w.redactor.Add(values...) }
 
-// GitRunner runs git in the checkout on the host, through the chokepoint.
-func (w *Workspace) GitRunner() forge.Git {
-	handle := w.snapshot()
-	if handle == nil {
-		return gitRunner{w: w}
-	}
-	return gitRunner{w: w, dir: handle.Root}
-}
+// GitRunner runs git in the checkout on the host, through the chokepoint:
+// what the `commit` verifier asks about the repository.
+func (w *Workspace) GitRunner() forge.Git { return w.verbs.Runner() }
 
 // Candidate snapshots the run's cache copies as the promotion candidate of
 // an evidence-closed step (workspace.CacheCandidate).
@@ -636,11 +691,18 @@ func (w *Workspace) List(_ context.Context, path string) ([]workspace.Entry, err
 	return entries, nil
 }
 
-// Git is the git verbs, not built.
-func (w *Workspace) Git() workspace.Git { return gitVerbs{} }
+// Git is the git verbs: run on the host against the run's workspace
+// directory, with the mill's identity and signing key, exactly as the local
+// backend runs them against its checkout. The bind is idmapped, so what a
+// session wrote as `agent` is the worker's to stage and commit here, and
+// nothing about git enters the machine (docs/sandbox.md §Verbs).
+func (w *Workspace) Git() workspace.Git { return w.verbs.Git() }
 
-// Forge is the forge verbs, not built.
-func (w *Workspace) Forge() workspace.ForgeVerbs { return forgeVerbs{} }
+// Forge is the forge verbs, on the host with the worker's forge credential,
+// bound to the step whose token the workspace currently holds. The
+// credential never enters the machine: a session's own `git push` inside
+// has none and fails, by design (docs/sandbox.md §Verbs).
+func (w *Workspace) Forge() workspace.ForgeVerbs { return w.verbs.ForgeVerbs() }
 
 // snapshot is the handle, copied.
 func (w *Workspace) snapshot() *workspace.Handle {
@@ -705,38 +767,6 @@ func (w *Workspace) resolve(path string) (string, error) {
 // within reports whether path is root or below it.
 func within(root, path string) bool {
 	return path == root || strings.HasPrefix(path, root+string(filepath.Separator))
-}
-
-type gitVerbs struct{}
-
-func (gitVerbs) Status(context.Context) (workspace.Status, error) {
-	return workspace.Status{}, notBuilt("git.status")
-}
-
-func (gitVerbs) Diff(context.Context, workspace.DiffRequest) (string, error) {
-	return "", notBuilt("git.diff")
-}
-
-func (gitVerbs) Log(context.Context, workspace.LogRequest) ([]workspace.CommitInfo, error) {
-	return nil, notBuilt("git.log")
-}
-
-func (gitVerbs) Commit(context.Context, workspace.CommitRequest) (workspace.CommitInfo, error) {
-	return workspace.CommitInfo{}, notBuilt("git.commit")
-}
-
-type forgeVerbs struct{}
-
-func (forgeVerbs) Push(context.Context, workspace.PushRequest) (workspace.PushResult, error) {
-	return workspace.PushResult{}, notBuilt("git.push")
-}
-
-func (forgeVerbs) PR(context.Context, workspace.PRRequest) (forge.PullRequest, error) {
-	return forge.PullRequest{}, notBuilt("forge.pr")
-}
-
-func (forgeVerbs) Checks(context.Context, workspace.ChecksRequest) (workspace.ChecksResult, error) {
-	return workspace.ChecksResult{}, notBuilt("forge.checks")
 }
 
 // The workspace satisfies the interfaces the run loop wants of one.

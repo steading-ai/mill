@@ -18,7 +18,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -27,6 +26,7 @@ import (
 	"github.com/ivy/mill/internal/workspace/redact"
 	"github.com/ivy/mill/internal/workspace/signing"
 	"github.com/ivy/mill/internal/workspace/socket"
+	"github.com/ivy/mill/internal/workspace/verbs"
 )
 
 // Names inside a run's directory. The socket and the signing material sit
@@ -109,6 +109,7 @@ type Workspace struct {
 	options  Options
 	redactor *redact.Redactor
 	execer   workspace.Execer
+	verbs    verbs.Verbs
 	server   *socket.Server
 
 	mu        sync.RWMutex
@@ -118,12 +119,6 @@ type Workspace struct {
 	gitConfig string
 	egress    workspace.Egress
 }
-
-// keyMu serialises generating the mill's signing key, which every workspace
-// under one Root shares. Two runs starting at once would otherwise race to
-// write it. Workers on the same host in different processes are not a case
-// MVP has: one mill runs per account.
-var keyMu sync.Mutex
 
 // New returns a workspace for one run. Nothing exists on disk until Create.
 func New(options Options) *Workspace {
@@ -144,8 +139,26 @@ func New(options Options) *Workspace {
 	if w.options.Identity == "" {
 		w.options.Identity = "mill@localhost"
 	}
+	w.verbs = verbs.Verbs{
+		Host:     verbs.Host{Git: options.Git, Execer: w.execer, Redactor: w.redactor},
+		Forge:    options.Forge,
+		Checkout: w.checkout,
+	}
 	w.server = socket.New(w, socket.WithLog(options.Log, w.redactor))
 	return w
+}
+
+// checkout is the run's checkout as the verbs see it at each call: the
+// clone, the run's branch, the mill's key and the live step token. It is
+// what makes the verbs the same code on every backend
+// (internal/workspace/verbs).
+func (w *Workspace) checkout() (verbs.Checkout, error) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if w.handle == nil {
+		return verbs.Checkout{}, ErrNotCreated
+	}
+	return verbs.Checkout{Dir: w.handle.Root, Branch: w.handle.Branch, Signer: w.signer, Token: w.token}, nil
 }
 
 // Create makes the run's workspace: its own directory under Root, readable by
@@ -185,7 +198,7 @@ func (w *Workspace) Create(ctx context.Context, spec workspace.Spec) (*workspace
 	// The clone carries the forge's credential, because a private
 	// repository refuses an anonymous read and a run that cannot clone
 	// never starts.
-	auth, err := w.originAuth(ctx, origin)
+	auth, err := w.verbs.OriginAuth(ctx, origin)
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		return nil, err
@@ -197,7 +210,7 @@ func (w *Workspace) Create(ctx context.Context, spec workspace.Spec) (*workspace
 		clone = append(clone, "--branch", spec.Ref)
 	}
 	clone = append(clone, origin, filepath.Join(dir, checkoutDir))
-	if _, err := w.gitWith(ctx, w.options.Root, auth.Env, clone...); err != nil {
+	if _, err := w.verbs.Host.Run(ctx, w.options.Root, auth.Env, clone...); err != nil {
 		_ = os.RemoveAll(dir)
 		return nil, err
 	}
@@ -225,7 +238,7 @@ func (w *Workspace) Attach(ctx context.Context, spec workspace.Spec) (*workspace
 func (w *Workspace) open(ctx context.Context, dir string, spec workspace.Spec) (*workspace.Handle, error) {
 	branch := workspace.BranchFor(spec.NodeRef)
 	checkout := filepath.Join(dir, checkoutDir)
-	current, err := w.branchOf(ctx, checkout)
+	current, err := w.verbs.Host.BranchOf(ctx, checkout)
 	if err != nil {
 		return nil, err
 	}
@@ -282,8 +295,6 @@ func (w *Workspace) arrangeSigner(ctx context.Context) error {
 	if signer != nil {
 		return nil
 	}
-	keyMu.Lock()
-	defer keyMu.Unlock()
 	key, err := signing.Generate(ctx, w.execer, filepath.Join(w.options.Root, signingDir), w.options.Name, w.options.Identity)
 	if err != nil {
 		return err
@@ -560,7 +571,18 @@ func (w *Workspace) List(_ context.Context, path string) ([]workspace.Entry, err
 
 // Git is the git verbs, run against this checkout with the mill's identity
 // and signing key.
-func (w *Workspace) Git() workspace.Git { return gitVerbs{w: w} }
+func (w *Workspace) Git() workspace.Git { return w.verbs.Git() }
+
+// Forge is the forge verbs, bound to the step whose token the workspace
+// currently holds.
+func (w *Workspace) Forge() workspace.ForgeVerbs { return w.verbs.ForgeVerbs() }
+
+// GitRunner runs git in the run's checkout through the same chokepoint the
+// forge uses. The `commit` verifier needs it — asking git whether an object
+// exists and whether it is on the run's branch is a fact about the
+// repository, not about the session — and the run loop is what wires the two
+// together (internal/evidence.Git).
+func (w *Workspace) GitRunner() forge.Git { return w.verbs.Runner() }
 
 // Committer is the identity every commit this workspace makes carries. It is
 // read from the signing key when one is arranged, because that key's name and
@@ -649,239 +671,11 @@ func within(root, path string) bool {
 	return strings.HasPrefix(path, root+string(filepath.Separator))
 }
 
-// git runs one git command and returns its standard output. Its environment
-// is the workspace's, not the mill's: no global or system config is read, no
-// terminal prompt can block it, and the identity is the mill's own.
+// git runs one git command against dir and returns its standard output,
+// through the verbs' host git: the inspector's read of a checkout no run
+// holds.
 func (w *Workspace) git(ctx context.Context, dir string, args ...string) (string, error) {
-	return w.gitWith(ctx, dir, nil, args...)
-}
-
-// gitWith runs git with extra environment on top of the workspace's own. A
-// credential reaches git through that environment and a credential helper, so
-// it appears in neither the remote URL nor argv (docs/architecture.md
-// §"Identity and credentials"). The clone and the forge's own commands are
-// its callers.
-func (w *Workspace) gitWith(ctx context.Context, dir string, extra map[string]string, args ...string) (string, error) {
-	binary := w.options.Git
-	if binary == "" {
-		binary = "git"
-	}
-	verb := gitVerb(args)
-	env := w.gitEnv(dir)
-	for name, value := range extra {
-		env[name] = value
-	}
-	process, err := w.execer.Exec(ctx, workspace.Command{
-		Path: binary,
-		Args: args,
-		Dir:  dir,
-		Env:  env,
-	})
-	if err != nil {
-		return "", fmt.Errorf("workspace: git %s: %w", verb, err)
-	}
-	_ = process.Stdin.Close()
-	var stderr []byte
-	var stderrErr error
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		stderr, stderrErr = io.ReadAll(process.Stderr)
-	}()
-	stdout, stdoutErr := io.ReadAll(process.Stdout)
-	<-done
-	result := process.Wait()
-	if stdoutErr != nil {
-		return "", fmt.Errorf("workspace: git %s: %w", verb, stdoutErr)
-	}
-	if stderrErr != nil {
-		return "", fmt.Errorf("workspace: git %s: %w", verb, stderrErr)
-	}
-	if result.Status != 0 {
-		return string(stdout), fmt.Errorf("workspace: git %s exited %d: %s",
-			verb, result.Status, w.redactor.String(strings.TrimSpace(string(stderr))))
-	}
-	return string(stdout), nil
-}
-
-// gitVerb is the subcommand in a git invocation, for naming it in an error.
-// It is not args[0] whenever the command carries a credential helper, which
-// arrives as git's own `-c` options ahead of the subcommand.
-func gitVerb(args []string) string {
-	for index := 0; index < len(args); index++ {
-		switch args[index] {
-		case "-c", "--config-env":
-			index++
-		default:
-			if strings.HasPrefix(args[index], "-") {
-				continue
-			}
-			return args[index]
-		}
-	}
-	return "git"
-}
-
-// gitEnv is what git and everything it spawns — ssh-keygen for a signature,
-// above all — is given. HOME points inside the workspace so nothing of the
-// operator's own configuration is read.
-func (w *Workspace) gitEnv(dir string) map[string]string {
-	home := dir
-	if handle := w.snapshot(); handle != nil {
-		home = filepath.Dir(handle.Root)
-	}
-	return map[string]string{
-		"PATH":                os.Getenv("PATH"),
-		"HOME":                home,
-		"GIT_CONFIG_GLOBAL":   os.DevNull,
-		"GIT_CONFIG_SYSTEM":   os.DevNull,
-		"GIT_TERMINAL_PROMPT": "0",
-		"GIT_ASKPASS":         "true",
-		"LC_ALL":              "C",
-	}
-}
-
-// branchOf is the branch a checkout is on, empty when it is detached.
-func (w *Workspace) branchOf(ctx context.Context, checkout string) (string, error) {
-	out, err := w.git(ctx, checkout, "branch", "--show-current")
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(out), nil
-}
-
-// config is the identity and signing arguments every git invocation that
-// writes history carries.
-func (w *Workspace) config() []string {
-	w.mu.RLock()
-	signer := w.signer
-	w.mu.RUnlock()
-	return signer.GitConfig()
-}
-
-// gitVerbs implements workspace.Git against the run's checkout.
-type gitVerbs struct{ w *Workspace }
-
-// Status reports the branch and every path git sees as changed.
-func (g gitVerbs) Status(ctx context.Context) (workspace.Status, error) {
-	handle := g.w.snapshot()
-	if handle == nil {
-		return workspace.Status{}, ErrNotCreated
-	}
-	out, err := g.w.git(ctx, handle.Root, "status", "--porcelain=v1")
-	if err != nil {
-		return workspace.Status{}, err
-	}
-	status := workspace.Status{Branch: handle.Branch, Clean: true}
-	for _, line := range strings.Split(out, "\n") {
-		if len(line) < 4 {
-			continue
-		}
-		status.Clean = false
-		status.Files = append(status.Files, workspace.FileStatus{Code: line[:2], Path: strings.TrimSpace(line[3:])})
-	}
-	return status, nil
-}
-
-// Diff renders a unified diff of the working tree, or of the index.
-func (g gitVerbs) Diff(ctx context.Context, request workspace.DiffRequest) (string, error) {
-	handle := g.w.snapshot()
-	if handle == nil {
-		return "", ErrNotCreated
-	}
-	args := []string{"diff"}
-	if request.Staged {
-		args = append(args, "--staged")
-	}
-	args = append(args, pathspec(request.Paths)...)
-	return g.w.git(ctx, handle.Root, args...)
-}
-
-// logFormat separates a commit's fields with the unit separator, which no
-// field of a commit can contain.
-const logFormat = "--format=%H%x1f%an <%ae>%x1f%aI%x1f%s"
-
-// Log reads the branch's history, newest first.
-func (g gitVerbs) Log(ctx context.Context, request workspace.LogRequest) ([]workspace.CommitInfo, error) {
-	handle := g.w.snapshot()
-	if handle == nil {
-		return nil, ErrNotCreated
-	}
-	limit := request.Limit
-	if limit <= 0 {
-		limit = 20
-	}
-	args := append([]string{"log", "-n", strconv.Itoa(limit), logFormat}, pathspec(request.Paths)...)
-	out, err := g.w.git(ctx, handle.Root, args...)
-	if err != nil {
-		return nil, err
-	}
-	var commits []workspace.CommitInfo
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		fields := strings.Split(line, "\x1f")
-		if len(fields) != 4 {
-			continue
-		}
-		commits = append(commits, workspace.CommitInfo{SHA: fields[0], Author: fields[1], Date: fields[2], Subject: fields[3]})
-	}
-	return commits, nil
-}
-
-// Commit stages and commits on the run's branch, signed with the mill's key.
-// A checkout that has wandered off the run's branch is refused rather than
-// committed to: the branch is the run's whole claim on the repository.
-func (g gitVerbs) Commit(ctx context.Context, request workspace.CommitRequest) (workspace.CommitInfo, error) {
-	handle := g.w.snapshot()
-	if handle == nil {
-		return workspace.CommitInfo{}, ErrNotCreated
-	}
-	if request.Message == "" {
-		return workspace.CommitInfo{}, errors.New("workspace: a commit needs a message")
-	}
-	current, err := g.w.branchOf(ctx, handle.Root)
-	if err != nil {
-		return workspace.CommitInfo{}, err
-	}
-	if current != handle.Branch {
-		return workspace.CommitInfo{}, fmt.Errorf("workspace: checkout is on %q, not the run's branch %q", current, handle.Branch)
-	}
-
-	add := append([]string{"add", "--all", "--"}, request.Paths...)
-	if len(request.Paths) == 0 {
-		add = []string{"add", "--all", "."}
-	}
-	if _, err := g.w.git(ctx, handle.Root, add...); err != nil {
-		return workspace.CommitInfo{}, err
-	}
-
-	commit := append(g.w.config(), "commit", "--message", request.Message)
-	if request.AllowEmpty {
-		commit = append(commit, "--allow-empty")
-	}
-	if len(request.Paths) > 0 {
-		commit = append(commit, pathspec(request.Paths)...)
-	}
-	if _, err := g.w.git(ctx, handle.Root, commit...); err != nil {
-		return workspace.CommitInfo{}, err
-	}
-
-	out, err := g.w.git(ctx, handle.Root, "log", "-n", "1", logFormat)
-	if err != nil {
-		return workspace.CommitInfo{}, err
-	}
-	fields := strings.Split(strings.TrimSpace(out), "\x1f")
-	if len(fields) != 4 {
-		return workspace.CommitInfo{}, fmt.Errorf("workspace: unreadable commit record %q", out)
-	}
-	return workspace.CommitInfo{SHA: fields[0], Author: fields[1], Date: fields[2], Subject: fields[3]}, nil
-}
-
-// pathspec renders paths as git's `-- <path>…`, or nothing.
-func pathspec(paths []string) []string {
-	if len(paths) == 0 {
-		return nil
-	}
-	return append([]string{"--"}, paths...)
+	return w.verbs.Host.Run(ctx, dir, nil, args...)
 }
 
 // Workspace is the interface this implements; a compile-time check, because

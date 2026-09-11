@@ -137,7 +137,7 @@ func (i *Inspector) Inspect(ctx context.Context, runID string) (*Info, error) {
 
 // readGit fills in the branch, the head and whether the tree is clean.
 func (i *Inspector) readGit(ctx context.Context, info *Info) error {
-	branch, err := i.w.branchOf(ctx, info.Checkout)
+	branch, err := i.w.verbs.Host.BranchOf(ctx, info.Checkout)
 	if err != nil {
 		return err
 	}

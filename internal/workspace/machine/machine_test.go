@@ -570,15 +570,6 @@ var _ = Describe("The machine workspace", Label("unit"), func() {
 		Expect(f.host.CallsTo(driver.StartUnit)).To(BeEmpty())
 	})
 
-	It("answers the session's git and forge verbs with ErrNotBuilt naming the node that builds them", func(ctx context.Context) {
-		ws := f.workspace()
-		_, err := ws.Git().Status(ctx)
-		Expect(err).To(MatchError(machine.ErrNotBuilt))
-		Expect(err).To(MatchError(ContainSubstring(machine.VerbsNode)))
-		_, err = ws.Forge().Push(ctx, workspace.PushRequest{})
-		Expect(err).To(MatchError(machine.ErrNotBuilt))
-	})
-
 	It("refuses a second Create for a run directory that is already there", func(ctx context.Context) {
 		ws := f.workspace()
 		_, err := ws.Create(ctx, spec)
