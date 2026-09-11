@@ -272,15 +272,13 @@ def scope_epic(dg, epic_ref, label):
 
 
 def predecessors(dg, node, by_id):
-    """Done nodes that block this one, oldest first. Their results are inputs."""
-    shown = dg.show(dg.ref(node))
+    """Results of the done nodes that block this one, oldest first, from dagger's
+    own `inputs` — which crosses projects. A lookup over this project's node list
+    misses a blocker filed in another project and drops its result silently."""
     out = []
-    for edge in shown.get("edges", []):
-        if edge.get("to") != node["id"] or not is_(edge.get("kind"), "EDGE_KIND_", "blocks"):
-            continue
-        pred = by_id.get(edge["from"])
-        if pred and is_(pred["status"], "STATUS_", "done"):
-            out.append(dg.show(dg.ref(pred)))
+    for item in dg.run("inputs", dg.ref(node)).get("inputs", []):
+        if item.get("result"):
+            out.append({"node": item["node"], "result": item["result"]})
     return sorted(out, key=lambda s: int(s["node"]["number"]))
 
 
@@ -307,7 +305,7 @@ def work_order_text(dg, node, by_id):
         for shown in preds:
             p = shown["node"]
             result = (shown.get("result") or {}).get("body")
-            w(f"\n## {dg.ref(p)}: {p['title']}\n\n")
+            w(f"\n## {p.get('reference') or dg.ref(p)}: {p['title']}\n\n")  # its own project, not ours
             w((result or "(completed with no result body)").rstrip() + "\n")
     return buf.getvalue()
 
