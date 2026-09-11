@@ -1,0 +1,5 @@
+# Keys trusted to sign commits in this project, in OpenSSH allowed_signers
+# format (ssh-keygen(1) §ALLOWED SIGNERS). Verify a commit with
+#   git -c gpg.format=ssh -c gpg.ssh.allowedSignersFile=allowed_signers verify-commit <sha>
+# mill doctor's `signing` probe looks for the deployed mill's key here.
+mill@ivyevans.net namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILGSmo1B/59KOB3chcnPKXfOp4e5LLwAK83+M984Yv0z
