@@ -67,14 +67,20 @@ type Config struct {
 	// The machine backend's host facts (docs/sandbox.md §Provision,
 	// §Network, §"Skill mount"): the worker's skill directory bound
 	// read-only into every machine, the run-state directory the socket
-	// directories are made under, the proxy every machine leaves through
-	// and what bypasses it, and the origins whose `[machine].nested`
-	// request is granted. Each has the default homestead fixes on `core`.
-	SkillDir    string   `yaml:"skill-dir"`
-	RunStateDir string   `yaml:"run-state-dir"`
-	Proxy       string   `yaml:"proxy"`
-	NoProxy     string   `yaml:"no-proxy"`
-	Nested      []string `yaml:"nested"`
+	// directories are made under, and the proxy every machine leaves
+	// through and what bypasses it. Each has the default homestead fixes
+	// on `core`.
+	SkillDir    string `yaml:"skill-dir"`
+	RunStateDir string `yaml:"run-state-dir"`
+	Proxy       string `yaml:"proxy"`
+	NoProxy     string `yaml:"no-proxy"`
+	// Nesting (docs/sandbox.md §Self-hosting): the repositories whose
+	// `[machine].nested` request is granted, each by its path on the forge
+	// (`wellspring/mill`) or its origin URL, and the dagger checkout a
+	// nested machine gets bound read-only for its test fixture. Spelled
+	// with underscores the way env_mode is: a deployment writes them.
+	NestedRepos    []string `yaml:"nested_repos"`
+	DaggerCheckout string   `yaml:"dagger_checkout"`
 	// The reconciliation sweep (docs/sandbox.md §"External state"): the
 	// forge group the acceptance suite makes its scratch projects in, by
 	// path or numeric id, and how old a scratch project must be before the

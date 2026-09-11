@@ -386,9 +386,12 @@ file's `workspace`, else `local` — the same way a run chooses it
 (docs/architecture.md §"The workspace"). Under `local` there is nothing to
 probe beyond naming it. Under `machine` it asks what filesystem the sandbox
 root is on — `--sandbox-root`, else the file's `sandbox-root`, else
-`/var/lib/mill` — and fails naming the filesystem it found when that is not
-btrfs, because ephemeral roots, cache lineages and eviction are all subvolume
-operations (docs/sandbox.md §Storage):
+`/var/lib/mill`, or `/home/agent/mill` when `systemd-detect-virt --container`
+says the worker is itself inside a machine (docs/sandbox.md §Self-hosting;
+`run`, `work` and `cache ls` default the same way) — and fails naming the
+filesystem it found when that is not btrfs, because ephemeral roots, cache
+lineages and eviction are all subvolume operations (docs/sandbox.md
+§Storage):
 
 ```
 fail  workspace  machine: sandbox root /var/lib/mill is xfs, not btrfs (docs/sandbox.md §Storage)
@@ -587,6 +590,9 @@ DIGEST        BASE          PACKAGES                BUILT                 LAST B
 
 `base` in the second column is the base's own subvolume, the one a run
 boots when its repository declares no packages or its derived build failed.
+`+nested` after a package list marks the nested variant (docs/sandbox.md
+§"Derived images"): the same packages with `agent`'s sudo baked in, a
+subvolume of its own.
 The listing is the worker's records under `<sandbox-root>/images`, each
 checked against the subvolume it names; a record whose subvolume is gone is
 not shown. The subvolume directory is root's, so the check goes through

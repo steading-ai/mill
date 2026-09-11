@@ -2,6 +2,7 @@ package machine_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -468,17 +469,35 @@ var _ = Describe("The machine workspace", Label("unit"), func() {
 		Expect(strings.TrimSpace(out)).To(Equal("mill/mill-61"))
 	})
 
-	It("records what the first session is told: an invalid mill.toml and an ungranted nested request", func(ctx context.Context) {
+	// Scenario: nested is a request the worker grants
+	//   Given mill.toml requests nested and worker config does not grant it
+	//   When the run is provisioned
+	//   Then the machine is provisioned without nested
+	//   And the first session receives a finding
+	It("nested is a request the worker grants", func(ctx context.Context) {
+		By("given mill.toml requests nested and worker config does not grant it")
 		f = newFixture(origin(map[string]string{"mill.toml": "[machine]\nnested = true\n[cache.bad]\npath = \"/etc\"\n"}))
 		spec.Origin = f.config.Origin
+		f.config.NestedRepos = []string{"wellspring/other"}
 		ws := f.workspace()
+
+		By("when the run is provisioned")
 		_, err := ws.Create(ctx, spec)
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func(ctx context.Context) { _ = ws.Destroy(ctx) })
 
-		Expect(ws.Findings()).To(ContainElement(ContainSubstring("cache.bad.path")))
-		Expect(ws.Findings()).To(ContainElement(ContainSubstring("machine.nested")))
-		Expect(f.manifest().Nested).To(BeFalse())
+		By("then the machine is provisioned without nested")
+		m := f.manifest()
+		Expect(m.Nested).To(BeFalse())
+		Expect(m.Binds).NotTo(ContainElement(HaveField("Target", "/var/lib/machines")))
+		Expect(m.Binds).NotTo(ContainElement(HaveField("Target", machine.DaggerCheckoutTarget)))
+		Expect(m.Image).To(Equal(string(base)), "the flat image, not the nested variant")
+
+		By("and the first session receives a finding, beside mill.toml's other findings")
+		var provisioned workspace.Provisioned = ws
+		Expect(provisioned.Findings()).To(ContainElement(SatisfyAll(
+			ContainSubstring("machine.nested"), ContainSubstring("not granted"), ContainSubstring("nested_repos"))))
+		Expect(provisioned.Findings()).To(ContainElement(ContainSubstring("cache.bad.path")))
 	})
 
 	It("holds the shim's report of an install until the loop drains it, and refuses one naming nothing", func(ctx context.Context) {
@@ -494,19 +513,61 @@ var _ = Describe("The machine workspace", Label("unit"), func() {
 		Expect(ws.Installs()).To(BeEmpty(), "handed over once")
 	})
 
-	It("grants nested to a listed origin and binds the host's images read-only for it", func(ctx context.Context) {
+	It("grants nested to a listed repository: machine.json gains nested, the two read-only binds and the nested image, and nothing else differs", func(ctx context.Context) {
+		f = newFixture(origin(map[string]string{"mill.toml": "[machine]\nnested = true\n[image]\npackages = [\"libpq-devel\"]\n"}))
+		spec.Origin = f.config.Origin
+		f.config.DaggerCheckout = filepath.Join(f.root, "dagger")
+		Expect(os.MkdirAll(f.config.DaggerCheckout, 0o755)).To(Succeed())
+		provision := func(granted bool) map[string]any {
+			GinkgoHelper()
+			ws := f.workspace()
+			_, err := ws.Create(ctx, spec)
+			Expect(err).NotTo(HaveOccurred())
+			raw, err := os.ReadFile(filepath.Join(f.runDir(), machine.ManifestName))
+			Expect(err).NotTo(HaveOccurred())
+			if granted {
+				Expect(ws.Findings()).To(BeEmpty())
+			} else {
+				Expect(ws.Findings()).To(ConsistOf(ContainSubstring("machine.nested")))
+			}
+			Expect(ws.Destroy(ctx)).To(Succeed())
+			var doc map[string]any
+			Expect(json.Unmarshal(raw, &doc)).To(Succeed())
+			return doc
+		}
+
+		By("provisioning the same run ungranted and then granted by its repository path")
+		ungranted := provision(false)
+		f.config.NestedRepos = []string{"/" + strings.TrimPrefix(f.config.Origin, "/")}
+		granted := provision(true)
+
+		By("then the diff of the two machine.json documents is nested, the two binds, and the nested variant of the image")
+		Expect(ungranted["nested"]).To(BeFalse())
+		Expect(granted["nested"]).To(BeTrue())
+		flat := image.Derived(base, []string{"libpq-devel"})
+		Expect(ungranted["image"]).To(Equal(string(flat)))
+		Expect(granted["image"]).To(Equal(string(image.Derived(base, []string{"libpq-devel"}, image.Nested))),
+			"the nested variant of the same packages: sudo for agent is baked, not bound")
+		Expect(granted["limits"]).To(Equal(ungranted["limits"]))
+		Expect(granted["binds"]).To(Equal(append(ungranted["binds"].([]any),
+			map[string]any{"source": f.machines, "target": "/var/lib/machines", "readonly": true},
+			map[string]any{"source": f.config.DaggerCheckout, "target": machine.DaggerCheckoutTarget, "readonly": true},
+		)), "the ungranted binds in order, then the two read-only nested binds")
+		for key := range granted {
+			Expect([]string{"image", "binds", "limits", "nested"}).To(ContainElement(key), "no key beyond the helper's schema")
+		}
+		Expect(f.host.CallsTo(driver.BuildImageOnHost)).To(HaveLen(2), "one flat build, one nested build")
+	})
+
+	It("refuses a nested provision whose dagger checkout is not there, before the unit starts", func(ctx context.Context) {
 		f = newFixture(origin(map[string]string{"mill.toml": "[machine]\nnested = true\n"}))
 		spec.Origin = f.config.Origin
-		f.config.Nested = []string{f.config.Origin}
+		f.config.NestedRepos = []string{f.config.Origin}
+		f.config.DaggerCheckout = filepath.Join(f.root, "dagger")
 		ws := f.workspace()
 		_, err := ws.Create(ctx, spec)
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func(ctx context.Context) { _ = ws.Destroy(ctx) })
-
-		m := f.manifest()
-		Expect(m.Nested).To(BeTrue())
-		Expect(m.Binds).To(ContainElement(machine.Bind{Source: f.machines, Target: "/var/lib/machines", ReadOnly: true}))
-		Expect(ws.Findings()).To(BeEmpty())
+		Expect(err).To(MatchError(ContainSubstring("dagger")))
+		Expect(f.host.CallsTo(driver.StartUnit)).To(BeEmpty())
 	})
 
 	It("answers the session's git and forge verbs with ErrNotBuilt naming the node that builds them", func(ctx context.Context) {
@@ -586,10 +647,29 @@ var _ = Describe("Names and the preflight", Label("unit"), func() {
 		Expect(err).To(MatchError(ContainSubstring("homestead")))
 	})
 
+	It("Check refuses a sandbox root outside the ephemeral root for a worker inside a machine, and lets a host alone", func() {
+		f := newFixture(origin(nil))
+		f.host.Script(driver.Container, driver.ContainerNspawn)
+		f.config.Root = "/proc/mill"
+		err := machine.Check(f.host, f.config)
+		Expect(err).To(MatchError(driver.ErrOutsideEphemeralRoot))
+		Expect(f.host.CallsTo(driver.Statfs)).To(BeEmpty(), "refused before anything else is probed")
+
+		f.host.Script(driver.Container, "")
+		f.host.Script(driver.Statfs, driver.Filesystem{Type: driver.TypeBtrfs})
+		f.config.Root = f.root
+		Expect(machine.Check(f.host, f.config)).To(Succeed(), "a host's root is wherever it is configured")
+		Expect(machine.InsideMachine(context.Background(), f.host)).To(BeFalse())
+		f.host.Script(driver.Container, driver.ContainerNspawn)
+		Expect(machine.InsideMachine(context.Background(), f.host)).To(BeTrue())
+	})
+
 	It("takes the sandbox's default paths and network when none are configured", func() {
 		Expect(machine.DefaultRoot).To(Equal("/var/lib/mill"))
 		Expect(machine.DefaultMachines).To(Equal("/var/lib/machines"))
 		Expect(machine.DefaultRunState).To(Equal("/run/mill"))
+		Expect(machine.DefaultDaggerCheckout).To(Equal("/var/lib/mill/dagger"))
+		Expect(machine.NestedRoot).To(Equal("/home/agent/mill"))
 		Expect(machine.DefaultProxy).To(Equal("http://10.99.255.1:3128"))
 		Expect(machine.DefaultGateway).To(Equal("http://10.99.255.1:8080"))
 	})

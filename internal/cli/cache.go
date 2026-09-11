@@ -193,8 +193,8 @@ func cacheStore(cmd *cobra.Command, opts *cacheOptions) (*cache.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if config.SandboxRoot != "" && unset(cmd, "sandbox-root") {
-		opts.sandboxRoot = config.SandboxRoot
+	if err := resolveSandboxRoot(cmd, &opts.sandboxRoot, config.SandboxRoot); err != nil {
+		return nil, err
 	}
 	if config.CacheGlobalCap != "" && unset(cmd, "global-cap") {
 		opts.globalCap = config.CacheGlobalCap

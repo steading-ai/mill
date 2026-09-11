@@ -42,6 +42,17 @@ const (
 	DefaultRoot     = driver.DefaultRoot
 	DefaultMachines = driver.DefaultMachines
 	DefaultRunState = driver.DefaultRunState
+	// DefaultDaggerCheckout is where the host keeps the dagger checkout a
+	// nested machine's test fixture reads migrations from, bound read-only
+	// at [DaggerCheckoutTarget] (docs/sandbox.md §Testing, §Self-hosting).
+	// The helper's policy names it among the nested read-only sources.
+	DefaultDaggerCheckout = DefaultRoot + "/dagger"
+	// DaggerCheckoutTarget is where a nested machine sees it: the same
+	// path, so `MILL_DAGGER_REPO` reads alike inside and out.
+	DaggerCheckoutTarget = DefaultRoot + "/dagger"
+	// NestedRoot is the sandbox root of a worker inside a machine
+	// (docs/sandbox.md §Self-hosting).
+	NestedRoot = driver.NestedRoot
 )
 
 // The network the host's mill_egress role fixes for every machine
@@ -194,10 +205,14 @@ type Config struct {
 	// Limits are the unit's resource limits. Empty leaves the unit's
 	// defaults.
 	Limits Limits
-	// Nested lists the origins whose `[machine].nested` request is
-	// granted. An ungranted request is a finding (docs/sandbox.md
-	// §mill.toml).
-	Nested []string
+	// NestedRepos lists the repositories whose `[machine].nested` request
+	// is granted, each as its path on the forge (`wellspring/mill`) or as
+	// its origin URL. An ungranted request is a finding (docs/sandbox.md
+	// §mill.toml, §Self-hosting).
+	NestedRepos []string
+	// DaggerCheckout is the dagger checkout bound read-only into a nested
+	// machine; [DefaultDaggerCheckout] when empty.
+	DaggerCheckout string
 	// ReadyTimeout bounds readiness; [DefaultReadyTimeout] when zero.
 	ReadyTimeout time.Duration
 	// StopTimeout bounds the machine unit's stop; [DefaultStopTimeout]
@@ -219,6 +234,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.RunState == "" {
 		c.RunState = DefaultRunState
+	}
+	if c.DaggerCheckout == "" {
+		c.DaggerCheckout = DefaultDaggerCheckout
 	}
 	if c.Skill == "" {
 		if home, err := os.UserHomeDir(); err == nil {
@@ -274,13 +292,19 @@ func (c Config) runDir(id string) string { return filepath.Join(c.runsDir(), id)
 func (c Config) socketDir(id string) string { return filepath.Join(c.RunState, id) }
 
 // Check reports whether this worker could run the machine backend at all:
-// the sandbox root is btrfs, its runs directory and the run-state
+// the sandbox root is btrfs — and, for a worker inside a machine, under
+// the machine's own ephemeral root — its runs directory and the run-state
 // directory are the worker's to write, the skill directory is there, and a
 // run's socket path fits. It is asked before a node is claimed, so a worker
 // configured for machines refuses at start rather than after a claim it
 // cannot honour.
 func Check(host driver.Driver, c Config) error {
 	c = c.withDefaults()
+	if InsideMachine(context.Background(), host) {
+		if err := driver.CheckEphemeralRoot(c.Root); err != nil {
+			return err
+		}
+	}
 	fs, err := host.Statfs(c.Root)
 	if err != nil {
 		return err
@@ -301,6 +325,16 @@ func Check(host driver.Driver, c Config) error {
 		return fmt.Errorf("machine: skill directory %s is not a directory the machine can bind", c.Skill)
 	}
 	return socket.CheckPath(filepath.Join(c.socketDir(strings.Repeat("0", 26)), SocketName))
+}
+
+// InsideMachine is whether this worker runs inside a machine, as
+// `systemd-detect-virt --container` says. Such a worker is a nested one:
+// its sandbox root defaults to [NestedRoot] and may not leave the
+// ephemeral root (docs/sandbox.md §Self-hosting). A host that cannot
+// answer — no systemd — is not a machine.
+func InsideMachine(ctx context.Context, host driver.Driver) bool {
+	manager, err := host.Container(ctx)
+	return err == nil && manager == driver.ContainerNspawn
 }
 
 // writable is whether the worker may create entries in a directory.

@@ -438,8 +438,13 @@ var _ = Describe("A machine on a real host", Label("live"), Serial, Ordered, fun
 		Expect(err).NotTo(HaveOccurred())
 		out, _, res := drainProcess(bg)
 		Expect(res.Status).To(BeEquivalentTo(0), out)
+		// alpine has a sleep and every file root's; quay.io/podman/hello
+		// is one binary from scratch with no sleep, and busybox's tree
+		// has a uid past agent's 55536 subordinates. The pull goes
+		// through Harbor's proxy project as registries.conf routes
+		// docker.io.
 		container, err := ws.Exec(ctx, workspace.Command{Path: "/bin/sh", Args: []string{"-c",
-			"podman run -d --name lingering --entrypoint sleep quay.io/podman/hello 3600"}})
+			"podman run -d --name lingering docker.io/library/alpine sleep 3600"}})
 		Expect(err).NotTo(HaveOccurred())
 		cout, cerr, res := drainProcess(container)
 		Expect(res.Status).To(BeEquivalentTo(0), "podman run: %s%s", cout, cerr)

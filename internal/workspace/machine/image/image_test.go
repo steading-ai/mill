@@ -91,6 +91,15 @@ var _ = Describe("The derived digest", Label("unit"), func() {
 		Expect(image.Derived(other, []string{"libpq-devel"})).NotTo(Equal(one))
 	})
 
+	It("is its own digest for the nested variant, with or without packages", func() {
+		flat := image.Derived(baseA, []string{"libpq-devel"})
+		nested := image.Derived(baseA, []string{"libpq-devel"}, image.Nested)
+		Expect(nested).NotTo(Equal(flat), "a nested image and the flat image of the same packages are two subvolumes")
+		Expect(image.Derived(baseA, nil, image.Nested)).NotTo(Equal(baseA), "nested with no packages is still not the base")
+		Expect(image.Derived(baseA, image.NestedPackages, image.Nested)).To(Equal(image.Derived(baseA, nil, image.Nested)),
+			"the variant's own packages are part of the variant")
+	})
+
 	It("reads a digest with or without the sha256 prefix and refuses anything else", func() {
 		digest, err := image.ParseDigest("sha256:" + string(baseA))
 		Expect(err).NotTo(HaveOccurred())
@@ -139,6 +148,24 @@ var _ = Describe("Ensuring an image subvolume", Label("unit"), func() {
 		Expect(f.store.Path(digest) + image.BuildingSuffix).NotTo(BeAnExistingFile())
 	})
 
+	It("builds the nested variant with the sudoers line for agent, nspawn and btrfs-progs, and records it in the manifest", func(ctx context.Context) {
+		digest, finding, err := f.store.Ensure(ctx, baseA, []string{"libpq-devel"}, image.Nested)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(finding).To(BeNil())
+		Expect(digest).To(Equal(image.Derived(baseA, []string{"libpq-devel"}, image.Nested)))
+
+		Expect(f.store.Containerfile(baseA, []string{"btrfs-progs", "libpq-devel", "systemd-container"}, true)).To(Equal(
+			"FROM harbor.example/mill/base@sha256:" + string(baseA) + "\n" +
+				"RUN dnf install -y btrfs-progs libpq-devel systemd-container && dnf clean all\n" +
+				"RUN echo 'agent ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/agent-nested && chmod 0440 /etc/sudoers.d/agent-nested && visudo -cf /etc/sudoers.d/agent-nested\n"))
+		Expect(f.store.Containerfile(baseA, nil, false)).NotTo(ContainSubstring("sudoers"), "no other image carries the line")
+
+		manifest, err := f.store.Manifest(digest)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(manifest.Nested).To(BeTrue())
+		Expect(manifest.Packages).To(Equal([]string{"btrfs-progs", "libpq-devel", "systemd-container"}))
+	})
+
 	It("builds from a Containerfile pinning the base by digest and installing the packages, and exports with the capabilities restored", func(ctx context.Context) {
 		digest, finding, err := f.store.Ensure(ctx, baseA, []string{"vips-devel", "libpq-devel"})
 		Expect(err).NotTo(HaveOccurred())
@@ -147,10 +174,10 @@ var _ = Describe("Ensuring an image subvolume", Label("unit"), func() {
 		build := f.fake.CallsTo(driver.BuildImageOnHost)[0].Args[0].(driver.ImageBuild)
 		Expect(build.Containerfile).NotTo(BeAnExistingFile(), "the build context is temporary and gone")
 		Expect(build.Tags).To(ConsistOf("localhost/mill/derived:" + string(digest)))
-		Expect(f.store.Containerfile(baseA, []string{"libpq-devel", "vips-devel"})).To(Equal(
+		Expect(f.store.Containerfile(baseA, []string{"libpq-devel", "vips-devel"}, false)).To(Equal(
 			"FROM harbor.example/mill/base@sha256:" + string(baseA) + "\n" +
 				"RUN dnf install -y libpq-devel vips-devel && dnf clean all\n"))
-		Expect(f.store.Containerfile(baseA, nil)).To(Equal("FROM harbor.example/mill/base@sha256:" + string(baseA) + "\n"))
+		Expect(f.store.Containerfile(baseA, nil, false)).To(Equal("FROM harbor.example/mill/base@sha256:" + string(baseA) + "\n"))
 
 		building := f.store.Path(digest) + image.BuildingSuffix
 		Expect(f.fake.CallsTo(driver.CreateSubvolume)[0].Args).To(Equal([]any{building}))

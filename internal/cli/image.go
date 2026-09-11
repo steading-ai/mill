@@ -168,7 +168,7 @@ func runImageLs(cmd *cobra.Command, store *image.Store) error {
 	_, _ = fmt.Fprintln(w, "DIGEST\tBASE\tPACKAGES\tBUILT\tLAST BOOT")
 	for _, m := range manifests {
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-			m.Digest.Short(), baseText(m), packagesText(m.Packages),
+			m.Digest.Short(), baseText(m), packagesText(m.Packages)+variantText(m),
 			m.BuiltAt.UTC().Format(time.RFC3339), bootText(m))
 	}
 	return w.Flush()
@@ -187,6 +187,15 @@ func packagesText(packages []string) string {
 		return "-"
 	}
 	return strings.Join(packages, ",")
+}
+
+// variantText marks the nested variant in the packages column: the same
+// list built twice is two subvolumes (docs/sandbox.md §"Derived images").
+func variantText(m image.Manifest) string {
+	if m.Nested {
+		return " +nested"
+	}
+	return ""
 }
 
 func bootText(m image.Manifest) string {

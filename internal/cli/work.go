@@ -141,6 +141,9 @@ func applyConfig(cmd *cobra.Command, opts *workOptions, socket *string) error {
 	if config.Gateway && unset(cmd, "gateway") {
 		opts.run.gateway.enabled = true
 	}
+	if err := resolveSandboxRoot(cmd, &opts.run.sandboxRoot, config.SandboxRoot); err != nil {
+		return err
+	}
 	return applySandboxConfig(config, &opts.run.sandbox)
 }
 

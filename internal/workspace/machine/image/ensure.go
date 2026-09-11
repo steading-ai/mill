@@ -31,6 +31,8 @@ type Finding struct {
 	Base Digest
 	// Packages is the list that failed.
 	Packages []string
+	// Nested is whether the nested variant was being built.
+	Nested bool
 	// Stage is where it failed: `build` for podman build and dnf, `export`
 	// for the subvolume, the extraction, the capabilities or the rename.
 	Stage string
@@ -43,8 +45,12 @@ type Finding struct {
 
 func (f *Finding) String() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "the derived image for packages [%s] failed at %s (%v); the run boots from base %s.",
-		strings.Join(f.Packages, ", "), f.Stage, f.Err, f.Base.Short())
+	variant := ""
+	if f.Nested {
+		variant = " (nested variant)"
+	}
+	fmt.Fprintf(&b, "the derived image for packages [%s]%s failed at %s (%v); the run boots from base %s.",
+		strings.Join(f.Packages, ", "), variant, f.Stage, f.Err, f.Base.Short())
 	if f.Output != "" {
 		b.WriteString("\ndnf said:\n")
 		b.WriteString(f.Output)
@@ -52,19 +58,23 @@ func (f *Finding) String() string {
 	return b.String()
 }
 
-// Ensure is sequence step 5: the subvolume for base plus packages, built if
-// it is not there, under one lock per digest so that two runs of a
-// repository build it once and the second waits and finds it. What comes
-// back is the digest to boot — the derived one, or the base's when the
-// derived build failed, with the [Finding] that says why. The base
-// subvolume is ensured the same way when the fallback needs it; when the
-// base itself cannot be built there is nothing to boot and that is the
-// error.
-func (s *Store) Ensure(ctx context.Context, base Digest, packages []string) (Digest, *Finding, error) {
+// Ensure is sequence step 5: the subvolume for base plus packages — and
+// the [Nested] variant when a variant names it — built if it is not there,
+// under one lock per digest so that two runs of a repository build it once
+// and the second waits and finds it. What comes back is the digest to boot
+// — the derived one, or the base's when the derived build failed, with the
+// [Finding] that says why. The base subvolume is ensured the same way when
+// the fallback needs it; when the base itself cannot be built there is
+// nothing to boot and that is the error.
+func (s *Store) Ensure(ctx context.Context, base Digest, packages []string, variants ...Variant) (Digest, *Finding, error) {
+	nested := hasNested(variants)
 	packages = Packages(packages)
-	digest := Derived(base, packages)
+	if nested {
+		packages = Packages(append(packages, NestedPackages...))
+	}
+	digest := Derived(base, packages, variants...)
 
-	finding, err := s.ensureLocked(ctx, base, digest, packages)
+	finding, err := s.ensureLocked(ctx, base, digest, packages, nested)
 	if err != nil {
 		return "", nil, err
 	}
@@ -83,7 +93,7 @@ func (s *Store) Ensure(ctx context.Context, base Digest, packages []string) (Dig
 // ensureLocked takes the digest's lock, re-checks for the subvolume, and
 // builds it when it is missing. The finding is nil when the subvolume is
 // there by the end.
-func (s *Store) ensureLocked(ctx context.Context, base, digest Digest, packages []string) (*Finding, error) {
+func (s *Store) ensureLocked(ctx context.Context, base, digest Digest, packages []string, nested bool) (*Finding, error) {
 	unlock, err := s.lock(ctx, digest)
 	if err != nil {
 		return nil, err
@@ -97,7 +107,7 @@ func (s *Store) ensureLocked(ctx context.Context, base, digest Digest, packages 
 	if present {
 		return nil, nil
 	}
-	return s.buildOnHostOutsideAnyMachine(ctx, base, digest, packages), nil
+	return s.buildOnHostOutsideAnyMachine(ctx, base, digest, packages, nested), nil
 }
 
 // buildOnHostOutsideAnyMachine is the derived build: `podman build` on the
@@ -110,9 +120,9 @@ func (s *Store) ensureLocked(ctx context.Context, base, digest Digest, packages 
 //
 // Every failure is a [Finding] and leaves nothing behind: no `.building`,
 // no export container, no built image.
-func (s *Store) buildOnHostOutsideAnyMachine(ctx context.Context, base, digest Digest, packages []string) *Finding {
+func (s *Store) buildOnHostOutsideAnyMachine(ctx context.Context, base, digest Digest, packages []string, nested bool) *Finding {
 	fail := func(stage, output string, err error) *Finding {
-		return &Finding{Digest: digest, Base: base, Packages: packages, Stage: stage, Output: output, Err: err}
+		return &Finding{Digest: digest, Base: base, Packages: packages, Nested: nested, Stage: stage, Output: output, Err: err}
 	}
 
 	budget, cancel := context.WithTimeout(ctx, s.config.BuildBudget)
@@ -124,7 +134,7 @@ func (s *Store) buildOnHostOutsideAnyMachine(ctx context.Context, base, digest D
 	}
 	defer func() { _ = os.RemoveAll(contextDir) }()
 	containerfile := filepath.Join(contextDir, "Containerfile")
-	if err := os.WriteFile(containerfile, []byte(s.Containerfile(base, packages)), 0o600); err != nil {
+	if err := os.WriteFile(containerfile, []byte(s.Containerfile(base, packages, nested)), 0o600); err != nil {
 		return fail("build", "", err)
 	}
 
@@ -158,7 +168,7 @@ func (s *Store) buildOnHostOutsideAnyMachine(ctx context.Context, base, digest D
 			return fail("export", "", err)
 		}
 	}
-	if err := s.writeManifest(Manifest{Digest: digest, Base: base, Packages: packages, BuiltAt: s.config.Now()}); err != nil {
+	if err := s.writeManifest(Manifest{Digest: digest, Base: base, Packages: packages, Nested: nested, BuiltAt: s.config.Now()}); err != nil {
 		cleanup()
 		return fail("export", "", err)
 	}
@@ -170,13 +180,18 @@ func (s *Store) buildOnHostOutsideAnyMachine(ctx context.Context, base, digest D
 	return nil
 }
 
-// Containerfile is the derived image's recipe: the base by digest, and one
-// dnf transaction when there are packages. It is what the build is given.
-func (s *Store) Containerfile(base Digest, packages []string) string {
+// Containerfile is the derived image's recipe: the base by digest, one dnf
+// transaction when there are packages, and for the nested variant the
+// sudoers line that gives `agent` everything. It is what the build is
+// given.
+func (s *Store) Containerfile(base Digest, packages []string, nested bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "FROM %s\n", s.BaseReference(base))
 	if len(packages) > 0 {
 		fmt.Fprintf(&b, "RUN dnf install -y %s && dnf clean all\n", strings.Join(packages, " "))
+	}
+	if nested {
+		fmt.Fprintf(&b, "RUN echo 'agent ALL=(ALL) NOPASSWD: ALL' > %[1]s && chmod 0440 %[1]s && visudo -cf %[1]s\n", NestedSudoers)
 	}
 	return b.String()
 }

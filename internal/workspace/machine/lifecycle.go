@@ -14,6 +14,7 @@ import (
 	"github.com/ivy/mill/internal/workspace/machine/cache"
 	"github.com/ivy/mill/internal/workspace/machine/config"
 	"github.com/ivy/mill/internal/workspace/machine/driver"
+	"github.com/ivy/mill/internal/workspace/machine/image"
 	"github.com/ivy/mill/internal/workspace/socket"
 )
 
@@ -123,7 +124,7 @@ func (w *Workspace) create(ctx context.Context, spec workspace.Spec, record *Rec
 	nested := declared.Machine.Nested && w.nestedGranted(record.Origin)
 	if declared.Machine.Nested && !nested {
 		record.Findings = append(record.Findings,
-			"mill.toml: machine.nested: requested but not granted by worker configuration; the machine boots without a nested range")
+			"mill.toml: machine.nested: requested but not granted by worker configuration (nested_repos does not list this repository); the machine is provisioned without nested")
 	}
 	record.Nested = nested
 
@@ -136,7 +137,11 @@ func (w *Workspace) create(ctx context.Context, spec workspace.Spec, record *Rec
 	if base.Fallback {
 		record.Findings = append(record.Findings, "base image: "+base.Reason)
 	}
-	digest, buildFinding, err := w.images.Ensure(ctx, base.Digest, declared.Image.Packages)
+	var variants []image.Variant
+	if nested {
+		variants = append(variants, image.Nested)
+	}
+	digest, buildFinding, err := w.images.Ensure(ctx, base.Digest, declared.Image.Packages, variants...)
 	if err != nil {
 		return nil, err
 	}
@@ -171,6 +176,14 @@ func (w *Workspace) create(ctx context.Context, spec workspace.Spec, record *Rec
 	}
 	if err := os.MkdirAll(w.config.socketDir(id), 0o700); err != nil {
 		return nil, fmt.Errorf("machine: create %s: %w", w.config.socketDir(id), err)
+	}
+	if nested {
+		// The helper refuses a bind whose source is not there, in the
+		// unit's journal; the checkout is the worker's to see, so say it
+		// here with the key that names it.
+		if info, err := os.Stat(w.config.DaggerCheckout); err != nil || !info.IsDir() {
+			return nil, fmt.Errorf("machine: nested: dagger_checkout %s is not a directory to bind read-only at %s", w.config.DaggerCheckout, DaggerCheckoutTarget)
+		}
 	}
 	manifest := w.manifest(declared, id, string(digest), proxyFile, nested)
 	if err := manifest.Check(w.allowedBindRoots(id, nested)); err != nil {
@@ -227,10 +240,11 @@ func (w *Workspace) checkoutBranch(ctx context.Context, checkout string, spec wo
 }
 
 // nestedGranted is whether worker configuration grants nested to an
-// origin.
+// origin: `nested_repos` names it by its path on the forge or by its URL.
 func (w *Workspace) nestedGranted(origin string) bool {
-	for _, granted := range w.config.Nested {
-		if sameRepo(origin, granted) {
+	path := repoPath(origin)
+	for _, granted := range w.config.NestedRepos {
+		if sameRepo(origin, granted) || (path != "" && strings.EqualFold(path, repoPath(granted))) {
 			return true
 		}
 	}
@@ -266,7 +280,8 @@ func (w *Workspace) writeProxyFile(runDir string, egress workspace.Egress) (stri
 // workspace, the socket directory, the skill read-only, one per cache —
 // plus the proxy file read-only, and under nested the host's image
 // subvolumes read-only so an inner suite boots them rather than building
-// them.
+// them, and the dagger checkout read-only for its test fixture. Nothing
+// else differs between a nested and a flat provision.
 func (w *Workspace) manifest(declared config.Config, id, digest, proxyFile string, nested bool) Manifest {
 	binds := config.Binds(declared, config.Mounts{
 		Run:    w.config.runDir(id),
@@ -279,14 +294,17 @@ func (w *Workspace) manifest(declared config.Config, id, digest, proxyFile strin
 	}
 	m.Binds = append(m.Binds, Bind{Source: proxyFile, Target: ProxyTarget, ReadOnly: true})
 	if nested {
-		m.Binds = append(m.Binds, Bind{Source: w.config.Machines, Target: DefaultMachines, ReadOnly: true})
+		m.Binds = append(m.Binds,
+			Bind{Source: w.config.Machines, Target: DefaultMachines, ReadOnly: true},
+			Bind{Source: w.config.DaggerCheckout, Target: DaggerCheckoutTarget, ReadOnly: true})
 	}
 	return m
 }
 
 // allowedBindRoots is the helper's policy as this worker knows it: the run
 // directory and the socket directory read-write, the skill read-only, and
-// under nested the image directory read-only.
+// under nested — only then — the image directory and the dagger checkout
+// read-only.
 func (w *Workspace) allowedBindRoots(id string, nested bool) map[string]bool {
 	roots := map[string]bool{
 		w.config.runDir(id):    false,
@@ -295,6 +313,7 @@ func (w *Workspace) allowedBindRoots(id string, nested bool) map[string]bool {
 	}
 	if nested {
 		roots[w.config.Machines] = true
+		roots[w.config.DaggerCheckout] = true
 	}
 	return roots
 }

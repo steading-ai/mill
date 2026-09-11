@@ -26,6 +26,7 @@ const (
 	SetReadOnly       = "SetReadOnly"
 	DiskUsage         = "DiskUsage"
 	Statfs            = "Statfs"
+	Container         = "Container"
 
 	Exists           = "Exists"
 	CreateSubvolume  = "CreateSubvolume"
@@ -409,6 +410,12 @@ func (f *FakeDriver) Statfs(path string) (Filesystem, error) {
 	default:
 		return Filesystem{}, scriptMismatch(Statfs, result)
 	}
+}
+
+// Container records the call and returns the scripted container manager,
+// or none: the fake is a host unless told otherwise.
+func (f *FakeDriver) Container(_ context.Context) (string, error) {
+	return asString(Container, f.record(Container))
 }
 
 // asError is a scripted result for a method that returns only an error.

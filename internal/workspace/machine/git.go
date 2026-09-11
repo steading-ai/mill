@@ -73,6 +73,28 @@ func sameRepo(a, b string) bool {
 	return trim(a) == trim(b)
 }
 
+// repoPath is a repository's path on its forge as an origin or a grant
+// spells it: `https://gitlab.com/wellspring/mill.git`,
+// `git@gitlab.com:wellspring/mill` and `wellspring/mill` are all
+// `wellspring/mill`.
+func repoPath(ref string) string {
+	path := strings.TrimSpace(ref)
+	if i := strings.Index(path, "://"); i >= 0 {
+		path = path[i+3:]
+		if j := strings.Index(path, "/"); j >= 0 {
+			path = path[j+1:]
+		} else {
+			path = ""
+		}
+	} else if i := strings.Index(path, "@"); i >= 0 && !strings.Contains(path[:i], "/") {
+		if _, after, found := strings.Cut(path[i+1:], ":"); found {
+			path = after
+		}
+	}
+	path = strings.Trim(path, "/")
+	return strings.TrimSuffix(path, ".git")
+}
+
 // gitWith runs git in dir with extra environment over the workspace's own,
 // and returns its standard output. A credential reaches git through that
 // environment and a helper, never argv.

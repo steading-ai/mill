@@ -149,8 +149,8 @@ func runDoctor(cmd *cobra.Command, opts doctorOptions) error {
 	if config.Workspace != "" && unset(cmd, "workspace") {
 		opts.workspace = config.Workspace
 	}
-	if config.SandboxRoot != "" && unset(cmd, "sandbox-root") {
-		opts.sandboxRoot = config.SandboxRoot
+	if err := resolveSandboxRoot(cmd, &opts.sandboxRoot, config.SandboxRoot); err != nil {
+		return err
 	}
 	applyGatewayConfig(cmd, config, &opts.gateway)
 	opts.credentialMinted = config.ModelCredentialMinted

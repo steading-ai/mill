@@ -325,6 +325,9 @@ func execute(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 	if opts.project == "" {
 		return fmt.Errorf("mill run: a dagger project is required; pass --project or set %s", daggerProjectEnv)
 	}
+	if err := resolveSandboxRoot(cmd, &opts.sandboxRoot, ""); err != nil {
+		return err
+	}
 
 	// A gate filed under `mill run` is put to whoever is watching. The run
 	// stops either way — the gate is filed, the lease released — and the
@@ -498,7 +501,8 @@ type sandboxOptions struct {
 	repoCap         uint64
 	proxy           string
 	noProxy         string
-	nested          []string
+	nestedRepos     []string
+	daggerCheckout  string
 	// What the worker's start does to the host (docs/sandbox.md
 	// §Reconciliation, §Eviction): the forge namespace and age the scratch
 	// sweep works by, and the expiry image eviction works by.
@@ -517,7 +521,8 @@ func applySandboxConfig(config Config, opts *sandboxOptions) error {
 	opts.baseImage = config.BaseImage
 	opts.proxy = config.Proxy
 	opts.noProxy = config.NoProxy
-	opts.nested = config.Nested
+	opts.nestedRepos = config.NestedRepos
+	opts.daggerCheckout = config.DaggerCheckout
 	opts.scratchNamespace = config.ScratchNamespace
 	if config.ScratchBudget != "" {
 		budget, err := time.ParseDuration(config.ScratchBudget)
@@ -668,12 +673,13 @@ func machineConfig(opts runOptions, f forge.Forge, redactor *redact.Redactor) ma
 			Pin:         sandbox.baseImage,
 			BuildBudget: sandbox.buildBudget,
 		},
-		Caches:        cache.Config{GlobalCap: sandbox.globalCap, RepoCap: sandbox.repoCap},
-		CacheDriver:   cacheDriver(),
-		Proxy:         sandbox.proxy,
-		NoProxy:       sandbox.noProxy,
-		Nested:        sandbox.nested,
-		ScratchBudget: sandbox.scratchBudget,
+		Caches:         cache.Config{GlobalCap: sandbox.globalCap, RepoCap: sandbox.repoCap},
+		CacheDriver:    cacheDriver(),
+		Proxy:          sandbox.proxy,
+		NoProxy:        sandbox.noProxy,
+		NestedRepos:    sandbox.nestedRepos,
+		DaggerCheckout: sandbox.daggerCheckout,
+		ScratchBudget:  sandbox.scratchBudget,
 	}
 }
 

@@ -62,6 +62,13 @@ RUN sed -i "s/@HARBOR_HOST@/${HARBOR_HOST}/g" /etc/containers/registries.conf.d/
          /home/agent/.config/systemd/user/sockets.target.wants/podman.socket \
     && chown -R agent:agent /home/agent/.config
 
+# The machine's side of its veth: systemd's own 80-container-host0.network
+# takes a lease from the host's DHCP server on ve-mill-* (docs/sandbox.md
+# §Network), and for a nested machine 80-container-ve.network masquerades
+# an inner machine's traffic through the outer (§Self-hosting). Fedora's
+# preset leaves networkd off; without it the machine has no route out.
+RUN systemctl enable systemd-networkd.service
+
 # nspawn masks /proc's sensitive paths, and podman's pause process copies
 # that mount table; a pristine proc stacked over it at boot is what lets
 # rootless podman start (spike E2). A unit in the image, so no exec has to

@@ -32,14 +32,33 @@ import (
 // the suite.
 
 const (
-	liveVar  = "MILL_SANDBOX_HOST"
-	liveRoot = "/var/lib/mill"
+	liveVar = "MILL_SANDBOX_HOST"
+	// hostRoot is the sandbox root on a host; inside a machine the root is
+	// the nested worker's (docs/sandbox.md §Self-hosting), see liveRoot.
+	hostRoot = "/var/lib/mill"
 	// liveFill is the generation the timed scenario restores and promotes:
 	// four GiB, as the criterion says.
 	liveFill = 4 << 30
 	// liveBudget is what restore and promote must each finish within.
 	liveBudget = time.Second
 )
+
+// liveRoot is the sandbox root this spec process works under: the host's
+// volume, or — inside a machine, which is where this suite runs once mill
+// builds mill — the nested worker's subvolume under the ephemeral root,
+// made here as the worker's own uid the way `mill run` would. Off the
+// ephemeral root would be a bind of the outer's, which is what a nested run
+// must never promote into.
+func liveRoot(ctx context.Context) string {
+	GinkgoHelper()
+	host := driver.NewSystemd(workspace.Spawner{}, driver.Commands{})
+	if manager, err := host.Container(ctx); err != nil || manager != driver.ContainerNspawn {
+		return hostRoot
+	}
+	Expect(driver.EnsureNestedRoot(ctx, host, driver.NestedRoot)).To(Succeed())
+	Expect(driver.CheckEphemeralRoot(driver.NestedRoot)).To(Succeed())
+	return driver.NestedRoot
+}
 
 // host runs argv on the host and returns what it said and its status.
 func host(argv ...string) (stdout, stderr string, status int) {
@@ -94,7 +113,7 @@ func sweep(root string) {
 		host("btrfs", "property", "set", "-ts", subvolumes[i], "ro", "false")
 		host("btrfs", "subvolume", "delete", subvolumes[i])
 	}
-	host("btrfs", "filesystem", "sync", liveRoot)
+	host("btrfs", "filesystem", "sync", root)
 	_ = os.RemoveAll(root)
 }
 
@@ -140,13 +159,14 @@ var _ = Describe("Cache lineages on the sandbox volume", Label("live"), Serial, 
 		repo  = cache.Repo("live-" + cache.RepoID("https://example.invalid/live/repo.git"))
 	)
 
-	BeforeAll(func() {
+	BeforeAll(func(ctx context.Context) {
 		if os.Getenv(liveVar) == "" {
 			Skip("set " + liveVar + "=1 on a host with root, nspawn and btrfs to run the spec that snapshots real lineages")
 		}
+		sandbox := liveRoot(ctx)
 		var err error
-		root, err = os.MkdirTemp(liveRoot, "cache-live-*")
-		Expect(err).NotTo(HaveOccurred(), "the sandbox root %s is not this account's", liveRoot)
+		root, err = os.MkdirTemp(sandbox, "cache-live-*")
+		Expect(err).NotTo(HaveOccurred(), "the sandbox root %s is not this account's", sandbox)
 		DeferCleanup(func() { sweep(root) })
 		host := driver.NewSystemd(workspace.Spawner{}, driver.Commands{})
 		fs, err := host.Statfs(root)
@@ -343,5 +363,74 @@ var _ = Describe("Cache lineages on the sandbox volume", Label("live"), Serial, 
 			Expect(files(store.CopyPath(run, "shared"))).To(ConsistOf("one", "by-"+run))
 			Expect(store.Discard(ctx, run)).To(Succeed())
 		}
+	})
+})
+
+// The nested half of docs/sandbox.md §Caching's "a nested run never promotes
+// into the outer's lineages": run inside a machine by the machine package's
+// live tier, this is the inner run — a step closed on evidence, a promotion
+// — against the nested worker's own root. On a host it runs the same code
+// against the host's volume and sweeps itself; inside a machine it leaves
+// its generation standing, under the ephemeral root, for the outer's spec
+// to find, and the machine's end is its sweep.
+var _ = Describe("A nested run's lineages", Label("live"), Serial, func() {
+	BeforeEach(func() {
+		if os.Getenv(liveVar) == "" {
+			Skip("set " + liveVar + "=1 on a host with root, nspawn and btrfs to run the spec that snapshots real lineages")
+		}
+	})
+
+	// Scenario: A nested run does not promote into the outer's lineages
+	//   Given an inner run whose step closed on evidence
+	//   When the inner run finishes
+	//   Then the outer repo's lineage has no new generation
+	It("A nested run promotes under its own root and nowhere else", func(ctx context.Context) {
+		host := driver.NewSystemd(workspace.Spawner{}, driver.Commands{})
+		sandbox := liveRoot(ctx)
+		inside := sandbox != hostRoot
+		root := filepath.Join(sandbox, "cache-live-nested")
+		sweep(root)
+		Expect(os.MkdirAll(root, 0o755)).To(Succeed())
+		if !inside {
+			DeferCleanup(func() { sweep(root) })
+		}
+		store := cache.New(host, cache.Config{Root: root, GlobalCap: 1 << 30})
+		lineage := cache.Lineage{Scope: cache.Repo("nested-" + cache.RepoID("https://example.invalid/nested/repo.git")), Name: "go-build"}
+
+		By("given an inner run whose step closed on evidence")
+		_, err := store.Restore(ctx, "01NESTED", []cache.Lineage{lineage})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(os.WriteFile(filepath.Join(store.CopyPath("01NESTED", "go-build"), "inner"), []byte("inner"), 0o644)).To(Succeed())
+		Expect(store.Candidate(ctx, "01NESTED", "step-1")).To(Succeed())
+
+		By("when the inner run finishes")
+		promoted, err := store.Promote(ctx, "01NESTED")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(store.Discard(ctx, "01NESTED")).To(Succeed())
+
+		By("then its generation is under its own root")
+		Expect(promoted).To(HaveLen(1))
+		generation := store.GenerationPath(lineage, promoted[0].Generation)
+		Expect(generation).To(HavePrefix(root + "/"))
+		Expect(isSubvolume(generation)).To(BeTrue())
+		Expect(files(generation)).To(Equal([]string{"inner"}))
+		if inside {
+			Expect(generation).To(HavePrefix(driver.NestedRoot+"/"), "inside a machine the root is the nested worker's")
+			point, err := driver.MountPoint(generation)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(point).To(Equal("/"), "on the ephemeral root, not on a bind of the outer's")
+		}
+
+		By("and a promotion addressed outside the worker's root is refused")
+		other := cache.New(host, cache.Config{Root: filepath.Join(sandbox, "cache-live-other"), GlobalCap: 1 << 30})
+		_, err = other.Restore(ctx, "01ELSEWHERE", []cache.Lineage{lineage})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(other.Candidate(ctx, "01ELSEWHERE", "step-1")).To(Succeed())
+		Expect(os.Rename(other.RunDir("01ELSEWHERE"), store.RunDir("01ELSEWHERE"))).To(Succeed())
+		_, err = store.Promote(ctx, "01ELSEWHERE")
+		Expect(err).To(MatchError(cache.ErrOutsideRoot))
+		Expect(os.Rename(store.RunDir("01ELSEWHERE"), other.RunDir("01ELSEWHERE"))).To(Succeed())
+		Expect(other.Discard(ctx, "01ELSEWHERE")).To(Succeed())
+		sweep(other.Config().Root)
 	})
 })

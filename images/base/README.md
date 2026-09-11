@@ -35,7 +35,8 @@ the host's own `registries.conf` uses.
 | `agent`, uid 1000, home `/home/agent` | the session user; `/work` is its checkout mount, `mise trust` pre-granted |
 | `/etc/subuid`, `/etc/subgid` | `agent:10000:55536` — inside the machine's own 65536 uids, so rootless podman can write its map |
 | `/usr/local/bin/dnf` | the shim: `sudo /usr/bin/dnf install`, a `report.install` to `/run/mill/ws.sock` with the session's `STEP_TOKEN` when both are there, the `[image].packages` hint as the last three lines |
-| `/etc/sudoers.d/agent-dnf` | `agent ALL=(root) NOPASSWD: /usr/bin/dnf install *` — the only sudo path |
+| `/etc/sudoers.d/agent-dnf` | `agent ALL=(root) NOPASSWD: /usr/bin/dnf install *` — the only sudo path; the `nested` variant a worker derives adds `agent-nested`, `agent ALL=(ALL) NOPASSWD: ALL`, and nothing else does (docs/sandbox.md §Self-hosting) |
+| `systemd-networkd.service` | enabled: `host0` takes its lease from the host's DHCP server through systemd's own `80-container-host0.network`, and a nested machine's `ve-*` masquerades its inner machine through `80-container-ve.network` |
 | `/etc/containers/storage.conf` | `overlay` under the ephemeral root |
 | `/etc/containers/containers.conf` | `cgroups = "split"`: containers under the step's slice |
 | `/etc/containers/registries.conf.d/harbor.conf` | the proxy projects |

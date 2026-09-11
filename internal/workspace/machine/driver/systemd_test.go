@@ -49,6 +49,7 @@ func newHost() *host {
 			Tar:        stub("tar"),
 			Setcap:     stub("setcap"),
 			Du:         stub("du"),
+			DetectVirt: stub("systemd-detect-virt"),
 		},
 	}
 }
@@ -307,6 +308,34 @@ var _ = Describe("The systemd driver", Label("unit"), func() {
 
 		_, err = d.Statfs(filepath.Join(GinkgoT().TempDir(), "absent"))
 		Expect(err).To(MatchError(ContainSubstring("absent")))
+	})
+
+	It("reports the container manager from systemd-detect-virt, and none on a host", func(ctx context.Context) {
+		h.stub("systemd-detect-virt", `echo systemd-nspawn`)
+		manager, err := d.Container(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(manager).To(Equal(driver.ContainerNspawn))
+		Expect(h.calls("systemd-detect-virt")).To(Equal([]string{"--container"}))
+
+		h.stub("systemd-detect-virt", `echo none; exit 1`)
+		manager, err = d.Container(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(manager).To(BeEmpty(), "`none` and a non-zero exit is a host, not an error")
+	})
+
+	It("finds the mount holding a path, and refuses a nested root that is not on the ephemeral root", func() {
+		point, err := driver.MountPoint("/proc/self")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(point).To(Equal("/proc"))
+		point, err = driver.MountPoint("/")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(point).To(Equal("/"))
+
+		err = driver.CheckEphemeralRoot("/proc/mill/absent")
+		Expect(err).To(MatchError(driver.ErrOutsideEphemeralRoot))
+		Expect(err).To(MatchError(ContainSubstring("/proc")), "the nearest existing ancestor names the mount")
+		Expect(driver.CheckEphemeralRoot("/")).To(Succeed())
+		Expect(driver.NestedRoot).To(Equal("/home/agent/mill"))
 	})
 
 	It("drains a command that says nothing and exits zero", func(ctx context.Context) {

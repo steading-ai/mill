@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ivy/mill/internal/run"
+	"github.com/ivy/mill/internal/workspace/machine"
 )
 
 // The supervisor is the only place a signal becomes one of the two stops
@@ -160,7 +161,13 @@ model_credential_minted: 2026-09-01
 		Expect(os.WriteFile(path, []byte("concurrency: 1\n"), 0o600)).To(Succeed())
 		opts := parse()
 		Expect(opts.run.workspace).To(Equal("local"))
-		Expect(opts.run.sandboxRoot).To(Equal("/var/lib/mill"))
+		// Inside a machine the default is the nested root (docs/sandbox.md
+		// §Self-hosting); this suite runs there once mill builds mill.
+		expectedRoot := machine.DefaultRoot
+		if machine.InsideMachine(context.Background(), cacheDriver()) {
+			expectedRoot = machine.NestedRoot
+		}
+		Expect(opts.run.sandboxRoot).To(Equal(expectedRoot))
 		Expect(opts.run.gateway.enabled).To(BeFalse())
 		Expect(opts.run.gateway.listen).To(Equal("10.99.255.1:8080"))
 		Expect(opts.run.gateway.upstream).To(Equal("https://api.anthropic.com"))

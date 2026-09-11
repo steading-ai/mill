@@ -43,6 +43,9 @@ type Commands struct {
 	Setcap string
 	// Du estimates a generation's size at promotion; `du`.
 	Du string
+	// DetectVirt says whether the worker is inside a machine;
+	// `systemd-detect-virt`.
+	DetectVirt string
 	// Sudo runs the verbs that write the image directory as root, because
 	// that directory is root's on the host (docs/sandbox.md §Storage): the
 	// subvolume create, rename and delete, the extraction, setcap, and the
@@ -106,6 +109,9 @@ func (c Commands) withDefaults() Commands {
 	}
 	if c.Du == "" {
 		c.Du = "du"
+	}
+	if c.DetectVirt == "" {
+		c.DetectVirt = "systemd-detect-virt"
 	}
 	return c
 }
@@ -551,6 +557,23 @@ func (d *systemdDriver) PushImage(ctx context.Context, reference string) error {
 
 // Statfs is the statfs(2) system call: not a command, but the same truth
 // `btrfs filesystem usage` would report and the one eviction reads.
+// Container is `systemd-detect-virt --container`: the manager's name on
+// stdout, or `none` and a non-zero exit outside any container, which is
+// not an error.
+func (d *systemdDriver) Container(ctx context.Context) (string, error) {
+	process, err := d.spawner.Exec(ctx, workspace.Command{Path: d.commands.DetectVirt, Args: []string{"--container"}})
+	if err != nil {
+		return "", fmt.Errorf("machine: %s --container: %w", d.commands.DetectVirt, err)
+	}
+	_ = process.Stdin.Close()
+	stdout, _, _ := drain(process)
+	name := strings.TrimSpace(stdout)
+	if name == "none" {
+		return "", nil
+	}
+	return name, nil
+}
+
 func (d *systemdDriver) Statfs(path string) (Filesystem, error) {
 	var stat syscall.Statfs_t
 	if err := syscall.Statfs(path, &stat); err != nil {

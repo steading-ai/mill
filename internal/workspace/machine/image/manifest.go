@@ -23,6 +23,8 @@ type Manifest struct {
 	// Packages are what dnf installed over the base, sorted; none for the
 	// base.
 	Packages []string `json:"packages"`
+	// Nested is whether the image is the [Nested] variant.
+	Nested bool `json:"nested,omitempty"`
 	// BuiltAt is when the export was renamed into place.
 	BuiltAt time.Time `json:"built_at"`
 	// LastBootedAt is when a machine last booted from it; zero when none

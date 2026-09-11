@@ -87,13 +87,40 @@ func (d Digest) Short() string {
 	return string(d)
 }
 
+// Variant is a change to a derived image beyond its package list. There
+// is one: [Nested].
+type Variant string
+
+// Nested is the variant a machine granted `[machine].nested` boots
+// (docs/sandbox.md §Provision, §Self-hosting): `agent` has passwordless
+// sudo for everything, because root inside the user namespace is an
+// unprivileged uid on the host and the namespace is the boundary; and
+// systemd-nspawn and btrfs-progs are installed, because booting a machine
+// of its own is what the grant is for. No other image carries the sudoers
+// line: the shim's `dnf install` rule is the only escalation elsewhere.
+const Nested Variant = "nested"
+
+// NestedPackages is what the nested variant installs over the repository's
+// own list.
+var NestedPackages = []string{"btrfs-progs", "systemd-container"}
+
+// NestedSudoers is the sudoers.d file the nested variant writes.
+const NestedSudoers = "/etc/sudoers.d/agent-nested"
+
 // Derived is the digest of base plus packages: `sha256(base ‖ sorted,
-// deduplicated package list)`, or base itself when the list is empty, so a
-// repository declaring nothing boots the base subvolume (docs/sandbox.md
-// §"Derived images"). Order and repetition in the list do not matter.
-func Derived(base Digest, packages []string) Digest {
+// deduplicated package list)`, or base itself when the list is empty and
+// there is no variant, so a repository declaring nothing boots the base
+// subvolume (docs/sandbox.md §"Derived images"). Order and repetition in
+// the list do not matter. The nested variant hashes its own name after
+// the list, so a nested image and the flat image of the same packages are
+// two subvolumes.
+func Derived(base Digest, packages []string, variants ...Variant) Digest {
 	packages = Packages(packages)
-	if len(packages) == 0 {
+	nested := hasNested(variants)
+	if nested {
+		packages = Packages(append(packages, NestedPackages...))
+	}
+	if len(packages) == 0 && !nested {
 		return base
 	}
 	h := sha256.New()
@@ -102,7 +129,15 @@ func Derived(base Digest, packages []string) Digest {
 		h.Write([]byte{'\n'})
 		h.Write([]byte(name))
 	}
+	if nested {
+		h.Write([]byte("\n+" + Nested))
+	}
 	return Digest(hex.EncodeToString(h.Sum(nil)))
+}
+
+// hasNested is whether the variants name [Nested].
+func hasNested(variants []Variant) bool {
+	return slices.Contains(variants, Nested)
 }
 
 // Packages is the list sorted and deduplicated, with blanks dropped: the

@@ -96,6 +96,11 @@ type Driver interface {
 	// which is what eviction decides on and what doctor asks of the
 	// sandbox root (§Eviction, §Storage).
 	Statfs(path string) (Filesystem, error)
+	// Container is `systemd-detect-virt --container`: the container
+	// manager this worker runs under, [ContainerNspawn] inside a machine,
+	// empty on a host. A worker inside a machine is a nested one and roots
+	// its sandbox under its own ephemeral root (§Self-hosting).
+	Container(ctx context.Context) (string, error)
 
 	// The verbs below are the image pipeline's (§Images): the one place the
 	// worker runs a container outside a machine, and the export that turns
