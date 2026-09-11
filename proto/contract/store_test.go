@@ -42,7 +42,8 @@ var wantedRPCs = []string{
 	"GetRunByNode", "CreateRun", "SetLease",
 	"StartStepRun", "RecordStepEnvironment", "MarkSessionStarted", "CloseStepRun", "FailStepRun",
 	"AbortOpenStepRuns", "SupersedeSteps",
-	"MarkWaiting", "Park", "RecordNotice", "RecordHeartbeat", "RecordInstall", "RecordReconciliation", "SetCompleteRequestId", "Done", "Fail", "Resume", "Abandon", "Cancel", "Rerun",
+	"MarkWaiting", "Park", "RecordNotice", "RecordHeartbeat", "RecordInstall", "RecordReconciliation", "RecordWorkspace", "FinishWorkspace",
+	"SetCompleteRequestId", "Done", "Fail", "Resume", "Abandon", "Cancel", "Rerun",
 	"IssueStepToken", "RevokeStepToken",
 	"RecordUsage", "MarkUsagePosted",
 	"GetWorkflow", "ListWorkflows", "PutWorkflow", "PutSkill", "GetSkill",
@@ -96,10 +97,13 @@ var _ = Describe("store.proto", func() {
 
 	It("names the exceptions to the fencing rule on their own requests", func() {
 		// SetLease is the write that changes what later comparisons compare
-		// against; PutWorkflow and PutSkill write rows that belong to no run.
-		// Each says so where an implementer will read it.
+		// against; PutWorkflow and PutSkill write rows that belong to no run;
+		// FinishWorkspace is written after the run has ended and released
+		// its lease. Each says so where an implementer will read it.
 		Expect(c.field("SetLeaseRequest", "lease_id").comment).To(
 			ContainSubstring("not compared against the stored one"))
+		Expect(c.field("FinishWorkspaceRequest", "lease_id").comment).To(
+			ContainSubstring("once the run has ended"))
 		for _, m := range []string{"PutWorkflowRequest", "PutSkillRequest"} {
 			Expect(c.field(m, "lease_id").comment).To(
 				ContainSubstring("Empty for a CLI push"), m)

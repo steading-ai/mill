@@ -131,6 +131,13 @@ func (r *Runner) discardWorkspace(ctx context.Context, old *millv1.Run) {
 	}
 	if err := ws.Destroy(ctx); err != nil {
 		r.options.Log.Warn("destroying the workspace", "run", old.GetId(), "error", err)
+		return
+	}
+	// The run is abandoned and holds no lease, which is what admits the
+	// record of its workspace's end. A run that recorded no workspace has
+	// no row to finish, and that is a note rather than a failure.
+	if err := r.finishWorkspaceOf(ctx, "", old.GetId(), ws); err != nil {
+		r.options.Log.Debug("recording the workspace's end", "run", old.GetId(), "error", err)
 	}
 }
 

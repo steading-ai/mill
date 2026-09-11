@@ -399,6 +399,10 @@ type Workspace struct {
 	// installs are the shim's reports not yet drained into the run's
 	// provenance (workspace.Reporter).
 	installs []workspace.Install
+	// promoted is the run's lineages as Destroy left them, each with the
+	// generation it promoted (workspace.Promoter). Nil until Destroy has
+	// promoted.
+	promoted []workspace.Lineage
 }
 
 // New returns a workspace for one run, reaching the host through host.
@@ -758,7 +762,7 @@ func (w *Workspace) snapshot() *workspace.Handle {
 	handle.Capabilities = append([]workspace.Capability(nil), w.handle.Capabilities...)
 	if w.handle.Sandbox != nil {
 		sandbox := *w.handle.Sandbox
-		sandbox.Lineages = append([]string(nil), w.handle.Sandbox.Lineages...)
+		sandbox.Lineages = append([]workspace.Lineage(nil), w.handle.Sandbox.Lineages...)
 		handle.Sandbox = &sandbox
 	}
 	return &handle

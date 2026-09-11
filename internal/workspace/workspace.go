@@ -331,10 +331,47 @@ type Sandbox struct {
 	// named it — truncated from `ve-mill-<id>`, so recorded rather than
 	// derived.
 	Veth string
-	// Lineages are the cache lineages restored into the run, each as
-	// `<scope>/<name>@<generation>`; generation 0 is a copy that started
-	// empty.
-	Lineages []string
+	// Lineages are the cache lineages restored into the run, with the
+	// generation each was restored from and, once the run has finished,
+	// the generation each promoted.
+	Lineages []Lineage
+}
+
+// Lineage is one cache lineage as a run's record names it: which lineage,
+// the generation the run's copy started from, and the generation the run
+// promoted at finish (docs/sandbox.md §Caching).
+type Lineage struct {
+	// Scope is `global` or `repo/<id>`.
+	Scope string
+	// Name is the lineage's name within its scope.
+	Name string
+	// Restored is the generation the copy was restored from; 0 for a copy
+	// that started empty.
+	Restored int
+	// Promoted is the generation the run promoted, 0 for a reset; nil
+	// until the run has finished, and for a copy that was discarded.
+	Promoted *int
+}
+
+// String is `<scope>/<name>@<restored>`, with `->` and the promoted
+// generation once there is one.
+func (l Lineage) String() string {
+	text := fmt.Sprintf("%s/%s@%d", l.Scope, l.Name, l.Restored)
+	if l.Promoted != nil {
+		text += fmt.Sprintf("->%d", *l.Promoted)
+	}
+	return text
+}
+
+// Promoter is a workspace whose Destroy promotes the run's cache copies
+// (docs/sandbox.md §Promote), and so knows, once destroyed, what each
+// lineage came to. The run loop asks it after Destroy and records the
+// answer in the ledger; the local backend has no caches and does not
+// implement it.
+type Promoter interface {
+	// Promoted is the run's lineages as Destroy left them, each with its
+	// promoted generation where one was made. Nil before Destroy.
+	Promoted() []Lineage
 }
 
 // Entry is one name in a directory listing.

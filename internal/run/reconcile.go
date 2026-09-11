@@ -25,7 +25,8 @@ func NewLedger(store millv1connect.StoreServiceClient, workerRef string) *Ledger
 }
 
 // LiveRuns is every run the ledger holds in a non-terminal state, with the
-// step it is at. `Status` with no filter is exactly that set.
+// step it is at and the machine its workspace record names. `Status` with
+// no filter is exactly that set.
 func (l *Ledger) LiveRuns(ctx context.Context) ([]machine.LiveRun, error) {
 	res, err := call(ctx, l.store.Status, &millv1.StatusRequest{})
 	if err != nil {
@@ -37,6 +38,7 @@ func (l *Ledger) LiveRuns(ctx context.Context) ([]machine.LiveRun, error) {
 			RunID:   summary.GetRun().GetId(),
 			NodeRef: summary.GetRun().GetNodeRef(),
 			Step:    summary.GetCurrentStep(),
+			Machine: summary.GetWorkspace().GetSandbox().GetMachine(),
 		})
 	}
 	return live, nil

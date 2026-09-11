@@ -1922,6 +1922,10 @@ func summarize(ctx context.Context, q *Queries, row Run) (*millv1.RunSummary, er
 	if err != nil {
 		return nil, fmt.Errorf("lease count of run %s: %w", row.ID, err)
 	}
+	workspace, err := latestWorkspace(ctx, q, row.ID)
+	if err != nil {
+		return nil, err
+	}
 	currentStep, attempt := CurrentStep(state, workflow)
 	summary := &millv1.RunSummary{
 		Run:            state.Run,
@@ -1929,6 +1933,7 @@ func summarize(ctx context.Context, q *Queries, row Run) (*millv1.RunSummary, er
 		CurrentAttempt: attempt,
 		Totals:         make([]*millv1.ModelTotals, 0, len(totals)),
 		Leases:         leases,
+		Workspace:      workspace,
 	}
 	// The run's cost is what its sessions reported. The gateway's count is
 	// read per attempt, beside the adapter's, and never summed into it.

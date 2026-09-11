@@ -190,6 +190,36 @@ func (s *StoreService) RecordReconciliation(ctx context.Context, req *connect.Re
 	return connect.NewResponse(&millv1.RecordReconciliationResponse{}), nil
 }
 
+// RecordWorkspace records the run's workspace once it is open.
+func (s *StoreService) RecordWorkspace(ctx context.Context, req *connect.Request[millv1.RecordWorkspaceRequest]) (*connect.Response[millv1.RecordWorkspaceResponse], error) {
+	if req.Msg.GetRunId() == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("run_id is required"))
+	}
+	workspace, err := s.svc.RecordWorkspace(ctx, req.Msg.GetLeaseId(), domain.WorkspaceParams{
+		RunID:     req.Msg.GetRunId(),
+		Kind:      req.Msg.GetKind(),
+		WorkerRef: req.Msg.GetWorkerRef(),
+		Ref:       req.Msg.GetRef(),
+		Sandbox:   req.Msg.GetSandbox(),
+	})
+	if err != nil {
+		return nil, connectError(err)
+	}
+	return connect.NewResponse(&millv1.RecordWorkspaceResponse{Workspace: workspace}), nil
+}
+
+// FinishWorkspace records the workspace's end and what its caches promoted.
+func (s *StoreService) FinishWorkspace(ctx context.Context, req *connect.Request[millv1.FinishWorkspaceRequest]) (*connect.Response[millv1.FinishWorkspaceResponse], error) {
+	if req.Msg.GetRunId() == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("run_id is required"))
+	}
+	workspace, err := s.svc.FinishWorkspace(ctx, req.Msg.GetLeaseId(), req.Msg.GetRunId(), req.Msg.GetPromoted())
+	if err != nil {
+		return nil, connectError(err)
+	}
+	return connect.NewResponse(&millv1.FinishWorkspaceResponse{Workspace: workspace}), nil
+}
+
 // RecordInstall appends what a session installed into its machine with the
 // shim.
 func (s *StoreService) RecordInstall(ctx context.Context, req *connect.Request[millv1.RecordInstallRequest]) (*connect.Response[millv1.RecordInstallResponse], error) {

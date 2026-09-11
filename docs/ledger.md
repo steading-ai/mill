@@ -154,11 +154,26 @@ One row per turn, per model, as the adapter reports — a turn that bills two mo
 |---|---|
 | `id` | ULID |
 | `run_id` | Unique while live |
-| `kind` | `local`, `container`, `remote` |
+| `kind` | `local`, `machine`, `container`, `remote` |
 | `worker_ref` | Where it is |
 | `ref` | The git ref it was created at |
 | `state` | `live`, `retained`, `destroyed` |
 | `created_at`, `destroyed_at` | |
+| `sandbox` | The machine behind a `machine` workspace, on the wire as one `Sandbox` message and in the table as the columns below; every one empty for a workspace with no machine |
+
+The sandbox's columns, which `docs/sandbox.md` §Reconciliation names:
+
+| Sandbox column | Holds |
+|---|---|
+| `machine` | The machine's name, `mill-<id>`: what reconciliation matches `machinectl list` against |
+| `unit` | The host unit that owns it, `mill-machine@<id>.service` |
+| `image_digest` | The derived image the machine booted |
+| `veth` | The host side of the machine's link, as the host named it — truncated from `ve-mill-<id>`, so recorded rather than derived |
+| `lineages` | `[{scope, name, restored, promoted?}]`: each cache lineage the run restored a copy of, the generation the copy came from (0 for one that started empty), and the generation the run promoted at its end — 0 for a reset, absent until the run has finished and for a copy that was discarded. Null for a workspace with no machine |
+
+The row is written twice by the worker: `RecordWorkspace` once the workspace is open — at creation, and again on a resume that reattaches it, which brings the same row up to date rather than adding one — and `FinishWorkspace` after the run is done and the workspace destroyed, which marks it `destroyed` and writes each lineage's promoted generation. The second write is the one the resume algorithm makes after `store.Done`, when the run holds no lease; the store admits it for a run that has ended (`FinishWorkspaceRequest` says so).
+
+**Which record is authoritative.** The machine backend keeps a copy of the same facts on the host, `runs/<id>/run.json` (`docs/sandbox.md` §Provision), because `Attach` has to find the machine before the ledger is asked anything and a worker that lost its ledger still has to be able to tell an orphan from a machine it made. The ledger is the record: `mill inspect`, `mill status`, reconciliation and the end-to-end proof read from it, and when a reconciliation pass finds the two naming different machines for one run it records a `disagreement` finding naming both and acts on the ledger's. `run.json` is for the host — what it reads before the ledger answers, and what it has when the ledger is gone — and it carries what the ledger does not need: the base the image derived from, whether it fell back, the provisioning findings, when the machine reported ready, and the step slice in flight.
 
 ### `reconciliations`
 
@@ -212,6 +227,8 @@ go heartbeat(node.lease_id) until run leaves this worker   # renews well inside 
 #   cancel_requested: abort the step run (reason cancelled), Release(PREEMPTED, 'cancel'), return — the run stays resumable
 
 ws := workspace.Attach(run) or workspace.Create(run)   # local? reattach. elsewhere? clone run.branch (pushed, by the loader's rule)
+store.RecordWorkspace(run, ws.handle)             # kind, worker, ref; and the machine, unit, digest, veth and restored lineages on the machine backend
+#   a reattached workspace brings its live row up to date; nothing adds a second
 
 if run.workflow_id == nil:                         # docs/domain-model.md §Selection
     if project default: w, tier := that                    # a person pinned this project to one workflow
@@ -276,7 +293,8 @@ for step in run.workflow.steps starting at run.current_step():
 run.complete_request_id = store.SetCompleteRequestId(run)      # idempotency key, durable before use
 dagger.ApplyPatch(complete_node(result, artifacts), lease, run.complete_request_id)   # releases the lease as part of the patch
 store.Done(run)                                    # only now
-ws.Destroy()
+ws.Destroy()                                       # stops the machine and promotes the last evidence-closed step's candidate
+store.FinishWorkspace(run, ws.promoted())          # the row destroyed, and each lineage's promoted generation; admitted after Done because the run has ended
 ```
 
 Three properties fall out:

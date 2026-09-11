@@ -50,6 +50,12 @@ type LiveRun struct {
 	NodeRef string
 	// Step is the run's current step, or empty while it is selecting.
 	Step string
+	// Machine is the machine the ledger's workspace record names for the
+	// run, or empty when the ledger records none — a run with no machine,
+	// or one whose record predates the sandbox fields. When the ledger
+	// names one, the pass acts on it: the host's `run.json` is the copy,
+	// and one that disagrees is a finding (docs/sandbox.md §Reconciliation).
+	Machine string
 }
 
 // Project is the dagger project a node reference names.
@@ -109,6 +115,10 @@ const (
 	// FindingFailure is something the pass could not do, kept so the rest
 	// of the pass still stands.
 	FindingFailure FindingKind = "failure"
+	// FindingDisagreement is a run whose ledger record and whose `run.json`
+	// on this host name different machines. The pass acts on the ledger's
+	// and records both.
+	FindingDisagreement FindingKind = "disagreement"
 )
 
 // Finding is one line of the report.
@@ -210,9 +220,16 @@ func (r *Reconciler) Reconcile(ctx context.Context, ledger Ledger) (Report, erro
 		return report, fmt.Errorf("machine: reconcile: live runs: %w", err)
 	}
 	liveByID := map[string]LiveRun{}
+	// The ledger's machine name is the one the pass acts on: a registered
+	// machine of that name belongs to its run whatever the run's id would
+	// have derived, so live runs are also found by it.
+	liveByMachine := map[string]LiveRun{}
 	for _, run := range live {
 		if id, err := IDFor(run.RunID); err == nil {
 			liveByID[id] = run
+		}
+		if id, ok := strings.CutPrefix(run.Machine, MachinePrefix); ok && id != "" {
+			liveByMachine[id] = run
 		}
 	}
 	machines, err := r.host.ListMachines(ctx)
@@ -221,21 +238,33 @@ func (r *Reconciler) Reconcile(ctx context.Context, ledger Ledger) (Report, erro
 	}
 
 	registered := map[string]bool{}
+	handled := map[string]bool{}
 	for _, m := range machines {
 		if !strings.HasPrefix(m.Name, MachinePrefix) {
 			continue
 		}
 		id := strings.TrimPrefix(m.Name, MachinePrefix)
 		registered[id] = true
-		if run, ok := liveByID[id]; ok {
-			r.resumable(ctx, &report, id, run)
+		run, ok := liveByID[id]
+		if !ok {
+			run, ok = liveByMachine[id]
+		}
+		if ok {
+			// A run whose ledger row and run.json name different
+			// registered machines is handled once, on the ledger's; the
+			// other is neither the run's nor an orphan to stop, and the
+			// disagreement finding names it.
+			if !handled[run.RunID] {
+				handled[run.RunID] = true
+				r.resumable(ctx, &report, run)
+			}
 			continue
 		}
 		r.orphan(ctx, &report, id)
 	}
 
 	for id, run := range sortedIDs(liveByID) {
-		if registered[id] {
+		if registered[id] || registered[strings.TrimPrefix(run.Machine, MachinePrefix)] {
 			continue
 		}
 		record, err := readRecord(r.config.runDir(id))
@@ -244,8 +273,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, ledger Ledger) (Report, erro
 			// nothing was lost here.
 			continue
 		}
+		machine := r.machineOf(&report, run, record)
 		report.add(FindingLostSandbox, run.RunID, "",
-			fmt.Sprintf("machine %s is not registered; the ledger's step is %s", record.Machine, stepOrSelecting(run.Step)))
+			fmt.Sprintf("machine %s is not registered; the ledger's step is %s", machine, stepOrSelecting(run.Step)))
 	}
 
 	r.leftovers(ctx, &report, liveByID)
@@ -261,22 +291,45 @@ func (r *Reconciler) Reconcile(ctx context.Context, ledger Ledger) (Report, erro
 // left in flight is stopped now rather than when the run is next claimed,
 // so nothing it was running keeps running for nobody. Attach stops it again
 // — a stop of an inactive slice is harmless — and recreates it.
-func (r *Reconciler) resumable(ctx context.Context, report *Report, id string, run LiveRun) {
+func (r *Reconciler) resumable(ctx context.Context, report *Report, run LiveRun) {
+	id, _ := IDFor(run.RunID)
 	record, err := readRecord(r.config.runDir(id))
 	if err != nil {
-		report.add(FindingResumable, run.RunID, "", fmt.Sprintf("machine %s, no run record on this host: %v", MachineName(id), err))
+		name := run.Machine
+		if name == "" {
+			name = MachineName(id)
+		}
+		report.add(FindingResumable, run.RunID, "", fmt.Sprintf("machine %s, no run record on this host: %v", name, err))
 		return
 	}
+	machine := r.machineOf(report, run, record)
 	if record.Slice == "" {
-		report.add(FindingResumable, run.RunID, "", fmt.Sprintf("machine %s at step %s, no slice in flight", record.Machine, stepOrSelecting(run.Step)))
+		report.add(FindingResumable, run.RunID, "", fmt.Sprintf("machine %s at step %s, no slice in flight", machine, stepOrSelecting(run.Step)))
 		return
 	}
-	if err := r.host.StopUnit(ctx, record.Machine, record.Slice); err != nil {
-		report.fail(run.RunID, fmt.Errorf("stop %s in %s: %w", record.Slice, record.Machine, err))
+	if err := r.host.StopUnit(ctx, machine, record.Slice); err != nil {
+		report.fail(run.RunID, fmt.Errorf("stop %s in %s: %w", record.Slice, machine, err))
 		return
 	}
 	report.add(FindingResumable, run.RunID, "stopped "+record.Slice,
-		fmt.Sprintf("machine %s resumes at step %s in a fresh slice", record.Machine, stepOrSelecting(run.Step)))
+		fmt.Sprintf("machine %s resumes at step %s in a fresh slice", machine, stepOrSelecting(run.Step)))
+}
+
+// machineOf is the machine the pass acts on for a live run: the ledger's
+// when the ledger names one, else the host record's. The two are the same
+// name derived the same way, so a disagreement is a record that was
+// tampered with or a host that lost its ledger and grew another; it is
+// recorded, naming both, and the ledger's is used (docs/ledger.md
+// §workspaces).
+func (r *Reconciler) machineOf(report *Report, run LiveRun, record Record) string {
+	if run.Machine == "" {
+		return record.Machine
+	}
+	if record.Machine != "" && record.Machine != run.Machine {
+		report.add(FindingDisagreement, run.RunID, "",
+			fmt.Sprintf("the ledger names machine %s and %s on this host names %s; acting on the ledger's", run.Machine, RecordName, record.Machine))
+	}
+	return run.Machine
 }
 
 // orphan is a machine with no live run: stopped as Destroy would — a stop

@@ -430,6 +430,9 @@ func (w *Workspace) Destroy(ctx context.Context) error {
 	for _, p := range promoted {
 		w.logf("promoted %s to gen-%d (%d bytes)", p.Lineage, p.Generation, p.SizeBytes)
 	}
+	w.mu.Lock()
+	w.promoted = record.lineages(promoted)
+	w.mu.Unlock()
 	w.removeRunDirectory(ctx, record.ID)
 	if len(promoted) > 0 {
 		// The trigger after a promotion is the cheap one: free space
@@ -445,6 +448,17 @@ func (w *Workspace) Destroy(ctx context.Context) error {
 		}
 	}
 	return closeErr
+}
+
+// Promoted is workspace.Promoter: the run's lineages as Destroy left them,
+// each with the generation it promoted. Nil before Destroy has promoted.
+func (w *Workspace) Promoted() []workspace.Lineage {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if w.promoted == nil {
+		return nil
+	}
+	return append([]workspace.Lineage(nil), w.promoted...)
 }
 
 // teardownReady stops a machine that reported ready: `systemctl stop` of

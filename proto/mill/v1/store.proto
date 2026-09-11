@@ -35,9 +35,11 @@ option go_package = "github.com/ivy/mill/gen/mill/v1;millv1";
 // path for a stale worker, not an error to retry: it abandons the run
 // locally and goes back to ClaimNext.
 //
-// Two mutations sit outside that rule and say so on their requests:
+// Three mutations sit outside that rule and say so on their requests:
 // SetLease, which is the write that changes what later comparisons compare
-// against, and PutWorkflow and PutSkill, whose rows are not run-scoped.
+// against; PutWorkflow and PutSkill, whose rows are not run-scoped; and
+// FinishWorkspace, the one write made after the run has ended and released
+// its lease, which the run's ended state admits instead.
 service StoreService {
   // GetRunByNode returns the live run for a dagger node, or nothing. The
   // first call a worker makes after a claim.
@@ -106,6 +108,15 @@ service StoreService {
   // the host, not of a run: no lease fences it, because the pass runs before
   // the worker holds one.
   rpc RecordReconciliation(RecordReconciliationRequest) returns (RecordReconciliationResponse);
+  // RecordWorkspace records the run's workspace once it is open: its kind,
+  // where it is, the ref it was made at, and the machine behind it when
+  // there is one (docs/ledger.md §workspaces). A run whose workspace is
+  // already on record — one reattached on resume — has the record brought
+  // up to date rather than a second row.
+  rpc RecordWorkspace(RecordWorkspaceRequest) returns (RecordWorkspaceResponse);
+  // FinishWorkspace records the workspace's end: its files destroyed, and
+  // the generation each cache lineage promoted (docs/sandbox.md §Promote).
+  rpc FinishWorkspace(FinishWorkspaceRequest) returns (FinishWorkspaceResponse);
   // SetCompleteRequestId mints and stores the idempotency key of the patch
   // that completes the node, before that patch is sent. Minting is once per
   // run: a second call returns the key already stored, so a worker resuming
@@ -544,6 +555,56 @@ message ReconciliationFinding {
 // RecordReconciliationResponse carries nothing: the row is the record.
 message RecordReconciliationResponse {
   // Reserved: the row the call wrote is the whole of the answer.
+}
+
+// RecordWorkspaceRequest records the run's workspace once it is open.
+message RecordWorkspaceRequest {
+  // The lease the caller holds, compared against the run's current lease
+  // inside the writing transaction.
+  string lease_id = 1;
+  // The run the workspace belongs to.
+  string run_id = 2;
+  // How the workspace is realised.
+  WorkspaceKind kind = 3;
+  // Where it is: the worker that holds it.
+  string worker_ref = 4;
+  // The git ref checked out at creation.
+  string ref = 5;
+  // The machine behind it. Unset for a workspace with no machine; a
+  // machine-backed workspace's lineages carry their restored generations
+  // and no promoted one yet.
+  Sandbox sandbox = 6;
+}
+
+// RecordWorkspaceResponse carries the workspace as recorded.
+message RecordWorkspaceResponse {
+  // The workspace row, its state live.
+  Workspace workspace = 1;
+}
+
+// FinishWorkspaceRequest records that the run's workspace was destroyed
+// and what its caches promoted. It is the one write made after the run has
+// ended: the files go once dagger has confirmed the completing patch and the
+// store has marked the run done, and the promotion happens as they go
+// (docs/ledger.md §Resume). By then the run holds no lease, so the store
+// admits the write when the run has ended and holds none; while the run is
+// live the lease is compared as for every other write.
+message FinishWorkspaceRequest {
+  // The lease the caller held. Compared against the run's current lease
+  // while the run is live; once the run has ended and released its lease,
+  // the run's ended state is what admits the write.
+  string lease_id = 1;
+  // The run the workspace belongs to.
+  string run_id = 2;
+  // Each lineage the run promoted, with the generation it made. A lineage
+  // the run restored and did not promote is left as it was recorded.
+  repeated SandboxLineage promoted = 3;
+}
+
+// FinishWorkspaceResponse carries the workspace as recorded.
+message FinishWorkspaceResponse {
+  // The workspace row, its state destroyed.
+  Workspace workspace = 1;
 }
 
 // SetCompleteRequestIdRequest asks for the run's completing request id.

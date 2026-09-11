@@ -53,6 +53,8 @@ var _ = Describe("Restart", Label(testsupport.DBLabel), func() {
 		Expect(before.GetSummary().GetRun().GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_ABANDONED))
 		Expect(before.GetSteps()).To(HaveLen(len(f.inspectRun(ctx, first.GetId()).GetSteps())))
 		Expect(sessionsOf(before, "implement")).To(Equal(was))
+		Expect(before.GetSummary().GetWorkspace().GetState()).To(Equal(millv1.WorkspaceState_WORKSPACE_STATE_DESTROYED),
+			"the discarded workspace's row records its end")
 
 		// The branch is gone and the pull request is closed with a comment
 		// naming the restart.

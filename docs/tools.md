@@ -78,6 +78,12 @@ millcli#1  running  implement  1        0s       184213/9820  -
 `TOKENS` is input/output, summed over models. Counts, never currency: the
 ledger records tokens and a rate table is applied by whoever wants money.
 
+`MACHINE` is the machine a run on the `machine` backend runs in, as the
+ledger's workspace row names it (`ledger.md` §workspaces); `-` for a local
+run. `--view full` adds `IMAGE`, the derived digest it booted, `VETH`, and
+`CACHES`, each lineage as `<scope>/<name>@<restored>` with `->` and the
+generation it promoted once the run has finished.
+
 ## inspect
 
 One run in full: the workflow version it follows and every attempt in order,
@@ -96,6 +102,22 @@ STEP            ATTEMPT  STATUS   EXIT  EVIDENCE     VALUE
 select          1        closed         structured   workflow=quick-fix
 gather-context  1        closed         artifact     sha256:3f3f3f3f3f3f3f…
 implement       1        running        unspecified  -
+```
+
+A run on the `machine` backend shows its machine under the header, from
+the ledger's workspace row (`ledger.md` §workspaces): the name and unit, the
+derived image digest it booted, the host side of its network link, and one
+`cache` line per lineage with the generation the run's copy was restored
+from and the one it promoted — `-` until the run has finished, and for a copy
+the run discarded. A local run shows none of these.
+
+```
+  branch    mill/millcli-1
+  machine   mill-01m20w6cbs8nx5qrg9xpytd21p (mill-machine@01m20w6cbs8nx5qrg9xpytd21p.service)
+  image     sha256:3c9a43f2…
+  veth      ve-mill-01m20w
+  cache     global/mise restored 3 promoted 4
+  cache     repo/9f1c…/go-build restored 0 promoted -
 ```
 
 `VALUE` is the claim the mill verified — a SHA, a URL, an artifact digest, a

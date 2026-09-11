@@ -114,6 +114,30 @@ func (s *Service) RecordHeartbeat(ctx context.Context, leaseID, runID, stepRunID
 	return s.store.RecordHeartbeat(ctx, leaseID, runID, stepRunID, strike, strikes, waitingSeconds, tasks)
 }
 
+// WorkspaceParams is a run's workspace as the run loop opened it.
+type WorkspaceParams struct {
+	RunID     string
+	Kind      millv1.WorkspaceKind
+	WorkerRef string
+	Ref       string
+	Sandbox   *millv1.Sandbox
+}
+
+// RecordWorkspace records the run's workspace once it is open, or brings a
+// reattached one's record up to date. It changes no run state.
+func (s *Service) RecordWorkspace(ctx context.Context, leaseID string, p WorkspaceParams) (*millv1.Workspace, error) {
+	return s.store.RecordWorkspace(ctx, leaseID, store.WorkspaceParams{
+		RunID: p.RunID, Kind: p.Kind, WorkerRef: p.WorkerRef, Ref: p.Ref, Sandbox: p.Sandbox,
+	})
+}
+
+// FinishWorkspace records that the run's workspace was destroyed and what
+// each of its cache lineages promoted. It changes no run state; the store
+// admits it after the run has ended, which is when the files go.
+func (s *Service) FinishWorkspace(ctx context.Context, leaseID, runID string, promoted []*millv1.SandboxLineage) (*millv1.Workspace, error) {
+	return s.store.FinishWorkspace(ctx, leaseID, runID, promoted)
+}
+
 // RecordInstall appends what a session installed into its machine with the
 // shim. There is no transition to check: it records the run's provenance of
 // an undeclared package, not a change to the run.

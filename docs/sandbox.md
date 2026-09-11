@@ -476,7 +476,7 @@ Reconciliation runs the sweeps on the same pass it reconciles machines, and the 
 
 ## Reconciliation on resume
 
-The ledger records per run: machine name, machine unit, derived digest, veth name, current step slice, lineages restored, and the candidate snapshot's step. The first five travel on the workspace handle as `workspace.Sandbox`, filled by `Create` and `Attach`; the run's own copy on the host is `runs/<id>/run.json`, which `Attach` reads before the ledger is asked anything and which also records when the machine reported ready.
+The ledger records per run: machine name, machine unit, derived digest, veth name, the lineages restored and, at the run's end, the generation each promoted (`docs/ledger.md` §workspaces). They travel on the workspace handle as `workspace.Sandbox`, filled by `Create` and `Attach`, and the run loop writes them when the workspace opens and when the run finishes. The run's own copy on the host is `runs/<id>/run.json`, which `Attach` reads before the ledger is asked anything and which also records the current step slice, the candidate snapshot's step, and when the machine reported ready. The ledger is the record; `run.json` is the host's copy. A pass that finds the two naming different machines for one run records a `disagreement` finding naming both and acts on the ledger's.
 
 On worker start, before the first claim and in this order:
 

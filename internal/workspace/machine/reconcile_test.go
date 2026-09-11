@@ -234,6 +234,42 @@ var _ = Describe("Reconciliation on resume", Label("unit"), func() {
 		Expect(matches).To(HaveLen(1), "step 1's candidate became generation 1")
 	})
 
+	// The ledger is the record and run.json the host's copy (docs/ledger.md
+	// §workspaces): when the two name different machines, the pass says so
+	// and acts on the ledger's.
+	It("records a finding naming both when the ledger and run.json disagree on the machine, and acts on the ledger's", func(ctx context.Context) {
+		By("given a live run whose run.json names one machine and whose ledger row names another")
+		ws := f.workspace()
+		_, err := ws.Create(ctx, workspace.Spec{RunID: runID, NodeRef: "mill#80", Origin: f.config.Origin})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ws.BeginStep(ctx, 1)).To(Succeed())
+		theirs := "mill-" + id
+		ledgers := "mill-somebodyelse"
+		f.host.add(ledgers)
+		ledger.live = []machine.LiveRun{{RunID: runID, NodeRef: "mill#80", Step: "implement", Machine: ledgers}}
+		stopsBefore := len(f.host.CallsTo(driver.StopUnit))
+
+		By("when the worker starts")
+		report := reconcile(ctx)
+
+		By("then the disagreement is recorded, naming both")
+		disagreements := report.Of(machine.FindingDisagreement)
+		Expect(disagreements).To(HaveLen(1))
+		Expect(disagreements[0].Name).To(Equal(runID))
+		Expect(disagreements[0].Detail).To(ContainSubstring(ledgers))
+		Expect(disagreements[0].Detail).To(ContainSubstring(theirs))
+		Expect(disagreements[0].Detail).To(ContainSubstring("run.json"))
+
+		By("and the pass acts on the ledger's: that machine is the run's, and its slice is the one stopped")
+		Expect(f.host.CallsTo(driver.StopUnit)[stopsBefore:]).To(ContainElement(
+			driver.Call{Method: driver.StopUnit, Args: []any{ledgers, "mill-step-1.slice"}}))
+		resumable := report.Of(machine.FindingResumable)
+		Expect(resumable).To(HaveLen(1))
+		Expect(resumable[0].Detail).To(ContainSubstring(ledgers))
+		Expect(report.Of(machine.FindingLostSandbox)).To(BeEmpty(), "the ledger's machine is registered, so nothing is lost")
+		Expect(f.host.registered()).To(ContainElement(ledgers), "the ledger's machine is not an orphan")
+	})
+
 	// Scenario: Scratch projects are swept by name
 	//   Given stale mill-acceptance-* projects in dagger and on the forge with no live run
 	//   When the worker reconciles

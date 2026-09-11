@@ -113,7 +113,8 @@ func (r *Runner) postUsage(ctx context.Context, s *state, sr *millv1.StepRun) er
 //  2. the patch itself, which carries the result and its artifacts and
 //     releases the lease as part of the same write;
 //  3. store.Done, only once dagger has acknowledged the patch;
-//  4. the workspace, destroyed.
+//  4. the workspace, destroyed, and its end recorded: the files gone and
+//     what its caches promoted (docs/ledger.md §workspaces).
 //
 // Never the reverse. A run marked done before dagger confirmed would strand
 // a node nothing can ever claim; a crash between 2 and 3 is recovered by the
@@ -140,7 +141,13 @@ func (r *Runner) finish(ctx context.Context, s *state, detail *millv1.InspectRes
 		return err
 	}
 	if err := s.workspace.Destroy(ctx); err != nil {
+		// The files are still there, so the record stays live: the
+		// reconciliation pass finds the machine by the run's name.
 		r.options.Log.Warn("destroying the workspace", "run", s.run.GetId(), "error", err)
+	} else if err := r.finishWorkspace(ctx, s); err != nil {
+		// The run is done and the node complete; the record of the
+		// workspace's end is a log line short, never a failed run.
+		r.options.Log.Warn("recording the workspace's end", "run", s.run.GetId(), "error", err)
 	}
 	r.printf("%s done\n", s.node.GetReference())
 	return nil

@@ -70,6 +70,67 @@ var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 			Expect(rowFor(out, "select")).To(ContainSubstring("workflow=quick-fix"))
 		})
 
+		// Scenario: Inspect shows it
+		//   Given a finished machine-backed run
+		//   When the operator runs mill inspect
+		//   Then the machine, digest, veth and lineages are printed
+		It("Inspect shows it", func() {
+			By("given a finished machine-backed run: its workspace recorded at creation and finished with a promotion")
+			r := openRun(ctx, "millcli#80", nodeID(80))
+			_, err := r.store.RecordWorkspace(ctx, connect.NewRequest(&millv1.RecordWorkspaceRequest{
+				LeaseId: r.lease, RunId: r.run.GetId(), Kind: millv1.WorkspaceKind_WORKSPACE_KIND_MACHINE,
+				WorkerRef: "spec@host", Ref: "main",
+				Sandbox: &millv1.Sandbox{
+					Machine: "mill-01jrun", Unit: "mill-machine@01jrun.service",
+					ImageDigest: "sha256:3c9a43", Veth: "ve-mill-01jru",
+					Lineages: []*millv1.SandboxLineage{
+						{Scope: "global", Name: "mise", Restored: 3},
+						{Scope: "repo/abc123", Name: "go-build", Restored: 0},
+					},
+				},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			_, err = r.store.Done(ctx, connect.NewRequest(&millv1.DoneRequest{LeaseId: r.lease, RunId: r.run.GetId()}))
+			Expect(err).NotTo(HaveOccurred())
+			four := int64(4)
+			_, err = r.store.FinishWorkspace(ctx, connect.NewRequest(&millv1.FinishWorkspaceRequest{
+				LeaseId: r.lease, RunId: r.run.GetId(),
+				Promoted: []*millv1.SandboxLineage{{Scope: "global", Name: "mise", Restored: 3, Promoted: &four}},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+
+			By("when the operator runs mill inspect")
+			out := r.cli(ctx, "inspect", "millcli#80")
+
+			By("then the machine, digest, veth and lineages are printed")
+			Expect(out).To(ContainSubstring("machine   mill-01jrun (mill-machine@01jrun.service)"))
+			Expect(out).To(ContainSubstring("image     sha256:3c9a43"))
+			Expect(out).To(ContainSubstring("veth      ve-mill-01jru"))
+			Expect(out).To(ContainSubstring("cache     global/mise restored 3 promoted 4"))
+			Expect(out).To(ContainSubstring("cache     repo/abc123/go-build restored 0 promoted -"))
+
+			By("and status names the machine")
+			status := r.cli(ctx, "status", "--status", "done", "--view", "full")
+			Expect(rowFor(status, "millcli#80")).To(ContainSubstring("mill-01jrun"))
+			Expect(rowFor(status, "millcli#80")).To(ContainSubstring("global/mise@3->4"))
+		})
+
+		It("prints no machine for a local run", func() {
+			r := openRun(ctx, "millcli#81", nodeID(81))
+			_, err := r.store.RecordWorkspace(ctx, connect.NewRequest(&millv1.RecordWorkspaceRequest{
+				LeaseId: r.lease, RunId: r.run.GetId(), Kind: millv1.WorkspaceKind_WORKSPACE_KIND_LOCAL,
+				WorkerRef: "spec@host", Ref: "main",
+			}))
+			Expect(err).NotTo(HaveOccurred())
+
+			out := r.cli(ctx, "inspect", "millcli#81")
+
+			Expect(out).To(ContainSubstring("branch    mill/millcli-81"))
+			Expect(out).NotTo(ContainSubstring("machine"))
+			Expect(out).NotTo(ContainSubstring("veth"))
+			Expect(out).NotTo(ContainSubstring("cache "))
+		})
+
 		It("shows a verdict's decision and the findings that blocked it, inline", func() {
 			r := openRun(ctx, "millcli#10", nodeID(10))
 			sr := r.start(ctx, "review", millv1.StepKind_STEP_KIND_SKILL)

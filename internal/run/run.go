@@ -578,6 +578,9 @@ func (r *Runner) openWorkspace(ctx context.Context, s *state) error {
 		return fmt.Errorf("run %s: workspace: %w", s.run.GetId(), err)
 	}
 	s.workspace = ws
+	if err := r.recordWorkspace(ctx, s); err != nil {
+		return err
+	}
 	// The adapter table is built for this workspace: a machine-backed run
 	// spawns its sidecar inside the machine, so the execer is the run's own
 	// workspace (docs/sandbox.md §Exec, §"Skill mount").

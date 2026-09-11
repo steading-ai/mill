@@ -89,6 +89,12 @@ const (
 	// StoreServiceRecordReconciliationProcedure is the fully-qualified name of the StoreService's
 	// RecordReconciliation RPC.
 	StoreServiceRecordReconciliationProcedure = "/mill.v1.StoreService/RecordReconciliation"
+	// StoreServiceRecordWorkspaceProcedure is the fully-qualified name of the StoreService's
+	// RecordWorkspace RPC.
+	StoreServiceRecordWorkspaceProcedure = "/mill.v1.StoreService/RecordWorkspace"
+	// StoreServiceFinishWorkspaceProcedure is the fully-qualified name of the StoreService's
+	// FinishWorkspace RPC.
+	StoreServiceFinishWorkspaceProcedure = "/mill.v1.StoreService/FinishWorkspace"
 	// StoreServiceSetCompleteRequestIdProcedure is the fully-qualified name of the StoreService's
 	// SetCompleteRequestId RPC.
 	StoreServiceSetCompleteRequestIdProcedure = "/mill.v1.StoreService/SetCompleteRequestId"
@@ -212,6 +218,15 @@ type StoreServiceClient interface {
 	// the host, not of a run: no lease fences it, because the pass runs before
 	// the worker holds one.
 	RecordReconciliation(context.Context, *connect.Request[v1.RecordReconciliationRequest]) (*connect.Response[v1.RecordReconciliationResponse], error)
+	// RecordWorkspace records the run's workspace once it is open: its kind,
+	// where it is, the ref it was made at, and the machine behind it when
+	// there is one (docs/ledger.md §workspaces). A run whose workspace is
+	// already on record — one reattached on resume — has the record brought
+	// up to date rather than a second row.
+	RecordWorkspace(context.Context, *connect.Request[v1.RecordWorkspaceRequest]) (*connect.Response[v1.RecordWorkspaceResponse], error)
+	// FinishWorkspace records the workspace's end: its files destroyed, and
+	// the generation each cache lineage promoted (docs/sandbox.md §Promote).
+	FinishWorkspace(context.Context, *connect.Request[v1.FinishWorkspaceRequest]) (*connect.Response[v1.FinishWorkspaceResponse], error)
 	// SetCompleteRequestId mints and stores the idempotency key of the patch
 	// that completes the node, before that patch is sent. Minting is once per
 	// run: a second call returns the key already stored, so a worker resuming
@@ -402,6 +417,18 @@ func NewStoreServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(storeServiceMethods.ByName("RecordReconciliation")),
 			connect.WithClientOptions(opts...),
 		),
+		recordWorkspace: connect.NewClient[v1.RecordWorkspaceRequest, v1.RecordWorkspaceResponse](
+			httpClient,
+			baseURL+StoreServiceRecordWorkspaceProcedure,
+			connect.WithSchema(storeServiceMethods.ByName("RecordWorkspace")),
+			connect.WithClientOptions(opts...),
+		),
+		finishWorkspace: connect.NewClient[v1.FinishWorkspaceRequest, v1.FinishWorkspaceResponse](
+			httpClient,
+			baseURL+StoreServiceFinishWorkspaceProcedure,
+			connect.WithSchema(storeServiceMethods.ByName("FinishWorkspace")),
+			connect.WithClientOptions(opts...),
+		),
 		setCompleteRequestId: connect.NewClient[v1.SetCompleteRequestIdRequest, v1.SetCompleteRequestIdResponse](
 			httpClient,
 			baseURL+StoreServiceSetCompleteRequestIdProcedure,
@@ -555,6 +582,8 @@ type storeServiceClient struct {
 	recordHeartbeat       *connect.Client[v1.RecordHeartbeatRequest, v1.RecordHeartbeatResponse]
 	recordInstall         *connect.Client[v1.RecordInstallRequest, v1.RecordInstallResponse]
 	recordReconciliation  *connect.Client[v1.RecordReconciliationRequest, v1.RecordReconciliationResponse]
+	recordWorkspace       *connect.Client[v1.RecordWorkspaceRequest, v1.RecordWorkspaceResponse]
+	finishWorkspace       *connect.Client[v1.FinishWorkspaceRequest, v1.FinishWorkspaceResponse]
 	setCompleteRequestId  *connect.Client[v1.SetCompleteRequestIdRequest, v1.SetCompleteRequestIdResponse]
 	done                  *connect.Client[v1.DoneRequest, v1.DoneResponse]
 	fail                  *connect.Client[v1.FailRequest, v1.FailResponse]
@@ -657,6 +686,16 @@ func (c *storeServiceClient) RecordInstall(ctx context.Context, req *connect.Req
 // RecordReconciliation calls mill.v1.StoreService.RecordReconciliation.
 func (c *storeServiceClient) RecordReconciliation(ctx context.Context, req *connect.Request[v1.RecordReconciliationRequest]) (*connect.Response[v1.RecordReconciliationResponse], error) {
 	return c.recordReconciliation.CallUnary(ctx, req)
+}
+
+// RecordWorkspace calls mill.v1.StoreService.RecordWorkspace.
+func (c *storeServiceClient) RecordWorkspace(ctx context.Context, req *connect.Request[v1.RecordWorkspaceRequest]) (*connect.Response[v1.RecordWorkspaceResponse], error) {
+	return c.recordWorkspace.CallUnary(ctx, req)
+}
+
+// FinishWorkspace calls mill.v1.StoreService.FinishWorkspace.
+func (c *storeServiceClient) FinishWorkspace(ctx context.Context, req *connect.Request[v1.FinishWorkspaceRequest]) (*connect.Response[v1.FinishWorkspaceResponse], error) {
+	return c.finishWorkspace.CallUnary(ctx, req)
 }
 
 // SetCompleteRequestId calls mill.v1.StoreService.SetCompleteRequestId.
@@ -838,6 +877,15 @@ type StoreServiceHandler interface {
 	// the host, not of a run: no lease fences it, because the pass runs before
 	// the worker holds one.
 	RecordReconciliation(context.Context, *connect.Request[v1.RecordReconciliationRequest]) (*connect.Response[v1.RecordReconciliationResponse], error)
+	// RecordWorkspace records the run's workspace once it is open: its kind,
+	// where it is, the ref it was made at, and the machine behind it when
+	// there is one (docs/ledger.md §workspaces). A run whose workspace is
+	// already on record — one reattached on resume — has the record brought
+	// up to date rather than a second row.
+	RecordWorkspace(context.Context, *connect.Request[v1.RecordWorkspaceRequest]) (*connect.Response[v1.RecordWorkspaceResponse], error)
+	// FinishWorkspace records the workspace's end: its files destroyed, and
+	// the generation each cache lineage promoted (docs/sandbox.md §Promote).
+	FinishWorkspace(context.Context, *connect.Request[v1.FinishWorkspaceRequest]) (*connect.Response[v1.FinishWorkspaceResponse], error)
 	// SetCompleteRequestId mints and stores the idempotency key of the patch
 	// that completes the node, before that patch is sent. Minting is once per
 	// run: a second call returns the key already stored, so a worker resuming
@@ -1024,6 +1072,18 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(storeServiceMethods.ByName("RecordReconciliation")),
 		connect.WithHandlerOptions(opts...),
 	)
+	storeServiceRecordWorkspaceHandler := connect.NewUnaryHandler(
+		StoreServiceRecordWorkspaceProcedure,
+		svc.RecordWorkspace,
+		connect.WithSchema(storeServiceMethods.ByName("RecordWorkspace")),
+		connect.WithHandlerOptions(opts...),
+	)
+	storeServiceFinishWorkspaceHandler := connect.NewUnaryHandler(
+		StoreServiceFinishWorkspaceProcedure,
+		svc.FinishWorkspace,
+		connect.WithSchema(storeServiceMethods.ByName("FinishWorkspace")),
+		connect.WithHandlerOptions(opts...),
+	)
 	storeServiceSetCompleteRequestIdHandler := connect.NewUnaryHandler(
 		StoreServiceSetCompleteRequestIdProcedure,
 		svc.SetCompleteRequestId,
@@ -1190,6 +1250,10 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 			storeServiceRecordInstallHandler.ServeHTTP(w, r)
 		case StoreServiceRecordReconciliationProcedure:
 			storeServiceRecordReconciliationHandler.ServeHTTP(w, r)
+		case StoreServiceRecordWorkspaceProcedure:
+			storeServiceRecordWorkspaceHandler.ServeHTTP(w, r)
+		case StoreServiceFinishWorkspaceProcedure:
+			storeServiceFinishWorkspaceHandler.ServeHTTP(w, r)
 		case StoreServiceSetCompleteRequestIdProcedure:
 			storeServiceSetCompleteRequestIdHandler.ServeHTTP(w, r)
 		case StoreServiceDoneProcedure:
@@ -1305,6 +1369,14 @@ func (UnimplementedStoreServiceHandler) RecordInstall(context.Context, *connect.
 
 func (UnimplementedStoreServiceHandler) RecordReconciliation(context.Context, *connect.Request[v1.RecordReconciliationRequest]) (*connect.Response[v1.RecordReconciliationResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.RecordReconciliation is not implemented"))
+}
+
+func (UnimplementedStoreServiceHandler) RecordWorkspace(context.Context, *connect.Request[v1.RecordWorkspaceRequest]) (*connect.Response[v1.RecordWorkspaceResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.RecordWorkspace is not implemented"))
+}
+
+func (UnimplementedStoreServiceHandler) FinishWorkspace(context.Context, *connect.Request[v1.FinishWorkspaceRequest]) (*connect.Response[v1.FinishWorkspaceResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.FinishWorkspace is not implemented"))
 }
 
 func (UnimplementedStoreServiceHandler) SetCompleteRequestId(context.Context, *connect.Request[v1.SetCompleteRequestIdRequest]) (*connect.Response[v1.SetCompleteRequestIdResponse], error) {

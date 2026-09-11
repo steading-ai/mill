@@ -65,13 +65,30 @@ type Record struct {
 // Ready reports whether the machine reached ready.
 func (r Record) Ready() bool { return !r.ReadyAt.IsZero() }
 
-// Sandbox is the record as the ledger's handle carries it.
+// Sandbox is the record as the ledger's handle carries it: the lineages
+// with their restored generations and no promoted one, which the run's end
+// supplies.
 func (r Record) Sandbox() *workspace.Sandbox {
-	lineages := make([]string, 0, len(r.Lineages))
+	return &workspace.Sandbox{Machine: r.Machine, Unit: r.Unit, Image: r.Image, Veth: r.Veth, Lineages: r.lineages(nil)}
+}
+
+// lineages is the record's restored lineages, each carrying its promoted
+// generation where promoted names one.
+func (r Record) lineages(promoted []cache.Promoted) []workspace.Lineage {
+	lineages := make([]workspace.Lineage, 0, len(r.Lineages))
 	for _, restored := range r.Lineages {
-		lineages = append(lineages, fmt.Sprintf("%s@%d", restored.Lineage, restored.Generation))
+		lineage := workspace.Lineage{
+			Scope: string(restored.Scope), Name: restored.Name, Restored: restored.Generation,
+		}
+		for _, p := range promoted {
+			if p.Scope == restored.Scope && p.Name == restored.Name {
+				generation := p.Generation
+				lineage.Promoted = &generation
+			}
+		}
+		lineages = append(lineages, lineage)
 	}
-	return &workspace.Sandbox{Machine: r.Machine, Unit: r.Unit, Image: r.Image, Veth: r.Veth, Lineages: lineages}
+	return lineages
 }
 
 // ErrNoRecord is a run directory with no record: never created on this

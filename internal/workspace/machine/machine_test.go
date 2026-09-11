@@ -344,7 +344,12 @@ var _ = Describe("The machine workspace", Label("unit"), func() {
 		ws := f.workspace()
 		handle, err := ws.Create(ctx, spec)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(handle.Sandbox.Lineages).To(ConsistOf("global/mise@0", "global/go-mod@0", "repo/"+cache.RepoID(f.config.Origin)+"/go-build@0"))
+		Expect(handle.Sandbox.Lineages).To(ConsistOf(
+			workspace.Lineage{Scope: "global", Name: "mise"},
+			workspace.Lineage{Scope: "global", Name: "go-mod"},
+			workspace.Lineage{Scope: "repo/" + cache.RepoID(f.config.Origin), Name: "go-build"},
+		), "each lineage restored at generation 0, none promoted yet")
+		Expect(ws.Promoted()).To(BeNil(), "nothing is promoted before Destroy")
 		copies, err := filepath.Glob(filepath.Join(f.runDir(), "cache", "*"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(copies).To(HaveLen(3), "one writable copy per lineage")
@@ -378,6 +383,12 @@ var _ = Describe("The machine workspace", Label("unit"), func() {
 		), "the promoted generations, and nothing else")
 		Expect(filepath.Join(f.root, "cache", "repo", cache.RepoID(f.config.Origin), "go-build", "gen-1", "object")).To(BeAnExistingFile())
 		Expect(f.host.CallsTo(driver.DeleteSubvolume)).NotTo(BeEmpty(), "the run's copies went through the driver")
+		one := 1
+		Expect(ws.Promoted()).To(ConsistOf(
+			workspace.Lineage{Scope: "global", Name: "mise", Promoted: &one},
+			workspace.Lineage{Scope: "global", Name: "go-mod", Promoted: &one},
+			workspace.Lineage{Scope: "repo/" + cache.RepoID(f.config.Origin), Name: "go-build", Promoted: &one},
+		), "what the ledger records at the run's end: each lineage's promoted generation")
 	})
 
 	It("The clone uses the worker's forge credential and no step token exists when it runs", func(ctx context.Context) {

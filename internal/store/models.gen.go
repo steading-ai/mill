@@ -142,4 +142,9 @@ type Workspace struct {
 	State       string
 	CreatedAt   time.Time
 	DestroyedAt *time.Time
+	Machine     string
+	Unit        string
+	ImageDigest string
+	Veth        string
+	Lineages    []byte
 }

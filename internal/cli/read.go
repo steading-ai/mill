@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"maps"
 	"slices"
 	"sort"
@@ -189,26 +190,69 @@ func renderStatus(cmd *cobra.Command, runs []*millv1.RunSummary, v view) error {
 			_, _ = fmt.Fprintf(w, "%s\t%s\n", summary.GetRun().GetNodeRef(), summary.GetRun().GetId())
 		}
 	case viewFull:
-		_, _ = fmt.Fprintln(w, "NODE\tRUN\tSTATUS\tSTEP\tATTEMPT\tELAPSED\tLEASES\tGATE\tWORKER\tTOKENS")
+		_, _ = fmt.Fprintln(w, "NODE\tRUN\tSTATUS\tSTEP\tATTEMPT\tELAPSED\tLEASES\tGATE\tWORKER\tTOKENS\tMACHINE\tIMAGE\tVETH\tCACHES")
 		for _, summary := range runs {
 			run := summary.GetRun()
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\t%d\t%s\t%s\t%s\n",
+			sandbox := summary.GetWorkspace().GetSandbox()
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 				run.GetNodeRef(), run.GetId(), runStatusName(run.GetStatus()),
 				summary.GetCurrentStep(), summary.GetCurrentAttempt(), elapsed(run),
 				summary.GetLeases(), dash(run.GetGateNodeId()), dash(run.GetWorkerRef()),
-				tokenText(summary.GetTotals()))
+				tokenText(summary.GetTotals()),
+				dash(sandbox.GetMachine()), dash(sandbox.GetImageDigest()), dash(sandbox.GetVeth()), dash(lineagesText(sandbox)))
 		}
 	default:
-		_, _ = fmt.Fprintln(w, "NODE\tSTATUS\tSTEP\tATTEMPT\tELAPSED\tTOKENS\tGATE")
+		_, _ = fmt.Fprintln(w, "NODE\tSTATUS\tSTEP\tATTEMPT\tELAPSED\tTOKENS\tGATE\tMACHINE")
 		for _, summary := range runs {
 			run := summary.GetRun()
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n",
 				run.GetNodeRef(), runStatusName(run.GetStatus()), summary.GetCurrentStep(),
 				summary.GetCurrentAttempt(), elapsed(run), tokenText(summary.GetTotals()),
-				dash(run.GetGateNodeId()))
+				dash(run.GetGateNodeId()), dash(summary.GetWorkspace().GetSandbox().GetMachine()))
 		}
 	}
 	return w.Flush()
+}
+
+// lineagesText is a sandbox's cache lineages on one line: each as
+// `<scope>/<name>@<restored>`, with `->` and the promoted generation once
+// the run has finished and promoted it. Empty for no lineages.
+func lineagesText(sandbox *millv1.Sandbox) string {
+	parts := make([]string, 0, len(sandbox.GetLineages()))
+	for _, lineage := range sandbox.GetLineages() {
+		parts = append(parts, lineageText(lineage))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// lineageText is one lineage as lineagesText spells it.
+func lineageText(lineage *millv1.SandboxLineage) string {
+	text := fmt.Sprintf("%s/%s@%d", lineage.GetScope(), lineage.GetName(), lineage.GetRestored())
+	if lineage.Promoted != nil {
+		text += fmt.Sprintf("->%d", lineage.GetPromoted())
+	}
+	return text
+}
+
+// renderSandbox prints the machine behind a run's workspace under the
+// inspect header: the name and unit, the digest it booted, the veth, and
+// each cache lineage with the generation it restored and the one it
+// promoted (docs/ledger.md §workspaces). Nothing for a run with no machine.
+func renderSandbox(out io.Writer, sandbox *millv1.Sandbox) {
+	if sandbox == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(out, "  machine   %s (%s)\n", sandbox.GetMachine(), sandbox.GetUnit())
+	_, _ = fmt.Fprintf(out, "  image     %s\n", sandbox.GetImageDigest())
+	_, _ = fmt.Fprintf(out, "  veth      %s\n", dash(sandbox.GetVeth()))
+	for _, lineage := range sandbox.GetLineages() {
+		promoted := "-"
+		if lineage.Promoted != nil {
+			promoted = fmt.Sprint(lineage.GetPromoted())
+		}
+		_, _ = fmt.Fprintf(out, "  cache     %s/%s restored %d promoted %s\n",
+			lineage.GetScope(), lineage.GetName(), lineage.GetRestored(), promoted)
+	}
 }
 
 // Inspect.
@@ -273,6 +317,7 @@ func renderInspect(cmd *cobra.Command, detail *millv1.InspectResponse, v view) e
 		_, _ = fmt.Fprintf(out, "  cancel    requested\n")
 	}
 	_, _ = fmt.Fprintf(out, "  branch    %s\n", run.GetBranch())
+	renderSandbox(out, detail.GetSummary().GetWorkspace().GetSandbox())
 	_, _ = fmt.Fprintf(out, "  tokens    %s\n\n", tokenText(detail.GetSummary().GetTotals()))
 
 	w := table(cmd)

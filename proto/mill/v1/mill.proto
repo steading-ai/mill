@@ -280,6 +280,9 @@ enum WorkspaceKind {
   // WORKSPACE_KIND_REMOTE is a clone on another host reached over the
   // tailnet.
   WORKSPACE_KIND_REMOTE = 3;
+  // WORKSPACE_KIND_MACHINE is a clone on the host bind-mounted into a
+  // systemd-nspawn machine of the run's own (docs/sandbox.md).
+  WORKSPACE_KIND_MACHINE = 4;
 }
 
 // WorkspaceState is whether a workspace's files still exist.
@@ -832,6 +835,43 @@ message Workspace {
   google.protobuf.Timestamp created_at = 11;
   // When its files were destroyed. From docs/ledger.md §workspaces.
   google.protobuf.Timestamp destroyed_at = 12;
+  // The machine behind a machine-backed workspace. Unset for a workspace
+  // with no machine. From docs/ledger.md §workspaces.
+  Sandbox sandbox = 13;
+}
+
+// Sandbox is what the ledger records of a run's machine, so that a
+// reconciliation pass can tell an orphan from a live run, `mill inspect`
+// can name it, and a proof can read from the record what the run booted
+// and what it left in the cache (docs/sandbox.md §Reconciliation). The
+// host's own copy is `runs/<id>/run.json`; the ledger's is the record.
+message Sandbox {
+  // The machine's name, `mill-<id>`: the reconciliation key.
+  string machine = 1;
+  // The host unit that owns it, `mill-machine@<id>.service`.
+  string unit = 2;
+  // The derived image digest the machine booted from.
+  string image_digest = 3;
+  // The host side of the machine's network link, as the host named it.
+  string veth = 4;
+  // The cache lineages restored into the run, and what each promoted.
+  repeated SandboxLineage lineages = 5;
+}
+
+// SandboxLineage is one cache lineage a run restored a copy of, with the
+// generation it restored and, once the run has finished, the generation it
+// promoted (docs/sandbox.md §Caching).
+message SandboxLineage {
+  // The lineage's scope: `global` or `repo/<id>`.
+  string scope = 1;
+  // The lineage's name within its scope.
+  string name = 2;
+  // The generation the run's copy was restored from; 0 for a copy that
+  // started empty.
+  int64 restored = 3;
+  // The generation the run promoted at finish: 0 for a reset. Unset until
+  // the run has finished, and for a run whose copy was discarded.
+  optional int64 promoted = 4;
 }
 
 // ModelTotals is one model's usage summed over some scope: a step run, a run.
@@ -865,6 +905,10 @@ message RunSummary {
   // How many dagger leases the node has held under this run. Distinct from a
   // step's attempt.
   int64 leases = 5;
+  // The run's workspace as the ledger recorded it: where it is, whether
+  // its files still exist, and the machine behind it when there is one.
+  // Unset for a run that has recorded none.
+  Workspace workspace = 6;
 }
 
 // StepRunDetail is one attempt with everything hanging off it, which is what
