@@ -1,6 +1,6 @@
 # Mill
 
-The piece of the software factory that consumes dagger tickets and delivers running software. Scoped the way dagger was scoped: *just* a workflow runner — it claims a ready node, selects a workflow, drives gated steps with evidence, and reports a result with provenance. It does not plan, hold a backlog, sandbox, or converse.
+The piece of the software factory that consumes dagger tickets and delivers running software. Scoped the way dagger was scoped: *just* a workflow runner — it claims a ready node, selects a workflow, drives gated steps with evidence, and reports a result with provenance. It does not plan, hold a backlog, or converse.
 
 Design first, code second. Read [docs/prd.md](docs/prd.md), then [docs/domain-model.md](docs/domain-model.md), [docs/architecture.md](docs/architecture.md), and [docs/ledger.md](docs/ledger.md). [docs/core-principles.md](docs/core-principles.md) are the decision filters. [docs/roadmap.md](docs/roadmap.md) is where this is going.
 
