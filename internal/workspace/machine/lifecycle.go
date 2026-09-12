@@ -40,6 +40,17 @@ const (
 // every step, and the helper admits it.
 const ReadySlice = "mill-step-ready.slice"
 
+// OnlineArgv is the readiness probe's second exec: networkd's own wait for
+// host0 to be routable over IPv4, bounded to a few seconds so the readiness
+// loop, not wait-online, keeps the clock. Routable is the DHCP lease on the
+// veth; the link-local address networkd assigns first satisfies `--ipv4`
+// alone, and a machine with only that reaches neither the proxy nor the
+// gateway.
+var OnlineArgv = []string{
+	"/usr/lib/systemd/systemd-networkd-wait-online",
+	"--interface=host0", "--ipv4", "--operational-state=routable", "--timeout=5",
+}
+
 // Create is docs/sandbox.md §"Sequence of a run", steps 1 to 8: the run
 // directory; the clone with the worker's forge credential; mill.toml read
 // from the checkout; the base resolved and the derived image ensured; the
@@ -265,7 +276,7 @@ func (w *Workspace) writeProxyFile(runDir string, egress workspace.Egress) (stri
 	for _, name := range []string{workspace.HTTPSProxyVar, workspace.HTTPProxyVar} {
 		fmt.Fprintf(&b, "%s=%s\n%s=%s\n", name, egress.Proxy, strings.ToLower(name), egress.Proxy)
 	}
-	fmt.Fprintf(&b, "%s=%s\n%s=%s\n", workspace.NoProxyVar, egress.NoProxy, strings.ToLower(workspace.NoProxyVar), egress.NoProxy)
+	fmt.Fprintf(&b, "%s=%s\n%s=%s\n", workspace.NoProxyVar, egress.Bypass(), strings.ToLower(workspace.NoProxyVar), egress.Bypass())
 	if egress.Gateway != "" {
 		fmt.Fprintf(&b, "%s=%s\n", workspace.ModelGatewayVar, egress.Gateway)
 	}
@@ -277,18 +288,23 @@ func (w *Workspace) writeProxyFile(runDir string, egress workspace.Egress) (stri
 }
 
 // manifest is machine.json for a run: the configuration's binds — the
-// workspace, the socket directory, the skill and the sidecar read-only, one
+// workspace, the socket directory, the skill, the sidecar and the workflow
+// directory read-only, one
 // plus the proxy file read-only, and under nested the host's image
 // subvolumes read-only so an inner suite boots them rather than building
 // them, and the dagger checkout read-only for its test fixture. Nothing
 // else differs between a nested and a flat provision.
 func (w *Workspace) manifest(declared config.Config, id, digest, proxyFile string, nested bool) Manifest {
-	binds := config.Binds(declared, config.Mounts{
+	mounts := config.Mounts{
 		Run:     w.config.runDir(id),
 		Socket:  w.config.socketDir(id),
 		Skill:   w.config.Skill,
 		Sidecar: w.config.Sidecar,
-	})
+	}
+	if w.config.WorkflowSource != "" {
+		mounts.Workflow = w.config.Workflow
+	}
+	binds := config.Binds(declared, mounts)
 	m := Manifest{Image: digest, Limits: w.config.Limits, Nested: nested}
 	for _, bind := range binds {
 		m.Binds = append(m.Binds, Bind{Source: bind.Host, Target: bind.Machine, ReadOnly: bind.ReadOnly})
@@ -303,15 +319,18 @@ func (w *Workspace) manifest(declared config.Config, id, digest, proxyFile strin
 }
 
 // allowedBindRoots is the helper's policy as this worker knows it: the run
-// directory and the socket directory read-write, the skill and sidecar
-// under nested — only then — the image directory and the dagger checkout
-// read-only.
+// directory and the socket directory read-write, the skill, the sidecar and
+// the workflow copy read-only, and under nested — only then — the image
+// directory and the dagger checkout read-only.
 func (w *Workspace) allowedBindRoots(id string, nested bool) map[string]bool {
 	roots := map[string]bool{
 		w.config.runDir(id):    false,
 		w.config.socketDir(id): false,
 		w.config.Skill:         true,
 		w.config.Sidecar:       true,
+	}
+	if w.config.WorkflowSource != "" {
+		roots[w.config.Workflow] = true
 	}
 	if nested {
 		roots[w.config.Machines] = true
@@ -323,8 +342,11 @@ func (w *Workspace) allowedBindRoots(id string, nested bool) map[string]bool {
 // waitReady is docs/sandbox.md §Provision's readiness: machined reports
 // the machine running, then `systemctl is-system-running --wait` inside it
 // returns — `running`, or `degraded` for a machine that booted with a
-// failed unit, which is booted all the same. Under the configured
-// timeout; over it, the error carries the digest and the last probe.
+// failed unit, which is booted all the same — and then networkd reports
+// host0 online with an IPv4 address, because systemd's state lands before
+// the DHCP lease does and the first step's `mise install` would otherwise
+// run with no route to the proxy. Under the configured timeout; over it,
+// the error carries the digest and the last probe.
 func (w *Workspace) waitReady(ctx context.Context, record *Record) error {
 	deadline := time.NewTimer(w.config.ReadyTimeout)
 	defer deadline.Stop()
@@ -383,7 +405,7 @@ func (w *Workspace) probeReady(ctx context.Context, record *Record) (ready bool,
 	result := process.Wait()
 	state := strings.TrimSpace(string(stdout))
 	if result.Status == 0 || state == "degraded" {
-		return true, state, nil
+		return w.probeOnline(ctx, record, state)
 	}
 	if result.Status == driver.HelperRefused {
 		// The helper refused the exec itself, before the machine was
@@ -391,6 +413,33 @@ func (w *Workspace) probeReady(ctx context.Context, record *Record) (ready bool,
 		return false, "", fmt.Errorf("machine: readiness probe of %s refused by the helper: %s", record.Machine, strings.TrimSpace(string(stderr)))
 	}
 	return false, fmt.Sprintf("is-system-running exited %d: %s %s", result.Status, state, strings.TrimSpace(string(stderr))), nil
+}
+
+// probeOnline is the second half of a readiness probe, once systemd's state
+// is in: `systemd-networkd-wait-online` for host0 with an IPv4 address,
+// bounded so the readiness loop stays the loop. Ready when it exits zero;
+// otherwise not yet, with systemd's state and wait-online's word as the
+// probe.
+func (w *Workspace) probeOnline(ctx context.Context, record *Record, state string) (ready bool, probe string, err error) {
+	process, err := w.host.Exec(ctx, driver.ExecRequest{
+		Machine: record.Machine,
+		Slice:   ReadySlice,
+		Argv:    OnlineArgv,
+	})
+	if err != nil {
+		return false, err.Error(), nil
+	}
+	_ = process.Stdin.Close()
+	_, _ = io.ReadAll(process.Stdout)
+	stderr, _ := io.ReadAll(process.Stderr)
+	result := process.Wait()
+	if result.Status == 0 {
+		return true, state, nil
+	}
+	if result.Status == driver.HelperRefused {
+		return false, "", fmt.Errorf("machine: online probe of %s refused by the helper: %s", record.Machine, strings.TrimSpace(string(stderr)))
+	}
+	return false, fmt.Sprintf("%s; wait-online exited %d: %s", state, result.Status, strings.TrimSpace(string(stderr))), nil
 }
 
 // Destroy is docs/sandbox.md §Destroy: the socket closed, the machine

@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ivy/mill/internal/workspace"
@@ -66,7 +68,7 @@ func (w *Workspace) Exec(ctx context.Context, command workspace.Command) (*works
 		Dir:     dir,
 		User:    SessionUser,
 		Env:     w.execEnvironment(command),
-		Argv:    append([]string{command.Path}, command.Args...),
+		Argv:    append([]string{w.inMachine(command.Path)}, command.Args...),
 	}
 
 	process, err := w.execWithRetry(ctx, request)
@@ -81,6 +83,26 @@ func (w *Workspace) Exec(ctx context.Context, command workspace.Command) (*works
 	// already collected itself, which the helper answers harmlessly.
 	go w.stopOnCancel(ctx, record.Machine, request.Unit)
 	return process, nil
+}
+
+// inMachine is the program as the machine names it: a path the worker
+// resolved under the workflow directory it loaded from — a check step's
+// script — is the copy bound at [config.WorkflowPath] (docs/sandbox.md
+// §"Skill mount"); anything else is passed as given, for the machine's own
+// PATH or its own filesystem to resolve.
+func (w *Workspace) inMachine(path string) string {
+	source := w.config.WorkflowSource
+	if source == "" || !filepath.IsAbs(path) {
+		return path
+	}
+	if abs, err := filepath.Abs(source); err == nil {
+		source = abs
+	}
+	rel, err := filepath.Rel(source, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return path
+	}
+	return filepath.Join(config.WorkflowPath, rel)
 }
 
 // execEnvironment is the exec's whole environment: the command's own, with

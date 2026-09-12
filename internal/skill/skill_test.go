@@ -200,3 +200,56 @@ var _ = Describe("The materialised sidecar", Label("unit"), func() {
 		Expect(skill.MaterialiseSidecar(source, dest, "1.0.0\nextra")).To(MatchError(ContainSubstring("not one line")))
 	})
 })
+
+// The workflow directory a check step's scripts come from rides into the
+// machine as a copy: links resolved, modes kept, nothing else left behind.
+var _ = Describe("The materialised workflow directory", Label("unit"), func() {
+	var source, dest string
+
+	BeforeEach(func() {
+		tmp := GinkgoT().TempDir()
+		// The shape the acceptance suite stages: a definition of its own
+		// beside links into the tree it derives from.
+		tree := filepath.Join(tmp, "tree", "quick-fix")
+		Expect(os.MkdirAll(filepath.Join(tree, "scripts"), 0o755)).To(Succeed())
+		Expect(os.MkdirAll(filepath.Join(tree, "skills", "commit"), 0o755)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(tree, "scripts", "clean-tree"), []byte("#!/bin/sh\nexit 0\n"), 0o755)).To(Succeed()) //nolint:gosec // a script
+		Expect(os.WriteFile(filepath.Join(tree, "skills", "commit", "SKILL.md"), []byte("# commit\n"), 0o644)).To(Succeed())
+		source = filepath.Join(tmp, "staged", "derived")
+		Expect(os.MkdirAll(source, 0o755)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(source, "workflow.yaml"), []byte("name: derived\n"), 0o644)).To(Succeed())
+		Expect(os.Symlink(filepath.Join(tree, "scripts"), filepath.Join(source, "scripts"))).To(Succeed())
+		Expect(os.Symlink(filepath.Join(tree, "skills"), filepath.Join(source, "skills"))).To(Succeed())
+		dest = filepath.Join(tmp, "share", "workflow")
+	})
+
+	It("copies the directory with its links resolved and its scripts still executable", func() {
+		Expect(skill.MaterialiseWorkflow(source, dest)).To(Succeed())
+
+		script, err := os.Lstat(filepath.Join(dest, "scripts", "clean-tree"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(script.Mode().IsRegular()).To(BeTrue(), "a link is copied as the file it names")
+		Expect(script.Mode().Perm()&0o111).NotTo(BeZero(), "the script's mode rides")
+		Expect(filepath.Join(dest, "skills", "commit", "SKILL.md")).To(BeAnExistingFile())
+		Expect(filepath.Join(dest, "workflow.yaml")).To(BeAnExistingFile())
+	})
+
+	It("prunes what an earlier directory had that this one does not, and leaves an unchanged file's inode alone", func() {
+		Expect(skill.MaterialiseWorkflow(source, dest)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(dest, "stale"), []byte("x"), 0o644)).To(Succeed())
+		before, err := os.Stat(filepath.Join(dest, "scripts", "clean-tree"))
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(skill.MaterialiseWorkflow(source, dest)).To(Succeed())
+
+		Expect(filepath.Join(dest, "stale")).NotTo(BeAnExistingFile())
+		after, err := os.Stat(filepath.Join(dest, "scripts", "clean-tree"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(os.SameFile(before, after)).To(BeTrue())
+	})
+
+	It("refuses a source that is not a directory", func() {
+		Expect(skill.MaterialiseWorkflow(filepath.Join(source, "workflow.yaml"), dest)).To(MatchError(ContainSubstring("not a directory")))
+		Expect(dest).NotTo(BeADirectory())
+	})
+})

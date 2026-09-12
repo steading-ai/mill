@@ -488,6 +488,15 @@ suite's variables:
 | `MILL_SANDBOX_HOST` | Set to anything to turn the live tier on. Unset, every `live` spec skips with the message that names its cost: *set MILL_SANDBOX_HOST=1 on a host with root, nspawn and btrfs to run the spec that boots a real machine*. `make test` never sets it, so the tier skips there and on any laptop. |
 | `MILL_SANDBOX_MODEL_CREDENTIAL` | The `claude setup-token` file the credential gateway presents upstream for a machine's sessions. No login enters a machine, so a machine run has no account credential of its own; supply the setup-token the deployed worker loads from its vault ([sandbox.md](sandbox.md) §Credentials). Unset, the live tier skips before booting anything. |
 
+The service the tier's `mill run` and `mill work` write to is the ordinary
+suite's, on `MILL_ACCEPTANCE_DATABASE_URL` — on `core`, `make db-up`'s
+development database. That database outlives every suite run, and a
+worker's reconciliation reads every live run it holds: a run killed by an
+earlier tier run is a lost sandbox finding (harmless), but a workflow row a
+mill of another version stored is a listing that fails to decode, and the
+worker refuses to start on it. `make db-reset` is the answer; it is the
+throwaway development database and nothing else.
+
 The live tier **refuses** to file into the deployed dagger. It boots real
 machines and drives real `mill run` subprocesses, and `mill#49` already showed
 a test process becoming a worker against the operator's graph; so a
@@ -511,49 +520,85 @@ MILL_ACCEPTANCE=1 ginkgo --label-filter=sandbox \
 ```
 
 The scenarios: *One node, delivered, inside a machine* (the whole delivery,
-its every step's evidence in the ledger, and the run's own `run.json`
+its every step's evidence in the ledger, and the ledger's workspace row
 recording the machine, the derived digest, the veth and the lineages it
-restored and promoted); *The db suite runs inside a machine* (`make test-db`
-inside a machine bound to a mill checkout, against the machine's own podman
-socket, no container outliving the step); *The boundaries hold* (the uid, the
-unreachable home, the proxy the only way out, no login in the machine,
-nothing outliving its step, `machinectl list` empty after); *The second run
-is warm* (the go-build lineage restored from a promoted generation and the
-build step faster off the ledger's durations); *The live tier refuses the
-deployed dagger* (the refusal, which needs no host); and a killed run swept
-clean by the next worker's reconciliation.
+restored and promoted, with the promoted generation found on the volume);
+*The db suite runs inside a machine* (`make test-db` inside a machine bound
+to a mill checkout, against the machine's own podman socket, once the run's
+own toolchain step has installed what `mise.toml` pins; no container
+outliving the step); *The boundaries hold* (the uid, the unreachable home,
+the proxy the only way out, no login in the machine, nothing outliving its
+step, `machinectl list` empty after, the gateway's log naming the step token
+and never its value); *The second run is warm* (the go-build lineage
+restored from a promoted generation and the build step faster off the
+ledger's durations); *The live tier refuses the deployed dagger* (the
+refusal, which needs no host); and *A killed suite leaves no machine, run
+directory, or project after reconciliation* (a run killed mid-flight, the
+lease taken back, and a `mill work --workspace machine` started against the
+suite's own service and dagger, whose startup reconciliation sweeps what the
+kill left).
 
-**What it creates, and what it leaves behind.** One machine per scenario,
-named `mill-acceptance-<scenario>-<nonce>` where the spec boots it and
-`mill-<run-id>` where `mill run` does, on the btrfs volume; a run directory
-under `/var/lib/mill/runs`; cache copies restored from the worker's lineages;
-and, for the delivering scenarios, a scratch project and a merge on it as the
-ordinary suite makes. It leaves behind **nothing but promoted cache
-generations** — the `gen-<n>` snapshots an evidence-closed step earns, which
-are the point of the warm run and which eviction reclaims under its watermarks
-([sandbox.md](sandbox.md) §Eviction). Everything else is swept **by name**:
-a `mill-*` machine with no live run, its run directory, and stale scratch
+Every network assertion runs from *inside* the machine, through the helper,
+never from the host with a source-interface trick: squid refuses host
+processes by design (`homestead#40`), so a host probe is denied whatever
+the machine's policy is. The fixture's `mise.toml` pins an exact go release
+rather than a minor (`1.25.14`, not `1.25`): a partial pin makes mise list
+the releases upstream before it settles on one — a `git ls-remote` of
+golang/go from inside the machine that the toolchain step then pays on
+every run — while an exact release already in the worker's global `mise`
+lineage costs the step no lookup at all. Its build cache is warmed by a
+mise `postinstall` hook (`go vet` over a package that pulls in `net/http`),
+which runs on every `mise install`, so the toolchain step is what the warm
+scenario times.
+
+**What it creates, and what it leaves behind.** One machine per run, named
+`mill-<run-id>` (every machine here is `mill run`'s or the worker's; the
+`mill-acceptance-<scenario>-<nonce>` name is the scratch project's and the
+dagger project's, which is what the sweep by name matches), on the btrfs
+volume; a run directory under `/var/lib/mill/runs`; cache copies restored
+from the worker's lineages; a derived image with `btrfs-progs` for the db
+suite's machine; and, for the delivering scenarios, a scratch project and a
+merge on it as the ordinary suite makes. It leaves behind **nothing but
+promoted cache generations** — the `gen-<n>` snapshots an evidence-closed
+step earns, which are the point of the warm run and which eviction reclaims
+under its watermarks ([sandbox.md](sandbox.md) §Eviction) — and the derived
+image, which image expiry takes. Everything else is swept **by name**: a
+`mill-*` machine with no live run, its run directory, and stale scratch
 projects on the forge and in dagger are taken by the next worker's
 reconciliation pass ([sandbox.md](sandbox.md) §"External state",
-§Reconciliation), which a killed live-tier run exercises on purpose. To sweep
-by hand before the next worker start, the machine cleanup a `live` spec's own
-teardown does is `sudo /usr/libexec/mill-machine terminate mill-<name>` then
-`sudo btrfs subvolume delete` of any leftover run copy, and the scratch
-projects go the way [What it leaves behind](#what-it-leaves-behind) describes.
+§Reconciliation), which the killed scenario exercises on purpose. The two
+scenarios that kill their own run — the db suite's, and the boundaries when
+it fails — sweep it themselves at teardown, because a killed run is live in
+the ledger with no worker to resume it: `mill-machine terminate` through the
+helper, every subvolume under the run directory deleted, the directory and
+the socket directory removed. To do the same by hand after a suite killed
+from outside: `sudo /usr/libexec/mill-machine terminate mill-<id>`, then
+under `/var/lib/mill/runs/<id>` a `btrfs property set -f <copy> ro false`
+and `btrfs subvolume delete` of each `cache/*` and `candidate/*` as the
+worker's own account, `rm -r` the directory and `/run/mill/<id>`; the
+scratch projects go the way [What it leaves behind](#what-it-leaves-behind)
+describes.
 
 **Its wall clock and cost the first time.** The first run on a cold host pays
-for the base image: `mill image build-base --push` is minutes of `dnf`, and
-the first machine's derived build and cache lineages start empty, so *One
-node, delivered, inside a machine* is dominated by the toolchain install
-(`mise install` of the Go toolchain through the proxy) rather than the
-session. Budget the base build separately — it is a prerequisite, not a
-scenario — and expect the first delivering scenario to take several minutes
-over its local-backend counterpart's ~2 min 20 s, most of it setup that the
-second, warm run does not repeat. The session cost is the ordinary suite's:
-roughly a quick-fix's `$0.37` per delivering scenario. Recompute the base
-build's wall clock the same way after a change to `images/base`; the shape of
-the first-run bill is `dnf` and a cold toolchain, and nothing else comes
-close.
+for the base image: `mill image build-base --push` is minutes of `dnf`
+(homestead's `mill-image` timer does it weekly, and the role's first apply
+does it once), and the first machine's derived build and cache lineages
+start empty, so *One node, delivered, inside a machine* is dominated by the
+toolchain install (`mise install` of the Go toolchain through the proxy)
+rather than the session. Budget the base build separately — it is a
+prerequisite, not a scenario. On `core` with the base built and the global
+`mise` lineage holding the go release, measured on 2026-09-11: *One node,
+delivered, inside a machine* ran in 70 s end to end (the machine ready
+5 s after the claim, the toolchain step 3.9 s cold, the four sessions and
+the merge the rest); *The boundaries hold* 82 s; *The second run is warm*
+142 s for its two deliveries, the toolchain step 3.9 s cold against 0.22 s
+warm. *The db suite runs inside a machine* is the long one: `make test-db`
+compiles the module cold inside the machine and pulls PostgreSQL through
+Harbor's proxy for every `db` suite. The session cost is the ordinary
+suite's: roughly a quick-fix's `$0.37` per delivering scenario, and the
+warm scenario delivers twice. Recompute the base build's wall clock the
+same way after a change to `images/base`; the shape of the first-run bill
+is `dnf` and a cold toolchain, and nothing else comes close.
 
 ## Adding a scenario
 

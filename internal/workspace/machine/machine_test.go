@@ -213,7 +213,8 @@ var _ = Describe("The machine workspace", Label("unit"), func() {
 		Expect(string(body)).To(ContainSubstring("HTTPS_PROXY=" + machine.DefaultProxy + "\n"))
 		Expect(string(body)).To(ContainSubstring("HTTP_PROXY=" + machine.DefaultProxy + "\n"))
 		Expect(string(body)).To(ContainSubstring("http_proxy=" + machine.DefaultProxy + "\n"))
-		Expect(string(body)).To(ContainSubstring("NO_PROXY=" + machine.DefaultNoProxy + "\n"))
+		Expect(string(body)).To(ContainSubstring("NO_PROXY="+machine.DefaultNoProxy+",10.99.255.1\n"),
+			"the gateway's host bypasses the proxy")
 		Expect(string(body)).To(ContainSubstring("ANTHROPIC_BASE_URL=" + machine.DefaultGateway + "\n"))
 		Expect(m.Check(map[string]bool{f.runDir(): false, f.socketDir(): false, f.skill: true, f.sidecar: true})).To(Succeed())
 	})
@@ -245,6 +246,7 @@ var _ = Describe("The machine workspace", Label("unit"), func() {
 	// Scenario: Readiness is systemd's
 	//   When a run creates its machine
 	//   Then no step exec is issued before is-system-running returns
+	//   And networkd has reported host0 online before the first step
 	It("Readiness is systemd's", func(ctx context.Context) {
 		ws := f.workspace()
 
@@ -264,11 +266,34 @@ var _ = Describe("The machine workspace", Label("unit"), func() {
 
 		By("and no step exec is issued before is-system-running returns")
 		execs := f.host.CallsTo(driver.Exec)
-		Expect(execs).To(HaveLen(1), "the readiness probe is the only exec Create issues")
+		Expect(execs).To(HaveLen(2), "the readiness probe's two execs are the only ones Create issues")
 		request := execs[0].Args[0].(driver.ExecRequest)
 		Expect(request.Argv).To(Equal([]string{"systemctl", "is-system-running", "--wait"}))
 		Expect(request.Machine).To(Equal("mill-" + id))
 		Expect(request.Slice).To(Equal(machine.ReadySlice))
+
+		By("and networkd has reported host0 online before the first step")
+		online := execs[1].Args[0].(driver.ExecRequest)
+		Expect(online.Argv).To(Equal(machine.OnlineArgv))
+		Expect(online.Machine).To(Equal("mill-" + id))
+		Expect(online.Slice).To(Equal(machine.ReadySlice))
+	})
+
+	It("A machine whose link has no address yet is not ready", func(ctx context.Context) {
+		f.config.ReadyTimeout = 700 * time.Millisecond
+		// systemd is running; the DHCP lease has not landed.
+		for range 50 {
+			f.host.Script(driver.Exec, driver.Output{Stdout: "running\n"})
+			f.host.Script(driver.Exec, driver.Output{Stderr: "Timeout occurred while waiting for network connectivity.\n", Status: 1})
+		}
+		ws := f.workspace()
+
+		_, err := ws.Create(ctx, spec)
+
+		var timeout *machine.ReadyTimeoutError
+		Expect(errors.As(err, &timeout)).To(BeTrue(), "%v", err)
+		Expect(timeout.Last).To(ContainSubstring("wait-online exited 1"))
+		Expect(timeout.Last).To(ContainSubstring("running"))
 	})
 
 	It("A machine that never reaches ready is terminated, never stopped, and Create returns the timeout and the digest", func(ctx context.Context) {
@@ -457,7 +482,7 @@ var _ = Describe("The machine workspace", Label("unit"), func() {
 		Expect(env[workspace.ModelGatewayTokenVar]).To(Equal("the-step-bearer"))
 		Expect(env[workspace.ModelGatewayVar]).To(Equal(machine.DefaultGateway))
 		Expect(env[workspace.HTTPSProxyVar]).To(Equal(machine.DefaultProxy))
-		Expect(env[workspace.NoProxyVar]).To(Equal(machine.DefaultNoProxy))
+		Expect(env[workspace.NoProxyVar]).To(Equal(machine.DefaultNoProxy+",10.99.255.1"), "the gateway host bypasses the proxy")
 		By("the zero token revokes")
 		Expect(ws.Rotate(ctx, workspace.Token{})).To(Succeed())
 		Expect(ws.Handle().Capabilities).To(BeEmpty())

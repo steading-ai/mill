@@ -13,12 +13,13 @@ write the message, and commit.
 
 ## Constraints
 
-- **Never `git add -A` or `git add .`** Be intentional about every path.
-- **Never `git -C <path>`** Run git from the working directory.
+- **Never `git add` or `git commit` yourself.** The workspace commits, through
+  its `git.commit` verb (below): it stages exactly the paths you name and
+  commits on the run's branch as the mill, signed with the mill's key, which
+  is on the host and never in this session. A commit you make yourself is
+  unsigned, and the step that pushes refuses it.
 - **Never set an identity or a signature, and never change git's
-  configuration.** Who the run commits as, and the key the commit is signed
-  with, are the workspace's and already in place: a plain `git commit` makes
-  the right commit. `--author`, `-c user.name=`, `-c user.email=`,
+  configuration.** `--author`, `-c user.name=`, `-c user.email=`,
   `--no-gpg-sign` and `git config` are all wrong here, and a commit that
   carries any other identity is refused by the step that verifies this one.
 - **Never amend, rebase, or force.** The run's history is the record of what
@@ -72,19 +73,31 @@ Conventional Commits:
 
 ### 4. Commit
 
+The workspace's socket is at `$WORKSPACE_SOCKET` and `$STEP_TOKEN` is the
+bearer it wants; every verb is one JSON `POST` to `http://mill/v1/<verb>`.
+Write the request to a file — a message with backticks or quotes does not
+survive a shell argument — naming the paths from step 2 and the message from
+step 3:
+
 ```bash
-git commit -m "$(cat <<'EOF'
-fix(scope): subject line
-
-Why this change was made.
-
-Refs: <node ref>
+cat > /tmp/commit.json <<'EOF'
+{
+  "message": "fix(scope): subject line\n\nWhy this change was made.\n\nRefs: <node ref>\n",
+  "paths": ["path/one", "path/two"]
+}
 EOF
-)"
+curl -sS --fail-with-body --unix-socket "$WORKSPACE_SOCKET" \
+  -H "Authorization: Bearer $STEP_TOKEN" -H 'Content-Type: application/json' \
+  --data @/tmp/commit.json http://mill/v1/git.commit
+rm /tmp/commit.json
 ```
+
+The response is the commit: `{"sha": "...", "subject": "...", ...}`. An error
+body names what was refused — a path outside the tree, nothing staged — and
+is yours to fix and retry.
 
 ### 5. Report the SHA
 
-Run `git rev-parse HEAD` and end with the full SHA on a line of its own.
-That is what this step is closed on; a summary that does not contain it
-closes nothing.
+End with the full `sha` the verb returned on a line of its own (`git
+rev-parse HEAD` shows the same). That is what this step is closed on; a
+summary that does not contain it closes nothing.

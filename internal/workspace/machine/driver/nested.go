@@ -103,13 +103,33 @@ func CheckEphemeralRoot(root string) error {
 
 // EnsureNestedRoot makes the nested root a subvolume when it is not there,
 // as the worker's own uid: its parent is the session user's home, which
-// every image has.
+// every image has. Two workers asking at once — a suite's parallel
+// processes, each a `mill doctor` or `mill run` inside the same machine —
+// race on the create, and the loser's refusal is the winner's subvolume:
+// it is checked for after the create fails, and only its absence is the
+// error.
 func EnsureNestedRoot(ctx context.Context, host Driver, root string) error {
-	if info, err := os.Stat(root); err == nil {
-		if !info.IsDir() {
-			return fmt.Errorf("machine: nested root %s is not a directory", root)
-		}
-		return nil
+	if present, err := nestedRootPresent(root); present || err != nil {
+		return err
 	}
-	return host.CreateSubvolume(ctx, root)
+	if err := host.CreateSubvolume(ctx, root); err != nil {
+		if present, _ := nestedRootPresent(root); present {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// nestedRootPresent is whether the nested root is there; something there
+// that is not a directory is the error.
+func nestedRootPresent(root string) (bool, error) {
+	info, err := os.Stat(root)
+	if err != nil {
+		return false, nil //nolint:nilerr // absent is the answer, not an error
+	}
+	if !info.IsDir() {
+		return true, fmt.Errorf("machine: nested root %s is not a directory", root)
+	}
+	return true, nil
 }

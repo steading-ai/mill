@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	millv1 "github.com/ivy/mill/gen/mill/v1"
@@ -283,7 +284,7 @@ func (n Egress) Environment(token string) map[string]string {
 	if n.Proxy != "" {
 		env[HTTPSProxyVar] = n.Proxy
 		env[HTTPProxyVar] = n.Proxy
-		env[NoProxyVar] = n.NoProxy
+		env[NoProxyVar] = n.Bypass()
 	}
 	if n.Gateway != "" {
 		env[ModelGatewayVar] = n.Gateway
@@ -291,6 +292,31 @@ func (n Egress) Environment(token string) map[string]string {
 		env[ToolSearchVar] = "true"
 	}
 	return env
+}
+
+// Bypass is NO_PROXY as a process is given it: NoProxy, and the gateway's
+// host when a gateway was decided beside the proxy. The gateway is on the
+// host side of the machine's own link and admitted there directly; sent
+// through the proxy instead, the request reaches squid as a host-bound
+// connection it refuses, and the session's first call to the model fails
+// with the proxy's error page (docs/sandbox.md §Network).
+func (n Egress) Bypass() string {
+	if n.Proxy == "" || n.Gateway == "" {
+		return n.NoProxy
+	}
+	host := n.Gateway
+	if u, err := url.Parse(n.Gateway); err == nil && u.Hostname() != "" {
+		host = u.Hostname()
+	}
+	for entry := range strings.SplitSeq(n.NoProxy, ",") {
+		if strings.TrimSpace(entry) == host {
+			return n.NoProxy
+		}
+	}
+	if n.NoProxy == "" {
+		return host
+	}
+	return n.NoProxy + "," + host
 }
 
 // Handle is the workspace as the ledger records it. docs/domain-model.md

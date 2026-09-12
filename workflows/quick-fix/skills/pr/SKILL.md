@@ -66,30 +66,45 @@ repository does. Keep it under 72 characters.
 
 ### 4. Push and open
 
+The push and the pull request are the workspace's, through its `git.push`
+and `forge.pr` verbs: the forge credential is on the host and never in this
+session, so `git push` and `gh` here have nothing to present and fail. The
+workspace's socket is at `$WORKSPACE_SOCKET` and `$STEP_TOKEN` is the bearer
+it wants; every verb is one JSON `POST` to `http://mill/v1/<verb>`.
+
+Push the run's branch:
+
 ```bash
-git push -u origin <branch>
+curl -sS --fail-with-body --unix-socket "$WORKSPACE_SOCKET" \
+  -H "Authorization: Bearer $STEP_TOKEN" -H 'Content-Type: application/json' \
+  --data '{}' http://mill/v1/git.push
 ```
 
-Write the body to a file rather than passing it inline — backticks and code
-fences do not survive a shell argument:
+A push refused because a commit is not signed by the mill is a commit made
+outside the `commit` step's verb; report it and stop.
+
+Write the request to a file rather than passing it inline — backticks and
+code fences do not survive a shell argument — and open the pull request
+against the default base (`target` empty):
 
 ```bash
-cat > pr-body.md <<'PRBODY'
-...
+cat > /tmp/pr.json <<'PRBODY'
+{"title": "...", "description": "...", "target": ""}
 PRBODY
-gh pr create --title "..." --body-file pr-body.md
+curl -sS --fail-with-body --unix-socket "$WORKSPACE_SOCKET" \
+  -H "Authorization: Bearer $STEP_TOKEN" -H 'Content-Type: application/json' \
+  --data @/tmp/pr.json http://mill/v1/forge.pr
+rm /tmp/pr.json
 ```
 
-Delete `pr-body.md` afterwards. The tree must stay clean.
+Write the files under `/tmp`, never in the tree: it must stay clean.
 
 ### 5. Report the URL
 
-End with the pull request URL on a line of its own. That is the evidence
-this step is closed on.
+The response is the pull request: `{"number": ..., "url": "...", ...}`. End
+with its `url` on a line of its own. That is the evidence this step is
+closed on.
 
 If a pull request for this branch already exists — a resumed run reaches
-this step twice — do not open a second one. Query it and report its URL:
-
-```bash
-gh pr view --json url --jq .url
-```
+this step twice — `forge.pr` returns it rather than opening a second one;
+report its URL the same way.

@@ -151,6 +151,18 @@ type Config struct {
 	// of the helper's read-only sources — the worker's share root — and the
 	// worker writes this binary's sidecar there before [Check].
 	Sidecar string
+	// Workflow is the worker's materialised workflow directory, bound
+	// read-only into every machine when WorkflowSource is set, so a check
+	// step's scripts are there to run (docs/sandbox.md §"Skill mount").
+	// Like the skill it must be under one of the helper's read-only
+	// sources, and the worker writes its copy there before [Check].
+	Workflow string
+	// WorkflowSource is the directory the worker loaded the workflow from
+	// — what a check step's relative command was resolved against on the
+	// host. An exec naming a program under it runs the copy at
+	// [config.WorkflowPath] inside the machine. Empty binds no workflow
+	// and translates nothing.
+	WorkflowSource string
 	// Origin is the repository to clone when a spec does not name one.
 	Origin string
 	// Forge is where the run delivers, and whose credential the clone
@@ -249,6 +261,11 @@ func (c Config) withDefaults() Config {
 			c.Sidecar = filepath.Join(home, ".local", "share", "mill", "sidecar")
 		}
 	}
+	if c.Workflow == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			c.Workflow = filepath.Join(home, ".local", "share", "mill", "workflow")
+		}
+	}
 	if c.Name == "" {
 		c.Name = "mill"
 	}
@@ -307,6 +324,12 @@ func (c Config) SkillDir() string { return c.withDefaults().Skill }
 // the sidecar into before [Check] asks whether it is there (internal/skill).
 func (c Config) SidecarDir() string { return c.withDefaults().Sidecar }
 
+// WorkflowDir is the directory bound read-only into every machine as the
+// workflow's scripts, when a workflow directory was loaded from
+// (docs/sandbox.md §"Skill mount"): the configured one, or the share
+// root's `workflow`.
+func (c Config) WorkflowDir() string { return c.withDefaults().Workflow }
+
 // socketDir is `<run state>/<id>`, bound into the machine at `/run/mill`.
 func (c Config) socketDir(id string) string { return filepath.Join(c.RunState, id) }
 
@@ -345,6 +368,11 @@ func Check(host driver.Driver, c Config) error {
 	}
 	if info, err := os.Stat(c.Sidecar); err != nil || !info.IsDir() {
 		return fmt.Errorf("machine: sidecar directory %s is not a directory the machine can bind", c.Sidecar)
+	}
+	if c.WorkflowSource != "" {
+		if info, err := os.Stat(c.Workflow); err != nil || !info.IsDir() {
+			return fmt.Errorf("machine: workflow directory %s is not a directory the machine can bind", c.Workflow)
+		}
 	}
 	return socket.CheckPath(filepath.Join(c.socketDir(strings.Repeat("0", 26)), SocketName))
 }

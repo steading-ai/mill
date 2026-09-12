@@ -46,12 +46,25 @@ RUN useradd -u 1000 -m agent \
 RUN mkdir -p /home/agent/.claude/skills/mill \
     && chown -R agent:agent /home/agent/.claude
 
-# The mount point of the mill sidecar, made as agent's ahead of the bind, for
-# the same reason the skill's is: nspawn makes a missing mount point as root,
-# and the worker binds the sidecar read-only here at provision — it is not
-# baked in (docs/sandbox.md §"Skill mount"). The image's node runs it.
-RUN mkdir -p /home/agent/.local/share/mill/sidecar \
+# The mount points of the mill sidecar and the workflow directory, made as
+# agent's ahead of the binds, for the same reason the skill's is: nspawn
+# makes a missing mount point as root, and the worker binds both read-only
+# here at provision — neither is baked in (docs/sandbox.md §"Skill mount").
+# The image's node runs the sidecar; a check step runs its script from the
+# workflow copy.
+RUN mkdir -p /home/agent/.local/share/mill/sidecar /home/agent/.local/share/mill/workflow \
     && chown -R agent:agent /home/agent/.local
+
+# The parents of every default cache mount point (docs/sandbox.md
+# §Caching's table), made as agent's ahead of the binds, for the same
+# reason again: nspawn makes a missing mount point and its parents as
+# root, and a tool that writes a sibling under one — mise's own lockfiles
+# beside ~/.cache/go-build, a package under ~/.local/share beside mise's
+# data — is refused with the parent root's.
+RUN mkdir -p /home/agent/.cache /home/agent/.local/share /home/agent/go/pkg \
+      /home/agent/.cargo /home/agent/.npm /home/agent/.bun/install /home/agent/.gem \
+    && chown -R agent:agent /home/agent/.cache /home/agent/.local /home/agent/go \
+      /home/agent/.cargo /home/agent/.npm /home/agent/.bun /home/agent/.gem
 
 # Node for the harness's runtime, installed globally through mise so a
 # session's own mise.toml can still choose another.

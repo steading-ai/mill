@@ -31,7 +31,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -189,32 +188,70 @@ func hostMust(ctx context.Context, argv ...string) string {
 // session inside the machine would see, asserted from outside it.
 func inMachine(ctx context.Context, machine string, argv ...string) (combined string, status int) {
 	GinkgoHelper()
+	return inMachineUnder(ctx, machine, "mill-step-probe.slice", argv...)
+}
+
+// inMachineUnder is inMachine under a named step slice: the run's own, when
+// what is being proved is that the run's step boundary reaps what a step
+// left behind.
+func inMachineUnder(ctx context.Context, machine, slice string, argv ...string) (combined string, status int) {
+	GinkgoHelper()
+	return inMachineWith(ctx, machine, slice, nil, argv...)
+}
+
+// inMachineWith is inMachineUnder with an environment for the exec, each
+// entry one `NAME=value` the helper admits; nil is the helper's bare
+// environment, which carries nothing of the run's.
+func inMachineWith(ctx context.Context, machine, slice string, env []string, argv ...string) (combined string, status int) {
+	GinkgoHelper()
 	args := []string{"-n", sandboxHelper, "exec", machine,
-		"-p", "Slice=mill-step-probe.slice", "-p", "WorkingDirectory=/work", "-p", "User=" + "agent", "--"}
+		"-p", "Slice=" + slice, "-p", "WorkingDirectory=/work", "-p", "User=" + "agent"}
+	for _, assignment := range env {
+		args = append(args, "-p", "Environment="+assignment)
+	}
+	args = append(args, "--")
 	args = append(args, argv...)
 	out, errb, status := hostRun(ctx, append([]string{"sudo"}, args...)...)
 	return out + errb, status
 }
 
+// asSession runs a command inside a machine the way a session's shell runs
+// one: under a probe slice, with the egress the run decided for the machine
+// — the proxy, its bypass list, the gateway — read off the environment.d
+// file the run wrote for the machine's user manager (docs/sandbox.md
+// §Network). The helper's exec carries no environment of its own, and a
+// tool that reaches out with none — `go` fetching a module — dials direct
+// and is dropped by the host's table.
+func asSession(ctx context.Context, runID, machine string, argv ...string) (combined string, status int) {
+	GinkgoHelper()
+	body, err := os.ReadFile(filepath.Join(runDir(runID), "environment.d", "50-mill-proxy.conf")) //nolint:gosec // the run directory is the worker's own, the suite's account
+	Expect(err).NotTo(HaveOccurred(), "the run wrote the machine's environment")
+	var env []string
+	for line := range strings.SplitSeq(string(body), "\n") {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		env = append(env, line)
+	}
+	Expect(env).NotTo(BeEmpty())
+	return inMachineWith(ctx, machine, "mill-step-probe.slice", env, argv...)
+}
+
 // sandboxRecord is the run's own note of its machine, `runs/<id>/run.json`
-// on the host, as much of it as the live tier reads back: the machine's name,
-// the digest it booted, the veth the host addresses it on, and the lineages
-// it restored. It is docs/sandbox.md §Reconciliation's per-run record — the
-// ledger's copy travels on the workspace handle as workspace.Sandbox — and
-// the suite reads this one because it is on a file it can open and reach
-// before the run's directory is removed at finish.
+// on the host, as much of it as the live tier reads: the machine's name and
+// when it reported ready. It is how a from-the-host scenario finds the
+// machine to probe while the run is in flight (docs/sandbox.md §Provision);
+// what the run recorded is asserted off the ledger, which is the record
+// (docs/ledger.md §Workspaces, `sandbox`).
 type sandboxRecord struct {
-	RunID    string `json:"run_id"`
-	ID       string `json:"id"`
-	Machine  string `json:"machine"`
-	Unit     string `json:"unit"`
-	Image    string `json:"image"`
-	Veth     string `json:"veth"`
-	Lineages []struct {
-		Lineage    string `json:"lineage"`
-		Generation int    `json:"generation"`
-	} `json:"lineages"`
+	RunID   string    `json:"run_id"`
+	Machine string    `json:"machine"`
 	ReadyAt time.Time `json:"ready_at"`
+	// Slice is the step slice in flight, `mill-step-<ordinal>.slice`, and
+	// Ordinal its number (docs/sandbox.md §"Step boundary"): what a probe
+	// that must be reaped by the run's own step boundary runs under.
+	Slice   string `json:"slice"`
+	Ordinal int    `json:"ordinal"`
 }
 
 // runDir is a run's directory on the host: the machine id is the run id in
@@ -242,7 +279,7 @@ func readRecord(runID string) (sandboxRecord, bool) {
 // awaitMachine waits for a run to boot its machine and reach ready, and
 // returns the record. It is how a from-the-host scenario finds the machine to
 // probe: the record names it, and machinectl confirms it is running.
-func awaitMachine(ctx context.Context, runID string, timeout time.Duration) sandboxRecord {
+func awaitMachine(ctx context.Context, runID string) sandboxRecord {
 	GinkgoHelper()
 	var record sandboxRecord
 	Eventually(func() bool {
@@ -253,47 +290,8 @@ func awaitMachine(ctx context.Context, runID string, timeout time.Duration) sand
 		}
 		state, _, _ := hostRun(ctx, "machinectl", "show", record.Machine, "-p", "State")
 		return strings.TrimSpace(state) == "State=running"
-	}, timeout, 2*time.Second).Should(BeTrue(), "run %s booted a machine and reached ready", runID)
+	}, deliveredTimeout, 2*time.Second).Should(BeTrue(), "run %s booted a machine and reached ready", runID)
 	return record
-}
-
-// capturedRecords collects a run's `run.json` while the run is in flight,
-// because the run's directory — and the record with it — is removed when the
-// run finishes. A scenario that asserts what the ledger recorded reads the
-// last snapshot the capture saw, taken while the machine was up.
-type capturedRecords struct {
-	done   chan struct{}
-	latest chan sandboxRecord
-}
-
-// captureRecord starts polling a run's `run.json` and returns a handle whose
-// stop yields the last record seen. A run that never booted a machine yields
-// the zero record, which the caller asserts against.
-func captureRecord(runID string) *capturedRecords {
-	c := &capturedRecords{done: make(chan struct{}), latest: make(chan sandboxRecord, 1)}
-	go func() {
-		var last sandboxRecord
-		ticker := time.NewTicker(500 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-c.done:
-				c.latest <- last
-				return
-			case <-ticker.C:
-				if record, ok := readRecord(runID); ok && record.Machine != "" {
-					last = record
-				}
-			}
-		}
-	}()
-	return c
-}
-
-// stop ends the capture and returns the last record it saw.
-func (c *capturedRecords) stop() sandboxRecord {
-	close(c.done)
-	return <-c.latest
 }
 
 // cacheGenerations are the promoted generations under the host's cache root:
@@ -325,12 +323,46 @@ func cacheGenerations(ctx context.Context) []string {
 // cache to promote, and a one-word diff to commit and merge — because a
 // session on the subscription and a merge on a scratch project cost real
 // money every run (the work order's own instruction to keep the node small).
+//
+// The build is mise's `postinstall` hook: `go vet` over one package that
+// pulls in net/http, so the `toolchain` step compiles a good slice of the
+// standard library into `~/.cache/go-build` — the repo-scoped `go-build`
+// lineage, empty for every fresh scratch repository and restored from the
+// first run's promotion by the second (docs/sandbox.md §Caching). That is
+// what makes the toolchain step's duration a cold-against-warm measure of
+// the lineage rather than of `mise install` alone, which is warm on any host
+// whose global `mise` lineage already holds this go. `go vet` writes nothing
+// into the tree, so the clean-tree check after commit is unaffected.
+//
+// The go release is pinned exactly. A partial pin (`1.25`) makes mise list
+// the releases upstream before it can settle on one — `git ls-remote` of
+// golang/go, a network round trip the toolchain step pays on every run and
+// that the fixture is not about; an exact release already installed in the
+// worker's global `mise` lineage costs the step no lookup at all.
+//
+// The second word the fixture's README misspells, for the node the warm
+// scenario files after the first has been delivered: the same repository
+// and the same kind of change, against a README the first run already
+// corrected once, so the second session has a change of its own to make.
+const (
+	secondMisspelling = "sep" + "erate"
+	secondCorrection  = "separate"
+)
+
 var machineTypo = fixture{
 	Name: "machine-typo",
 	Files: map[string]string{
-		"mise.toml": "[tools]\ngo = \"1.25\"\n",
+		"mise.toml": "[tools]\ngo = \"1.25.14\"\n\n[hooks]\npostinstall = \"go vet ./...\"\n",
+		"go.mod":    "module scratch\n\ngo 1.25\n",
+		// The binary a session's own `go build` would leave, ignored as a Go
+		// repository ignores it, so the clean-tree check after commit sees
+		// the tree and not the session's curiosity.
+		".gitignore": "/scratch\n",
+		"main.go": "package main\n\nimport (\n\t\"encoding/json\"\n\t\"fmt\"\n\t\"net/http\"\n)\n\n" +
+			"func main() {\n\tbody, _ := json.Marshal(http.StatusText(http.StatusTeapot))\n\tfmt.Println(string(body))\n}\n",
 		"README.md": "# Scratch\n\nThis project exists so the sandbox can prove itself.\n\n" +
-			"We " + misspelling + " the change inside a machine and merge it.\n",
+			"We " + misspelling + " the change inside a machine and merge it.\n\n" +
+			"A " + secondMisspelling + " run proves the cache is warm.\n",
 	},
 	Title: "Fix the typo in README.md: '" + misspelling + "' → '" + correction + "'",
 	Body: "README.md contains the misspelling \"" + misspelling + "\". It should read \"" + correction + "\".\n\n" +
@@ -375,13 +407,12 @@ var _ = Describe("Acceptance", Label("acceptance", "sandbox"), Label("live"), fu
 			SandboxRoot:     sandboxRoot,
 			ModelCredential: os.Getenv(sandboxModelCredentialVar),
 		})
-		// The record is captured while the run is in flight, because the run
-		// directory — and run.json with it — is removed at finish.
-		capture := captureRecord(s.runID(ctx))
+		// The machine's name off the run's own record while it is in flight,
+		// to hold the ledger's copy to afterwards.
+		booted := awaitMachine(ctx, s.runID(ctx)).Machine
 
 		By("then the node is done with a merge on the default branch")
 		Expect(run.wait(deliveredTimeout)).To(BeZero(), "mill run exited cleanly")
-		record := capture.stop()
 		view := s.Graph.show(ctx, s.NodeRef)
 		Expect(view.Node.Status).To(Equal("done"))
 		// The merge commit read off the run's own merge request — the mill's
@@ -411,16 +442,23 @@ var _ = Describe("Acceptance", Label("acceptance", "sandbox"), Label("live"), fu
 		}
 
 		By("and the ledger records the machine, the derived digest, the veth, and the lineages")
-		AddReportEntry("run.json", record)
-		Expect(record.Machine).To(HavePrefix("mill-"), "the run recorded its machine name")
-		Expect(record.Image).To(MatchRegexp(`^[a-z0-9]+$`), "the derived digest the machine booted")
-		Expect(record.Veth).NotTo(BeEmpty(), "the host-side veth the machine was reachable on")
-		Expect(record.Lineages).NotTo(BeEmpty(), "the lineages the run restored")
+		sandbox := detail.GetSummary().GetWorkspace().GetSandbox()
+		AddReportEntry("sandbox", sandbox)
+		Expect(sandbox).NotTo(BeNil(), "the run's workspace row carries its machine")
+		Expect(sandbox.GetMachine()).To(Equal(booted), "the ledger names the machine that booted")
+		Expect(sandbox.GetUnit()).To(Equal("mill-machine@" + strings.TrimPrefix(booted, "mill-") + ".service"))
+		Expect(sandbox.GetImageDigest()).To(MatchRegexp(`^[a-f0-9]{64}$`), "the derived digest the machine booted")
+		Expect(sandbox.GetVeth()).To(HavePrefix("ve-mill-"), "the host-side veth the machine was reachable on")
+		Expect(sandbox.GetLineages()).NotTo(BeEmpty(), "the lineages the run restored")
 
 		By("and the run promoted its build lineage")
+		build := lineageNamed(sandbox, "go-build")
+		Expect(build).NotTo(BeNil(), "a go repository restores a go-build lineage")
+		Expect(build.Promoted).NotTo(BeNil(), "the evidence-closed steps promoted the go build cache")
+		Expect(build.GetPromoted()).To(BeNumerically(">", 0))
 		after := cacheGenerations(ctx)
-		Expect(after).To(ContainElement(HaveSuffix("/go-build/gen-1")),
-			"the evidence-closed steps promoted the go build cache; before=%v after=%v", before, after)
+		Expect(after).To(ContainElement(HaveSuffix(fmt.Sprintf("/go-build/gen-%d", build.GetPromoted()))),
+			"the promoted generation is on the volume; before=%v after=%v", before, after)
 	})
 
 	// Scenario: The db suite runs inside a machine
@@ -441,24 +479,54 @@ var _ = Describe("Acceptance", Label("acceptance", "sandbox"), Label("live"), fu
 			SandboxRoot:     sandboxRoot,
 			ModelCredential: os.Getenv(sandboxModelCredentialVar),
 		})
-		DeferCleanup(run.kill)
-		machine := awaitMachine(ctx, s.runID(ctx), deliveredTimeout).Machine
+		id := s.runID(ctx)
+		DeferCleanup(func(ctx context.Context) {
+			run.kill()
+			sweepKilledRun(ctx, id)
+		})
+		machine := awaitMachine(ctx, id).Machine
 
 		By("when a session runs make test-db against the machine's podman")
-		// The image enables `podman.socket`; the rootless socket is the one
-		// inside the machine (docs/sandbox.md §Network). The suite finds
-		// whichever of the two the image landed on and points DOCKER_HOST at
-		// it, exactly as a session's own shell would.
+		// After the run's own toolchain step has installed what mill's
+		// mise.toml pins — go, ginkgo, goose — through the proxy: the suite's
+		// exec is a session's shell, and a session runs once the preparatory
+		// step has closed (docs/sandbox.md §"Preparatory steps"). The image
+		// enables `podman.socket`; the rootless socket is the one inside the
+		// machine (docs/sandbox.md §Network). The suite finds whichever of
+		// the two the image landed on and points DOCKER_HOST at it, exactly
+		// as a session's own shell would. The exec is a step of its own —
+		// its slice is the probe's — so what the assertion after it reads is
+		// what that step left in podman once it ended.
+		awaitClosed(ctx, s.NodeRef, "toolchain")
 		socket := podmanSocket(ctx, machine)
-		out, status := inMachine(ctx, machine, "sh", "-lc",
-			"cd /work && DOCKER_HOST=unix://"+socket+" make test-db")
+		// The reaper's window is the suite's own choice (internal/testsupport
+		// sets five minutes unless told otherwise): a container the machine's
+		// podman runs for a step is not in the step's slice — the API service
+		// under agent's user manager starts it, not the step's exec — so the
+		// step boundary does not take it, and a reaper that lingers five
+		// minutes after the step is a container that remains after the step.
+		// Ten seconds is ryuk's own default.
+		out, status := asSession(ctx, s.runID(ctx), machine, "sh", "-lc",
+			"cd /work && DOCKER_HOST=unix://"+socket+" RYUK_RECONNECTION_TIMEOUT=10s mise exec -- make test-db")
 		AddReportEntry("make test-db", out)
 
 		By("then it exits 0 and no container remains after the step")
 		Expect(status).To(BeZero(), "make test-db inside the machine: %s", out)
-		remaining, _ := inMachine(ctx, machine, "sh", "-lc",
-			"DOCKER_HOST=unix://"+socket+" podman ps -aq")
-		Expect(strings.TrimSpace(remaining)).To(BeEmpty(), "no container outlived the step")
+		// testcontainers' reaper (ryuk) is the one container the suite does
+		// not stop itself: it stops what the suite made and then exits, its
+		// window after the suite's last connection to it closes. So the
+		// machine's podman is given that long to be empty, and what it held
+		// at the step's end is on the record.
+		var seen string
+		Eventually(func() string {
+			remaining, _ := inMachine(ctx, machine, "sh", "-lc",
+				"DOCKER_HOST=unix://"+socket+" podman ps -a --format '{{.ID}} {{.Image}} {{.Status}}'")
+			if seen == "" {
+				seen = remaining
+			}
+			return strings.TrimSpace(remaining)
+		}, 30*time.Second, 2*time.Second).Should(BeEmpty(), "no container outlived the step")
+		AddReportEntry("podman ps -a at the step's end", seen)
 	})
 
 	// Scenario: The boundaries hold
@@ -477,21 +545,39 @@ var _ = Describe("Acceptance", Label("acceptance", "sandbox"), Label("live"), fu
 			SandboxRoot:     sandboxRoot,
 			ModelCredential: os.Getenv(sandboxModelCredentialVar),
 		})
-		DeferCleanup(run.kill)
-		machine := awaitMachine(ctx, s.runID(ctx), deliveredTimeout).Machine
+		id := s.runID(ctx)
+		// The run is left to finish; the sweep is for a run the scenario's
+		// failure left in flight.
+		DeferCleanup(func(ctx context.Context) {
+			if run.running() {
+				run.kill()
+				sweepKilledRun(ctx, id)
+			}
+		})
+		machine := awaitMachine(ctx, id).Machine
 
 		By("when the host inspects uids, mounts, network, credentials and processes")
+		// The marker for the last assertion goes in first, while the run is
+		// on its earliest step: a machine run delivers a quick fix in about a
+		// minute, and the probes between take seconds each.
+		left := leaveBehind(ctx, s.runID(ctx), machine)
 
 		By("then the session's uid on the host is in the machine's range and not the operator's")
 		leader := strings.TrimSpace(hostMust(ctx, "machinectl", "show", machine, "-p", "Leader", "--value"))
 		Expect(leader).NotTo(BeEmpty())
-		hostUID := strings.TrimSpace(hostMust(ctx, "sh", "-c", "stat -c %u /proc/"+leader))
-		Expect(hostUID).NotTo(Equal(fmt.Sprintf("%d", os.Getuid())), "the machine's processes are not the operator's uid on the host")
-		Expect(hostUID).NotTo(Equal("0"), "nor root's")
+		var hostUID int
+		_, err := fmt.Sscanf(strings.TrimSpace(hostMust(ctx, "sh", "-c", "stat -c %u /proc/"+leader)), "%d", &hostUID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(hostUID).NotTo(Equal(os.Getuid()), "the machine's processes are not the operator's uid on the host")
+		Expect(hostUID).NotTo(BeZero(), "nor root's")
+		// nspawn's --private-users=pick draws the machine's 65536 uids from
+		// above the host's own users (docs/sandbox.md §Provision).
+		Expect(hostUID).To(BeNumerically(">=", 65536), "the uid is in a range picked for the machine")
 
 		By("and /home/ivy is not reachable from inside")
-		out, status := inMachine(ctx, machine, "sh", "-c", "ls /home/ivy 2>&1; echo status=$?")
-		Expect(status).NotTo(BeZero())
+		out, status := inMachine(ctx, machine, "ls", "-a", "/home/ivy")
+		Expect(status).NotTo(BeZero(), "ls /home/ivy: %s", out)
+		Expect(out).To(ContainSubstring("No such file or directory"), "the operator's home is not there at all")
 		Expect(out).NotTo(ContainSubstring(".ssh"), "the operator's home is not mounted")
 
 		By("and a direct connection out times out and one through the proxy succeeds")
@@ -502,9 +588,14 @@ var _ = Describe("Acceptance", Label("acceptance", "sandbox"), Label("live"), fu
 		_, direct := inMachine(ctx, machine, "sh", "-c",
 			"curl -sS --max-time 8 https://example.com/ -o /dev/null")
 		Expect(direct).NotTo(BeZero(), "a direct connection is dropped and times out")
-		_, proxied := inMachine(ctx, machine, "sh", "-c",
-			"curl -sS --max-time 20 -x \"$HTTPS_PROXY\" https://example.com/ -o /dev/null")
-		Expect(proxied).To(BeZero(), "a connection through the proxy the environment names succeeds")
+		// The probe's exec carries no environment of its own (docs/sandbox.md
+		// §Exec), so the proxy is read from where the run bound it for the
+		// machine: the environment.d file agent's user manager reads at boot
+		// (§Network).
+		out, proxied := inMachine(ctx, machine, "sh", "-c",
+			". /etc/environment.d/50-mill-proxy.conf && test -n \"$HTTPS_PROXY\" && "+
+				"curl -sS --max-time 20 -x \"$HTTPS_PROXY\" https://example.com/ -o /dev/null")
+		Expect(proxied).To(BeZero(), "a connection through the proxy the environment names succeeds: %s", out)
 
 		By("and ~/.claude holds no .credentials.json")
 		creds, _ := inMachine(ctx, machine, "sh", "-c",
@@ -514,29 +605,45 @@ var _ = Describe("Acceptance", Label("acceptance", "sandbox"), Label("live"), fu
 		By("and a process left behind by a step is gone once the run has moved on")
 		// A daemon a session starts does not outlive the step's slice: the
 		// step boundary reaps everything under it, containers included
-		// (docs/sandbox.md §"Step boundary"). This is the coarse view from
-		// outside — a marker process the suite starts under a step slice is
-		// gone by the time the run's next step boundary or its teardown has
-		// passed; the rigorous within-a-run step-1-to-step-2 proof, which
-		// needs to drive the slices, is
-		// internal/workspace/machine/live_test.go's "A background process
-		// does not survive its step".
-		_, _ = inMachine(ctx, machine, "sh", "-c", "setsid sleep 3600 >/dev/null 2>&1 &")
-		Eventually(func() int {
-			// The probe stops once the machine is gone: the run finished and
-			// its teardown reaped every process with it.
-			if _, _, s := hostRun(ctx, "machinectl", "show", machine, "-p", "State"); s != 0 {
-				return 0
+		// (docs/sandbox.md §"Step boundary"). The marker was started under
+		// the run's own step slice in flight — read off run.json, which
+		// BeginStep writes and EndStep clears — so what reaps it is the run's
+		// next step boundary, not the machine's teardown; the assertion runs
+		// once the record shows a later ordinal, while the machine is still
+		// up. A run that finished before that reading has torn the machine
+		// down with everything in it, which is the same property from the
+		// other end; the report entry says which was seen.
+		var reaped string
+		Eventually(func() string {
+			record, ok := readRecord(s.runID(ctx))
+			if !ok || record.Ordinal <= left {
+				if !run.running() {
+					reaped = "the run ended and took the machine, and the marker, with it"
+				}
+				return reaped
 			}
 			out, _ := inMachine(ctx, machine, "sh", "-c", "pgrep -c -x sleep || true")
-			var n int
-			_, _ = fmt.Sscanf(strings.TrimSpace(out), "%d", &n)
-			return n
-		}, deliveredTimeout, 3*time.Second).Should(BeZero(), "nothing a step started outlives its slice")
+			if strings.TrimSpace(out) != "0" {
+				return ""
+			}
+			reaped = fmt.Sprintf("no sleep in the machine on step %d", record.Ordinal)
+			return reaped
+		}, deliveredTimeout, time.Second).ShouldNot(BeEmpty(), "nothing step %d started is there once the run is on a later step", left)
+		AddReportEntry("left behind", fmt.Sprintf("a sleep under step %d's slice; %s", left, reaped))
 
 		By("and machinectl list on the host is empty of this machine after the run")
 		Expect(run.wait(deliveredTimeout)).To(BeZero())
 		Expect(hostMust(ctx, "machinectl", "list", "--no-legend")).NotTo(ContainSubstring(machine))
+
+		By("and the gateway log shows the step token inbound, by name and never by value")
+		// The gateway logs every forwarded request on `mill run`'s stderr
+		// with the step token by id and the credential by fingerprint
+		// (docs/sandbox.md §Credentials). The token's value is what the
+		// session held; it is in no log line.
+		log := run.output.String()
+		Expect(log).To(MatchRegexp(`msg="gateway: forwarding" .*token=\S+ .*credential=credential:[0-9a-f]+`),
+			"the gateway forwarded a machine session's request under the step token")
+		Expect(log).NotTo(ContainSubstring("Bearer "), "no bearer value reaches the log")
 	})
 
 	// Scenario: The second run is warm
@@ -552,26 +659,29 @@ var _ = Describe("Acceptance", Label("acceptance", "sandbox"), Label("live"), fu
 		Expect(first.wait(deliveredTimeout)).To(BeZero(), "the first run delivered")
 
 		By("when the same node is delivered again")
-		// A fresh node against the same repository, so the second run restores
-		// the go build lineage the first promoted. The node's own delivery is
-		// not the point; the warm cache is.
-		again := s.Graph.file(ctx, machineTypo.Title, machineTypo.Body)
+		// A fresh node against the same repository — the README's second
+		// misspelling, since the first run corrected the first — so the second
+		// run restores the go build lineage the first promoted. The node's
+		// own delivery is not the point; the warm cache is.
+		again := s.Graph.file(ctx,
+			"Fix the typo in README.md: '"+secondMisspelling+"' → '"+secondCorrection+"'",
+			"README.md contains the misspelling \""+secondMisspelling+"\". It should read \""+secondCorrection+"\".\n\n"+
+				"Change that one word and nothing else.\n")
 		s2 := *s
 		s2.NodeRef = again
 		second := s2.start(ctx, runOptions{Machine: true, SandboxRoot: sandboxRoot, ModelCredential: os.Getenv(sandboxModelCredentialVar)})
-		capture := captureRecord(s2.runID(ctx))
 		Expect(second.wait(deliveredTimeout)).To(BeZero(), "the second run delivered")
-		record := capture.stop()
 
 		By("then the build lineage restores non-empty")
-		var restoredEmpty bool
-		for _, l := range record.Lineages {
-			if strings.HasSuffix(l.Lineage, "go-build") {
-				restoredEmpty = l.Generation == 0
-			}
-		}
-		AddReportEntry("second run.json", record)
-		Expect(restoredEmpty).To(BeFalse(), "the second run restored the go-build lineage from a promoted generation, not empty")
+		cold := lineageNamed(inspect(ctx, s.NodeRef).GetSummary().GetWorkspace().GetSandbox(), "go-build")
+		warm := lineageNamed(inspect(ctx, again).GetSummary().GetWorkspace().GetSandbox(), "go-build")
+		AddReportEntry("go-build lineages", fmt.Sprintf("first=%v second=%v", cold, warm))
+		Expect(cold).NotTo(BeNil())
+		Expect(warm).NotTo(BeNil())
+		Expect(cold.GetRestored()).To(BeZero(), "the first run started the repo's build lineage empty")
+		Expect(cold.GetPromoted()).To(BeNumerically(">", 0), "and promoted it")
+		Expect(warm.GetRestored()).To(Equal(cold.GetPromoted()),
+			"the second run restored the go-build lineage from the generation the first promoted, not empty")
 
 		By("and the build step is faster the second time")
 		firstBuild := buildDuration(ctx, s.NodeRef)
@@ -592,7 +702,14 @@ var _ = Describe("Acceptance", Label("acceptance", "sandbox"), Label("live"), fu
 		s := machineTypo.stage(ctx)
 		run := s.start(ctx, runOptions{Machine: true, SandboxRoot: sandboxRoot, ModelCredential: os.Getenv(sandboxModelCredentialVar)})
 		id := s.runID(ctx)
-		record := awaitMachine(ctx, id, deliveredTimeout)
+		// Should the worker not finish the run, the scenario sweeps what its
+		// kill left, as the boundaries scenario does.
+		DeferCleanup(func(ctx context.Context) {
+			if _, err := os.Stat(runDir(id)); err == nil {
+				sweepKilledRun(ctx, id)
+			}
+		})
+		record := awaitMachine(ctx, id)
 
 		By("when the suite is killed and a worker starts")
 		// A kill releases nothing: the machine is left registered and the run
@@ -606,13 +723,16 @@ var _ = Describe("Acceptance", Label("acceptance", "sandbox"), Label("live"), fu
 		Expect(hostMust(ctx, "machinectl", "list", "--no-legend")).To(ContainSubstring(record.Machine),
 			"the killed run left its machine registered")
 		s.Graph.preempt(ctx, s.Graph.leaseID(ctx, s.NodeRef), "acceptance: the suite was killed mid-run")
-		startMachineWorker(ctx, s.Graph.Slug)
+		w := startMachineWorker(ctx, s)
 
 		By("then no machine, run directory, or project outlives the sweep")
 		Eventually(func(ctx context.Context) string {
+			if !w.running() {
+				StopTrying("the worker ended before the machine was gone:\n" + w.output.String()).Now()
+			}
 			return hostMust(ctx, "machinectl", "list", "--no-legend")
 		}, 5*time.Minute, 5*time.Second).WithContext(ctx).ShouldNot(ContainSubstring(record.Machine))
-		Expect(runDir(id)).NotTo(BeADirectory(), "the run directory was removed")
+		Eventually(runDir(id), time.Minute, time.Second).ShouldNot(BeADirectory(), "the run directory was removed")
 
 		By("and the deployed dagger's project list is unchanged")
 		if deployed == "" {
@@ -643,13 +763,33 @@ func (s *staged) runID(ctx context.Context) string {
 // millCheckout stages a node whose repository is mill itself, so a machine's
 // `/work` is a mill checkout `make test-db` can run in. It is a local-origin
 // staging — the run is probed while in flight and killed, never delivered —
-// so it needs no forge: `--origin` points at this checkout and the run clones
-// it as any other origin (docs/runbook.md §"Without a forge").
+// so it needs no forge: `--origin` points at a clone of this checkout's HEAD
+// and the run clones it as any other origin (docs/runbook.md §"Without a
+// forge").
+//
+// The clone carries one commit of its own, with two things in it. The
+// working tree's uncommitted changes, so the suite inside the machine is
+// the tree under test and not the last commit's. And a `mill.toml`
+// declaring `btrfs-progs` in the image: a worker that finds itself inside a
+// machine — which mill's own `db` suite is, `mill doctor` and `mill run`
+// under it — defaults its sandbox root to a subvolume it creates under the
+// machine's ephemeral root with `btrfs` (docs/sandbox.md §Self-hosting,
+// "The inner worker's root"), and the base image does not carry the tool:
+// the nested image variant does, and this tree declares neither yet. So
+// the checkout the machine is bound to is mill's, with the declaration
+// §Self-hosting's third step will put in the tree, and nothing else.
 func millCheckout(ctx context.Context) *staged {
 	GinkgoHelper()
+	clone := filepath.Join(GinkgoT().TempDir(), "mill")
+	git(ctx, env.RepoRoot, "clone", "--quiet", "--no-hardlinks", env.RepoRoot, clone)
+	carryWorkingTree(ctx, env.RepoRoot, clone)
+	Expect(os.WriteFile(filepath.Join(clone, "mill.toml"),
+		[]byte("# The db suite inside a machine: the inner worker's root is a btrfs subvolume\n# (docs/sandbox.md §Self-hosting).\n[image]\npackages = [\"btrfs-progs\"]\n"), 0o600)).To(Succeed())
+	git(ctx, clone, "add", "--all")
+	git(ctx, clone, "commit", "--quiet", "--message", "The working tree, and btrfs-progs for the db suite inside a machine")
 	s := &staged{
 		Graph:  newScratchGraph(ctx, "mill-checkout"),
-		Origin: "file://" + env.RepoRoot,
+		Origin: "file://" + clone,
 		VCSURL: placeholderVCSURL,
 	}
 	s.NodeRef = s.Graph.file(ctx,
@@ -661,6 +801,93 @@ func millCheckout(ctx context.Context) *staged {
 	Expect(os.MkdirAll(s.WorkspaceDir, 0o700)).To(Succeed())
 	Expect(os.MkdirAll(s.LogDir, 0o700)).To(Succeed())
 	return s
+}
+
+// sweepKilledRun is the teardown a killed run never does, for a run a
+// scenario killed on purpose and nothing will resume: the machine terminated
+// through the helper, every subvolume under the run directory deleted and
+// the directory removed, the socket directory removed — §Destroy's steps
+// done by hand (docs/runbook.md §"The live tier", what it leaves behind).
+// The store still has the run as live; the next worker's reconciliation
+// records it as a lost sandbox and claims nothing for it, because its node
+// is in a dagger that ended with the suite.
+func sweepKilledRun(ctx context.Context, runID string) {
+	GinkgoHelper()
+	if record, ok := readRecord(runID); ok && record.Machine != "" {
+		_, _, _ = hostRun(ctx, "sudo", "-n", sandboxHelper, "terminate", record.Machine)
+	}
+	dir := runDir(runID)
+	var subvolumes []string
+	_ = filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || !entry.IsDir() || path == dir {
+			return nil //nolint:nilerr // what cannot be read is not a subvolume to delete
+		}
+		if info, err := entry.Info(); err == nil {
+			if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Ino == btrfsSubvolumeInode {
+				subvolumes = append(subvolumes, path)
+				return filepath.SkipDir
+			}
+		}
+		return nil
+	})
+	for _, subvolume := range subvolumes {
+		hostRun(ctx, "btrfs", "property", "set", "-f", subvolume, "ro", "false")
+		hostMust(ctx, "btrfs", "subvolume", "delete", subvolume)
+	}
+	Expect(os.RemoveAll(dir)).To(Succeed())
+	Expect(os.RemoveAll(filepath.Join("/run/mill", strings.ToLower(runID)))).To(Succeed())
+}
+
+// btrfsSubvolumeInode is the inode number every btrfs subvolume's root
+// directory has, which is how one is told from a directory.
+const btrfsSubvolumeInode = 256
+
+// awaitClosed waits for the ledger to show a closed attempt of a step on a
+// node's run: the moment a from-the-host scenario may treat what that step
+// prepared — a toolchain — as there.
+func awaitClosed(ctx context.Context, nodeRef, step string) {
+	GinkgoHelper()
+	Eventually(func() bool {
+		for _, d := range attempts(tryInspect(ctx, nodeRef), step) {
+			if d.GetStepRun().GetStatus() == millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED {
+				return true
+			}
+		}
+		return false
+	}, deliveredTimeout, 2*time.Second).Should(BeTrue(), "the run's %s step closed", step)
+}
+
+// carryWorkingTree copies what the working tree at root has that its HEAD
+// does not into a clone of that HEAD: the tracked files' changes as one
+// patch, and every untracked file git does not ignore. It is how a machine
+// bound to "a checkout of mill" runs the suite of the tree being worked on.
+func carryWorkingTree(ctx context.Context, root, clone string) {
+	GinkgoHelper()
+	patch := gitOutput(ctx, root, "diff", "--binary", "HEAD")
+	if patch != "" {
+		apply := exec.CommandContext(ctx, "git", "-C", clone, "apply", "--whitespace=nowarn", "-") //nolint:gosec // the suite's own git
+		apply.Stdin = strings.NewReader(patch)
+		out, err := apply.CombinedOutput()
+		Expect(err).NotTo(HaveOccurred(), "applying the working tree's changes: %s", out)
+	}
+	for path := range strings.SplitSeq(gitOutput(ctx, root, "ls-files", "--others", "--exclude-standard", "-z"), "\x00") {
+		if path == "" {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(root, path)) //nolint:gosec // this checkout's own files
+		Expect(err).NotTo(HaveOccurred())
+		Expect(os.MkdirAll(filepath.Dir(filepath.Join(clone, path)), 0o755)).To(Succeed()) //nolint:gosec // a checkout
+		Expect(os.WriteFile(filepath.Join(clone, path), body, 0o644)).To(Succeed())        //nolint:gosec // a checkout
+	}
+}
+
+// gitOutput is one git command's standard output, in a directory.
+func gitOutput(ctx context.Context, dir string, args ...string) string {
+	GinkgoHelper()
+	command := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...) //nolint:gosec // the suite's own git
+	out, err := command.Output()
+	Expect(err).NotTo(HaveOccurred(), "git %s", strings.Join(args, " "))
+	return string(out)
 }
 
 // podmanSocket is the podman API socket inside a machine, whichever of the
@@ -680,12 +907,48 @@ func podmanSocket(ctx context.Context, machine string) string {
 	return ""
 }
 
+// leaveBehind starts a marker process under the run's step slice in flight
+// and returns that step's ordinal. It reads the slice off run.json, and if
+// the step ended between the read and the exec — the marker would then sit
+// in a slice the run has already stopped and will not stop again — it tries
+// again under the next one.
+func leaveBehind(ctx context.Context, runID, machine string) int {
+	GinkgoHelper()
+	for range 10 {
+		var record sandboxRecord
+		Eventually(func() bool {
+			var ok bool
+			record, ok = readRecord(runID)
+			return ok && record.Slice != ""
+		}, deliveredTimeout, 200*time.Millisecond).Should(BeTrue(), "the run has a step in flight")
+		_, status := inMachineUnder(ctx, machine, record.Slice, "sh", "-c", "setsid sleep 3600 >/dev/null 2>&1 &")
+		Expect(status).To(BeZero())
+		if after, ok := readRecord(runID); ok && after.Slice == record.Slice {
+			return record.Ordinal
+		}
+	}
+	Fail("no step held still long enough to leave a process behind in")
+	return 0
+}
+
+// lineageNamed is the ledger's lineage of that name on a run's sandbox, or
+// nil: `go-build` for the repo-scoped go build cache a go repository restores
+// and promotes (docs/sandbox.md §Caching).
+func lineageNamed(sandbox *millv1.Sandbox, name string) *millv1.SandboxLineage {
+	for _, lineage := range sandbox.GetLineages() {
+		if lineage.GetName() == name {
+			return lineage
+		}
+	}
+	return nil
+}
+
 // buildDuration is how long a run's toolchain step took, from the ledger's
-// own timestamps. It is the deterministic setup step the cache lineages warm
-// — `mise install` against a warmed mise lineage and a `go build` against a
-// warmed go-build lineage — so its cold-to-warm difference is the cache
-// working, read off the ledger rather than a wall clock the suite kept
-// (docs/sandbox.md §Caching).
+// own timestamps. It is the deterministic step the cache lineages warm —
+// `mise install` against the mise lineage and, through the fixture's
+// postinstall hook, `go vet` against the go-build lineage — so its
+// cold-to-warm difference is the cache working, read off the ledger rather
+// than a wall clock the suite kept (docs/sandbox.md §Caching).
 func buildDuration(ctx context.Context, nodeRef string) time.Duration {
 	GinkgoHelper()
 	detail := inspect(ctx, nodeRef)
@@ -707,13 +970,33 @@ func buildDuration(ctx context.Context, nodeRef string) time.Duration {
 // sweeps what no live run owns (docs/sandbox.md §Reconciliation). It runs in
 // a process group of its own, so the scenario's kill of it reaches nothing
 // else.
-func startMachineWorker(ctx context.Context, project string) {
+func startMachineWorker(ctx context.Context, s *staged) *worker {
 	GinkgoHelper()
+	// The worker reads a configuration file where `mill run` reads none:
+	// the operator's, by default, which on core names the deployed dagger,
+	// the mill project and the label its own worker claims under. It is
+	// given an empty one of the suite's own, so every value it runs on is
+	// on this line. What it does after reconciling is claim the node the
+	// kill left claimable and resume the run in the machine the kill left —
+	// a live run with its machine is resumable, not an orphan (docs/
+	// sandbox.md §Reconciliation) — and its finish is what takes the
+	// machine and the run directory away.
+	config := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+	Expect(os.WriteFile(config, []byte("# the acceptance suite's worker: the scratch budget, which `work` takes from\n"+
+		"# no flag; everything else is on the command line. A zero budget so the\n"+
+		"# sweep reaches every scratch project by name at once (docs/sandbox.md\n"+
+		"# §\"External state\").\n"+
+		"scratch-budget: 0s\n"), 0o600)).To(Succeed())
 	args := []string{
 		"work",
-		"--socket", suite.service.Socket,
+		"--config", config,
 		"--dagger-socket", env.DaggerSocket,
-		"--project", project,
+		"--project", s.Graph.Slug,
+		"--workflow", "quick-fix",
+		"--workflow-dir", workflowDir("quick-fix"),
+		"--vcs-url", s.VCSURL,
+		"--origin", s.Origin,
+		"--ref", s.Ref,
 		"--workspace", "machine",
 		"--sandbox-root", sandboxRoot,
 		"--gateway",
@@ -721,24 +1004,28 @@ func startMachineWorker(ctx context.Context, project string) {
 		"--workspace-dir", GinkgoT().TempDir(),
 		"--log-dir", GinkgoT().TempDir(),
 		"--sidecar", env.Sidecar,
-		// The scratch namespace and budget so the sweep reaches the forge and
-		// dagger projects too, by name (docs/sandbox.md §"External state").
-		"--scratch-budget", "0s",
 	}
 	command := exec.CommandContext(ctx, env.Mill, args...) //nolint:gosec // the suite's own binary
+	// The service's socket reaches `work` as $MILL_SOCKET: the standalone
+	// worker declares no --socket flag, and a `socket:` line in its file is
+	// read against that flag and so never applied — `serve --work`, which
+	// declares it, is the face a deployment runs.
 	command.Env = append(os.Environ(),
+		"MILL_SOCKET="+suite.service.Socket,
 		"MILL_FORGE_TOKEN="+env.ForgeToken,
 		"MILL_FORGE_USER="+env.ForgeUser)
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	command.Stdout, command.Stderr = GinkgoWriter, GinkgoWriter
+	output := &lockedBuffer{}
+	command.Stdout, command.Stderr = teeTo(output), teeTo(output)
 	Expect(command.Start()).To(Succeed(), "mill work started")
-	var once sync.Once
-	DeferCleanup(func() {
-		once.Do(func() {
-			if command.Process != nil {
-				_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
-				_, _ = command.Process.Wait()
-			}
-		})
-	})
+	w := &worker{command: command, output: output, done: make(chan struct{})}
+	go func() {
+		defer close(w.done)
+		err := command.Wait()
+		w.mu.Lock()
+		w.err = err
+		w.mu.Unlock()
+	}()
+	DeferCleanup(func() { w.kill() })
+	return w
 }

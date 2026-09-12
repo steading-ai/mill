@@ -83,10 +83,15 @@ type Config struct {
 	// bound read-only into every machine beside the skill (docs/sandbox.md
 	// §"Skill mount"). It defaults, like the skill, to the worker's share
 	// root, the one the helper's policy admits.
-	SidecarDir  string `yaml:"sidecar-dir"`
-	RunStateDir string `yaml:"run-state-dir"`
-	Proxy       string `yaml:"proxy"`
-	NoProxy     string `yaml:"no-proxy"`
+	SidecarDir string `yaml:"sidecar-dir"`
+	// WorkflowCopyDir is where the worker materialises the workflow
+	// directory it loaded from, bound read-only into every machine so a
+	// check step's scripts are there (docs/sandbox.md §"Skill mount"). It
+	// defaults, like the skill, to the worker's share root.
+	WorkflowCopyDir string `yaml:"workflow-copy-dir"`
+	RunStateDir     string `yaml:"run-state-dir"`
+	Proxy           string `yaml:"proxy"`
+	NoProxy         string `yaml:"no-proxy"`
 	// Nesting (docs/sandbox.md §Self-hosting): the repositories whose
 	// `[machine].nested` request is granted, each by its path on the forge
 	// (`wellspring/mill`) or its origin URL, and the dagger checkout a

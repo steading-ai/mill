@@ -34,6 +34,18 @@ var _ = Describe("The workspace's vocabulary", Label("unit"), func() {
 			}))
 		})
 
+		It("bypass the proxy for the gateway's host, so the model is reached directly and never through squid", func() {
+			decided := workspace.Egress{Proxy: "http://10.99.255.1:3128", NoProxy: "localhost,127.0.0.1", Gateway: "http://10.99.255.1:8080"}
+			Expect(decided.Environment("t")).To(HaveKeyWithValue("NO_PROXY", "localhost,127.0.0.1,10.99.255.1"))
+			By("once, when NoProxy already names it")
+			Expect(workspace.Egress{Proxy: "http://p:3128", NoProxy: "localhost,10.99.255.1", Gateway: "http://10.99.255.1:8080"}.Bypass()).
+				To(Equal("localhost,10.99.255.1"))
+			By("alone, when nothing else bypasses")
+			Expect(workspace.Egress{Proxy: "http://p:3128", Gateway: "http://gw:8080"}.Bypass()).To(Equal("gw"))
+			By("not at all without a proxy to bypass")
+			Expect(workspace.Egress{Gateway: "http://gw:8080"}.Bypass()).To(BeEmpty())
+		})
+
 		It("set nothing when nothing was decided, so the host's route and the account's login stand", func() {
 			Expect(workspace.Egress{}.Environment("step-token-a")).To(BeEmpty())
 		})

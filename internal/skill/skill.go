@@ -305,3 +305,74 @@ func prune(dir string, wanted map[string]bool) error {
 	}
 	return nil
 }
+
+// MaterialiseWorkflow copies the workflow directory at source into dest, so
+// the scripts a check step names beside its definition ride into every
+// machine with the skill and the sidecar (docs/sandbox.md §"Skill mount").
+// The directory is the operator's, not the binary's, so there is no
+// breadcrumb to gate on: every call walks the source and dest ends up its
+// copy, each file landing by rename and an unchanged one keeping its inode,
+// with whatever an earlier directory had that this one does not pruned.
+// Symlinks are followed rather than carried — the acceptance suite stages a
+// workflow as links into the tree it derives from, and a link into the host
+// would name nothing inside a machine — and a file's mode rides so a
+// script stays executable.
+func MaterialiseWorkflow(source, dest string) error {
+	if info, err := os.Stat(source); err != nil || !info.IsDir() {
+		return fmt.Errorf("skill: workflow source %s is not a directory to materialise from", source)
+	}
+	if err := os.MkdirAll(dest, 0o755); err != nil { //nolint:gosec // bound read-only into every machine; nothing secret
+		return fmt.Errorf("skill: %w", err)
+	}
+	wanted := map[string]bool{}
+	if err := copyResolved(source, dest, "", wanted, 0); err != nil {
+		return fmt.Errorf("skill: %w", err)
+	}
+	return prune(dest, wanted)
+}
+
+// copyDepth bounds the walk of a workflow directory through its links: a
+// tree deeper than this is a cycle, not a workflow.
+const copyDepth = 32
+
+// copyResolved copies the directory at source/rel into dest/rel with every
+// link resolved, recording what it placed in wanted.
+func copyResolved(source, dest, rel string, wanted map[string]bool, depth int) error {
+	if depth > copyDepth {
+		return fmt.Errorf("workflow source %s is deeper than %d levels: a link cycle", filepath.Join(source, rel), copyDepth)
+	}
+	entries, err := os.ReadDir(filepath.Join(source, rel))
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		child := filepath.Join(rel, entry.Name())
+		info, err := os.Stat(filepath.Join(source, child))
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dest, child)
+		switch {
+		case info.IsDir():
+			wanted[filepath.ToSlash(child)] = true
+			if err := os.MkdirAll(target, 0o755); err != nil { //nolint:gosec // as above
+				return err
+			}
+			if err := copyResolved(source, dest, child, wanted, depth+1); err != nil {
+				return err
+			}
+		case info.Mode().IsRegular():
+			wanted[filepath.ToSlash(child)] = true
+			body, err := os.ReadFile(filepath.Join(source, child)) //nolint:gosec // the operator's workflow directory
+			if err != nil {
+				return err
+			}
+			if err := place(target, body, info.Mode().Perm()|0o444); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("workflow source %s is a %s, which cannot ride into a machine", child, info.Mode().Type())
+		}
+	}
+	return nil
+}

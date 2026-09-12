@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"regexp"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/machine"
+	"github.com/ivy/mill/internal/workspace/machine/config"
 	"github.com/ivy/mill/internal/workspace/machine/driver"
 )
 
@@ -114,6 +117,59 @@ var _ = Describe("Exec into the machine", Label("unit"), func() {
 		By("and the next exec without MARK does not carry the previous one's")
 		Expect(requests[1].Env).NotTo(HaveKey("MARK"))
 		Expect(requests[1].Env).To(HaveKeyWithValue(workspace.ModelGatewayTokenVar, "the-step-bearer"))
+	})
+
+	// Scenario: A check step's script runs from the workflow copy in the machine
+	//   Given a workflow directory the worker loaded from, and its copy bound
+	//   When a check step's command resolved under it on the host is exec'd
+	//   Then the machine is asked for the copy's path, and nothing else is rewritten
+	It("A check step's script runs from the workflow copy in the machine", func(ctx context.Context) {
+		f = newFixture(origin(nil))
+		tmp := GinkgoT().TempDir()
+		source := filepath.Join(tmp, "workflows", "quick-fix")
+		copied := filepath.Join(tmp, "share", "workflow")
+		Expect(os.MkdirAll(filepath.Join(source, "scripts"), 0o755)).To(Succeed())
+		Expect(os.MkdirAll(copied, 0o755)).To(Succeed())
+		f.config.WorkflowSource = source
+		f.config.Workflow = copied
+		spec = workspace.Spec{RunID: runID, NodeRef: "mill#69", Origin: f.config.Origin}
+		ws = f.workspace()
+		_, err := ws.Create(ctx, spec)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func(ctx context.Context) { _ = ws.Destroy(ctx) })
+		Expect(ws.Rotate(ctx, workspace.TokenFor("the-step-bearer", workspace.Exec))).To(Succeed())
+
+		By("the copy is bound read-only where the image expects it")
+		var bound *machine.Bind
+		for _, bind := range f.manifest().Binds {
+			if bind.Source == copied {
+				b := bind
+				bound = &b
+			}
+		}
+		Expect(bound).NotTo(BeNil(), "the workflow copy is bound")
+		Expect(bound.Target).To(Equal(config.WorkflowPath))
+		Expect(bound.ReadOnly).To(BeTrue())
+
+		before := len(f.host.CallsTo(driver.Exec))
+		Expect(ws.BeginStep(ctx, 1)).To(Succeed())
+		script, err := ws.Exec(ctx, workspace.Command{Path: filepath.Join(source, "scripts", "clean-tree")})
+		Expect(err).NotTo(HaveOccurred())
+		_, _, _ = drainProcess(script)
+		other, err := ws.Exec(ctx, workspace.Command{Path: "/bin/sh", Args: []string{"-c", filepath.Join(source, "scripts", "clean-tree")}})
+		Expect(err).NotTo(HaveOccurred())
+		_, _, _ = drainProcess(other)
+		outside, err := ws.Exec(ctx, workspace.Command{Path: filepath.Join(tmp, "workflows", "quick-fix-other", "scripts", "x")})
+		Expect(err).NotTo(HaveOccurred())
+		_, _, _ = drainProcess(outside)
+
+		requests := execRequestsAfter(f.host, before)
+		Expect(requests).To(HaveLen(3))
+		By("the script resolved under the workflow directory is named by its in-machine path")
+		Expect(requests[0].Argv).To(Equal([]string{config.WorkflowPath + "/scripts/clean-tree"}))
+		By("a program elsewhere, and every argument, is passed as given")
+		Expect(requests[1].Argv).To(Equal([]string{"/bin/sh", "-c", filepath.Join(source, "scripts", "clean-tree")}))
+		Expect(requests[2].Argv).To(Equal([]string{filepath.Join(tmp, "workflows", "quick-fix-other", "scripts", "x")}))
 	})
 
 	// Scenario: An exec without a step slice is refused

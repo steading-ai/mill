@@ -34,6 +34,8 @@ the host's own `registries.conf` uses.
 |---|---|
 | `agent`, uid 1000, home `/home/agent` | the session user; `/work` is its checkout mount, `mise trust` pre-granted |
 | `/home/agent/.claude/skills/mill` | the mill skill's mount point, agent's; a mount point nspawn makes is root's, and the rest of `~/.claude` must stay the session's to write (docs/sandbox.md §"Skill mount") |
+| `/home/agent/.cache`, `/home/agent/.local/share`, `/home/agent/go/pkg`, `/home/agent/.cargo`, `/home/agent/.npm`, `/home/agent/.bun/install`, `/home/agent/.gem` | the parents of the default cache mount points (docs/sandbox.md §Caching), agent's; nspawn would make them root's and refuse a tool writing a sibling under one, such as mise's lockfiles under `~/.cache` |
+| `/home/agent/.local/share/mill/workflow` | the workflow directory's mount point, agent's; the worker binds its copy of the directory it loaded the workflow from read-only here at provision, so a check step's scripts are in the machine (docs/sandbox.md §"Skill mount") |
 | `/home/agent/.local/share/mill/sidecar` | the mill sidecar's mount point, agent's; the worker binds its versioned sidecar read-only here at provision and the image's node runs it (docs/sandbox.md §"Skill mount") |
 | `/etc/subuid`, `/etc/subgid` | `agent:10000:55536` — inside the machine's own 65536 uids, so rootless podman can write its map |
 | `/usr/local/bin/dnf` | the shim: `sudo /usr/bin/dnf install`, a `report.install` to `/run/mill/ws.sock` with the session's `STEP_TOKEN` when both are there, the `[image].packages` hint as the last three lines |

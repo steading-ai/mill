@@ -127,7 +127,9 @@ var _ = Describe("Choosing the workspace backend", Label("unit"), func() {
 		// preflight writes nothing under the real share root.
 		opts.sandbox.skillDir = filepath.Join(tmp, "skill")
 		opts.sandbox.sidecarDir = filepath.Join(tmp, "sidecar")
+		opts.sandbox.workflowCopyDir = filepath.Join(tmp, "workflow")
 		opts.sidecar = builtSidecar(filepath.Join(tmp, "src", "sidecar"))
+		opts.workflowDir = filepath.Join("..", "..", "workflows", "quick-fix")
 
 		err := checkWorkspace(workspace.KindMachine, opts)
 
@@ -141,6 +143,11 @@ var _ = Describe("Choosing the workspace backend", Label("unit"), func() {
 		By("and the sidecar beside it, copied from the entrypoint's build, at the same version")
 		Expect(filepath.Join(opts.sandbox.sidecarDir, skill.SidecarEntrypoint)).To(BeAnExistingFile())
 		Expect(skill.Version(opts.sandbox.sidecarDir)).To(Equal(version.String()))
+
+		By("and the workflow directory beside them, its check scripts still executable")
+		script, err := os.Stat(filepath.Join(opts.sandbox.workflowCopyDir, "scripts", "clean-tree"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(script.Mode().Perm() & 0o100).NotTo(BeZero())
 	})
 
 	It("refuses the machine backend when the sidecar the flag names is not a built one", func() {

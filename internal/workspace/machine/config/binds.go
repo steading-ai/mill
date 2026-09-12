@@ -30,6 +30,11 @@ type Mounts struct {
 	// Sidecar is the worker's materialised sidecar directory, mounted
 	// read-only at the path the image owns (docs/sandbox.md §"Skill mount").
 	Sidecar string
+	// Workflow is the worker's materialised workflow directory, mounted
+	// read-only so a check step's scripts are in the machine; empty when
+	// no workflow directory was loaded from (docs/sandbox.md §"Skill
+	// mount").
+	Workflow string
 }
 
 // SkillPath is where the mill skill is mounted inside the machine
@@ -42,6 +47,12 @@ const SkillPath = Home + "/.claude/skills/mill"
 // image's `node` runs it.
 const SidecarPath = Home + "/.local/share/mill/sidecar"
 
+// WorkflowPath is where the worker's workflow directory is mounted
+// read-only inside the machine (docs/sandbox.md §"Skill mount"). A check
+// step's command the worker resolved under the workflow directory on the
+// host runs from here.
+const WorkflowPath = Home + "/.local/share/mill/workflow"
+
 // Binds derives a run's bind mounts from its configuration. Every host
 // side is under the run directory, the socket directory or the skill
 // directory: a cache's host side is named by the lineage, whose name
@@ -53,6 +64,9 @@ func Binds(config Config, mounts Mounts) []Bind {
 		{Host: mounts.Socket, Machine: RunDir},
 		{Host: mounts.Skill, Machine: SkillPath, ReadOnly: true},
 		{Host: mounts.Sidecar, Machine: SidecarPath, ReadOnly: true},
+	}
+	if mounts.Workflow != "" {
+		binds = append(binds, Bind{Host: mounts.Workflow, Machine: WorkflowPath, ReadOnly: true})
 	}
 	for _, cache := range config.Caches {
 		binds = append(binds, Bind{

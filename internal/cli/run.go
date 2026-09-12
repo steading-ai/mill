@@ -489,6 +489,7 @@ type sandboxOptions struct {
 	runStateDir     string
 	skillDir        string
 	sidecarDir      string
+	workflowCopyDir string
 	imageRegistry   string
 	imageRepository string
 	baseImage       string
@@ -517,6 +518,7 @@ func applySandboxConfig(config Config, opts *sandboxOptions) error {
 	opts.runStateDir = config.RunStateDir
 	opts.skillDir = config.SkillDir
 	opts.sidecarDir = config.SidecarDir
+	opts.workflowCopyDir = config.WorkflowCopyDir
 	opts.imageRegistry = config.ImageRegistry
 	opts.imageRepository = config.ImageRepository
 	opts.baseImage = config.BaseImage
@@ -644,6 +646,15 @@ func checkWorkspace(kind workspace.Kind, opts runOptions) error {
 		// only when the version differs (docs/sandbox.md §"Skill mount").
 		if err := skill.MaterialiseSidecar(sidecarSourceDir(opts.sidecar), config.SidecarDir(), version.String()); err != nil {
 			return fmt.Errorf("mill run: --workspace machine: %w", err)
+		}
+		// The workflow directory too, when one was named: a check step's
+		// script is resolved under it on the host and runs inside the
+		// machine, so the copy is what the machine has (docs/sandbox.md
+		// §"Skill mount").
+		if opts.workflowDir != "" {
+			if err := skill.MaterialiseWorkflow(opts.workflowDir, config.WorkflowDir()); err != nil {
+				return fmt.Errorf("mill run: --workspace machine: %w", err)
+			}
 		}
 		if err := machine.Check(machineDriver(), config); err != nil {
 			return fmt.Errorf("mill run: --workspace machine: %w", err)
@@ -778,10 +789,15 @@ func machineConfig(opts runOptions, f forge.Forge, redactor *redact.Redactor) ma
 		RunState: sandbox.runStateDir,
 		Skill:    sandbox.skillDir,
 		Sidecar:  sandbox.sidecarDir,
-		Origin:   opts.origin,
-		Forge:    f,
-		Name:     opts.name,
-		Identity: opts.identity,
+		// The workflow directory rides in beside them, when one was loaded
+		// from, so a check step's scripts are in the machine
+		// (docs/sandbox.md §"Skill mount").
+		WorkflowSource: opts.workflowDir,
+		Workflow:       sandbox.workflowCopyDir,
+		Origin:         opts.origin,
+		Forge:          f,
+		Name:           opts.name,
+		Identity:       opts.identity,
 		// The account's one signing key, where the local backend keeps it
 		// and `mill doctor` looks for it: a machine-backed run signs on
 		// the host with the same key a local one does.

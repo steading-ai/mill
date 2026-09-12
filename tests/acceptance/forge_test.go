@@ -55,6 +55,12 @@ func newScratchProject(ctx context.Context, name string, files map[string]string
 		"merge_method":                          "merge",
 		"only_allow_merge_if_pipeline_succeeds": false,
 		"remove_source_branch_after_merge":      false,
+		// Auto DevOps would run an instance-default pipeline the moment a
+		// fixture carries code it recognises, and a pipeline this project
+		// never asked for failing on a runner it does not have is not what
+		// the merge step's status evidence is about (internal/forge/gitlab,
+		// Checks): a project with no pipelines at all is green.
+		"auto_devops_enabled": false,
 	}, &project)
 	DeferCleanup(func(ctx context.Context) {
 		api.do(ctx, http.MethodDelete, "/projects/"+strconv.Itoa(project.ID), nil, nil)
