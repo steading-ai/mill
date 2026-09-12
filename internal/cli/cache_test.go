@@ -160,8 +160,18 @@ var _ = Describe("mill cache prune on the sandbox volume", Label("live"), Serial
 			Skip("set MILL_SANDBOX_HOST=1 on a host with root, nspawn and btrfs to run the spec that prunes real lineages")
 		}
 		host := driver.NewSystemd(workspace.Spawner{}, driver.Commands{})
-		root, err := os.MkdirTemp("/var/lib/mill", "cache-prune-live-*")
-		Expect(err).NotTo(HaveOccurred(), "/var/lib/mill is not this account's")
+		// The sandbox root this process prunes under: the host's volume, or
+		// — inside a machine, where mill's own live tier runs once mill
+		// builds mill — the nested worker's subvolume under the ephemeral
+		// root, made as the worker's own uid the way `mill run` would
+		// (docs/sandbox.md §Self-hosting, "The inner worker's root").
+		sandbox := "/var/lib/mill"
+		if manager, err := host.Container(ctx); err == nil && manager == driver.ContainerNspawn {
+			Expect(driver.EnsureNestedRoot(ctx, host, driver.NestedRoot)).To(Succeed())
+			sandbox = driver.NestedRoot
+		}
+		root, err := os.MkdirTemp(sandbox, "cache-prune-live-*")
+		Expect(err).NotTo(HaveOccurred(), "%s is not this account's", sandbox)
 		store := cache.New(host, cache.Config{Root: root})
 		DeferCleanup(func(ctx context.Context) {
 			for _, lineage := range []cache.Lineage{{Scope: cache.Repo("live-a"), Name: "expired"}, {Scope: cache.Repo("live-a"), Name: "fresh"}} {

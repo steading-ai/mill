@@ -1,0 +1,16 @@
+# What mill declares about its own machine (docs/sandbox.md §mill.toml).
+#
+# `nested`: this repository's tests boot machines, so its sessions run in a
+# machine that may boot machines of its own; the worker grants the request
+# through `nested_repos` (docs/sandbox.md §Self-hosting). `btrfs-progs`: a
+# worker that finds itself inside a machine — mill's own db suite, `mill
+# doctor`, `mill run` under it — makes its sandbox root a btrfs subvolume
+# under the machine's ephemeral root, and the base image does not carry the
+# tool. The nested variant does; declaring it keeps the flat provision a
+# worker falls back to when the request is not granted able to run the same
+# suite.
+[image]
+packages = ["btrfs-progs"]
+
+[machine]
+nested = true
