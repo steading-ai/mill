@@ -576,7 +576,7 @@ var _ = Describe("The sidecar", Label("unit"), func() {
 			"PATH": "/usr/bin:/bin",
 		}, line)
 
-		By("then the output contains those two names and no ANTHROPIC or forge variable")
+		By("then the output contains those two names and no model key or forge variable")
 		printed := ""
 		for _, event := range s.events() {
 			if result := event.GetToolResult(); result != nil {
@@ -585,7 +585,14 @@ var _ = Describe("The sidecar", Label("unit"), func() {
 		}
 		Expect(printed).To(ContainSubstring("WORKSPACE_SOCKET=/run/mill/workspace-01JB.sock"))
 		Expect(printed).To(ContainSubstring("STEP_TOKEN=step-token-01JB"))
-		Expect(printed).NotTo(ContainSubstring("ANTHROPIC"))
+		// The key, not the prefix: ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN
+		// are the way out the workspace decided, and session.ts copies them
+		// past both floors on purpose (WORKSPACE_EGRESS_ENVIRONMENT,
+		// docs/sandbox.md §Credentials) — "The workspace's network decisions
+		// reach the session" above requires them. A sidecar whose own process
+		// has them, which is every sidecar once mill runs inside its own
+		// machine, would fail a blanket match on something it is meant to do.
+		Expect(printed).NotTo(ContainSubstring("ANTHROPIC_API_KEY"))
 		Expect(printed).NotTo(ContainSubstring("GITHUB_TOKEN"))
 		Expect(printed).NotTo(ContainSubstring("GH_TOKEN"))
 		Expect(printed).NotTo(ContainSubstring("DAGGER"))

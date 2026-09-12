@@ -304,7 +304,20 @@ func randomSuffix() string {
 // socket when nothing else is configured. testcontainers looks for Docker
 // sockets only, and podman is the runtime this project assumes. Ryuk, the
 // sidecar that removes leftovers after a crashed run, can only reach that
-// socket from a privileged container, so it defaults to one too.
+// socket from a privileged container, so on a host it defaults to one too.
+//
+// Inside a machine — where mill's own db tier runs once mill builds mill
+// (docs/sandbox.md §Self-hosting) — Ryuk is turned off instead. A
+// privileged container cannot start there at all: it mounts a fresh rw
+// sysfs, which an unprivileged user namespace may only do when a fully
+// visible sysfs is already in its mount namespace, and a machine's /sys is
+// a tmpfs of read-only subtree binds; crun refuses it with "mount sysfs to
+// sys: Operation not permitted" and every db suite dies in its setup. An
+// unprivileged one does start — the socket there is the session user's own
+// — but it is a container per parallel process to wait on at the first
+// suite's cold start, for a job the machine already does: the leftovers
+// Ryuk exists to remove sit on an ephemeral root that is discarded whole
+// when the run ends, and that is the backstop.
 func useRootlessPodmanSocket() {
 	if os.Getenv("DOCKER_HOST") != "" {
 		return
@@ -318,7 +331,21 @@ func useRootlessPodmanSocket() {
 		return
 	}
 	setDefaultEnv("DOCKER_HOST", "unix://"+sock)
+	if insideMachine() {
+		setDefaultEnv("TESTCONTAINERS_RYUK_DISABLED", "true")
+		return
+	}
 	setDefaultEnv("TESTCONTAINERS_RYUK_CONTAINER_PRIVILEGED", "true")
+}
+
+// insideMachine is whether this process is running inside a machine. It is
+// the fact `systemd-detect-virt --container` reports and the driver asks it
+// for (driver.Driver's Container); systemd writes the manager's own name
+// into this file when it boots inside a container, so a fixture can read it
+// without a process or a dependency on the driver.
+func insideMachine() bool {
+	_, err := os.Stat("/run/systemd/container")
+	return err == nil
 }
 
 // patientReaper widens the window Ryuk waits before removing the containers

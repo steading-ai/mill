@@ -19,11 +19,16 @@ import (
 // and nowhere the machine that booted it could promote from
 // (docs/sandbox.md §Self-hosting).
 func resolveSandboxRoot(cmd *cobra.Command, root *string, configured string) error {
-	return resolveSandboxRootOn(cmd, cacheDriver(), root, configured)
+	return resolveSandboxRootOn(cmd, cacheDriver(), machine.NestedRoot, root, configured)
 }
 
-// resolveSandboxRootOn is resolveSandboxRoot against a given host.
-func resolveSandboxRootOn(cmd *cobra.Command, host driver.Driver, root *string, configured string) error {
+// resolveSandboxRootOn is resolveSandboxRoot against a given host and a
+// given nested root. The root is a parameter because
+// [driver.EnsureNestedRoot] asks the filesystem whether it is already
+// there, and inside a machine where a worker has run — where mill's own
+// live tier runs — it is: the spec that proves the create is asked of the
+// driver needs a root no one has made yet.
+func resolveSandboxRootOn(cmd *cobra.Command, host driver.Driver, nested string, root *string, configured string) error {
 	if !unset(cmd, "sandbox-root") {
 		return nil
 	}
@@ -38,7 +43,7 @@ func resolveSandboxRootOn(cmd *cobra.Command, host driver.Driver, root *string, 
 	if !machine.InsideMachine(ctx, host) {
 		return nil
 	}
-	*root = machine.NestedRoot
+	*root = nested
 	if err := driver.EnsureNestedRoot(ctx, host, *root); err != nil {
 		return fmt.Errorf("mill: nested sandbox root: %w", err)
 	}

@@ -300,19 +300,22 @@ var _ = Describe("mill run", func() {
 
 		It("The machine backend is chosen and honest about what it cannot do yet", func() {
 			By("given workspace: machine")
-			// The skill and the sidecar are materialised into directories of
-			// the spec's own, and the sidecar is copied from a built tree of
-			// the spec's own, so the preflight touches nothing under the real
-			// home and fails on the one thing the host lacks.
+			// The skill and the sidecar are materialised under a home of the
+			// spec's own, and the sidecar is copied from a built tree of the
+			// spec's own, so the preflight touches nothing under the real
+			// home and fails on the one thing the host lacks. The home is
+			// what redirects them: `mill run` takes the skill and sidecar
+			// directories from their defaults, which are under $HOME — the
+			// file's `skill-dir` and `sidecar-dir` are read by `mill work`
+			// alone (applySandboxConfig) — and inside a machine the real one
+			// is the read-only bind the machine mounts them from.
 			tmp := GinkgoT().TempDir()
+			GinkgoT().Setenv("HOME", tmp)
 			entrypoint := filepath.Join(tmp, "src", "sidecar", "dist", "main.js")
 			Expect(os.MkdirAll(filepath.Dir(entrypoint), 0o755)).To(Succeed())
 			Expect(os.WriteFile(entrypoint, []byte("//\n"), 0o600)).To(Succeed())
 			path := filepath.Join(tmp, "config.yaml")
-			Expect(os.WriteFile(path, []byte(
-				"workspace: machine\n"+
-					"skill-dir: "+filepath.Join(tmp, "skill")+"\n"+
-					"sidecar-dir: "+filepath.Join(tmp, "sidecar")+"\n"), 0o600)).To(Succeed())
+			Expect(os.WriteFile(path, []byte("workspace: machine\n"), 0o600)).To(Succeed())
 			GinkgoT().Setenv("MILL_CONFIG", path)
 
 			By("when a run is started on a host with no sandbox root")
