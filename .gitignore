@@ -23,3 +23,7 @@ node_modules/
 # Python bytecode
 __pycache__/
 *.pyc
+
+# pnpm keeps its store beside a project that is on a different filesystem
+# from its home, which /work inside a machine is.
+.pnpm-store/
