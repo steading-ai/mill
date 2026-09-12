@@ -20,9 +20,11 @@ files a dagger node ([prd.md](prd.md) R-55).
 
 Every tool takes `--socket`; the readers take `--view`; the two `workspace`
 subcommands take `--workspace-dir`, since the files they answer about are on
-this host and not in the ledger. The `image` subcommands take no socket at
-all: they answer about subvolumes and a registry, and nothing in the ledger
-knows either.
+this host and not in the ledger. The `image` and `cache` subcommands take no
+socket at all: they answer about subvolumes, lineages and a registry on this
+host, and nothing in the ledger knows any of them. `doctor`, `cache` and
+`image` read the configuration file (§Configuration) for the settings a
+deployment keeps there, `--config` naming another.
 
 | Tool | What it answers |
 |---|---|
@@ -33,6 +35,7 @@ knows either.
 | `history <run>` | What changed about a run, and when |
 | `cost` | What a window of runs billed |
 | `workflow list\|show` | What a run on this project would follow |
+| `workflow push\|pull` | Store a workflow directory as a version; write a stored version back out |
 | `workspace show <run>` | Where a run's files are, and what state they are in |
 | `doctor` | Whether this host could work at all |
 | `cancel <run>` | Stop a run's current step cleanly, leaving it resumable |
@@ -40,7 +43,7 @@ knows either.
 | `workspace clean` | Remove the checkouts of runs that have ended |
 | `image ls` | Which image subvolumes this host holds, from what, and when last booted |
 | `image prune` | Evict image subvolumes: expired, then least recently booted under the watermarks |
-| `image build-base` | Build the base image machines boot from, and push it |
+| `image build-base` | Build the base image machines boot from, and with `--push` publish it |
 | `cache ls` | Which cache lineages this worker holds, their generations, size and last restore |
 | `cache prune` | Evict: expired lineages and images, then least recently used under the free-space watermarks |
 
@@ -375,6 +378,38 @@ they pin is the one `quick-fix` pins — same name, same digest. Pushing the
 second of them says so, one line per skill: `skill implement 6d0a3794a0cd
 unchanged`.
 
+## workflow list
+
+The versions the store holds, newest of each name unless `--all-versions`;
+`--name`, `--project` and `--scope` narrow it. A row the store cannot decode
+is left out and named on standard error, as `status` names it.
+
+```
+$ mill workflow list
+NAME       SCOPE  VERSION       STEPS  CREATED
+quick-fix  org    1a91a9657d7e  7      2026-09-11 06:12
+feature    org    6415ee6fe810  13     2026-09-11 06:12
+```
+
+## workflow push
+
+Store a workflow directory — `workflow.yaml` beside `skills/` — as a
+version, and every skill its steps pin. The version is the hash of the
+definition, so pushing unchanged files stores nothing and names the version
+already there; one changed byte of one skill body is a new digest and a new
+version. `--scope org|project` overrides the definition's scope, `--project`
+names the project when the scope is `project`. A definition the loader
+refuses — a step with no `timeout`, a preparatory step with a check's
+contract — is refused here, naming the step. Needs the `operator` role.
+
+## workflow pull
+
+Write a stored version back out as `workflow.yaml` and one `SKILL.md` per
+skill step, in a directory `push` accepts unchanged; `--version`,
+`--scope` and `--project` name which. A skill that carries scripts, assets
+or references cannot be written back: the store keeps their digests, not
+their bytes.
+
 ## doctor
 
 Ten probes, one line of reason each. Every probe is reported; the command
@@ -408,6 +443,13 @@ warn  gateway    https://api.anthropic.com answers a token count through the gat
 | `space` | For `machine`, free space on the sandbox volume against the eviction watermarks (`cache-high-watermark`, `cache-low-watermark`): pass above the low one, warn between, fail below the high one — eviction runs at every promotion and the host is short of space |
 | `gateway` | The credential gateway's upstream answers one token count through it with the configured credential, and the credential's age against `model_credential_minted` |
 
+The probes take the worker's own flags for what they check — `--dagger-socket`
+and `--project` for dagger, `--sidecar` and `--env-mode` for the sidecar,
+`--workspace-dir`, `--identity` and `--name` for the signing key, `--vcs-url`
+for the forge, `--notify-command`, `--workspace` and `--sandbox-root`, and the
+gateway's — so a host is probed as its worker is configured, or as a flag
+says to try it.
+
 The sidecar probe sends a `cancel` request on stdin. Cancellation reaches a
 running sidecar as SIGTERM, so a cancel on stdin is a frame the sidecar
 understands and refuses by contract: it never starts a session, never reaches
@@ -438,17 +480,24 @@ lineages and eviction are all subvolume operations (docs/sandbox.md
 fail  workspace  machine: sandbox root /var/lib/mill is xfs, not btrfs (docs/sandbox.md §Storage)
 ```
 
-That is the whole of the probe for now; what else a machine needs of the
-host — the template unit, its polkit rule, the image subvolumes — is probed
-as the backend that needs it lands.
+That is the whole of the probe. What else a machine needs of the host is not
+probed: the template unit and its polkit rule, the helper and its sudoers
+rule, `/run/mill`, the proxy, Harbor and the base image subvolume. Each is
+found by the first run that needs it — `Check` refuses a missing `/run/mill`
+before a claim, an unstartable unit or an unreachable Harbor fails the run's
+provision naming what it asked for, and a proxy that does not answer is the
+toolchain step's finding (`docs/sandbox.md` §"Failure modes") — and by
+homestead's own specs for the roles that provide them.
 
 The gateway probe is the credential gateway of `docs/sandbox.md`
 §Credentials, asked the way a session would ask it. When `gateway: true` is
-configured — the flag, else the file — the doctor loads the upstream
+configured — `--gateway`, else the file — the doctor loads the upstream
 credential from `--model-credential-file` (the file's `model-credential-file`,
 else `$CREDENTIALS_DIRECTORY/claude-oauth`; never the environment), builds
 the gateway in process, mints a step token for the probe alone, and sends one
-`POST /v1/messages/count_tokens` through it to `--gateway-upstream`. A token
+`POST /v1/messages/count_tokens` through it to `--gateway-upstream`. The
+probe does not listen: `--gateway-listen`, the address a worker's gateway
+binds, is accepted for the file's sake and not used. A token
 count is answered without billing, so the probe costs nothing and proves the
 whole path: the file is there, the gateway accepts a step token, the upstream
 accepts the swapped credential. It fails naming the file when the credential
@@ -631,6 +680,10 @@ DIGEST        BASE          PACKAGES                BUILT                 LAST B
 
 `base` in the second column is the base's own subvolume, the one a run
 boots when its repository declares no packages or its derived build failed.
+The subvolumes live under `--machines-dir` (`/var/lib/machines`); the base is
+named by `--image-registry` and `--image-repository` (`harbor.tailcbcc0e.ts.net`
+and `mill/base`, or the file's `image-registry` and `image-repository`), which
+every `image` subcommand takes.
 `+nested` after a package list marks the nested variant (docs/sandbox.md
 §"Derived images"): the same packages with `agent`'s sudo baked in, a
 subvolume of its own.
@@ -659,7 +712,8 @@ DIGEST        PACKAGES     LAST BOOT             ACTION   REASON
 ```
 
 `--dry-run` lists what expiry would take; the watermark pass reads free
-space and cannot be rehearsed. Each removal holds the image's build lock,
+space and cannot be rehearsed. The watermarks are `--high-watermark` and
+`--low-watermark`, as `cache prune` takes them. Each removal holds the image's build lock,
 so a provision ensuring the same digest either finds the subvolume or
 rebuilds it. A running machine's root is an ephemeral snapshot of its own
 and is untouched by the source going. `mill cache prune` is the same
@@ -667,8 +721,9 @@ eviction over lineages and images both.
 
 ## image build-base
 
-Build the base image from `images/base` — `podman build` on this host,
-outside any machine, the one place mill runs a container there — tag it
+Build the base image from `images/base` — `--context` names another
+directory holding a Containerfile — by `podman build` on this host, outside
+any machine, the one place mill runs a container there; tag it
 `<registry>/mill/base:<today>` and `:latest`, and with `--push` publish
 both. The push presents the Harbor robot credential, one line of
 `robot:secret` from `$CREDENTIALS_DIRECTORY/harbor-robot` or
@@ -749,8 +804,9 @@ free 26.4G of 120G (high watermark 12G, low 24G)
 ```
 
 Nothing to evict prints `nothing to evict under <sandbox-root>/cache` and
-the free-space line. The image side goes through `sudo`, as `image prune`
-does; `--sudo none` on a host where the image directory is the caller's.
+the free-space line. The image side reads `--machines-dir` and goes through
+`sudo`, as `image prune` does; `--sudo none` on a host where the image
+directory is the caller's.
 An eviction that fails part way prints what it deleted before the error.
 
 ## Configuration
@@ -764,6 +820,14 @@ the long flag names, with the exceptions the table spells — `env_mode`,
 writes them. A flag always wins: the file is consulted only for a flag the
 command line left alone. A file that is not there is not an error; a file
 named by `--config` or `$MILL_CONFIG` and not there is.
+
+**A key the table does not list is ignored**, silently: the file is decoded
+into the settings the binary knows and nothing else is looked at. So
+`nested-repos`, `dagger-checkout` or `model-credential-minted` with hyphens
+set nothing and say nothing — the underscore is the whole spelling of those
+three — and `mill doctor`'s gateway probe warning that
+`model_credential_minted` *is not set in the configuration file* under a
+file that names the date is the first sign of a misspelt key.
 
 Which command reads which key is a matter of which flags it declares, since
 a key fills the flag of the same name, and of whether it reads the file at
@@ -861,7 +925,7 @@ every role holds — and applies the same answer: a `reader` calling
 `workspace_clean` is refused naming the role, exactly as it is refused
 `rerun`. `workspace show` and `workflow show` are reads and are not.
 
-## mill mcp
+## mcp
 
 The same tools as a stdio MCP server, one JSON-RPC message per line, for a
 Claude Code session or a thicket agent. Registered the way dagger's is:
@@ -879,6 +943,16 @@ underscore: `workflow_list`, `workflow_show`, `workspace_show`,
 `workspace_clean`. Arguments are the flags:
 `{"run": "mill#18", "view": "full"}`. A misspelt argument is reported rather
 than ignored.
+
+`doctor` is among them, read from the deployment's configuration file for
+the settings that have no argument (`model_credential_minted`, the
+watermarks), so a session asked why a host is sick reads the same ten lines.
+`cache` and `image` are not: they answer about subvolumes on this host's
+volume and go through `sudo` for the image directory, which is nothing a
+session should drive; an operator runs them from a shell or lets the timers
+(`contrib/systemd/mill-cache-prune.timer`, `contrib/systemd/mill-image-build.timer`)
+run them. `run`, `restart`, `workflow push` and `workflow pull` are absent
+for the reasons `mill mcp --help` gives.
 
 `initialize` returns instructions telling a session what mill is, how a run is
 named, what the views mean, and that a gate is a person's to answer. Reading

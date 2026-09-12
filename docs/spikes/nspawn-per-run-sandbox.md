@@ -2853,11 +2853,15 @@ unless the prompt shows one; `/var/lib/mill` is the operator's and is mounted
 
 ### The fill, on the host
 
-Squid on this host is homestead's now, and its `squid.conf` (Fedora's
-default, `-rw-r----- root squid 1171 Sep 11 04:03`, an empty
-`/etc/squid/conf.d/`) has no `machines` ACL: it admits `localhost` only, so
-a machine cannot fetch through it. The probe, from a non-loopback source on
-the host:
+Squid on this host is homestead's, and it admits the machines: a request
+from inside a machine gets `TCP_TUNNEL` 200 at `10.99.255.1:3128` and at the
+veth's own `.1`, and `conf.d/mill.conf`, which carries the pool ACL, has been
+loaded since 04:08 — two hours before this probe (`homestead#40`, which
+reproduced both from a fresh machine). What this session saw was a *host*
+probe: `curl --interface 10.99.255.1` is a host process, and squid refuses
+host processes like any other; `/etc/squid/squid.conf` renders to the same
+1171 bytes as Fedora's default and `conf.d/` is `root:squid 0750`, so the
+operator could not see that the drop-in was there. The probe, from the host:
 
 ```
 $ curl -sS -o /dev/null -w "%{http_code}\n" -x http://10.99.255.1:3128 --interface 10.99.255.1 https://proxy.golang.org/; sudo tail -1 /var/log/squid/access.log
@@ -2866,7 +2870,7 @@ curl: (56) CONNECT tunnel failed, response 403
 1789133238.531      0 10.99.255.1 TCP_DENIED/403 3367 CONNECT proxy.golang.org:443 - HIER_NONE/- text/html
 ```
 
-That is a finding against the network landing, not this node's; per the work
+That is not a finding against the network landing; per the work
 order the fill ran on the host with the same `GOCACHE`, and the second build
 inside the machine used the host's Go toolchain bound read-only at `/opt/go`
 with `GOPROXY=off` (the module cache is in the lineage, so nothing is
@@ -3453,10 +3457,10 @@ created in the checkout for the bind is gone.
   STEP`. A derived image is a full ~1 GB copy sharing nothing with the base;
   fine at a handful of package lists, and the thing to change (export onto a
   snapshot of the base) if `mill image ls` ever shows dozens.
-- **§Network / `homestead#34`.** The squid that landed admits `localhost`
-  only (`TCP_DENIED/403` from `10.99.255.1`); the `machines` ACL of
-  `spikes/nspawn/squid.conf` is missing from `/etc/squid/squid.conf`. Until
-  it is there no machine can fetch anything.
+- **§Network / `homestead#34`.** A host probe with `--interface 10.99.255.1`
+  is `TCP_DENIED/403`, because squid refuses host processes; a machine's
+  request is admitted (`homestead#40`). Every network assertion runs from
+  inside a machine, never from the host with a source-interface trick.
 - **§Testing.** The four scenarios run live in
   `spikes/nspawn/cache_test.go` under the same `MILL_SANDBOX_HOST=1` gate:
   the lineage pair fills a 2.4G cache from this repository in a minute and

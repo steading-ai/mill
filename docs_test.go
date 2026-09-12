@@ -1,6 +1,7 @@
 package mill_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -37,6 +38,11 @@ var (
 	wikiLink = regexp.MustCompile(`\[\[[^\]]+\]\]`)
 	// A markdown link to a relative path, with or without a fragment.
 	relativeLink = regexp.MustCompile(`\]\(([^):#\s]+)(#[^)]*)?\)`)
+	// A deferral: a sentence that hands a fact to the spike, to "the
+	// implementation", or to a later decision, instead of stating it.
+	deferral = regexp.MustCompile(`(?i)the spike (reports|decides|will decide|is to decide|has to)|` +
+		`the implementation (decides|will|should|is to)|the answer goes here|to be decided|` +
+		`stays a spike|decides which|until (it|that) is run|for now|\bTBD\b|\bTODO\b|^- Whether\b`)
 	// A repository path cited in backticks: rooted at a directory the repo map
 	// names, so a bare filename or a path inside a machine is not one.
 	repoPath = regexp.MustCompile("`((?:docs|internal|sidecar|workflows|contrib|tests|cmd|proto|gen|harness)/[^`\\s]*)`")
@@ -166,6 +172,20 @@ var _ = Describe("The architecture decision records", Label("unit"), func() {
 				Expect(path).To(BeAnExistingFile(), "%s cites %s, which is not in the tree", doc, path)
 			}
 		}
+	})
+
+	// mill#70: the sandbox specification states what was built.
+	It("The spec states facts", func() {
+		source, err := os.ReadFile("docs/sandbox.md")
+		Expect(err).NotTo(HaveOccurred())
+
+		var deferrals []string
+		for i, line := range strings.Split(string(source), "\n") {
+			if match := deferral.FindString(line); match != "" {
+				deferrals = append(deferrals, fmt.Sprintf("line %d: %q", i+1, match))
+			}
+		}
+		Expect(deferrals).To(BeEmpty(), "docs/sandbox.md still defers instead of stating the fact")
 	})
 
 	It("keeps every record under the word limit", func() {

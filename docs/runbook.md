@@ -239,7 +239,9 @@ the worker starts.
 | Scratch GitLab project | Deleted | `DELETE /projects/:id` at the end of the scenario; a stale one, by the worker's sweep of `scratch-namespace` through the forge adapter |
 | The suite's own dagger | Removed | `dg serve` killed, its database dropped and its socket's directory removed at the end of the suite; the PostgreSQL container terminated after them. Nothing of it is on the host afterwards. |
 | Scratch dagger project | Archived | `dg project archive` at the end of the scenario; a stale one, by the worker's sweep of the dagger it is configured for. In the suite's own dagger this is a courtesy, since the instance goes with the suite. Against an external dagger it is the only cleanup there is: dagger has no delete, and archiving — read-only, every node out of every ready set — is as gone as dagger goes. The sweep calls delete when the service offers it, archives when it does not, and its report says which. |
-| A live suite's machines | Stopped, run directory removed | The worker's reconciliation: a `mill-*` machine with no live run is an orphan, whatever made it |
+| A live suite's machines | Stopped, run directory removed | Every machine is `mill-<run-id>`, the `mill run` or `mill work` subprocess's own; a delivered run destroys its machine and removes `/var/lib/mill/runs/<id>` and `/run/mill/<id>` itself, the scenarios that kill a run sweep theirs at teardown, and the worker's reconciliation takes the rest: a `mill-*` machine with no live run is an orphan, whatever made it |
+| Promoted cache generations | **Kept** | `gen-<n>` under `/var/lib/mill/cache/<scope>/<name>`, earned by an evidence-closed step and the point of the warm scenario; eviction takes repo lineages by expiry and by watermark, `mill cache prune` on demand |
+| Derived image subvolumes | **Kept** | `/var/lib/machines/mill-image-<digest>`, one per package list the fixtures declare; image expiry takes them, `mill image prune` on demand |
 | Workspaces, clones, step logs, bare local origins, the built binary | Removed | Temporary directories the suite owns |
 | `mill serve` | Killed | Its process group, at the end of the suite |
 | Rows in `MILL_ACCEPTANCE_DATABASE_URL` | **Kept** | The ledger is the record of the run and is worth reading after a failure |
@@ -476,16 +478,27 @@ tested, merged — with the properties the design promises asserted from
 *outside* the machine. It is `tests/acceptance/sandbox_test.go`, labelled
 `live`, and it is what the bootstrap gate (`prove-sandbox`) runs.
 
-**What it needs.** `core`, prepared by homestead's `mill-role-sandbox`: the
-btrfs volume at `/var/lib/mill`, the machine template unit and its polkit
-rule, the root-owned helper at `/usr/libexec/mill-machine`, the nftables
-table, squid on the `mill-host` link, the base image in Harbor, and the SELinux
-module ([sandbox.md](sandbox.md) §"The host"). On top of the ordinary
-suite's variables:
+**What it needs.** `core`, prepared by homestead's roles
+([sandbox.md](sandbox.md) §"What the host provides"): `mill_storage` for the
+btrfs volume at `/var/lib/mill`; `mill_machine` for the template unit, the
+root-owned helper at `/usr/libexec/mill-machine`, its policy and its polkit
+and sudoers rules; `mill_egress` for the nftables table and squid on the
+`mill-host` link; `mill_selinux` for the file context; and `mill` for
+`/run/mill`, the base image in Harbor (`mill-image.timer`, or
+`systemctl --user start mill-image.service` once) and `/var/lib/mill/dagger`
+— a clone of dagger's `main`, which nothing pins: mill's `go.mod` has no
+dagger dependency and dagger has no tags, so a dagger change can fail the
+fixture inside a machine before mill changes at all, and a pin is a roadmap
+item ([roadmap.md](roadmap.md) §"What mill needs from the neighbours"). The
+configuration file the deployed worker reads is the one `mill doctor`
+reads: keys in their long-flag spelling, and `nested_repos`,
+`dagger_checkout` and `model_credential_minted` with underscores — a
+hyphenated one sets nothing ([tools.md](tools.md) §Configuration). On top
+of the ordinary suite's variables:
 
 | Variable | What it is |
 |---|---|
-| `MILL_SANDBOX_HOST` | Set to anything to turn the live tier on. Unset, every `live` spec skips with the message that names its cost: *set MILL_SANDBOX_HOST=1 on a host with root, nspawn and btrfs to run the spec that boots a real machine*. `make test` never sets it, so the tier skips there and on any laptop. |
+| `MILL_SANDBOX_HOST` | Set to anything to turn the live tier on. Unset, every `live` spec skips with the message that names its cost: *set MILL_SANDBOX_HOST=1 on a host with root, nspawn and btrfs to run the spec that boots a real machine*. `make test` never sets it, so the tier skips there and on any laptop — silently, because without `MILL_ACCEPTANCE` the whole suite skips at `BeforeSuite` first; the live specs' own message shows under `MILL_ACCEPTANCE=1` with this unset. |
 | `MILL_SANDBOX_MODEL_CREDENTIAL` | The `claude setup-token` file the credential gateway presents upstream for a machine's sessions. No login enters a machine, so a machine run has no account credential of its own; supply the setup-token the deployed worker loads from its vault ([sandbox.md](sandbox.md) §Credentials). Unset, the live tier skips before booting anything. |
 
 The service the tier's `mill run` and `mill work` write to is the ordinary

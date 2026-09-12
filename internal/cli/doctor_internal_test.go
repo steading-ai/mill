@@ -2,7 +2,9 @@ package cli
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
+	"regexp"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -136,5 +138,22 @@ var _ = Describe("The doctor's space probe", Label("unit"), func() {
 		result = probeSpace(opts, fake)
 		Expect(result.OK).To(BeFalse())
 		Expect(result.Reason).To(ContainSubstring("low watermark 5% is below the high watermark 50G"))
+	})
+})
+
+// mill#70: every probe is named where an operator reads about it.
+var _ = Describe("The doctor's probe names", Label("unit"), func() {
+	It("are each named by the command's usage and by docs/tools.md §doctor", func() {
+		usage := newDoctorCommand().Long
+		body, err := os.ReadFile(filepath.Join("..", "..", "docs", "tools.md"))
+		Expect(err).NotTo(HaveOccurred())
+		doc := string(body)
+
+		for _, name := range ProbeNames {
+			Expect(usage).To(MatchRegexp(`(?m)^  %s +\S`, name), "mill doctor --help does not name the %s probe", name)
+			Expect(doc).To(ContainSubstring("| `"+name+"` |"), "docs/tools.md §doctor has no row for the %s probe", name)
+		}
+		Expect(regexp.MustCompile(`(?m)^  ([a-z]+) +\S`).FindAllStringSubmatch(usage, -1)).To(HaveLen(len(ProbeNames)),
+			"mill doctor --help names a probe ProbeNames does not")
 	})
 })

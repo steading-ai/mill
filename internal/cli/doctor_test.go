@@ -12,6 +12,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/ivy/mill/internal/cli"
 	"github.com/ivy/mill/internal/testsupport"
 )
 
@@ -50,7 +51,15 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 			"--project", "", "--vcs-url", "")
 		Expect(err).To(HaveOccurred(), "a failed probe is a non-zero exit")
 
-		for _, name := range []string{"socket", "schema", "dagger", "sidecar", "signing", "forge", "notify", "workspace", "space", "gateway"} {
+		// The table is every line but the refusal cli.Run adds after it.
+		var reported []string
+		for _, line := range lines(out) {
+			if fields := strings.Fields(line); fields[0] == "pass" || fields[0] == "fail" || fields[0] == "warn" {
+				reported = append(reported, fields[1])
+			}
+		}
+		Expect(reported).To(Equal(cli.ProbeNames), "the probes reported are ProbeNames, in order")
+		for _, name := range cli.ProbeNames {
 			verdict, reason := probe(out, name)
 			Expect(verdict).To(BeElementOf("pass", "fail"), "probe %s: %s", name, out)
 			Expect(reason).NotTo(BeEmpty(), "probe %s carries no reason", name)

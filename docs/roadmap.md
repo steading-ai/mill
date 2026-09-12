@@ -158,6 +158,7 @@ Not mill's to build; mill's to wait on or work around.
 | `dg admin` bootstrap so a second principal is not a `psql` job | dagger | O4 |
 | An orchestrator principal kind or stored delegation grants, and M2's "owns its own principal" wording reconciled with `onlyOrchestrators` | dagger | O4 |
 | tsnet enabled in dagger's deployment | dagger, homestead | O5 |
-| The `mill` role on `core`: the btrfs volume, `mill-machine@.service` and its polkit rule, the nftables table, squid, the SELinux module, the model credential by `LoadCredential` (Sandbox §Sequencing across repositories) | homestead | O2 |
+| The `mill_storage`, `mill_machine`, `mill_egress`, `mill_selinux` and `mill` roles on `core`: the btrfs volume, `mill-machine@.service`, its helper and polkit rule, the nftables table, squid, the file context, the model credential by `LoadCredential` (Sandbox §"What the host provides") | homestead | O2 |
+| A dagger pin for the checkout a nested machine is given: mill's `go.mod` has no dagger dependency and dagger has no tags, so `/var/lib/mill/dagger` tracks `main` until dagger publishes a tag or the image `dagger#25` names (Sandbox §Testing) | dagger, homestead | O3 |
 | Attested releases and a CI runner for mill's own repo | homestead, the delivery bet | O3 |
 | Vault | homestead, the identity bet | O4 |

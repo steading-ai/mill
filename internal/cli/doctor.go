@@ -40,6 +40,14 @@ import (
 // point is to answer, not to wait.
 const probeTimeout = 10 * time.Second
 
+// ProbeNames is every probe, in the order `mill doctor` reports them. The
+// command's usage text and docs/tools.md §doctor name each of them, and a
+// spec holds both to this list.
+var ProbeNames = []string{
+	"socket", "schema", "dagger", "sidecar", "signing",
+	"forge", "notify", "workspace", "space", "gateway",
+}
+
 // probe is one check and what it found.
 type probe struct {
 	// Name is what was checked.

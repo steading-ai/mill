@@ -14,7 +14,7 @@ The harness hands you the work order — the node's body plus the results of eve
 
 ```bash
 dg node show '#18'      # the full work order for one node
-dg node inputs '#18'    # results handed on by the nodes it depends on
+dg inputs '#18'         # results handed on by the nodes it depends on
 dg ready                # what is claimable now
 dg explain '#18'        # why a node is or is not ready
 ```
@@ -31,19 +31,23 @@ Your contract is the node's **Acceptance criteria** and **Scenarios**. Every cri
 
 ```
 cmd/mill/             binary entrypoint; one binary, two faces (service, worker)
-internal/cli/         the cobra command tree: serve, work, run, restart, workflow, image, version
+internal/cli/         the cobra command tree: serve, work, run, restart, workflow, image, cache, doctor, mcp, the readers, version
 internal/store/       persistence and its migrations; only internal/domain may import it
 internal/dagger/      the client for dagger's dagger.v1 API, and the refusals mill owes a gate
 internal/run/         the loop: claim, heartbeat, steps, evidence, finish. docs/ledger.md §Resume in Go
 internal/harness/     the adapter seam: the Harness interface, the claude sidecar driver, a scripted fake
 internal/workflow/    the loader: a workflow directory in, a versioned definition and its skills out
 internal/workspace/   the process chokepoint. os/exec is forbidden everywhere else
+internal/workspace/machine  the machine backend: a run's systemd-nspawn machine through mill-machine@, its driver seam, images, cache lineages, eviction, reconciliation; docs/sandbox.md
+internal/gateway/     the credential gateway: the session's step token in, the subscription credential out, usage counted from outside; docs/sandbox.md §Credentials
+internal/skill/       the mill skill and the sidecar copy the worker mounts read-only into every machine; docs/sandbox.md §"Skill mount"
 internal/testsupport/ the testcontainers PostgreSQL fixture db-labelled specs use, and a real `dg serve` for the run loop
 internal/version/     the version injected at link time by the Makefile
 proto/                the contracts: mill.v1 the store API, harness.v1 the sidecar wire, dagger.v1 vendored from dagger; README.md is the compatibility policy
 gen/                  generated Go, committed. buf owns it; `make generate` writes it
 sidecar/              the TypeScript harness adapter; sidecar/gen is harness.v1 in TypeScript
 workflows/            the workflow definitions this repo seeds the store with; `mill workflow push` loads them
+contrib/systemd/      the user units a deployment runs: mill.service, the image-build and cache-prune timers; docs/architecture.md §Deployment
 images/               the base image machines boot from: images/base is the Containerfile, the dnf shim and what the export must restore; docs/sandbox.md §Images
 tests/acceptance/     the suite that drives the whole mill against real dependencies; docs/runbook.md
 docs/                 the design. Authoritative
@@ -60,7 +64,8 @@ compose.yaml          PostgreSQL for local development; .env.example seeds .env
 - **The store and the resume algorithm** — `docs/ledger.md`. The pseudocode there is the specification of the run loop.
 - **Where this is going** — `docs/roadmap.md`. O0 is the walking skeleton; everything past it is parked there with its provenance.
 - **The contract mill consumes** — dagger's `docs/domain-model.md`, checked out on this host under `~/src/github.com/ivy/dagger`.
-- **The tools an operator has** — `docs/tools.md`: what each read tool answers, what `doctor` probes, and how a session reaches them over `mill mcp`.
+- **The sandbox a run works in** — `docs/sandbox.md`: the machine, its image and `mill.toml`, caches and eviction, network and the credential gateway, privilege, reconciliation, what the host provides. `docs/sandbox-scenarios.md` is its behaviour; ADR-018 its decision.
+- **The tools an operator has** — `docs/tools.md`: what each read tool answers, what `doctor` probes, `cache` and `image`, and how a session reaches them over `mill mcp`.
 - **How to run the acceptance suite** — `docs/runbook.md`: what it needs, what it leaves behind, how to clean up.
 - **Prior art and reviews** — `docs/research/`.
 
