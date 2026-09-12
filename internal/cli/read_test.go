@@ -6,12 +6,14 @@ import (
 	"strings"
 
 	"connectrpc.com/connect"
+	"github.com/jackc/pgx/v5/pgxpool"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	harnessv1 "github.com/ivy/mill/gen/harness/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/testsupport"
+	"github.com/ivy/mill/internal/workflow"
 )
 
 var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
@@ -35,6 +37,39 @@ var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 			Expect(row).NotTo(BeEmpty(), out)
 			Expect(row).To(ContainSubstring("running"))
 			Expect(row).To(ContainSubstring("implement"))
+		})
+
+		It("One bad workflow row does not stop the listing", func() {
+			// Given a store with two workflows, one of which fails to decode
+			m := serving(ctx)
+			openRunOn(ctx, m, "millcli#1", nodeID(1))
+			definition, _, err := workflow.Load(quickFix)
+			Expect(err).NotTo(HaveOccurred())
+			definition.Name = "legacy"
+			stale := openRunFollowing(ctx, m, definition, "millcli#2", nodeID(2))
+			db, err := pgxpool.New(ctx, m.databaseURL)
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(db.Close)
+			// The bytes a mill whose schema had a `model` field would have
+			// written, which this one's decoder refuses.
+			_, err = db.Exec(ctx, `UPDATE workflows SET definition = definition || '{"model": "opus"}'::jsonb WHERE id = $1`,
+				stale.workflow.GetId())
+			Expect(err).NotTo(HaveOccurred())
+
+			// When mill status runs
+			out, err := runCLI(ctx, m.socket, "status")
+			Expect(err).NotTo(HaveOccurred(), out)
+
+			// Then the good workflow is listed and a finding names the bad one
+			Expect(rowFor(out, "millcli#1")).To(ContainSubstring("gather-context"), out)
+			Expect(rowFor(out, "millcli#2")).NotTo(BeEmpty(), "the run on the bad row is still a live run")
+			Expect(out).To(ContainSubstring("warning: workflow " + stale.workflow.GetId() + " does not decode"))
+			Expect(out).To(ContainSubstring(`field "model"`))
+			By("and the row is left exactly as it was")
+			var stored string
+			Expect(db.QueryRow(ctx, `SELECT definition::text FROM workflows WHERE id = $1`, stale.workflow.GetId()).
+				Scan(&stored)).To(Succeed())
+			Expect(stored).To(ContainSubstring(`"model"`))
 		})
 
 		It("takes a view, and refs is identifiers alone", func() {

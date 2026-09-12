@@ -269,10 +269,10 @@ var _ = Describe("The catalog", Label(testsupport.DBLabel), func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(pinned.GetId()).To(Equal(first.GetId()))
 
-		listed, err := l.store.ListWorkflows(ctx, store.WorkflowFilter{Name: "feature"})
+		listed, _, err := l.store.ListWorkflows(ctx, store.WorkflowFilter{Name: "feature"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(listed).To(HaveLen(1), "the newest of each name unless every version is asked for")
-		listed, err = l.store.ListWorkflows(ctx, store.WorkflowFilter{Name: "feature", AllVersions: true})
+		listed, _, err = l.store.ListWorkflows(ctx, store.WorkflowFilter{Name: "feature", AllVersions: true})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(listed).To(HaveLen(2))
 	}, SpecTimeout(time.Minute))
@@ -333,7 +333,7 @@ var _ = Describe("The reads the CLI needs", Label(testsupport.DBLabel), func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 
-		summaries, err := l.store.Status(ctx, nil, "mill")
+		summaries, _, err := l.store.Status(ctx, nil, "mill")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(summaries).To(HaveLen(1))
 		summary := summaries[0]
@@ -346,14 +346,84 @@ var _ = Describe("The reads the CLI needs", Label(testsupport.DBLabel), func() {
 
 		_, err = l.store.SetLease(ctx, run.GetId(), "L2", "worker-2")
 		Expect(err).NotTo(HaveOccurred())
-		summaries, err = l.store.Status(ctx, []millv1.RunStatus{millv1.RunStatus_RUN_STATUS_RUNNING}, "")
+		summaries, _, err = l.store.Status(ctx, []millv1.RunStatus{millv1.RunStatus_RUN_STATUS_RUNNING}, "")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(summaries[0].GetLeases()).To(Equal(int64(1)))
 
 		// A project the node does not belong to sees nothing.
-		summaries, err = l.store.Status(ctx, nil, "dagger")
+		summaries, _, err = l.store.Status(ctx, nil, "dagger")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(summaries).To(BeEmpty())
+	}, SpecTimeout(time.Minute))
+
+	It("lists the workflows that decode and names the row that does not", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		good := l.workflow(ctx)
+		stale, _, err := l.store.PutWorkflow(ctx, &millv1.Workflow{
+			Name: "legacy", Scope: millv1.Scope_SCOPE_ORG,
+			Steps: []*millv1.Step{{Name: "implement"}}})
+		Expect(err).NotTo(HaveOccurred())
+		// A field an older mill's schema had and this one's does not, in
+		// the bytes of the stored definition.
+		l.corrupt(ctx, stale.GetId(), `{"model": "opus"}`)
+
+		listed, findings, err := l.store.ListWorkflows(ctx, store.WorkflowFilter{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(listed).To(HaveLen(1))
+		Expect(listed[0].GetId()).To(Equal(good.GetId()))
+		Expect(findings).To(HaveLen(1))
+		Expect(findings[0].WorkflowID).To(Equal(stale.GetId()))
+		Expect(findings[0].Field).To(Equal("model"))
+		Expect(findings[0].Detail).NotTo(BeEmpty())
+
+		// The row is reported and nothing else: still there, still as it was.
+		var definition []byte
+		Expect(l.db.QueryRow(ctx, `SELECT definition FROM workflows WHERE id = $1`, stale.GetId()).
+			Scan(&definition)).To(Succeed())
+		Expect(string(definition)).To(ContainSubstring(`"model"`))
+	}, SpecTimeout(time.Minute))
+
+	It("names a field nested in a step, by its path", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		stale, _, err := l.store.PutWorkflow(ctx, &millv1.Workflow{
+			Name: "legacy", Scope: millv1.Scope_SCOPE_ORG,
+			Steps: []*millv1.Step{{Name: "implement"}, {Name: "review"}}})
+		Expect(err).NotTo(HaveOccurred())
+		l.corrupt(ctx, stale.GetId(), `{"steps": [{"name": "implement"}, {"name": "review", "budget": 3}]}`)
+
+		_, findings, err := l.store.ListWorkflows(ctx, store.WorkflowFilter{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(findings).To(HaveLen(1))
+		Expect(findings[0].Field).To(Equal("steps[1].budget"))
+	}, SpecTimeout(time.Minute))
+
+	It("Status lists a run whose workflow will not decode, with the row named once", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		good, _ := l.runWithWorkflow(ctx, "mill#8")
+		legacy, _, err := l.store.PutWorkflow(ctx, &millv1.Workflow{
+			Name: "legacy", Scope: millv1.Scope_SCOPE_ORG,
+			Steps: []*millv1.Step{{Name: "assess"}, {Name: "implement"}}})
+		Expect(err).NotTo(HaveOccurred())
+		stale, workflow := l.runFollowing(ctx, "mill#9", legacy)
+		l.corrupt(ctx, workflow.GetId(), `{"model": "opus"}`)
+
+		summaries, findings, err := l.store.Status(ctx, nil, "mill")
+		Expect(err).NotTo(HaveOccurred())
+		ids := make([]string, 0, len(summaries))
+		for _, summary := range summaries {
+			ids = append(ids, summary.GetRun().GetId())
+		}
+		Expect(ids).To(ConsistOf(good.GetId(), stale.GetId()))
+		for _, summary := range summaries {
+			if summary.GetRun().GetId() == good.GetId() {
+				Expect(summary.GetCurrentStep()).To(Equal("implement"), "the run whose workflow decodes is derived as ever")
+			} else {
+				Expect(summary.GetCurrentStep()).To(BeEmpty(), "no definition, no derived step")
+			}
+		}
+		Expect(findings).To(HaveLen(1))
+		Expect(findings[0].WorkflowID).To(Equal(workflow.GetId()))
+		Expect(findings[0].Field).To(Equal("model"))
 	}, SpecTimeout(time.Minute))
 
 	It("Inspect returns every attempt in order with its evidence and cost", func(ctx SpecContext) {

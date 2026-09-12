@@ -36,8 +36,13 @@ func (s *Service) GetWorkflow(ctx context.Context, p GetWorkflowParams) (*millv1
 	})
 }
 
-// ListWorkflows lists workflow versions in a scope, newest first.
-func (s *Service) ListWorkflows(ctx context.Context, p WorkflowFilter) ([]*millv1.Workflow, error) {
+// UndecodableWorkflow is a workflow row a listing could not decode and left
+// out, reported beside the rest. The row is not touched.
+type UndecodableWorkflow = store.UndecodableWorkflow
+
+// ListWorkflows lists workflow versions in a scope, newest first, with the
+// rows it could not decode named beside them.
+func (s *Service) ListWorkflows(ctx context.Context, p WorkflowFilter) ([]*millv1.Workflow, []UndecodableWorkflow, error) {
 	return s.store.ListWorkflows(ctx, store.WorkflowFilter{
 		Name:        p.Name,
 		Scope:       p.Scope,

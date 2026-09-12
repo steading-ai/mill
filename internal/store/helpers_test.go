@@ -54,6 +54,15 @@ func (l *ledger) workflow(ctx context.Context) *millv1.Workflow {
 	return stored
 }
 
+// corrupt merges extra JSON into a stored workflow's definition, which is
+// what a row written by a mill whose schema had a field this one's does not
+// looks like.
+func (l *ledger) corrupt(ctx context.Context, workflowID, extra string) {
+	GinkgoHelper()
+	_, err := l.db.Exec(ctx, `UPDATE workflows SET definition = definition || $2::jsonb WHERE id = $1`, workflowID, extra)
+	Expect(err).NotTo(HaveOccurred())
+}
+
 // run creates a run on a node, holding l.lease.
 func (l *ledger) run(ctx context.Context, nodeRef string) *millv1.Run {
 	GinkgoHelper()
@@ -72,7 +81,12 @@ func (l *ledger) run(ctx context.Context, nodeRef string) *millv1.Run {
 // state a run is in once selection has closed.
 func (l *ledger) runWithWorkflow(ctx context.Context, nodeRef string) (*millv1.Run, *millv1.Workflow) {
 	GinkgoHelper()
-	workflow := l.workflow(ctx)
+	return l.runFollowing(ctx, nodeRef, l.workflow(ctx))
+}
+
+// runFollowing creates a run and pins a stored workflow to it.
+func (l *ledger) runFollowing(ctx context.Context, nodeRef string, workflow *millv1.Workflow) (*millv1.Run, *millv1.Workflow) {
+	GinkgoHelper()
 	run := l.run(ctx, nodeRef)
 	stepRun := l.start(ctx, run.GetId(), "assess")
 	_, _, err := l.store.CloseStepRun(ctx, l.lease, store.CloseStepRunParams{

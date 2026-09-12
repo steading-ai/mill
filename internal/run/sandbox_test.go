@@ -193,7 +193,7 @@ var _ = Describe("The ledger's record of the machine", Label(testsupport.DBLabel
 		scripts[0].Do = func(session harness.Session) {
 			defer GinkgoRecover()
 			first(session)
-			live, err := run.NewLedger(f.store, f.worker).LiveRuns(ctx)
+			live, err := run.NewLedger(f.store, f.worker, nil).LiveRuns(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			mu.Lock()
 			seen = live

@@ -125,8 +125,7 @@ model_credential_minted: 2026-09-01
 		cmd := &cobra.Command{Use: "work"}
 		bindWorkFlags(cmd, &opts)
 		Expect(cmd.Flags().Parse(append([]string{"--config", path}, args...))).To(Succeed())
-		var socket string
-		Expect(applyConfig(cmd, &opts, &socket)).To(Succeed())
+		Expect(applyConfig(cmd, &opts)).To(Succeed())
 		return opts
 	}
 
@@ -182,6 +181,29 @@ model_credential_minted: 2026-09-01
 		Expect(opts.concurrency).To(Equal(2))
 		Expect(opts.projects).To(Equal([]string{"just-this-one"}))
 		Expect(opts.labels).To(Equal([]string{"agent"}), "the rest still comes from the file")
+	})
+
+	It("The worker honours the configured socket", func() {
+		// Given a config file naming a socket path and no --socket flag
+		Expect(os.WriteFile(path, []byte("socket: /tmp/x.sock\n"), 0o600)).To(Succeed())
+		// When mill work starts: the command itself, its flags parsed, its
+		// file applied, which is the resolution runWork does before it
+		// dials anything.
+		opts := workOptions{}
+		cmd := workCommand(&opts)
+		Expect(cmd.ParseFlags([]string{"--config", path})).To(Succeed())
+		Expect(applyConfig(cmd, &opts)).To(Succeed())
+		// Then it listens on the configured path
+		Expect(opts.run.socket).To(Equal("/tmp/x.sock"))
+	})
+
+	It("lets a --socket flag win over the file's socket", func() {
+		Expect(os.WriteFile(path, []byte("socket: /tmp/x.sock\n"), 0o600)).To(Succeed())
+		opts := workOptions{}
+		cmd := workCommand(&opts)
+		Expect(cmd.ParseFlags([]string{"--config", path, "--socket", "/tmp/flag.sock"})).To(Succeed())
+		Expect(applyConfig(cmd, &opts)).To(Succeed())
+		Expect(opts.run.socket).To(Equal("/tmp/flag.sock"))
 	})
 
 	It("is not required to exist", func() {

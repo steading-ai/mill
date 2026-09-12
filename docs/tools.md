@@ -84,6 +84,22 @@ run. `--view full` adds `IMAGE`, the derived digest it booted, `VETH`, and
 `CACHES`, each lineage as `<scope>/<name>@<restored>` with `->` and the
 generation it promoted once the run has finished.
 
+A workflow row the store cannot decode — one a mill of another version
+wrote, with a field this one's schema does not have — does not stop the
+listing. The run on it is still listed, with no `STEP`, because the step is
+derived from the definition; and after the table one line on standard error
+names the row and the field:
+
+```
+warning: workflow 01K4… does not decode and was left out: field "model": proto: (line 1:2): unknown field "model"
+```
+
+The row is reported and nothing else: not deleted, not repaired. `workflow
+list` says the same of a row it leaves out, and a worker starting on the
+`machine` backend, whose reconciliation reads the same listing, logs the same
+line and starts. The remedy is the operator's; for the development database
+it is `make db-reset` ([runbook.md](runbook.md)).
+
 ## inspect
 
 One run in full: the workflow version it follows and every attempt in order,
@@ -736,6 +752,91 @@ Nothing to evict prints `nothing to evict under <sandbox-root>/cache` and
 the free-space line. The image side goes through `sudo`, as `image prune`
 does; `--sudo none` on a host where the image directory is the caller's.
 An eviction that fails part way prints what it deleted before the error.
+
+## Configuration
+
+A worker's settings are the long tail of a systemd `ExecStart` line, so they
+may live in a file: `$MILL_CONFIG`, else `$XDG_CONFIG_HOME/mill/config.yaml`,
+else `~/.config/mill/config.yaml`, or whatever `--config` names. Its keys are
+the long flag names, with the exceptions the table spells — `env_mode`,
+`notify_command`, `nested_repos`, `dagger_checkout` and
+`model_credential_minted` are written the way the deployment that sets them
+writes them. A flag always wins: the file is consulted only for a flag the
+command line left alone. A file that is not there is not an error; a file
+named by `--config` or `$MILL_CONFIG` and not there is.
+
+Which command reads which key is a matter of which flags it declares, since
+a key fills the flag of the same name, and of whether it reads the file at
+all. The mechanism is one: `bindWorkFlags` declares the worker's flags —
+`--config` and `--socket` among them — on `work` and on `serve` alike, and
+`applyConfig` fills in every one the command line left alone. `run` declares
+no `--config` and reads no file: it is flags and environment only. `serve`
+reads the file only with `--work`, before it binds, because `socket` is one
+of the keys and the listener is built from it. A key with no flag of its own
+— the machine backend's — is the file's alone, and is read whenever the file
+is.
+
+The table is hand-kept, and a spec in `internal/cli` renders the same table
+from the commands' declared flags and asserts the two are the same, so a
+flag added or removed without this table changing is a failing spec.
+
+| Key | `run` | `work` | `serve --work` |
+|---|---|---|---|
+| `socket` | | yes | yes |
+| `dagger-socket` | | yes | yes |
+| `project` | | yes | yes |
+| `label` | | yes | yes |
+| `concurrency` | | yes | yes |
+| `workflow` | | yes | yes |
+| `tier` | | yes | yes |
+| `workflow-dir` | | yes | yes |
+| `sidecar` | | yes | yes |
+| `vcs-url` | | yes | yes |
+| `origin` | | yes | yes |
+| `ref` | | yes | yes |
+| `identity` | | yes | yes |
+| `name` | | yes | yes |
+| `workspace-dir` | | yes | yes |
+| `workspace` | | yes | yes |
+| `sandbox-root` | | yes | yes |
+| `machines-dir` | | yes | yes |
+| `image-registry` | | yes | yes |
+| `image-repository` | | yes | yes |
+| `base-image` | | yes | yes |
+| `image-build-budget` | | yes | yes |
+| `image-expiry` | | yes | yes |
+| `cache-global-cap` | | yes | yes |
+| `cache-global-caps` | | yes | yes |
+| `cache-repo-cap` | | yes | yes |
+| `cache-expiry` | | yes | yes |
+| `cache-high-watermark` | | yes | yes |
+| `cache-low-watermark` | | yes | yes |
+| `skill-dir` | | yes | yes |
+| `sidecar-dir` | | yes | yes |
+| `workflow-copy-dir` | | yes | yes |
+| `run-state-dir` | | yes | yes |
+| `proxy` | | yes | yes |
+| `no-proxy` | | yes | yes |
+| `nested_repos` | | yes | yes |
+| `dagger_checkout` | | yes | yes |
+| `scratch-namespace` | | yes | yes |
+| `scratch-budget` | | yes | yes |
+| `log-dir` | | yes | yes |
+| `env_mode` | | yes | yes |
+| `notify_command` | | yes | yes |
+| `gateway` | | yes | yes |
+| `gateway-listen` | | yes | yes |
+| `gateway-upstream` | | yes | yes |
+| `model-credential-file` | | yes | yes |
+| `work` | | | |
+| `model_credential_minted` | | | |
+
+`work` is parsed and read by nothing: the worker in a `serve` process is
+turned on by `--work` and only by it. `model_credential_minted` is read by
+`mill doctor` and `mill mcp`'s doctor tool, not by a worker. Other commands
+read the file for their own keys — `doctor`, `cache` and `image` for the
+sandbox and cache settings, `mcp` for the credential's age — and are outside
+this table.
 
 ## Identity
 

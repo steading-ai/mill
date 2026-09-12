@@ -226,8 +226,9 @@ func (s *Service) Rerun(ctx context.Context, runID, fromStep, requestedBy, reaso
 	return s.store.Rerun(ctx, runID, fromStep, requestedBy, reason)
 }
 
-// Status lists runs by state with what the ledger derives about each.
-func (s *Service) Status(ctx context.Context, statuses []millv1.RunStatus, project string) ([]*millv1.RunSummary, error) {
+// Status lists runs by state with what the ledger derives about each, and
+// the workflow rows it could not decode.
+func (s *Service) Status(ctx context.Context, statuses []millv1.RunStatus, project string) ([]*millv1.RunSummary, []UndecodableWorkflow, error) {
 	return s.store.Status(ctx, statuses, project)
 }
 

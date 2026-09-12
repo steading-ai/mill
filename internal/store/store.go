@@ -1645,20 +1645,26 @@ type WorkflowFilter struct {
 	AllVersions bool
 }
 
-// ListWorkflows lists workflow versions, newest first.
-func (s *Store) ListWorkflows(ctx context.Context, p WorkflowFilter) ([]*millv1.Workflow, error) {
+// ListWorkflows lists workflow versions, newest first. A row that will not
+// decode is left out of the listing and named in the findings, so one row
+// another mill's schema wrote does not hide every other workflow; the row
+// itself is not touched.
+func (s *Store) ListWorkflows(ctx context.Context, p WorkflowFilter) ([]*millv1.Workflow, []UndecodableWorkflow, error) {
 	rows, err := New(s.pool).ListWorkflows(ctx, ListWorkflowsParams{
 		Name:    nullable(p.Name),
 		Scope:   nullable(enumText(p.Scope)),
 		Project: nullable(p.Project),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("list workflows: %w", err)
+		return nil, nil, fmt.Errorf("list workflows: %w", err)
 	}
 	// The query orders by name then newest first, so the first row of each
-	// name is the newest version of it.
+	// name is the newest version of it. An undecodable row still counts as
+	// that name's newest: the listing says what is stored, and an older
+	// version standing in for a newer one that cannot be read would not.
 	seen := map[string]bool{}
 	workflows := make([]*millv1.Workflow, 0, len(rows))
+	var findings []UndecodableWorkflow
 	for _, row := range rows {
 		key := row.Name + "\x00" + row.Scope + "\x00" + row.Project
 		if !p.AllVersions && seen[key] {
@@ -1667,11 +1673,12 @@ func (s *Store) ListWorkflows(ctx context.Context, p WorkflowFilter) ([]*millv1.
 		seen[key] = true
 		workflow, err := workflowProto(row)
 		if err != nil {
-			return nil, err
+			findings = append(findings, undecodable(row, err))
+			continue
 		}
 		workflows = append(workflows, workflow)
 	}
-	return workflows, nil
+	return workflows, findings, nil
 }
 
 // PutWorkflow stores a workflow version, idempotent by content hash: the
@@ -1877,7 +1884,12 @@ func latestState(ctx context.Context, q *Queries, row Run) (RunState, error) {
 // how many leases the node has held. Empty statuses means every
 // non-terminal state, which is what a human asking "what is running?"
 // means.
-func (s *Store) Status(ctx context.Context, statuses []millv1.RunStatus, project string) ([]*millv1.RunSummary, error) {
+//
+// A run whose workflow row will not decode is still listed — the run is the
+// ledger's, whatever its definition's bytes say — with no current step,
+// since the step is derived from the definition, and the row is named once
+// in the findings.
+func (s *Store) Status(ctx context.Context, statuses []millv1.RunStatus, project string) ([]*millv1.RunSummary, []UndecodableWorkflow, error) {
 	wanted := enumTexts(statuses)
 	if len(wanted) == 0 {
 		wanted = []string{"selecting", "running", "waiting", "parked"}
@@ -1885,46 +1897,56 @@ func (s *Store) Status(ctx context.Context, statuses []millv1.RunStatus, project
 	q := New(s.pool)
 	rows, err := q.ListRuns(ctx, ListRunsParams{Statuses: wanted, Project: nullable(project)})
 	if err != nil {
-		return nil, fmt.Errorf("list runs: %w", err)
+		return nil, nil, fmt.Errorf("list runs: %w", err)
 	}
 	summaries := make([]*millv1.RunSummary, 0, len(rows))
+	var findings []UndecodableWorkflow
+	reported := map[string]bool{}
 	for _, row := range rows {
-		summary, err := summarize(ctx, q, row)
+		summary, finding, err := summarize(ctx, q, row)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
+		}
+		if finding != nil && !reported[finding.WorkflowID] {
+			reported[finding.WorkflowID] = true
+			findings = append(findings, *finding)
 		}
 		summaries = append(summaries, summary)
 	}
-	return summaries, nil
+	return summaries, findings, nil
 }
 
-// summarize derives one run's summary.
-func summarize(ctx context.Context, q *Queries, row Run) (*millv1.RunSummary, error) {
+// summarize derives one run's summary. The finding is set when the run's
+// workflow row would not decode, and the summary is then derived without
+// it.
+func summarize(ctx context.Context, q *Queries, row Run) (*millv1.RunSummary, *UndecodableWorkflow, error) {
 	state, err := latestState(ctx, q, row)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var workflow *millv1.Workflow
+	var finding *UndecodableWorkflow
 	if row.WorkflowID != nil {
 		workflowRow, err := q.GetWorkflowByID(ctx, *row.WorkflowID)
 		if err != nil {
-			return nil, fmt.Errorf("get workflow %s: %w", *row.WorkflowID, err)
+			return nil, nil, fmt.Errorf("get workflow %s: %w", *row.WorkflowID, err)
 		}
 		if workflow, err = workflowProto(workflowRow); err != nil {
-			return nil, err
+			found := undecodable(workflowRow, err)
+			finding = &found
 		}
 	}
 	totals, err := q.TotalsForRun(ctx, row.ID)
 	if err != nil {
-		return nil, fmt.Errorf("usage totals of run %s: %w", row.ID, err)
+		return nil, nil, fmt.Errorf("usage totals of run %s: %w", row.ID, err)
 	}
 	leases, err := q.CountRunLeases(ctx, row.ID)
 	if err != nil {
-		return nil, fmt.Errorf("lease count of run %s: %w", row.ID, err)
+		return nil, nil, fmt.Errorf("lease count of run %s: %w", row.ID, err)
 	}
 	workspace, err := latestWorkspace(ctx, q, row.ID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	currentStep, attempt := CurrentStep(state, workflow)
 	summary := &millv1.RunSummary{
@@ -1950,7 +1972,7 @@ func summarize(ctx context.Context, q *Queries, row Run) (*millv1.RunSummary, er
 			CacheWriteTokens: total.CacheWriteTokens,
 		})
 	}
-	return summary, nil
+	return summary, finding, nil
 }
 
 // RunDetail is one run in full: what `mill inspect` renders.
@@ -1992,7 +2014,10 @@ func (s *Store) Inspect(ctx context.Context, p InspectParams) (*RunDetail, error
 		return nil, fmt.Errorf("get run: %w", err)
 	}
 
-	summary, err := summarize(ctx, q, row)
+	// One run's own workflow failing to decode is not a finding beside
+	// the answer here: the definition is what an inspection is of, and the
+	// decode below refuses with the row named.
+	summary, _, err := summarize(ctx, q, row)
 	if err != nil {
 		return nil, err
 	}

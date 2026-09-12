@@ -31,7 +31,12 @@ type workOptions struct {
 // newWorkCommand is the worker face: ClaimNext against dagger, then drive
 // the claimed node's run.
 func newWorkCommand() *cobra.Command {
-	opts := workOptions{}
+	return workCommand(&workOptions{})
+}
+
+// workCommand is the worker command over the options it fills, so a spec
+// can read what the command resolved.
+func workCommand(opts *workOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "work",
 		Short: "Claim ready dagger nodes and drive their runs",
@@ -50,10 +55,10 @@ and leaves the run resumable at that step. A second SIGTERM inside the grace
 window kills the sessions and exits non-zero.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runWork(cmd, &opts)
+			return runWork(cmd, opts)
 		},
 	}
-	bindWorkFlags(cmd, &opts)
+	bindWorkFlags(cmd, opts)
 	return cmd
 }
 
@@ -63,6 +68,7 @@ window kills the sessions and exits non-zero.`,
 func bindWorkFlags(cmd *cobra.Command, opts *workOptions) {
 	f := cmd.Flags()
 	f.StringVar(&opts.config, "config", defaultConfigPath(), "path of the configuration file (default: $"+configEnv+", else $XDG_CONFIG_HOME/mill/config.yaml)")
+	f.StringVar(&opts.run.socket, "socket", defaultSocketPath(), "path of the service's unix socket: what `serve` listens on, and what a worker reaches it at (default: $"+socketEnv+")")
 	f.StringSliceVar(&opts.projects, "project", nil, "dagger project to claim from; repeat for more (default: $"+daggerProjectEnv+")")
 	f.StringSliceVar(&opts.labels, "label", nil, "only claim nodes carrying every one of these labels; repeat for more")
 	f.IntVar(&opts.concurrency, "concurrency", run.DefaultConcurrency, "how many runs to drive at once")
@@ -89,10 +95,13 @@ func bindWorkFlags(cmd *cobra.Command, opts *workOptions) {
 	bindGatewayFlags(cmd, &opts.run.gateway)
 }
 
-// applyConfig fills in every worker flag the command line left alone. The
-// socket flag is not declared here — `work` and `serve` each declare their
-// own — so it is passed in.
-func applyConfig(cmd *cobra.Command, opts *workOptions, socket *string) error {
+// applyConfig fills in every worker flag the command line left alone. Every
+// key it reads has a flag bindWorkFlags declared on the same command —
+// `socket` included, which is why `work` and `serve --work` honour it alike
+// — or is one of the machine backend's, which has no flag and is the file's
+// alone. configKeys is the list, and docs/tools.md §Configuration is the
+// same list as an operator reads it.
+func applyConfig(cmd *cobra.Command, opts *workOptions) error {
 	if err := checkNamedConfig(cmd, opts.config); err != nil {
 		return err
 	}
@@ -100,31 +109,8 @@ func applyConfig(cmd *cobra.Command, opts *workOptions, socket *string) error {
 	if err != nil {
 		return err
 	}
-	targets := map[string]*string{
-		"socket": socket, "dagger-socket": &opts.run.daggerSocket,
-		"workflow": &opts.run.workflow, "tier": &opts.run.tier,
-		"workflow-dir": &opts.run.workflowDir, "sidecar": &opts.run.sidecar,
-		"vcs-url": &opts.run.vcsURL, "origin": &opts.run.origin, "ref": &opts.run.ref,
-		"identity": &opts.run.identity, "name": &opts.run.name,
-		"workspace-dir": &opts.run.workspaceDir, "log-dir": &opts.run.logDir,
-		"workspace": &opts.run.workspace, "sandbox-root": &opts.run.sandboxRoot,
-		"env-mode": &opts.run.envMode, "notify-command": &opts.run.notifyCommand,
-		"gateway-listen": &opts.run.gateway.listen, "gateway-upstream": &opts.run.gateway.upstream,
-		"model-credential-file": &opts.run.gateway.credentialFile,
-	}
-	values := map[string]string{
-		"socket": config.Socket, "dagger-socket": config.DaggerSocket,
-		"workflow": config.Workflow, "tier": config.Tier,
-		"workflow-dir": config.WorkflowDir, "sidecar": config.Sidecar,
-		"vcs-url": config.VCSURL, "origin": config.Origin, "ref": config.Ref,
-		"identity": config.Identity, "name": config.Name,
-		"workspace-dir": config.WorkspaceDir, "log-dir": config.LogDir,
-		"workspace": config.Workspace, "sandbox-root": config.SandboxRoot,
-		"env-mode": config.EnvMode, "notify-command": config.NotifyCommand,
-		"gateway-listen": config.GatewayListen, "gateway-upstream": config.GatewayUpstream,
-		"model-credential-file": config.ModelCredentialFile,
-	}
-	for name, target := range targets {
+	values := stringValues(config)
+	for name, target := range stringTargets(opts) {
 		if value := values[name]; value != "" && unset(cmd, name) {
 			*target = value
 		}
@@ -147,9 +133,43 @@ func applyConfig(cmd *cobra.Command, opts *workOptions, socket *string) error {
 	return applySandboxConfig(config, &opts.run.sandbox)
 }
 
+// stringTargets is where each string-valued flag's setting lives, by flag
+// name; stringValues is what the file says for each. The two are keyed the
+// same so a key added to one without the other is a spec failure, not a
+// silently dropped setting.
+func stringTargets(opts *workOptions) map[string]*string {
+	return map[string]*string{
+		"socket": &opts.run.socket, "dagger-socket": &opts.run.daggerSocket,
+		"workflow": &opts.run.workflow, "tier": &opts.run.tier,
+		"workflow-dir": &opts.run.workflowDir, "sidecar": &opts.run.sidecar,
+		"vcs-url": &opts.run.vcsURL, "origin": &opts.run.origin, "ref": &opts.run.ref,
+		"identity": &opts.run.identity, "name": &opts.run.name,
+		"workspace-dir": &opts.run.workspaceDir, "log-dir": &opts.run.logDir,
+		"workspace": &opts.run.workspace, "sandbox-root": &opts.run.sandboxRoot,
+		"env-mode": &opts.run.envMode, "notify-command": &opts.run.notifyCommand,
+		"gateway-listen": &opts.run.gateway.listen, "gateway-upstream": &opts.run.gateway.upstream,
+		"model-credential-file": &opts.run.gateway.credentialFile,
+	}
+}
+
+func stringValues(config Config) map[string]string {
+	return map[string]string{
+		"socket": config.Socket, "dagger-socket": config.DaggerSocket,
+		"workflow": config.Workflow, "tier": config.Tier,
+		"workflow-dir": config.WorkflowDir, "sidecar": config.Sidecar,
+		"vcs-url": config.VCSURL, "origin": config.Origin, "ref": config.Ref,
+		"identity": config.Identity, "name": config.Name,
+		"workspace-dir": config.WorkspaceDir, "log-dir": config.LogDir,
+		"workspace": config.Workspace, "sandbox-root": config.SandboxRoot,
+		"env-mode": config.EnvMode, "notify-command": config.NotifyCommand,
+		"gateway-listen": config.GatewayListen, "gateway-upstream": config.GatewayUpstream,
+		"model-credential-file": config.ModelCredentialFile,
+	}
+}
+
 // runWork builds the worker and supervises it.
 func runWork(cmd *cobra.Command, opts *workOptions) error {
-	if err := applyConfig(cmd, opts, &opts.run.socket); err != nil {
+	if err := applyConfig(cmd, opts); err != nil {
 		return err
 	}
 	worker, err := newWorker(cmd, opts)
@@ -219,7 +239,8 @@ func newWorker(cmd *cobra.Command, opts *workOptions) (*run.Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	startup, err := workerStartup(kind, opts.run, projects[0], worker, cmd.OutOrStdout())
+	log := slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: slog.LevelInfo}))
+	startup, err := workerStartup(kind, opts.run, projects[0], worker, cmd.OutOrStdout(), log)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +251,7 @@ func newWorker(cmd *cobra.Command, opts *workOptions) (*run.Worker, error) {
 		Concurrency: opts.concurrency,
 		Wait:        opts.wait,
 		Out:         cmd.OutOrStdout(),
-		Log:         slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: slog.LevelInfo})),
+		Log:         log,
 	})
 }
 

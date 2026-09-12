@@ -73,6 +73,14 @@ func openRunOn(ctx context.Context, m mill, nodeRef, nodeID string) *runs {
 		_, err := store.PutSkill(ctx, connect.NewRequest(&millv1.PutSkillRequest{Skill: skill}))
 		Expect(err).NotTo(HaveOccurred())
 	}
+	return openRunFollowing(ctx, m, definition, nodeRef, nodeID)
+}
+
+// openRunFollowing is openRunOn with the workflow the run follows given,
+// for a spec that needs two runs on two definitions.
+func openRunFollowing(ctx context.Context, m mill, definition *millv1.Workflow, nodeRef, nodeID string) *runs {
+	GinkgoHelper()
+	store := ledger(m)
 	stored, err := store.PutWorkflow(ctx, connect.NewRequest(&millv1.PutWorkflowRequest{Workflow: definition}))
 	Expect(err).NotTo(HaveOccurred())
 

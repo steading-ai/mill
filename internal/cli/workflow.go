@@ -231,7 +231,11 @@ func runWorkflowList(cmd *cobra.Command, opts *workflowOptions) error {
 			definition.GetName(), scopeText(definition), short(definition.GetVersion()),
 			len(definition.GetSteps()), definition.GetCreatedAt().AsTime().Format("2006-01-02 15:04"))
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	reportUndecodable(cmd, listed.Msg.GetFindings())
+	return nil
 }
 
 func newWorkflowShowCommand(opts *workflowOptions) *cobra.Command {

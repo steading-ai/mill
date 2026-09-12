@@ -838,6 +838,23 @@ message ListWorkflowsRequest {
 message ListWorkflowsResponse {
   // The workflows.
   repeated Workflow workflows = 1;
+  // The rows the listing could not decode and left out.
+  repeated UndecodableWorkflow findings = 2;
+}
+
+// UndecodableWorkflow is a workflow row whose stored bytes the service could
+// not decode — a row an older or newer mill wrote with a field this one does
+// not know. The listing that met it goes on without it. The row itself is
+// untouched: reported, neither deleted nor repaired.
+message UndecodableWorkflow {
+  // The row's id.
+  string workflow_id = 1;
+  // The field of the stored definition that failed to decode, as the JSON
+  // names it, with a dotted path into a nested message. Empty when the
+  // failure is not one field's.
+  string field = 2;
+  // The decoder's own account of the failure.
+  string detail = 3;
 }
 
 // PutWorkflowRequest stores a workflow version.
@@ -905,6 +922,10 @@ message StatusRequest {
 message StatusResponse {
   // One entry per run, most recently updated first.
   repeated RunSummary runs = 1;
+  // The workflow rows the listing could not decode. A run whose workflow is
+  // among them is still listed, with no current step, since the step is
+  // derived from the definition.
+  repeated UndecodableWorkflow findings = 2;
 }
 
 // InspectRequest asks for one run in full.

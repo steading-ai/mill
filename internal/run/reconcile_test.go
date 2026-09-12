@@ -1,9 +1,11 @@
 package run_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -262,7 +264,7 @@ var _ = Describe("Reconciliation on resume, in the loop", Label(testsupport.DBLa
 
 	It("reads the ledger's live runs with their steps, and records a pass", func() {
 		atStepTwo()
-		ledger := run.NewLedger(f.store, "spec@host")
+		ledger := run.NewLedger(f.store, "spec@host", nil)
 
 		live, err := ledger.LiveRuns(ctx)
 		Expect(err).NotTo(HaveOccurred())
@@ -286,6 +288,26 @@ var _ = Describe("Reconciliation on resume, in the loop", Label(testsupport.DBLa
 		live, err = ledger.LiveRuns(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(live).To(BeEmpty())
+	})
+
+	It("logs a workflow row that will not decode and proceeds with the runs it can read", func() {
+		atStepTwo()
+		// The run's workflow, as a mill whose schema had a `model` field
+		// would have stored it: the bytes no longer decode under this one.
+		workflowID := f.runOf(ctx).GetWorkflowId()
+		_, err := f.db.Exec(ctx, `UPDATE workflows SET definition = definition || '{"model": "opus"}'::jsonb WHERE id = $1`, workflowID)
+		Expect(err).NotTo(HaveOccurred())
+
+		var logged bytes.Buffer
+		ledger := run.NewLedger(f.store, "spec@host", slog.New(slog.NewTextHandler(&logged, nil)))
+
+		live, err := ledger.LiveRuns(ctx)
+		Expect(err).NotTo(HaveOccurred(), "the startup goes on")
+		Expect(live).To(Equal([]machine.LiveRun{{RunID: f.runOf(ctx).GetId(), NodeRef: f.nodeRef}}),
+			"the run is still live and still listed; its step is unknown without its definition")
+		Expect(logged.String()).To(ContainSubstring("workflow row does not decode"))
+		Expect(logged.String()).To(ContainSubstring("workflow=" + workflowID))
+		Expect(logged.String()).To(ContainSubstring("field=model"))
 	})
 })
 

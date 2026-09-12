@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"time"
 
@@ -31,7 +32,7 @@ type machineStartup struct {
 // backend's pass, or nothing for the local one. The sweep's dagger client is
 // the worker's own — the configured socket and project, the worker's agent
 // ref — and never one the environment names.
-func workerStartup(kind workspace.Kind, opts runOptions, project, workerRef string, out io.Writer) (run.Startup, error) {
+func workerStartup(kind workspace.Kind, opts runOptions, project, workerRef string, out io.Writer, log *slog.Logger) (run.Startup, error) {
 	if kind != workspace.KindMachine {
 		return nil, nil
 	}
@@ -49,7 +50,7 @@ func workerStartup(kind workspace.Kind, opts runOptions, project, workerRef stri
 	}
 	return &machineStartup{
 		reconciler: machine.NewReconciler(machineDriver(), config, externals...),
-		ledger:     run.NewLedger(storeClient(opts.socket), workerRef),
+		ledger:     run.NewLedger(storeClient(opts.socket), workerRef, log),
 		config:     config,
 		out:        out,
 	}, nil

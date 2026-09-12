@@ -492,10 +492,12 @@ The service the tier's `mill run` and `mill work` write to is the ordinary
 suite's, on `MILL_ACCEPTANCE_DATABASE_URL` — on `core`, `make db-up`'s
 development database. That database outlives every suite run, and a
 worker's reconciliation reads every live run it holds: a run killed by an
-earlier tier run is a lost sandbox finding (harmless), but a workflow row a
-mill of another version stored is a listing that fails to decode, and the
-worker refuses to start on it. `make db-reset` is the answer; it is the
-throwaway development database and nothing else.
+earlier tier run is a lost sandbox finding (harmless), and a workflow row a
+mill of another version stored is one the listing cannot decode: the worker
+logs the row and the field and starts without it, and `mill status` warns
+the same way ([tools.md](tools.md) §status). The row stays until something
+removes it, and `make db-reset` is the answer; it is the throwaway
+development database and nothing else.
 
 The live tier **refuses** to file into the deployed dagger. It boots real
 machines and drives real `mill run` subprocesses, and `mill#49` already showed

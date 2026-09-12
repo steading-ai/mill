@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -401,4 +402,92 @@ func structFrom(raw []byte) (*structpb.Struct, error) {
 		return nil, err
 	}
 	return value, nil
+}
+
+// UndecodableWorkflow is a workflow row whose stored bytes will not decode:
+// a definition an older or newer mill wrote with a field this one's schema
+// does not have. A listing that meets one reports it and goes on; the row
+// is left exactly as it is, neither deleted nor repaired, and the operator's
+// remedy is the runbook's.
+type UndecodableWorkflow struct {
+	// WorkflowID is the row's id.
+	WorkflowID string
+	// Field is the JSON name of the field that failed to decode, dotted
+	// into a nested message; empty when the failure is not one field's.
+	Field string
+	// Detail is the decoder's own account of the failure.
+	Detail string
+}
+
+func (u UndecodableWorkflow) String() string {
+	if u.Field == "" {
+		return fmt.Sprintf("workflow %s does not decode: %s", u.WorkflowID, u.Detail)
+	}
+	return fmt.Sprintf("workflow %s does not decode: field %q: %s", u.WorkflowID, u.Field, u.Detail)
+}
+
+// undecodable is the finding for a row workflowProto refused, naming the
+// field that failed when the stored JSON has one the schema does not.
+func undecodable(row Workflow, err error) UndecodableWorkflow {
+	return UndecodableWorkflow{
+		WorkflowID: row.ID,
+		Field:      unknownField(row.Definition, (&millv1.Workflow{}).ProtoReflect().Descriptor()),
+		Detail:     err.Error(),
+	}
+}
+
+// unknownField is the first key in raw, walked depth-first, that the message
+// descriptor has no field for — by JSON name or by proto name, the two
+// spellings protojson accepts — as a dotted path. Empty when every key is
+// known, or when raw is not an object at all.
+func unknownField(raw []byte, desc protoreflect.MessageDescriptor) string {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil {
+		return ""
+	}
+	return unknownFieldIn(object, desc, "")
+}
+
+func unknownFieldIn(object map[string]json.RawMessage, desc protoreflect.MessageDescriptor, prefix string) string {
+	fields := desc.Fields()
+	// Sorted so the answer is the same for the same row every time.
+	keys := make([]string, 0, len(object))
+	for key := range object {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	for _, key := range keys {
+		field := fields.ByJSONName(key)
+		if field == nil {
+			field = fields.ByName(protoreflect.Name(key))
+		}
+		if field == nil {
+			return prefix + key
+		}
+		if field.Kind() != protoreflect.MessageKind || field.IsMap() {
+			continue
+		}
+		var nested []map[string]json.RawMessage
+		if field.IsList() {
+			if json.Unmarshal(object[key], &nested) != nil {
+				continue
+			}
+		} else {
+			var one map[string]json.RawMessage
+			if json.Unmarshal(object[key], &one) != nil {
+				continue
+			}
+			nested = []map[string]json.RawMessage{one}
+		}
+		for i, child := range nested {
+			path := prefix + key + "."
+			if field.IsList() {
+				path = fmt.Sprintf("%s%s[%d].", prefix, key, i)
+			}
+			if found := unknownFieldIn(child, field.Message(), path); found != "" {
+				return found
+			}
+		}
+	}
+	return ""
 }

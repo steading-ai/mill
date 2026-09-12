@@ -177,7 +177,32 @@ func runStatus(cmd *cobra.Command, opts readOptions) error {
 	if err != nil {
 		return fmt.Errorf("status: %w", err)
 	}
-	return renderStatus(cmd, res.Msg.GetRuns(), v)
+	if err := renderStatus(cmd, res.Msg.GetRuns(), v); err != nil {
+		return err
+	}
+	reportUndecodable(cmd, res.Msg.GetFindings())
+	return nil
+}
+
+// reportUndecodable prints the workflow rows a listing could not decode,
+// one line each on standard error, after the answer: the answer is still
+// the answer, and a row that will not read is a warning about the ledger,
+// not a column of it. The remedy is the operator's (docs/runbook.md); the
+// tool neither deletes nor repairs the row.
+func reportUndecodable(cmd *cobra.Command, findings []*millv1.UndecodableWorkflow) {
+	for _, finding := range findings {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", undecodableText(finding))
+	}
+}
+
+// undecodableText is one finding on one line: the row, the field when the
+// decoder could name one, and the decoder's own words.
+func undecodableText(finding *millv1.UndecodableWorkflow) string {
+	if finding.GetField() == "" {
+		return fmt.Sprintf("workflow %s does not decode and was left out: %s", finding.GetWorkflowId(), finding.GetDetail())
+	}
+	return fmt.Sprintf("workflow %s does not decode and was left out: field %q: %s",
+		finding.GetWorkflowId(), finding.GetField(), finding.GetDetail())
 }
 
 // renderStatus prints the ledger's status query as a table.

@@ -369,7 +369,7 @@ func (s *StoreService) GetWorkflow(ctx context.Context, req *connect.Request[mil
 
 // ListWorkflows lists workflow versions in a scope, newest first.
 func (s *StoreService) ListWorkflows(ctx context.Context, req *connect.Request[millv1.ListWorkflowsRequest]) (*connect.Response[millv1.ListWorkflowsResponse], error) {
-	workflows, err := s.svc.ListWorkflows(ctx, domain.WorkflowFilter{
+	workflows, findings, err := s.svc.ListWorkflows(ctx, domain.WorkflowFilter{
 		Name:        req.Msg.GetName(),
 		Scope:       req.Msg.GetScope(),
 		Project:     req.Msg.GetProject(),
@@ -378,7 +378,18 @@ func (s *StoreService) ListWorkflows(ctx context.Context, req *connect.Request[m
 	if err != nil {
 		return nil, connectError(err)
 	}
-	return connect.NewResponse(&millv1.ListWorkflowsResponse{Workflows: workflows}), nil
+	return connect.NewResponse(&millv1.ListWorkflowsResponse{Workflows: workflows, Findings: undecodableProtos(findings)}), nil
+}
+
+// undecodableProtos is the wire form of a listing's findings.
+func undecodableProtos(findings []domain.UndecodableWorkflow) []*millv1.UndecodableWorkflow {
+	out := make([]*millv1.UndecodableWorkflow, 0, len(findings))
+	for _, finding := range findings {
+		out = append(out, &millv1.UndecodableWorkflow{
+			WorkflowId: finding.WorkflowID, Field: finding.Field, Detail: finding.Detail,
+		})
+	}
+	return out
 }
 
 // PutWorkflow stores a workflow version, idempotent by content hash.
@@ -410,11 +421,11 @@ func (s *StoreService) GetSkill(ctx context.Context, req *connect.Request[millv1
 
 // Status lists runs by state with what the ledger derives about them.
 func (s *StoreService) Status(ctx context.Context, req *connect.Request[millv1.StatusRequest]) (*connect.Response[millv1.StatusResponse], error) {
-	runs, err := s.svc.Status(ctx, req.Msg.GetStatuses(), req.Msg.GetProject())
+	runs, findings, err := s.svc.Status(ctx, req.Msg.GetStatuses(), req.Msg.GetProject())
 	if err != nil {
 		return nil, connectError(err)
 	}
-	return connect.NewResponse(&millv1.StatusResponse{Runs: runs}), nil
+	return connect.NewResponse(&millv1.StatusResponse{Runs: runs, Findings: undecodableProtos(findings)}), nil
 }
 
 // Inspect returns one run's every attempt in order.

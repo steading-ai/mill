@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -205,4 +206,122 @@ func checkNamedConfig(cmd *cobra.Command, path string) error {
 		return fmt.Errorf("mill: %s: %w", path, err)
 	}
 	return nil
+}
+
+// configKey is one key of the file as the worker reads it: the key as the
+// file spells it, and the flag it stands in for. A key with no flag is the
+// machine backend's, which the file alone sets whenever it is read.
+type configKey struct {
+	key  string
+	flag string
+}
+
+// configKeys is every key applyConfig reads. A command honours one when it
+// reads the file at all — it declares --config — and declares the key's
+// flag, or the key has none; configKeyTable renders that per command and
+// docs/tools.md §Configuration carries the rendering. The order is the
+// Config struct's.
+var configKeys = []configKey{
+	{"socket", "socket"},
+	{"dagger-socket", "dagger-socket"},
+	{"project", "project"},
+	{"label", "label"},
+	{"concurrency", "concurrency"},
+	{"workflow", "workflow"},
+	{"tier", "tier"},
+	{"workflow-dir", "workflow-dir"},
+	{"sidecar", "sidecar"},
+	{"vcs-url", "vcs-url"},
+	{"origin", "origin"},
+	{"ref", "ref"},
+	{"identity", "identity"},
+	{"name", "name"},
+	{"workspace-dir", "workspace-dir"},
+	{"workspace", "workspace"},
+	{"sandbox-root", "sandbox-root"},
+	{"machines-dir", ""},
+	{"image-registry", ""},
+	{"image-repository", ""},
+	{"base-image", ""},
+	{"image-build-budget", ""},
+	{"image-expiry", ""},
+	{"cache-global-cap", ""},
+	{"cache-global-caps", ""},
+	{"cache-repo-cap", ""},
+	{"cache-expiry", ""},
+	{"cache-high-watermark", ""},
+	{"cache-low-watermark", ""},
+	{"skill-dir", ""},
+	{"sidecar-dir", ""},
+	{"workflow-copy-dir", ""},
+	{"run-state-dir", ""},
+	{"proxy", ""},
+	{"no-proxy", ""},
+	{"nested_repos", ""},
+	{"dagger_checkout", ""},
+	{"scratch-namespace", ""},
+	{"scratch-budget", ""},
+	{"log-dir", "log-dir"},
+	{"env_mode", "env-mode"},
+	{"notify_command", "notify-command"},
+	{"gateway", "gateway"},
+	{"gateway-listen", "gateway-listen"},
+	{"gateway-upstream", "gateway-upstream"},
+	{"model-credential-file", "model-credential-file"},
+}
+
+// unreadKeys are the file's keys no worker reads: `work` is parsed and
+// used by nothing, and `model_credential_minted` is `mill doctor`'s. They
+// are listed so the table shows them as what they are rather than leaving
+// them out.
+var unreadKeys = []string{"work", "model_credential_minted"}
+
+// honoursKey reports whether a command reads key from the file: it reads
+// the file at all, and the key's flag — the one the file's value fills when
+// the command line leaves it alone — is among the command's, or the key has
+// none.
+func honoursKey(cmd *cobra.Command, key configKey) bool {
+	if cmd.Flags().Lookup("config") == nil {
+		return false
+	}
+	return key.flag == "" || cmd.Flags().Lookup(key.flag) != nil
+}
+
+// configKeyTable renders which of the file's keys each of `run`, `work`
+// and `serve` honours, as the Markdown table docs/tools.md carries. The
+// columns are the commands as an operator invokes them; `serve` reads the
+// file only with --work, which is what its column says.
+func configKeyTable(root *cobra.Command) string {
+	columns := []struct{ heading, name string }{
+		{"`run`", "run"}, {"`work`", "work"}, {"`serve --work`", "serve"},
+	}
+	var b strings.Builder
+	b.WriteString("| Key |")
+	for _, column := range columns {
+		b.WriteString(" " + column.heading + " |")
+	}
+	b.WriteString("\n|---|")
+	for range columns {
+		b.WriteString("---|")
+	}
+	b.WriteString("\n")
+	row := func(key string, honours func(*cobra.Command) bool) {
+		b.WriteString("| `" + key + "` |")
+		for _, column := range columns {
+			cmd, _, err := root.Find([]string{column.name})
+			if err == nil && honours(cmd) {
+				b.WriteString(" yes |")
+			} else {
+				b.WriteString(" |")
+			}
+		}
+		b.WriteString("\n")
+	}
+	for _, key := range configKeys {
+		row(key.key, func(cmd *cobra.Command) bool { return honoursKey(cmd, key) })
+	}
+	for _, key := range unreadKeys {
+		row(key, func(*cobra.Command) bool { return false })
+	}
+	return b.String()
 }

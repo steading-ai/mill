@@ -48,7 +48,6 @@ func defaultSocketPath() string {
 }
 
 type serveOptions struct {
-	socket          string
 	databaseURL     string
 	roles           string
 	shutdownTimeout time.Duration
@@ -56,9 +55,16 @@ type serveOptions struct {
 	// on one host as one unit (docs/architecture.md §"One binary, two
 	// faces"); the Connect boundary between them is still there, so a
 	// second worker elsewhere stays a configuration change.
+	//
+	// The socket the service listens on is the worker's --socket: one flag,
+	// declared once by bindWorkFlags, because a worker in this process
+	// reaches the store at the path this process binds.
 	work   bool
 	worker workOptions
 }
+
+// socket is the path the service listens on.
+func (o *serveOptions) socket() string { return o.worker.run.socket }
 
 // newServeCommand is the service face: Connect handlers over PostgreSQL,
 // owning workflows, runs, the ledger, and step tokens.
@@ -87,7 +93,6 @@ drains after it, because the worker is one of the store's clients.`,
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&opts.socket, "socket", defaultSocketPath(), "path of the unix socket to listen on (default: $"+socketEnv+")")
 	f.StringVar(&opts.databaseURL, "database-url", os.Getenv(databaseURLEnv), "PostgreSQL connection URL (default: $"+databaseURLEnv+")")
 	f.StringVar(&opts.roles, "roles", "", "path of the uid-to-role map (default: only the service's own uid)")
 	f.DurationVar(&opts.shutdownTimeout, "shutdown-timeout", server.DefaultShutdownTimeout, "how long to wait for in-flight requests on shutdown")
@@ -102,14 +107,14 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 		// The file is read before anything is built, because --socket is
 		// one of the settings it may carry and the listener is built from
 		// it.
-		if err := applyConfig(cmd, &opts.worker, &opts.socket); err != nil {
+		if err := applyConfig(cmd, &opts.worker); err != nil {
 			return err
 		}
 	}
 	// Before the migrations, the pool and the bind: a socket path the
 	// kernel cannot hold fails as "bind: invalid argument", and by then the
 	// schema has been migrated for a service that will not start.
-	if err := socket.CheckPath(opts.socket); err != nil {
+	if err := socket.CheckPath(opts.socket()); err != nil {
 		return fmt.Errorf("mill serve: --socket: %w", err)
 	}
 	if opts.databaseURL == "" {
@@ -136,7 +141,7 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 	defer svc.Close()
 
 	srv := server.New(server.Config{
-		SocketPath:      opts.socket,
+		SocketPath:      opts.socket(),
 		ShutdownTimeout: opts.shutdownTimeout,
 		Logger:          log,
 		Interceptors: []connect.Interceptor{
@@ -144,7 +149,7 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 		},
 	}, server.NewStoreService(svc))
 
-	log.Info("mill serve starting", "version", version.String(), "socket", opts.socket)
+	log.Info("mill serve starting", "version", version.String(), "socket", opts.socket())
 	if err := srv.Listen(); err != nil {
 		return fmt.Errorf("mill serve: %w", err)
 	}
@@ -161,7 +166,6 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 	worked := make(chan error, 1)
 	stopped := make(chan struct{})
 	if opts.work {
-		opts.worker.run.socket = opts.socket
 		worker, err := newWorker(cmd, &opts.worker)
 		if err != nil {
 			return fmt.Errorf("mill serve: %w", err)
