@@ -25,6 +25,7 @@ import (
 	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/forge/gitlab"
 	"github.com/ivy/mill/internal/skill"
+	"github.com/ivy/mill/internal/testsupport"
 	"github.com/ivy/mill/internal/version"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/machine"
@@ -146,6 +147,9 @@ var _ = Describe("A machine on a real host", Label("live"), Serial, Ordered, fun
 	BeforeAll(func(ctx context.Context) {
 		if os.Getenv(liveVar) == "" {
 			Skip("set " + liveVar + "=1 on a host with root, nspawn and btrfs to run the spec that boots a real machine.")
+		}
+		if testsupport.InsideMachine() {
+			Skip(testsupport.HostOnlySkip("the host's template unit, helper and image volume to boot a machine"))
 		}
 		if _, _, status := host("sudo", "-n", "true"); status != 0 {
 			Skip("sudo -n is refused; the helper and the image export need it")

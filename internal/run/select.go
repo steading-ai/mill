@@ -183,64 +183,89 @@ func (r *Runner) assess(ctx context.Context, s *state, step *millv1.Step, candid
 		if err := s.workspace.Rotate(ctx, workspace.TokenFromProto(token.GetStepToken())); err != nil {
 			return nil, fmt.Errorf("run %s: rotate the workspace token: %w", s.run.GetId(), err)
 		}
+		r.rotateGateway(s, step, sr, token.GetStepToken())
 		s.token = token.GetStepToken().GetId()
 
-		stepCtx, cancel := stepContext(ctx, step)
-		res, execErr := r.runSkill(stepCtx, s, step, sr, detail, token.GetStepToken(), feedback, brief)
-		cancel()
-		if ctx.Err() != nil || isFenced(execErr) {
-			return nil, r.stopped(ctx, s)
-		}
-
-		if err := r.recordUsage(ctx, s, sr, res.usage); err != nil {
-			return nil, err
-		}
-		if _, err := call(ctx, r.options.Store.RevokeStepToken, &millv1.RevokeStepTokenRequest{
-			LeaseId:     s.lease,
-			StepTokenId: token.GetStepToken().GetId(),
-		}); err != nil {
-			return nil, err
-		}
-		if err := r.postUsage(ctx, s, sr); err != nil {
-			return nil, err
-		}
-
-		verified, verifyErr := r.verify(ctx, s, step, sr, detail, res)
-		if cause := errors.Join(execErr, verifyErr); cause != nil {
-			exit := res.exit
-			if exit == nil {
-				exit = &harnessProcessExit
+		// The attempt runs under the workspace's step boundary like every
+		// step of the walk, and its token is the gateway's bearer for as
+		// long as it runs: a machine refuses an exec under no slice, the
+		// assessing session is spawned through the workspace, and the
+		// model it reaches is behind the gateway (docs/sandbox.md §Exec,
+		// §Credentials).
+		var (
+			assessment map[string]any
+			retry      bool
+		)
+		err = r.underBoundary(ctx, s, step, func() (bool, error) {
+			stepCtx, cancel := stepContext(ctx, step)
+			res, execErr := r.runSkill(stepCtx, s, step, sr, detail, token.GetStepToken(), feedback, brief)
+			cancel()
+			if over := r.gatewayRefusal(s, sr); over != nil {
+				execErr = errors.Join(execErr, over)
 			}
-			if _, err := call(ctx, r.options.Store.FailStepRun, &millv1.FailStepRunRequest{
+			if ctx.Err() != nil || isFenced(execErr) {
+				return false, r.stopped(ctx, s)
+			}
+
+			if err := r.recordUsage(ctx, s, sr, res.usage); err != nil {
+				return false, err
+			}
+			if _, err := call(ctx, r.options.Store.RevokeStepToken, &millv1.RevokeStepTokenRequest{
+				LeaseId:     s.lease,
+				StepTokenId: token.GetStepToken().GetId(),
+			}); err != nil {
+				return false, err
+			}
+			if err := r.postUsage(ctx, s, sr); err != nil {
+				return false, err
+			}
+
+			verified, verifyErr := r.verify(ctx, s, step, sr, detail, res)
+			if cause := errors.Join(execErr, verifyErr); cause != nil {
+				exit := res.exit
+				if exit == nil {
+					exit = &harnessProcessExit
+				}
+				if _, err := call(ctx, r.options.Store.FailStepRun, &millv1.FailStepRunRequest{
+					LeaseId:   s.lease,
+					StepRunId: sr.GetId(),
+					Exit:      exit,
+				}); err != nil {
+					return false, err
+				}
+				s.record(step.GetName(), cause.Error())
+				s.recordAttempt(step, sr, exit, lastWords(res, cause.Error()), true)
+				r.printf("  failed: %v\n", cause)
+				if sr.GetAttempt() > int64(step.GetRetries()) {
+					return false, fmt.Errorf("run %s: the assessment did not close after %d attempts: %w",
+						s.run.GetId(), sr.GetAttempt(), cause)
+				}
+				feedback, feedbackFrom = cause.Error(), sr.GetId()
+				retry = true
+				return false, nil
+			}
+
+			value := verified.Value
+			value.StepRunId = sr.GetId()
+			if _, err := call(ctx, r.options.Store.CloseStepRun, &millv1.CloseStepRunRequest{
 				LeaseId:   s.lease,
 				StepRunId: sr.GetId(),
-				Exit:      exit,
+				Evidence:  value,
 			}); err != nil {
-				return nil, err
+				return false, err
 			}
-			s.record(step.GetName(), cause.Error())
-			s.recordAttempt(step, sr, exit, lastWords(res, cause.Error()), true)
-			r.printf("  failed: %v\n", cause)
-			if sr.GetAttempt() > int64(step.GetRetries()) {
-				return nil, fmt.Errorf("run %s: the assessment did not close after %d attempts: %w",
-					s.run.GetId(), sr.GetAttempt(), cause)
-			}
-			feedback, feedbackFrom = cause.Error(), sr.GetId()
-			continue
-		}
-
-		value := verified.Value
-		value.StepRunId = sr.GetId()
-		if _, err := call(ctx, r.options.Store.CloseStepRun, &millv1.CloseStepRunRequest{
-			LeaseId:   s.lease,
-			StepRunId: sr.GetId(),
-			Evidence:  value,
-		}); err != nil {
+			s.recordAttempt(step, sr, res.exit, lastWords(res, ""), false)
+			r.printf("  closed on %s evidence\n", evidenceName(value.GetKind()))
+			assessment = value.GetStructured().AsMap()
+			return true, nil
+		})
+		if err != nil {
 			return nil, err
 		}
-		s.recordAttempt(step, sr, res.exit, lastWords(res, ""), false)
-		r.printf("  closed on %s evidence\n", evidenceName(value.GetKind()))
-		return value.GetStructured().AsMap(), nil
+		if retry {
+			continue
+		}
+		return assessment, nil
 	}
 }
 

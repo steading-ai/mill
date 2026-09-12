@@ -91,32 +91,49 @@ func (r *Runner) walk(ctx context.Context, s *state) error {
 	}
 }
 
-// stepUnderBoundary runs one step between the workspace's step boundary: the
-// slice is begun before the step and stopped after it, whichever way the
-// step went, so nothing the step spawned outlives it and an evidence-closed
-// step leaves a candidate (docs/sandbox.md §"Step boundary"). A backend with
-// no boundary — the local one — runs the step as before.
-//
-// EndStep runs under a context the step's cancellation cannot reach, because
-// reaping the slice is the point of it: a cancelled step is exactly the one
-// whose leftovers must go. Its error does not fail the run — a run is not
-// failed because a slice teardown hiccuped — but is logged, because the next
-// slice was meant not to begin until this one was inactive.
+// stepUnderBoundary runs one step of the walk under the workspace's step
+// boundary; the attempt's outcome is what the next pass of the loop needs.
 func (r *Runner) stepUnderBoundary(ctx context.Context, s *state, step *millv1.Step, detail *millv1.InspectResponse, feedback, feedbackFrom string) (outcome, error) {
+	var out outcome
+	err := r.underBoundary(ctx, s, step, func() (bool, error) {
+		var err error
+		out, err = r.step(ctx, s, step, detail, feedback, feedbackFrom)
+		return out.closed, err
+	})
+	return out, err
+}
+
+// underBoundary runs one attempt of a step between the workspace's step
+// boundary: the slice is begun before the attempt and stopped after it,
+// whichever way the attempt went, so nothing the step spawned outlives it
+// and an evidence-closed step leaves a candidate (docs/sandbox.md §"Step
+// boundary"). Every attempt that spawns a session goes through here — the
+// walk's steps and the assessment alike, because a machine refuses an exec
+// under no slice. A backend with no boundary — the local one — runs the
+// attempt as before.
+//
+// The attempt reports whether it closed on evidence, which is what EndStep
+// is told. EndStep runs under a context the step's cancellation cannot
+// reach, because reaping the slice is the point of it: a cancelled step is
+// exactly the one whose leftovers must go. Its error does not fail the run —
+// a run is not failed because a slice teardown hiccuped — but is logged,
+// because the next slice was meant not to begin until this one was inactive.
+func (r *Runner) underBoundary(ctx context.Context, s *state, step *millv1.Step, attempt func() (closed bool, err error)) error {
 	if s.boundary == nil {
-		return r.step(ctx, s, step, detail, feedback, feedbackFrom)
+		_, err := attempt()
+		return err
 	}
 	s.ordinal++
 	ordinal := s.ordinal
 	if err := s.boundary.BeginStep(ctx, ordinal); err != nil {
-		return outcome{}, fmt.Errorf("run %s: begin step %s: %w", s.run.GetId(), step.GetName(), err)
+		return fmt.Errorf("run %s: begin step %s: %w", s.run.GetId(), step.GetName(), err)
 	}
-	out, err := r.step(ctx, s, step, detail, feedback, feedbackFrom)
-	if endErr := s.boundary.EndStep(context.WithoutCancel(ctx), ordinal, out.closed); endErr != nil {
+	closed, err := attempt()
+	if endErr := s.boundary.EndStep(context.WithoutCancel(ctx), ordinal, closed); endErr != nil {
 		r.options.Log.Warn("ending a step's slice",
 			"run", s.run.GetId(), "step", step.GetName(), "error", endErr)
 	}
-	return out, err
+	return err
 }
 
 // stopped is what a cancelled step context means: the heartbeat stopped it,

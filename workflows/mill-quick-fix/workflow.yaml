@@ -1,0 +1,158 @@
+# quick-fix, for the mill project: the org definition (../quick-fix) with one
+# step more, and otherwise identical — a spec holds the two together.
+#
+# The step is the live tier as a check (docs/sandbox.md §Self-hosting, step
+# 3): a node of mill's own runs inside a machine, and the tier that proves the
+# sandbox runs there too, as a check step under the workflow's timeout, with
+# an exit code as evidence. `MILL_SANDBOX_HOST=1 make test` is the tier's
+# invocation, the one docs/runbook.md gives the host; inside a machine the
+# specs that need the host's template unit, Harbor, a forge or the
+# subscription skip, naming what they need, and the ones written for the
+# inside of a machine run against its ephemeral root. The mill project alone
+# has this tier, which is why the step is on a project definition: it shadows
+# the org one for `mill` and for nothing else (docs/domain-model.md
+# §Workflow, `scope`).
+name: quick-fix
+scope: project
+project: mill
+steps:
+  - name: toolchain
+    kind: preparatory
+    check:
+      command:
+        - sh
+        - -c
+        - mise trust /work && mise install
+    evidence: exit
+    capabilities:
+      - exec
+    timeout: 20m
+
+  - name: gather-context
+    kind: skill
+    session: implement
+    skill: quick-fix/gather-context
+    evidence: artifact
+    capabilities:
+      - read
+    harness:
+      claude:
+        model: sonnet
+        effort: medium
+        tools:
+          allow:
+            - Glob
+            - Grep
+            - Read
+    retries: 2
+    timeout: 15m
+
+  - name: implement
+    kind: skill
+    session: implement
+    skill: quick-fix/implement
+    evidence: artifact
+    capabilities:
+      - read
+      - write
+      - exec
+    harness:
+      claude:
+        model: opus
+        effort: high
+        tools:
+          allow:
+            - Bash
+            - Edit
+            - Glob
+            - Grep
+            - Read
+            - Write
+    retries: 3
+    timeout: 1h
+
+  - name: commit
+    kind: skill
+    session: implement
+    skill: quick-fix/commit
+    evidence: commit
+    capabilities:
+      - write
+    harness:
+      claude:
+        model: sonnet
+        effort: medium
+    retries: 2
+    timeout: 15m
+
+  - name: clean-tree
+    kind: check
+    check:
+      command:
+        - scripts/clean-tree
+      exit:
+        - 0
+      stdout: none
+      feedback: revise
+    evidence: exit
+    capabilities:
+      - exec
+    on_failure: revise implement
+    retries: 3
+    timeout: 2m
+
+  # The live tier, inside the machine, on the tree the session committed.
+  # `mise exec` puts the pinned toolchain on PATH, as the toolchain step
+  # installed it. One run again on its own — a database container that
+  # did not come up is not the tree's fault — and then the failure is the
+  # session's next prompt: a check's feedback is its stderr, so ginkgo's
+  # report, which it writes to stdout, is sent there.
+  - name: live-tier
+    kind: check
+    check:
+      command:
+        - sh
+        - -c
+        - MILL_SANDBOX_HOST=1 mise exec -- make test 1>&2
+      exit:
+        - 0
+      stdout: none
+      feedback: revise
+    evidence: exit
+    capabilities:
+      - exec
+    on_failure: revise implement
+    retries: 1
+    timeout: 45m
+
+  - name: pr
+    kind: skill
+    session: implement
+    skill: quick-fix/pr
+    evidence: url
+    capabilities:
+      - forge
+    harness:
+      claude:
+        model: sonnet
+        effort: medium
+    retries: 2
+    timeout: 15m
+
+  - name: merge
+    kind: gate
+    gate:
+      ask:
+        title: 'Merge {{.NodeRef}}?'
+        body: |
+          {{.NodeRef}} — {{.NodeTitle}} — is ready to merge.
+
+          Pull request: {{.PullRequest}}
+
+          Complete this node to merge. Drop it to leave the branch open; the
+          run records the denial on {{.NodeRef}} and stops.
+      auto: true
+      deny_result: Merge denied by a human; the branch and its pull request are left open.
+    evidence: status
+    retries: 1
+    timeout: 168h

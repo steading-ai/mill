@@ -478,6 +478,17 @@ tested, merged — with the properties the design promises asserted from
 *outside* the machine. It is `tests/acceptance/sandbox_test.go`, labelled
 `live`, and it is what the bootstrap gate (`prove-sandbox`) runs.
 
+**Where it runs.** On `core`, by hand, as below; and inside every machine a
+node of mill's own is worked in, as the `live-tier` check step of the mill
+project's workflows (`workflows/mill-quick-fix`, `workflows/mill-feature`),
+which runs `MILL_SANDBOX_HOST=1 mise exec -- make test` on the committed
+tree after `clean-tree`. Inside a machine the specs that need the host —
+the template unit, the host's podman, the subscription credential, a forge
+— skip naming what they need, and the ones written for the inside run
+against the machine's ephemeral root ([sandbox.md](sandbox.md)
+§Self-hosting, "What the tier is inside a machine"). `mill logs <run>
+--step live-tier` has ginkgo's report; the step's exit is its evidence.
+
 **What it needs.** `core`, prepared by homestead's roles
 ([sandbox.md](sandbox.md) §"What the host provides"): `mill_storage` for the
 btrfs volume at `/var/lib/mill`; `mill_machine` for the template unit, the

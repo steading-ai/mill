@@ -13,6 +13,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/ivy/mill/internal/testsupport"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/machine"
 	"github.com/ivy/mill/internal/workspace/machine/cache"
@@ -85,6 +86,11 @@ var _ = Describe("A nested machine on a real host", Label("live"), Serial, Order
 	BeforeAll(func(ctx context.Context) {
 		if os.Getenv(liveVar) == "" {
 			Skip("set " + liveVar + "=1 on a host with root, nspawn and btrfs to run the spec that boots a real machine.")
+		}
+		if testsupport.InsideMachine() {
+			// The inner boot this spec performs as agent is what a spec
+			// inside a nested machine could drive itself; none does yet.
+			Skip(testsupport.HostOnlySkip("the host's template unit and helper to boot the outer machine"))
 		}
 		if _, _, status := host("sudo", "-n", "true"); status != 0 {
 			Skip("sudo -n is refused; the helper and the image export need it")

@@ -16,6 +16,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/ivy/mill/internal/testsupport"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/machine/driver"
 	"github.com/ivy/mill/internal/workspace/machine/image"
@@ -107,6 +108,9 @@ var _ = Describe("Images on a real host", Label("live"), Serial, Ordered, func()
 	BeforeAll(func(ctx context.Context) {
 		if os.Getenv(liveVar) == "" {
 			Skip("set " + liveVar + "=1 on a host with root, podman and the sandbox's btrfs volume to run the spec that builds real images")
+		}
+		if testsupport.InsideMachine() {
+			Skip(testsupport.HostOnlySkip("the host's podman and image volume to build and export an image"))
 		}
 		if _, _, status := host("sudo", "-n", "true"); status != 0 {
 			Skip("sudo -n is refused; the export writes the image tree as root")

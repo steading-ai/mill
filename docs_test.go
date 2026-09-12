@@ -227,3 +227,43 @@ var _ = Describe("The architecture decision records", Label("unit"), func() {
 		}
 	})
 })
+
+// The O2 retrospective, in the shape of dagger's first-build retrospective:
+// what was built with the numbers, the operator's side, the agent's side,
+// and the next run. The numbers are the milestone's report and the live
+// tier's first summary, quoted, so a retrospective that lost them would
+// fail here rather than be read.
+var _ = Describe("The O2 retrospective", Label("unit"), func() {
+	const path = "docs/retrospectives/o2.md"
+
+	// Scenario: The retrospective exists
+	//   Given the milestone's report
+	//   When docs/retrospectives/o2.md is read
+	//   Then it has the numbers, the operator's side, the agent's side, and
+	//   the next run
+	It("The retrospective exists", func() {
+		raw, err := os.ReadFile(path)
+		Expect(err).NotTo(HaveOccurred())
+		body := string(raw)
+
+		By("then it has the numbers: the milestone's nodes and cost, and the live tier's first wall clock")
+		Expect(body).To(ContainSubstring("## What was built"))
+		Expect(body).To(MatchRegexp(`\b28 nodes done\b`))
+		Expect(body).To(MatchRegexp(`\$\d{3}\.\d{2} at list prices`))
+		Expect(body).To(ContainSubstring("Ran 6 of 16 Specs in 426.852 seconds"))
+
+		By("and the operator's side, the agent's side, and the next run")
+		Expect(body).To(ContainSubstring("## Ivy's side"))
+		Expect(body).To(ContainSubstring("## Claude's side"))
+		Expect(body).To(ContainSubstring("## Next run"))
+		for _, heading := range []string{"## What was built", "## Ivy's side", "## Claude's side", "## Next run"} {
+			_, after, found := strings.Cut(body, heading)
+			Expect(found).To(BeTrue(), heading)
+			next := strings.Index(after, "\n## ")
+			if next >= 0 {
+				after = after[:next]
+			}
+			Expect(strings.TrimSpace(after)).NotTo(BeEmpty(), "%s is empty", heading)
+		}
+	})
+})

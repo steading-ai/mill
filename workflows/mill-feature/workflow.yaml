@@ -1,0 +1,351 @@
+# feature, for the mill project: the org definition (../feature) with one
+# step more, and otherwise identical — a spec holds the two together. The
+# step is the live tier as a check, for the reason ../mill-quick-fix gives:
+# a node of mill's own runs inside a machine, and the tier that proves the
+# sandbox runs there too (docs/sandbox.md §Self-hosting, step 3).
+name: feature
+scope: project
+project: mill
+steps:
+  # Ready the machine before any session runs: trust the checkout's mise
+  # configuration and install what it pins. `mise trust` is pre-granted for
+  # /work in the base image, and runs anyway so a repo whose config moved
+  # is trusted too. The step closes on its exit and output whichever way it
+  # ends, and its output stays out of every session; a non-zero exit is a
+  # finding the first session receives, never a failed run (docs/sandbox.md
+  # §"Preparatory steps"). The budget is the step's own, because a warm
+  # install and a cold toolchain are nothing alike.
+  - name: toolchain
+    kind: preparatory
+    check:
+      command:
+        - sh
+        - -c
+        - mise trust /work && mise install
+    evidence: exit
+    capabilities:
+      - exec
+    timeout: 20m
+
+  - name: gather-context
+    kind: skill
+    session: implement
+    skill: quick-fix/gather-context
+    evidence: artifact
+    capabilities:
+      - read
+    harness:
+      claude:
+        model: sonnet
+        effort: medium
+        tools:
+          allow:
+            - Glob
+            - Grep
+            - Read
+    retries: 2
+    timeout: 20m
+
+  # Explore before planning. Read-only and deliberately separate from plan: a
+  # plan written while the problem is still being understood is a plan for
+  # the first idea that arrived.
+  - name: think
+    kind: skill
+    session: implement
+    skill: feature/think
+    evidence: artifact
+    capabilities:
+      - read
+    harness:
+      claude:
+        model: opus
+        effort: high
+        tools:
+          allow:
+            - Glob
+            - Grep
+            - Read
+    retries: 2
+    timeout: 20m
+
+  # The plan is a file in the repository, not a note in a transcript. It is
+  # written to docs/plans/, committed with the change, and read back by the
+  # mill as this step's artifact, so the same bytes are on the node for a
+  # human answering the gate and in the tree for whoever asks later why the
+  # change is shaped this way. The mill renders the path and tells the
+  # session where to write (docs/domain-model.md §Step, `artifact.path`).
+  - name: plan
+    kind: skill
+    session: implement
+    skill: feature/plan
+    evidence: artifact
+    artifact:
+      path: docs/plans/{{.Date}}-{{.NodeSlug}}.md
+    capabilities:
+      - read
+      - write
+    harness:
+      claude:
+        model: opus
+        effort: high
+        tools:
+          allow:
+            - Glob
+            - Grep
+            - Read
+            - Write
+    retries: 2
+    timeout: 30m
+
+  # The last cheap moment: a plan is cheap to fix and expensive to follow.
+  # The step spends its own retries first, and the third failure returns to
+  # plan with the findings, in the implementing session
+  # (docs/domain-model.md §Step, "retries first, then on_failure").
+  # The output schema is the mill's own — a verdict is parsed, never read
+  # (docs/domain-model.md §Verdict) — so the step does not restate it.
+  - name: review-plan
+    kind: skill
+    session: review
+    skill: feature/review-plan
+    evidence: verdict
+    capabilities:
+      - read
+    harness:
+      claude:
+        model: opus
+        effort: high
+        tools:
+          deny:
+            - Write
+            - Edit
+            - Bash
+            - NotebookEdit
+    on_failure: revise plan
+    retries: 2
+    timeout: 30m
+
+  # Plan approval: the last decision that is cheap to change, and the one
+  # gate this workflow files for a person by default (docs/prd.md R-21,
+  # docs/domain-model.md §Gate).
+  #
+  # `auto` is the policy, and it is deliberately narrow: the reviewer
+  # approved, and the work is worth at most a feature. Anything larger, or
+  # any verdict but approve, is a person's decision — and a revised plan
+  # never arrives here at all, because review-plan's on_failure returns the
+  # run to plan. When the gate is filed, the ask carries the plan itself:
+  # a person reading it in dagger, or in whatever the deployment's notify
+  # command carries it to, can answer without opening the checkout.
+  #
+  # It is a gate after a step that wrote, which the loader would ordinarily
+  # refuse — but what plan wrote is the file its artifact evidence was read
+  # from, and that is on the node (docs/domain-model.md §"Gates and pushes").
+  - name: plan-approval
+    kind: gate
+    gate:
+      ask:
+        title: 'Approve the plan for {{.NodeRef}}?'
+        body: |
+          {{.NodeRef}} — {{.NodeTitle}} — has a plan, and it needs a
+          decision before anything is implemented.
+
+          The plan is attached to this node as an artifact of run
+          {{.RunID}}, and it is in the run's checkout at docs/plans/,
+          where it will be committed with the change. Its first forty
+          lines:
+
+          ```
+          {{head 40 (artifact "plan")}}
+          ```
+
+          Complete this node to implement it. Drop it to stop; the run
+          records the denial on {{.NodeRef}} and leaves the plan behind.
+      auto: verdict('review-plan').decision == approve && tier <= feature
+      deny_result: |
+        The plan for this node was rejected at the plan-approval gate, so
+        nothing was implemented and the run stopped there. The plan it was
+        asked about is an artifact on this node; file the work again with
+        what the plan got wrong, or drop it.
+    evidence: gate
+    retries: 1
+    timeout: 168h
+
+  # 45 minutes and two retries, not an hour and one: the O0 harness showed
+  # that an hour of wall clock is a blunt instrument, and a step that needs
+  # longer is a step whose plan was wrong. Let the breaker do its job.
+  - name: implement
+    kind: skill
+    session: implement
+    skill: quick-fix/implement
+    evidence: artifact
+    capabilities:
+      - read
+      - write
+      - exec
+    harness:
+      claude:
+        model: opus
+        effort: high
+        tools:
+          allow:
+            - Bash
+            - Edit
+            - Glob
+            - Grep
+            - Read
+            - Write
+    retries: 2
+    timeout: 45m
+
+  # Reuse, simplification, efficiency and altitude on the diff this run
+  # made, applied rather than reported. Behaviour is identical when it is
+  # done; a correctness fix here would ride in under a cleanup's name.
+  - name: simplify
+    kind: skill
+    session: implement
+    skill: feature/simplify
+    evidence: artifact
+    capabilities:
+      - read
+      - write
+      - exec
+    harness:
+      claude:
+        model: opus
+        effort: medium
+        tools:
+          allow:
+            - Bash
+            - Edit
+            - Glob
+            - Grep
+            - Read
+            - Write
+    retries: 2
+    timeout: 30m
+
+  - name: commit
+    kind: skill
+    session: implement
+    skill: quick-fix/commit
+    evidence: commit
+    capabilities:
+      - write
+    harness:
+      claude:
+        model: sonnet
+        effort: medium
+    retries: 2
+    timeout: 15m
+
+  # The tree has to be clean before the run leaves the workspace behind. The
+  # check runs again on its own three times, and a fourth dirty tree sends
+  # the session back to implement with the paths as its next prompt
+  # (docs/domain-model.md §Step, §Check). The script is quick-fix's, in
+  # place rather than copied: one check, one behaviour, one file to fix.
+  - name: clean-tree
+    kind: check
+    check:
+      command:
+        - scripts/clean-tree
+      exit:
+        - 0
+      stdout: none
+      feedback: revise
+    evidence: exit
+    capabilities:
+      - exec
+    on_failure: revise implement
+    retries: 3
+    timeout: 2m
+
+  # The live tier, inside the machine, on the tree the session committed.
+  # `mise exec` puts the pinned toolchain on PATH, as the toolchain step
+  # installed it. One run again on its own — a database container that
+  # did not come up is not the tree's fault — and then the failure is the
+  # session's next prompt: a check's feedback is its stderr, so ginkgo's
+  # report, which it writes to stdout, is sent there.
+  - name: live-tier
+    kind: check
+    check:
+      command:
+        - sh
+        - -c
+        - MILL_SANDBOX_HOST=1 mise exec -- make test 1>&2
+      exit:
+        - 0
+      stdout: none
+      feedback: revise
+    evidence: exit
+    capabilities:
+      - exec
+    on_failure: revise implement
+    retries: 1
+    timeout: 45m
+
+  - name: pr
+    kind: skill
+    session: implement
+    skill: quick-fix/pr
+    evidence: url
+    capabilities:
+      - forge
+    harness:
+      claude:
+        model: sonnet
+        effort: medium
+    retries: 2
+    timeout: 15m
+
+  # The reviewer, in its own session and read-only on both halves: no write
+  # capability, so the workspace refuses fs.write and git.commit under this
+  # step's token, and a tool policy that keeps the write tools out of the
+  # session at all (docs/domain-model.md §Step, R-24, R-38). The reviewer is
+  # asked again on its own two retries, and the third failure returns to
+  # implement with the findings, which are the implementer's next prompt.
+  #
+  # The schema is written down beside the skill rather than left implicit:
+  # it is the mill's own verdict schema, and the loader refuses any other,
+  # so the file and the verifier cannot drift.
+  - name: review
+    kind: skill
+    session: review
+    skill: feature/review
+    evidence: verdict
+    output_schema: skills/review/verdict.schema.json
+    capabilities:
+      - read
+    harness:
+      claude:
+        model: opus
+        effort: high
+        tools:
+          deny:
+            - Write
+            - Edit
+            - Bash
+            - NotebookEdit
+    on_failure: revise implement
+    retries: 2
+    timeout: 30m
+
+  # Auto-merged on an approving verdict at this tier or below; anything
+  # bigger is a person's decision. Repo protections are the repo's job
+  # (docs/core-principles.md §1), and the gate is what puts the merge on the
+  # record as a decision.
+  - name: merge
+    kind: gate
+    gate:
+      ask:
+        title: 'Merge {{.NodeRef}}?'
+        body: |
+          {{.NodeRef}} — {{.NodeTitle}} — is ready to merge.
+
+          Pull request: {{.PullRequest}}
+
+          Complete this node to merge. Drop it to leave the branch open; the
+          run records the denial on {{.NodeRef}} and stops.
+      auto: review.decision == approve && tier <= feature
+      deny_result: Merge denied by a human; the branch and its pull request are left open.
+    evidence: status
+    retries: 1
+    timeout: 168h

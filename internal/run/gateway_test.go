@@ -188,6 +188,43 @@ var _ = Describe("The credential gateway in the run loop", Label(testsupport.DBL
 		Expect(f.daggerUsage(ctx)).NotTo(HaveKey(turnModel))
 	})
 
+	// Scenario: The assessment reaches the model through the gateway
+	//   Given a gateway configured and a project with no default workflow
+	//   When the assessing session makes a model request with its token
+	//   Then the gateway accepts it, and the assessment's ledger row
+	//   carries what the gateway counted
+	//
+	// The assessment is step 0, run outside the walk; its token has to be
+	// installed in the gateway like every other attempt's, or the first
+	// session of every run on a machine is refused before it says a word.
+	It("The assessment reaches the model through the gateway", func() {
+		By("given a gateway, and no project default so the assessment runs")
+		g := startGateway()
+		f.pushWorkflowFrom(ctx, buildWorkflowDir)
+		assess := assessed("quick-fix", "quick-fix", "README.md is the only file the ask names")
+		assess.Do = g.requests(1)
+		f.script(append([]fake.Script{assess}, f.quickFixScripts()...)...)
+
+		By("when the run goes through")
+		Expect(f.runner(g.options, func(o *run.Options) {
+			o.Workflow = ""
+			o.Tier = millv1.Tier_TIER_UNSPECIFIED
+		}).Execute(ctx, f.nodeRef)).To(Succeed())
+
+		By("then the assessing session was accepted with its own token")
+		Expect(g.seen()).To(Equal([]int{http.StatusOK}))
+		Expect(g.envs).To(HaveLen(1))
+
+		By("and the assessment's row in the ledger carries the gateway's count")
+		detail := f.inspect(ctx)
+		Expect(detail.GetSteps()[0].GetStepRun().GetStepName()).To(Equal("assess"))
+		Expect(detail.GetSteps()[0].GetGatewayTotals()).To(HaveLen(1))
+		counted := detail.GetSteps()[0].GetGatewayTotals()[0]
+		Expect(counted.GetSource()).To(Equal(millv1.UsageSource_USAGE_SOURCE_GATEWAY))
+		Expect(counted.GetModel()).To(Equal(turnModel))
+		Expect(counted.GetInputTokens() + counted.GetOutputTokens() + counted.GetCacheReadTokens() + counted.GetCacheWriteTokens()).To(Equal(int64(turnTokens)))
+	})
+
 	It("The local backend passes the same two variables when configured, and none when not", func() {
 		By("given a gateway configured on a local run")
 		g := startGateway()

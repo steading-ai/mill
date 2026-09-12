@@ -46,7 +46,7 @@ internal/version/     the version injected at link time by the Makefile
 proto/                the contracts: mill.v1 the store API, harness.v1 the sidecar wire, dagger.v1 vendored from dagger; README.md is the compatibility policy
 gen/                  generated Go, committed. buf owns it; `make generate` writes it
 sidecar/              the TypeScript harness adapter; sidecar/gen is harness.v1 in TypeScript
-workflows/            the workflow definitions this repo seeds the store with; `mill workflow push` loads them
+workflows/            the workflow definitions this repo seeds the store with; `mill workflow push` loads them. mill-quick-fix and mill-feature are the mill project's own: the org definitions plus the live tier as a check step
 contrib/systemd/      the user units a deployment runs: mill.service, the image-build and cache-prune timers; docs/architecture.md §Deployment
 images/               the base image machines boot from: images/base is the Containerfile, the dnf shim and what the export must restore; docs/sandbox.md §Images
 tests/acceptance/     the suite that drives the whole mill against real dependencies; docs/runbook.md

@@ -2,14 +2,17 @@ package run_test
 
 import (
 	"context"
+	"sync"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	millv1 "github.com/ivy/mill/gen/mill/v1"
+	"github.com/ivy/mill/internal/harness"
 	"github.com/ivy/mill/internal/harness/fake"
 	"github.com/ivy/mill/internal/run"
 	"github.com/ivy/mill/internal/testsupport"
+	"github.com/ivy/mill/internal/workspace"
 )
 
 // Selection's second rule, driven end to end: a project with no default
@@ -108,6 +111,37 @@ var _ = Describe("Selection by assessment", Label(testsupport.DBLabel), func() {
 			"the run follows the workflow the assessment named")
 		Expect(f.runOf(ctx).GetTier()).To(Equal(millv1.Tier_TIER_QUICK_FIX))
 		Expect(closedSteps(detail)).To(HaveKey("implement"), "the run then walked the selected workflow")
+	})
+
+	// Scenario: The assessment runs under a step slice
+	//   Given a workspace with a step boundary
+	//   When the assessing session is spawned
+	//   Then a slice has been begun for it, and it is ended when the
+	//   assessment closes
+	//
+	// A machine refuses an exec under no slice, and the assessing session
+	// is spawned through the workspace like every other; an assessment
+	// outside the boundary fails on a machine before the session says a
+	// word (docs/sandbox.md §Exec, §"Step boundary").
+	It("The assessment runs under a step slice", func() {
+		var ws *sliced
+		f.wrapWorkspace = func(inner run.Workspace) run.Workspace {
+			ws = &sliced{Workspace: inner}
+			return ws
+		}
+		var underSlice int
+		assess := assessed("quick-fix", "quick-fix", "README.md is the only file the ask names")
+		assess.Do = func(harness.Session) { underSlice = ws.active() }
+		f.script(append([]fake.Script{assess}, f.quickFixScripts()...)...)
+
+		Expect(f.runner(noDefault).Execute(ctx, f.nodeRef)).To(Succeed())
+
+		Expect(underSlice).To(Equal(1), "the assessing session ran under the run's first slice")
+		Expect(ws.begun()).NotTo(BeEmpty())
+		Expect(ws.begun()[0]).To(Equal(1))
+		Expect(ws.ended()).To(Equal(ws.begun()), "every slice begun was ended, the assessment's first")
+		Expect(ws.closedAt(1)).To(BeTrue(), "the assessment closed on evidence, so its slice left a candidate")
+		Expect(closedSteps(f.inspect(ctx))).To(HaveKeyWithValue("assess", millv1.EvidenceKind_EVIDENCE_KIND_STRUCTURED))
 	})
 
 	// Scenario: An assessment cannot invent a workflow
@@ -224,3 +258,61 @@ var _ = Describe("Selection by assessment", Label(testsupport.DBLabel), func() {
 		})
 	})
 })
+
+// sliced is a workspace with a step boundary that records every slice begun
+// and ended, whether each closed on evidence, and which one is active.
+type sliced struct {
+	run.Workspace
+	mu     sync.Mutex
+	slice  int
+	begins []int
+	ends   []int
+	closed map[int]bool
+}
+
+var _ workspace.StepBoundary = (*sliced)(nil)
+
+func (s *sliced) BeginStep(_ context.Context, ordinal int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.slice = ordinal
+	s.begins = append(s.begins, ordinal)
+	return nil
+}
+
+func (s *sliced) EndStep(_ context.Context, ordinal int, closedOnEvidence bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed == nil {
+		s.closed = map[int]bool{}
+	}
+	s.slice = 0
+	s.ends = append(s.ends, ordinal)
+	s.closed[ordinal] = closedOnEvidence
+	return nil
+}
+
+// active is the ordinal of the slice begun and not yet ended; 0 for none.
+func (s *sliced) active() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.slice
+}
+
+func (s *sliced) begun() []int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]int(nil), s.begins...)
+}
+
+func (s *sliced) ended() []int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]int(nil), s.ends...)
+}
+
+func (s *sliced) closedAt(ordinal int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closed[ordinal]
+}

@@ -331,21 +331,11 @@ func useRootlessPodmanSocket() {
 		return
 	}
 	setDefaultEnv("DOCKER_HOST", "unix://"+sock)
-	if insideMachine() {
+	if InsideMachine() {
 		setDefaultEnv("TESTCONTAINERS_RYUK_DISABLED", "true")
 		return
 	}
 	setDefaultEnv("TESTCONTAINERS_RYUK_CONTAINER_PRIVILEGED", "true")
-}
-
-// insideMachine is whether this process is running inside a machine. It is
-// the fact `systemd-detect-virt --container` reports and the driver asks it
-// for (driver.Driver's Container); systemd writes the manager's own name
-// into this file when it boots inside a container, so a fixture can read it
-// without a process or a dependency on the driver.
-func insideMachine() bool {
-	_, err := os.Stat("/run/systemd/container")
-	return err == nil
 }
 
 // patientReaper widens the window Ryuk waits before removing the containers
