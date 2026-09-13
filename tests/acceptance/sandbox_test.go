@@ -788,7 +788,7 @@ func millCheckout(ctx context.Context) *staged {
 	git(ctx, clone, "add", "--all")
 	git(ctx, clone, "commit", "--quiet", "--message", "The working tree, and btrfs-progs for the db suite inside a machine")
 	s := &staged{
-		Graph:  newScratchGraph(ctx, "mill-checkout"),
+		Graph:  newScratchGraph(ctx, "mill-checkout", placeholderVCSURL),
 		Origin: "file://" + clone,
 		VCSURL: placeholderVCSURL,
 	}
@@ -994,7 +994,6 @@ func startMachineWorker(ctx context.Context, s *staged) *worker {
 		"--project", s.Graph.Slug,
 		"--workflow", "quick-fix",
 		"--workflow-dir", workflowDir("quick-fix"),
-		"--vcs-url", s.VCSURL,
 		"--origin", s.Origin,
 		"--ref", s.Ref,
 		"--workspace", "machine",

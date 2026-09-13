@@ -423,7 +423,7 @@ pass  schema     migration 18, current
 pass  dagger     /run/dagger/dg.sock answers; this account is a principal on mill, 1 node(s) ready for an agent
 fail  sidecar    sidecar/dist/main.js did not answer: claude: the sidecar answered nothing before it exited
 fail  signing    no signing key under ~/.local/state/mill/workspaces/signing
-fail  forge      no repository to probe: pass --vcs-url or set MILL_VCS_URL
+fail  forge      no repository to probe: forge: project mill has no repository: set it with `dg project update mill --vcs-url <url>`
 pass  notify     contrib/notify/thicket-send.sh accepts a probe notice
 pass  workspace  local: a clone under the mill's account
 pass  space      local: no sandbox volume to watch
@@ -445,8 +445,8 @@ warn  gateway    https://api.anthropic.com answers a token count through the gat
 
 The probes take the worker's own flags for what they check — `--dagger-socket`
 and `--project` for dagger, `--sidecar` and `--env-mode` for the sidecar,
-`--workspace-dir`, `--identity` and `--name` for the signing key, `--vcs-url`
-for the forge, `--notify-command`, `--workspace` and `--sandbox-root`, and the
+`--workspace-dir`, `--identity` and `--name` for the signing key, `--project`
+for the forge — the repository is the dagger project's `vcs_url` — `--notify-command`, `--workspace` and `--sandbox-root`, and the
 gateway's — so a host is probed as its worker is configured, or as a flag
 says to try it.
 
@@ -855,7 +855,6 @@ flag added or removed without this table changing is a failing spec.
 | `tier` | | yes | yes |
 | `workflow-dir` | | yes | yes |
 | `sidecar` | | yes | yes |
-| `vcs-url` | | yes | yes |
 | `origin` | | yes | yes |
 | `ref` | | yes | yes |
 | `identity` | | yes | yes |

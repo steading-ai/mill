@@ -126,10 +126,11 @@ type staged struct {
 	Graph   *scratchGraph
 	NodeRef string
 	// Origin is what a new workspace clones, and VCSURL is the repository
-	// the forge steps address. They are the same for a fixture on a forge;
-	// a local fixture clones from disk and carries a placeholder VCS URL,
-	// because `mill run` resolves a project's forge before it claims
-	// anything and a run that never reaches a forge step never calls it.
+	// the dagger project names, which the forge steps address. They are
+	// the same for a fixture on a forge; a local fixture clones from disk
+	// and its project carries a placeholder, because a run resolves its
+	// project's forge before it clones and a run that never reaches a
+	// forge step never calls it.
 	Origin string
 	VCSURL string
 	// Ref is the branch a new workspace checks out.
@@ -155,7 +156,7 @@ func (f fixture) stage(ctx context.Context) *staged {
 	}
 
 	By("and a dagger project whose repository is that repository")
-	s.Graph = newScratchGraph(ctx, f.Name)
+	s.Graph = newScratchGraph(ctx, f.Name, s.VCSURL)
 
 	By("and the fixture's node filed in it")
 	s.NodeRef = s.Graph.file(ctx, f.Title, f.Body)
@@ -174,11 +175,12 @@ func (f fixture) stage(ctx context.Context) *staged {
 	return s
 }
 
-// placeholderVCSURL is what a local fixture gives `mill run` for a
-// repository it will never reach. `--vcs-url` is required — the forge is
-// resolved before the claim, so a project with none fails before anything is
-// spent — and a scenario that runs on a bare repository asserts for itself
-// that no step ever went looking for this host.
+// placeholderVCSURL is the repository a local fixture's dagger project
+// names, for a forge the run will never reach. A project has to name one —
+// the forge is resolved after the claim and before the clone, so a project
+// with none fails before anything is spent — and a scenario that runs on a
+// bare repository asserts for itself that no step ever went looking for this
+// host.
 const placeholderVCSURL = "https://forge.invalid/mill-acceptance/no-forge.git"
 
 // start invokes `mill run` for the staged node.

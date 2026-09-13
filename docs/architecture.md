@@ -20,7 +20,7 @@ The read and operate verbs are one client with two framings — the CLI for a sh
 
 MVP runs `serve` and `work` in one process on one host — `mill serve --work`, which is what `mill.service` starts. The Connect boundary between them exists from the first commit so that a second worker on another host is a configuration change. On stop the worker goes first and the store drains after it, because the worker is one of the store's clients.
 
-A worker's settings — its projects, its labels, its concurrency, and the rest of a run's configuration — come from flags, from a YAML file at `$XDG_CONFIG_HOME/mill/config.yaml` whose keys are the long flag names, or from both: a flag the command line sets wins, and anything it leaves alone the file may fill in. A missing file is not an error; every setting has a default. This is what keeps a unit file one line and lets an operator change what the mill works on without editing a unit.
+A worker's settings — its projects, its labels, its concurrency, and the rest of a run's configuration — come from flags, from a YAML file at `$XDG_CONFIG_HOME/mill/config.yaml` whose keys are the long flag names, or from both: a flag the command line sets wins, and anything it leaves alone the file may fill in. A missing file is not an error; every setting has a default. This is what keeps a unit file one line and lets an operator change what the mill works on without editing a unit. The repository a run delivers to is not among those settings: it is the dagger project's `vcs_url`, read from the claim at every run, so a worker carries no repository of its own and two workers on one project cannot disagree about where it lives.
 
 ## Request path
 

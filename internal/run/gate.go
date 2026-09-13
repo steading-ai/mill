@@ -68,10 +68,7 @@ func (r *Runner) approve(ctx context.Context, s *state, step *millv1.Step) (stri
 	if step.GetEvidence() != millv1.EvidenceKind_EVIDENCE_KIND_STATUS {
 		return "", nil
 	}
-	f, err := r.options.Forges(ctx)
-	if err != nil {
-		return "", err
-	}
+	f := s.repo.Forge
 	pr, err := f.PR(ctx, s.run.GetBranch())
 	if err != nil {
 		return "", err

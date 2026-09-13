@@ -628,7 +628,6 @@ func (s *mcpServer) doctorOptions() doctorOptions {
 		workspaceDir:  defaultWorkspaceDir(),
 		workspace:     config.Workspace,
 		sandboxRoot:   config.SandboxRoot,
-		vcsURL:        os.Getenv(vcsURLEnv),
 		identity:      defaultIdentity(),
 		name:          defaultForgeUser,
 		notifyCommand: config.NotifyCommand,

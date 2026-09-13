@@ -265,15 +265,16 @@ func (f *fixture) runner(options ...func(*run.Options)) *run.Runner {
 	Expect(registry.Register(run.DefaultHarness, f.harness)).To(Succeed())
 
 	opts := run.Options{
-		Store:       f.store,
-		Dagger:      f.client,
-		Workspaces:  f.workspaces(),
-		Forges:      func(context.Context) (forge.Forge, error) { return f.forge, nil },
+		Store:      f.store,
+		Dagger:     f.client,
+		Workspaces: f.workspaces(),
+		Repositories: func(context.Context, *daggerv1.Project) (run.Repository, error) {
+			return run.Repository{Forge: f.forge, Origin: f.origin}, nil
+		},
 		Harnesses:   func(run.Workspace) (*harness.Registry, error) { return registry, nil },
 		WorkerRef:   f.worker,
 		Workflow:    "quick-fix",
 		WorkflowDir: mustAbs(workflowDir),
-		Origin:      f.origin,
 		Out:         GinkgoWriter,
 		Log:         slog.New(slog.NewTextHandler(GinkgoWriter, nil)),
 		Redactor:    f.redactor,
@@ -287,9 +288,11 @@ func (f *fixture) runner(options ...func(*run.Options)) *run.Runner {
 // workspaces makes a local workspace under the spec's temporary directory,
 // reattaching one an earlier invocation left behind.
 func (f *fixture) workspaces() run.Workspaces {
-	return func(ctx context.Context, spec workspace.Spec) (run.Workspace, error) {
+	return func(ctx context.Context, spec workspace.Spec, repo run.Repository) (run.Workspace, error) {
 		local := local.New(local.Options{
 			Root:     filepath.Join(f.root, "workspaces"),
+			Origin:   repo.Origin,
+			Forge:    repo.Forge,
 			Redactor: f.redactor,
 		})
 		var ws run.Workspace = local

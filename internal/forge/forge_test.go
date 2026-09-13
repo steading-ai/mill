@@ -66,12 +66,11 @@ var _ = Describe("The forge registry", Label("unit"), func() {
 		Expect(errors.As(err, &missing)).To(BeTrue(), "%v", err)
 		Expect(missing.Project).To(Equal("mill"))
 		Expect(err.Error()).To(ContainSubstring("mill"))
-		// The one source there is, named: dagger's project model carries
-		// no repository field yet (dagger#23), so there is no label to
-		// point an operator at.
-		Expect(err.Error()).To(ContainSubstring(forge.VCSURLFlag))
-		Expect(err.Error()).To(ContainSubstring(forge.VCSURLEnv))
-		Expect(err.Error()).To(ContainSubstring("dagger#23"))
+		// The one source there is, named: the project's own vcs_url in
+		// dagger, and the command that sets it. No flag, no variable and
+		// no label to send an operator looking elsewhere.
+		Expect(err.Error()).To(ContainSubstring("dg project update mill --vcs-url"))
+		Expect(err.Error()).NotTo(ContainSubstring("MILL_VCS_URL"))
 		Expect(err.Error()).NotTo(ContainSubstring("label"))
 		Expect(forge.Retryable(err)).To(BeFalse(), "no number of attempts adds a URL to the project")
 	})

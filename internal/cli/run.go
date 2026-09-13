@@ -18,6 +18,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
+	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/gen/mill/v1/millv1connect"
 	"github.com/ivy/mill/internal/dagger"
@@ -66,7 +67,6 @@ const (
 	forgeUserEnv  = "MILL_FORGE_USER"
 	// The forge names this one, because the forge is what refuses a project
 	// with no repository and its refusal has to say where a URL comes from.
-	vcsURLEnv = forge.VCSURLEnv
 )
 
 // sidecarEnv names the harness sidecar's entrypoint. The adapter's default
@@ -151,7 +151,6 @@ type runOptions struct {
 	tier          string
 	workflowDir   string
 	sidecar       string
-	vcsURL        string
 	origin        string
 	ref           string
 	identity      string
@@ -214,8 +213,7 @@ between.`,
 	f.StringVar(&opts.tier, "tier", "", "tier that workflow stands for, which gate policies compare against (default: quick-fix, or the assessed tier)")
 	f.StringVar(&opts.workflowDir, "workflow-dir", "", "directory the workflow was loaded from, for a check step's scripts")
 	f.StringVar(&opts.sidecar, "sidecar", envOr(sidecarEnv, claude.DefaultEntrypoint), "path of the harness sidecar's entrypoint (default: $"+sidecarEnv+")")
-	f.StringVar(&opts.vcsURL, "vcs-url", os.Getenv(vcsURLEnv), "repository this project delivers to, which the forge steps push and merge against (default: $"+vcsURLEnv+")")
-	f.StringVar(&opts.origin, "origin", "", "repository a new workspace clones (default: the --vcs-url repository)")
+	f.StringVar(&opts.origin, "origin", "", "repository a new workspace clones (default: the project's repository)")
 	f.StringVar(&opts.ref, "ref", "", "ref a new workspace checks out (default: the repository's own HEAD)")
 	f.StringVar(&opts.workspaceDir, "workspace-dir", defaultWorkspaceDir(), "directory run workspaces are made under")
 	f.StringVar(&opts.workspace, "workspace", string(workspace.KindLocal), workspaceUsage)
@@ -402,22 +400,7 @@ func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, 
 		return nil, err
 	}
 
-	// The forge is resolved once and shared: the loop reads the pull request
-	// through it and the workspace pushes through it, and both must be
-	// talking to the same repository. A project with no VCS URL yields a
-	// *forge.NoVCSURLError here, before anything is claimed.
 	opts.project = project
-	f, err := projectForge(opts)
-	if err != nil {
-		return nil, err
-	}
-	if opts.origin == "" {
-		repo, err := forge.RepoFor(forge.Project{Slug: project, VCSURL: opts.vcsURL})
-		if err != nil {
-			return nil, err
-		}
-		opts.origin = repo.CloneURL
-	}
 	if opts.identity == "" {
 		opts.identity = defaultIdentity()
 	}
@@ -432,14 +415,13 @@ func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, 
 		Store:          storeClient(opts.socket),
 		Notifier:       notifier(opts.notifyCommand),
 		Dagger:         client,
-		Workspaces:     workspacesFor(kind, opts, f, redactor),
-		Forges:         func(context.Context) (forge.Forge, error) { return f, nil },
+		Workspaces:     workspacesFor(kind, opts, redactor),
+		Repositories:   repositories(opts),
 		Harnesses:      harnessesFor(kind, opts, envMode),
 		WorkerRef:      worker,
 		Workflow:       opts.workflow,
 		Tier:           tier,
 		WorkflowDir:    opts.workflowDir,
-		Origin:         opts.origin,
 		Ref:            opts.ref,
 		TTL:            opts.ttl,
 		Interval:       opts.interval,
@@ -634,7 +616,7 @@ func cacheDriver() driver.Driver {
 // For the machine backend it is whether this host can run one at all.
 func checkWorkspace(kind workspace.Kind, opts runOptions) error {
 	if kind == workspace.KindMachine {
-		config := machineConfig(opts, nil, nil)
+		config := machineConfig(opts, run.Repository{}, nil)
 		// The skill every machine mounts is this binary's, written where
 		// the helper's policy admits a read-only bind from, with the
 		// version beside it (docs/sandbox.md §"Skill mount").
@@ -726,23 +708,23 @@ func inMachineSidecar(sidecar string) string {
 // exists today and the default; machine is docs/sandbox.md's, chosen here
 // and nowhere else, so that moving a worker from one to the other is the
 // configuration change docs/sandbox.md §Self-hosting says it is.
-func workspacesFor(kind workspace.Kind, opts runOptions, f forge.Forge, redactor *redact.Redactor) run.Workspaces {
+func workspacesFor(kind workspace.Kind, opts runOptions, redactor *redact.Redactor) run.Workspaces {
 	if kind == workspace.KindMachine {
-		return machineWorkspaces(opts, f, redactor)
+		return machineWorkspaces(opts, redactor)
 	}
-	return localWorkspaces(opts, f, redactor)
+	return localWorkspaces(opts, redactor)
 }
 
 // localWorkspaces makes a workspace under the worker's own account,
 // reattaching one this worker left behind before cloning a new one. The
-// forge goes in with it, because the `push` and `pr` verbs a session reaches
-// over the socket are the workspace's and not the loop's.
-func localWorkspaces(opts runOptions, f forge.Forge, redactor *redact.Redactor) run.Workspaces {
-	return func(ctx context.Context, spec workspace.Spec) (run.Workspace, error) {
+// run's repository goes in with it, because the `push` and `pr` verbs a
+// session reaches over the socket are the workspace's and not the loop's.
+func localWorkspaces(opts runOptions, redactor *redact.Redactor) run.Workspaces {
+	return func(ctx context.Context, spec workspace.Spec, repo run.Repository) (run.Workspace, error) {
 		ws := local.New(local.Options{
 			Root:     opts.workspaceDir,
-			Origin:   opts.origin,
-			Forge:    f,
+			Origin:   repo.Origin,
+			Forge:    repo.Forge,
 			Name:     opts.name,
 			Identity: opts.identity,
 			Redactor: redactor,
@@ -762,9 +744,9 @@ func localWorkspaces(opts runOptions, f forge.Forge, redactor *redact.Redactor) 
 // A run this host has a record of but no machine for is a lost sandbox,
 // and that is the error: nothing boots a fresh machine for it
 // (docs/sandbox.md §Reconciliation).
-func machineWorkspaces(opts runOptions, f forge.Forge, redactor *redact.Redactor) run.Workspaces {
-	return func(ctx context.Context, spec workspace.Spec) (run.Workspace, error) {
-		ws := machine.New(machineDriver(), machineConfig(opts, f, redactor))
+func machineWorkspaces(opts runOptions, redactor *redact.Redactor) run.Workspaces {
+	return func(ctx context.Context, spec workspace.Spec, repo run.Repository) (run.Workspace, error) {
+		ws := machine.New(machineDriver(), machineConfig(opts, repo, redactor))
 		_, err := ws.Attach(ctx, spec)
 		if err == nil {
 			return ws, nil
@@ -781,7 +763,7 @@ func machineWorkspaces(opts runOptions, f forge.Forge, redactor *redact.Redactor
 
 // machineConfig is the machine backend's configuration as the flags and
 // the file spell it.
-func machineConfig(opts runOptions, f forge.Forge, redactor *redact.Redactor) machine.Config {
+func machineConfig(opts runOptions, repo run.Repository, redactor *redact.Redactor) machine.Config {
 	sandbox := opts.sandbox
 	return machine.Config{
 		Root:     opts.sandboxRoot,
@@ -794,8 +776,8 @@ func machineConfig(opts runOptions, f forge.Forge, redactor *redact.Redactor) ma
 		// (docs/sandbox.md §"Skill mount").
 		WorkflowSource: opts.workflowDir,
 		Workflow:       sandbox.workflowCopyDir,
-		Origin:         opts.origin,
-		Forge:          f,
+		Origin:         repo.Origin,
+		Forge:          repo.Forge,
 		Name:           opts.name,
 		Identity:       opts.identity,
 		// The account's one signing key, where the local backend keeps it
@@ -839,19 +821,45 @@ func forges() *forge.Registry {
 	return registry
 }
 
-// projectForge is where the run delivers, resolved once at startup so a
-// project with no repository fails before a workspace is created rather than
-// four steps in.
-//
-// dagger's project model carries no VCS URL and no labels of its own
-// (dagger's docs/domain-model.md §Project), so O0 takes it from --vcs-url or
-// $MILL_VCS_URL and forge.Project carries it in the field that exists for
-// the day dagger does. The credential is the one the mill account holds,
-// handed out per request by [forge.Static].
-func projectForge(opts runOptions) (forge.Forge, error) {
-	return forges().For(
-		forge.Project{Slug: opts.project, VCSURL: opts.vcsURL},
-		forge.Static(envOr(forgeUserEnv, defaultForgeUser), os.Getenv(forgeTokenEnv)))
+// repositoryFor is where a run on the project delivers and what its
+// workspace clones: the project's own `vcs_url`, as dagger carries it, and
+// nothing the worker was configured with. A project with none is a
+// *forge.NoVCSURLError. `--origin` overrides the clone URL and nothing else.
+// The credential is the one the mill account holds, handed out per request
+// by [forge.Static].
+func repositoryFor(project *daggerv1.Project, opts runOptions) (run.Repository, error) {
+	p := forge.Project{Slug: project.GetSlug(), VCSURL: project.GetVcsUrl()}
+	f, err := forges().For(p, forge.Static(envOr(forgeUserEnv, defaultForgeUser), os.Getenv(forgeTokenEnv)))
+	if err != nil {
+		return run.Repository{}, err
+	}
+	origin := opts.origin
+	if origin == "" {
+		repo, err := forge.RepoFor(p)
+		if err != nil {
+			return run.Repository{}, err
+		}
+		origin = repo.CloneURL
+	}
+	return run.Repository{Forge: f, Origin: origin}, nil
+}
+
+// repositories is the seam a runner resolves each run's repository through.
+func repositories(opts runOptions) run.Repositories {
+	return func(_ context.Context, project *daggerv1.Project) (run.Repository, error) {
+		return repositoryFor(project, opts)
+	}
+}
+
+// projectRepository is repositoryFor for a caller with no claim in hand —
+// the worker's startup check, the reconciliation sweep, `doctor`'s probe:
+// one GetProject on the client's project, then the same rule.
+func projectRepository(ctx context.Context, client *dagger.Client, opts runOptions) (run.Repository, error) {
+	project, err := client.GetProject(ctx)
+	if err != nil {
+		return run.Repository{}, err
+	}
+	return repositoryFor(project, opts)
 }
 
 // workerRef names this worker on the run and on every lease: the account and

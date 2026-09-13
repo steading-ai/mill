@@ -298,7 +298,6 @@ func start(ctx context.Context, s *staged, opts runOptions) *worker {
 		"--dagger-socket", env.DaggerSocket,
 		"--project", s.Graph.Slug,
 		"--workflow-dir", dir,
-		"--vcs-url", s.VCSURL,
 		"--origin", s.Origin,
 		"--ref", s.Ref,
 		"--workspace-dir", s.WorkspaceDir,

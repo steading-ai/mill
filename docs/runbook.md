@@ -113,9 +113,9 @@ Each scenario stages a fixture and then drives it:
 2. A scratch dagger project in the suite's own dagger — or in the one
    `MILL_ACCEPTANCE_DAGGER_SOCKET` named — and the fixture's node filed in
    it.
-3. One `mill run` per attempt, as a subprocess, with that repository as its
-   `--vcs-url` and `--origin`, and a workspace root and log directory of the
-   scenario's own. The environment mode is the default, `inherit`, which is
+3. One `mill run` per attempt, as a subprocess, with that repository as the
+   dagger project's `vcs_url` and its `--origin`, and a workspace root and
+   log directory of the scenario's own. The environment mode is the default, `inherit`, which is
    what a person at a shell gets; a deployment runs `--env-mode strict`, as
    `contrib/systemd/mill.service` does (docs/architecture.md §"Skill steps:
    the harness adapter").
@@ -456,11 +456,12 @@ temporary directory, which `mill run --origin` points a workspace at. It is
 a real repository cloned by real git; the only thing missing is the API no
 step in that scenario calls.
 
-`--vcs-url` is still required — the project's forge is resolved before
-anything is claimed, so a project with no repository fails before it has
-spent a session — and the suite passes a placeholder pointing at a host that
-does not exist. The scenario asserts for itself that the run never reached
-`pr`, which is what makes the placeholder safe.
+The dagger project still has to name a repository — a run resolves its
+project's forge after the claim and before the clone, so a project with none
+fails before it has spent a session — and the suite creates the scratch
+project with a placeholder pointing at a host that does not exist. The
+scenario asserts for itself that the run never reached `pr`, which is what
+makes the placeholder safe.
 
 Half a forge is refused: a URL with no token or no namespace fails the
 preflight rather than skipping, because that is a configuration mistake and

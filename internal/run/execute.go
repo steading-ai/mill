@@ -627,15 +627,11 @@ const feedbackHeading = "## What the last attempt failed on\n\nThis is the mill'
 // are two requests to a forge that indexes the first one in its own time
 // (mill#46).
 func (r *Runner) pullRequest(ctx context.Context, s *state) (forge.PullRequest, error) {
-	client, err := r.options.Forges(ctx)
-	if err != nil {
-		return forge.PullRequest{}, err
-	}
 	head, err := r.head(ctx, s)
 	if err != nil {
 		return forge.PullRequest{}, err
 	}
-	return client.OpenPR(ctx, forge.OpenPRRequest{
+	return s.repo.Forge.OpenPR(ctx, forge.OpenPRRequest{
 		Branch:      s.run.GetBranch(),
 		Head:        head,
 		Title:       s.node.GetTitle(),

@@ -79,7 +79,6 @@ type doctorOptions struct {
 	workspaceDir  string
 	workspace     string
 	sandboxRoot   string
-	vcsURL        string
 	identity      string
 	name          string
 	config        string
@@ -135,7 +134,6 @@ failed; a warning does not fail it.`,
 	f.StringVar(&opts.workspaceDir, "workspace-dir", defaultWorkspaceDir(), "directory run workspaces and the signing key live under")
 	f.StringVar(&opts.workspace, "workspace", string(workspace.KindLocal), workspaceUsage)
 	f.StringVar(&opts.sandboxRoot, "sandbox-root", machine.DefaultRoot, sandboxRootUsage)
-	f.StringVar(&opts.vcsURL, "vcs-url", os.Getenv(vcsURLEnv), "repository the forge credential is probed against (default: $"+vcsURLEnv+")")
 	f.StringVar(&opts.identity, "identity", "", "address the mill commits under (default: mill@<host>)")
 	f.StringVar(&opts.name, "name", defaultForgeUser, "name on the mill's commits")
 	f.StringVar(&opts.config, "config", defaultConfigPath(), "path of the configuration file the notify command and the workspace kind are read from when no flag names them")
@@ -383,26 +381,32 @@ func keyBlob(publicKey string) string {
 
 // probeForge asks the forge about a branch that does not exist. The answer
 // does not matter; being answered does. A credential the forge rejects fails
-// here rather than four steps into a run.
+// here rather than four steps into a run. The repository is the project's,
+// read from dagger the way a run reads it, so the probe needs the project
+// and nothing else.
 func probeForge(ctx context.Context, opts doctorOptions) probe {
-	if opts.vcsURL == "" {
-		return fail("forge", "no repository to probe: pass --vcs-url or set %s", vcsURLEnv)
+	if opts.project == "" {
+		return fail("forge", "no project to read the repository from: pass --project or set %s", daggerProjectEnv)
 	}
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
+	project, err := dagger.Dial(opts.daggerSocket, opts.project).GetProject(ctx)
+	if err != nil {
+		return fail("forge", "no repository to probe: %v", err)
+	}
 	f, err := forges().For(
-		forge.Project{Slug: opts.project, VCSURL: opts.vcsURL},
+		forge.Project{Slug: project.GetSlug(), VCSURL: project.GetVcsUrl()},
 		forge.Static(envOr(forgeUserEnv, defaultForgeUser), os.Getenv(forgeTokenEnv)))
 	if err != nil {
-		return fail("forge", "%s: %v", opts.vcsURL, err)
+		return fail("forge", "no repository to probe: %v", err)
 	}
 	// A branch nothing has ever pushed. "No pull request" is the forge
 	// answering, which is what the credential is being probed for.
 	_, err = f.PR(ctx, "mill-doctor-probe")
 	if err == nil || errors.Is(err, forge.ErrNoPullRequest) {
-		return pass("forge", "%s accepts the credential", opts.vcsURL)
+		return pass("forge", "%s accepts the credential", project.GetVcsUrl())
 	}
-	return fail("forge", "%s refused the credential: %v", opts.vcsURL, err)
+	return fail("forge", "%s refused the credential: %v", project.GetVcsUrl(), err)
 }
 
 // probeNotify runs the configured notify command with a probe notice. It is

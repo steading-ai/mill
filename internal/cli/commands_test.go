@@ -116,7 +116,7 @@ var _ = Describe("The command tree", Label("unit"), func() {
 
 	It("doctor takes what it probes and needs no argument", func() {
 		Expect(run("doctor", "--help")).To(BeZero(), stderr.String())
-		for _, flag := range []string{"--dagger-socket", "--sidecar", "--vcs-url", "--workspace-dir"} {
+		for _, flag := range []string{"--dagger-socket", "--sidecar", "--project", "--workspace-dir"} {
 			Expect(stdout.String()).To(ContainSubstring(flag))
 		}
 	})

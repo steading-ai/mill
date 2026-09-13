@@ -8,9 +8,12 @@ import (
 	"strconv"
 	"strings"
 
+	"connectrpc.com/connect"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
 	"github.com/ivy/mill/internal/cli"
 	"github.com/ivy/mill/internal/run"
 	"github.com/ivy/mill/internal/testsupport"
@@ -195,7 +198,6 @@ var _ = Describe("mill run", func() {
 				"run", "millspec#1",
 				"--project", "millspec",
 				"--workspace-dir", dir,
-				"--vcs-url", "https://gitlab.example.test/group/thing.git",
 				"--socket", "/nonexistent/mill.sock",
 				"--dagger-socket", "/nonexistent/dg.sock",
 			}, strings.NewReader(""), &stdout, &stderr)
@@ -222,7 +224,6 @@ var _ = Describe("mill run", func() {
 				"run", "millspec#1",
 				"--project", "millspec",
 				"--workspace-dir", GinkgoT().TempDir(),
-				"--vcs-url", "https://gitlab.example.test/group/thing.git",
 				"--socket", "/nonexistent/mill.sock",
 				"--dagger-socket", "/nonexistent/dg.sock",
 			}, strings.NewReader(""), &stdout, &stderr)
@@ -254,7 +255,6 @@ var _ = Describe("mill run", func() {
 				"work",
 				"--config", path,
 				"--project", "millspec",
-				"--vcs-url", "https://gitlab.example.test/group/thing.git",
 				"--dagger-socket", "/nonexistent/dg.sock",
 			}, strings.NewReader(""), &stdout, &stderr)
 
@@ -275,7 +275,6 @@ var _ = Describe("mill run", func() {
 				"run", "millspec#1",
 				"--gateway",
 				"--project", "millspec",
-				"--vcs-url", "https://gitlab.example.test/group/thing.git",
 				"--socket", "/nonexistent/mill.sock",
 				"--dagger-socket", "/nonexistent/dg.sock",
 			}, strings.NewReader(""), &stdout, &stderr)
@@ -329,7 +328,6 @@ var _ = Describe("mill run", func() {
 				"--workspace", "machine",
 				"--sandbox-root", filepath.Join(tmp, "absent-sandbox"),
 				"--sidecar", entrypoint,
-				"--vcs-url", "https://gitlab.example.test/group/thing.git",
 				"--socket", "/nonexistent/mill.sock",
 				"--dagger-socket", "/nonexistent/dg.sock",
 			}, strings.NewReader(""), &stdout, &stderr)
@@ -358,27 +356,52 @@ var _ = Describe("mill run", func() {
 		})
 	})
 
-	// The project a run delivers to comes from the flag or the variable and
-	// from nowhere else: dagger's project model carries neither a
-	// repository field nor labels (dagger#23), so a refusal that named a
-	// label sent an operator looking for something that cannot exist.
-	Describe("without a repository", Label("unit"), func() {
-		It("names the flag and the variable, and mentions no label", func() {
+	// The repository a run delivers to is the dagger project's `vcs_url`
+	// and comes from nowhere else: no flag, no variable, no label. A
+	// refusal names the command that sets it.
+	Describe("the repository a run delivers to", Label(testsupport.DBLabel), func() {
+		It("delivers to the project's repository", func(ctx SpecContext) {
+			m := serving(ctx)
+			m.run(ctx, "workflow", "push", quickFix)
+			g := daggerNodeWith(ctx, "https://gitlab.example.test/group/thing.git")
 			var stdout, stderr bytes.Buffer
-			GinkgoT().Setenv("MILL_VCS_URL", "")
 
+			// The host does not exist, so the run fails at the clone; what
+			// is under test is what it set out to clone.
 			exit := cli.Run([]string{
-				"run", "millspec#1",
-				"--project", "millspec",
-				"--socket", "/nonexistent/mill.sock",
-				"--dagger-socket", "/nonexistent/dg.sock",
+				"run", g.nodeRef,
+				"--project", daggerProject, "--workflow", "quick-fix",
+				"--socket", m.socket, "--dagger-socket", g.service.Socket,
+				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
+				"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
 			}, strings.NewReader(""), &stdout, &stderr)
 
 			Expect(exit).NotTo(BeZero())
-			Expect(stderr.String()).To(ContainSubstring("--vcs-url"))
-			Expect(stderr.String()).To(ContainSubstring("MILL_VCS_URL"))
-			Expect(stderr.String()).To(ContainSubstring("dagger#23"))
+			Expect(stdout.String()).To(ContainSubstring("delivers to https://gitlab.example.test/group/thing.git"))
+		})
+
+		It("refuses a project that names no repository before anything is cloned, and releases the lease", func(ctx SpecContext) {
+			m := serving(ctx)
+			m.run(ctx, "workflow", "push", quickFix)
+			g := daggerNode(ctx)
+			workspaces := filepath.Join(GinkgoT().TempDir(), "workspaces")
+			var stdout, stderr bytes.Buffer
+
+			exit := cli.Run([]string{
+				"run", g.nodeRef,
+				"--project", daggerProject, "--workflow", "quick-fix",
+				"--socket", m.socket, "--dagger-socket", g.service.Socket,
+				"--workspace-dir", workspaces,
+				"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
+			}, strings.NewReader(""), &stdout, &stderr)
+
+			Expect(exit).NotTo(BeZero())
+			Expect(stderr.String()).To(ContainSubstring("dg project update " + daggerProject + " --vcs-url"))
 			Expect(stderr.String()).NotTo(ContainSubstring("label"))
+			Expect(filepath.Glob(filepath.Join(workspaces, "*", "*"))).To(BeEmpty(), "nothing was cloned")
+			res, err := g.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{Project: daggerProject, Node: g.nodeRef}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.Msg.GetNode().GetClaimed()).To(BeFalse(), "the lease went back")
 		})
 	})
 

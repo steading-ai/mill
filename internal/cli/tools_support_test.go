@@ -207,13 +207,21 @@ type gateFixture struct {
 }
 
 // daggerNode brings up a dagger with one project and one node in it: the
-// work a run is for, and the node a gate will hang off.
+// work a run is for, and the node a gate will hang off. The project names
+// no repository; daggerNodeWith gives it one.
 func daggerNode(ctx context.Context) *gateFixture {
+	GinkgoHelper()
+	return daggerNodeWith(ctx, "")
+}
+
+// daggerNodeWith is daggerNode with the project's repository set, which is
+// what a run resolves its forge and its clone from.
+func daggerNodeWith(ctx context.Context, vcsURL string) *gateFixture {
 	GinkgoHelper()
 	service := pg.StartDagger(ctx)
 	graph := daggerv1connect.NewGraphServiceClient(service.HTTPClient(), service.BaseURL())
 	_, err := graph.CreateProject(ctx, connect.NewRequest(&daggerv1.CreateProjectRequest{
-		RequestId: "cli-spec-project", Title: "mill cli specs", Slug: daggerProject,
+		RequestId: "cli-spec-project", Title: "mill cli specs", Slug: daggerProject, VcsUrl: vcsURL,
 	}))
 	Expect(err).NotTo(HaveOccurred())
 

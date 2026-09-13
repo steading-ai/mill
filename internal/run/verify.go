@@ -9,7 +9,6 @@ import (
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/dagger"
 	"github.com/ivy/mill/internal/evidence"
-	"github.com/ivy/mill/internal/forge"
 )
 
 // verify asks the verifier for the step's declared evidence kind whether the
@@ -29,7 +28,7 @@ func (r *Runner) verify(ctx context.Context, s *state, step *millv1.Step, sr *mi
 		Session:      res.session,
 		Elapsed:      elapsed(detail, step.GetName(), r.options.Now()),
 		Git:          s.workspace.GitRunner(),
-		Forge:        forgeReader{ctx: ctx, runner: r},
+		Forge:        s.repo.Forge,
 		Artifacts:    artifacts{client: r.options.Dagger, ref: s.node.GetReference()},
 		Gates:        gates{runner: r, state: s},
 		Now:          r.options.Now,
@@ -56,29 +55,6 @@ func committer(ws Workspace) evidence.Committer {
 	}
 	identity := ws.Committer()
 	return evidence.Committer{Name: identity.Name, Email: identity.Email}
-}
-
-// forgeReader is the read half of the project's forge, resolved lazily: a
-// run that never reaches a forge step never needs one configured.
-type forgeReader struct {
-	ctx    context.Context
-	runner *Runner
-}
-
-func (f forgeReader) PR(ctx context.Context, branch string) (forge.PullRequest, error) {
-	client, err := f.runner.options.Forges(ctx)
-	if err != nil {
-		return forge.PullRequest{}, err
-	}
-	return client.PR(ctx, branch)
-}
-
-func (f forgeReader) Checks(ctx context.Context, sha string) (forge.Status, error) {
-	client, err := f.runner.options.Forges(ctx)
-	if err != nil {
-		return "", err
-	}
-	return client.Checks(ctx, sha)
 }
 
 // artifacts asks dagger whether it holds an artifact of a digest. `artifact`

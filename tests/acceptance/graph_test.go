@@ -35,14 +35,16 @@ type scratchGraph struct {
 }
 
 // newScratchGraph creates a dagger project for one scenario, in the dagger
-// the suite started for itself unless the environment named another.
+// the suite started for itself unless the environment named another. The
+// project carries the repository the scenario delivers to, because that is
+// where `mill run` reads it from and nowhere else.
 //
 // Dagger has no delete: a project is archived, which makes it read-only and
 // takes it out of every ready set, and that is what "cleaned up" means on
 // this side (dagger's docs/domain-model.md §Project). In the suite's own
 // dagger the archive is a courtesy — the whole instance goes with the
 // suite — and it is the only cleanup an external dagger gets.
-func newScratchGraph(ctx context.Context, name string) *scratchGraph {
+func newScratchGraph(ctx context.Context, name, vcsURL string) *scratchGraph {
 	GinkgoHelper()
 	slug := "mill-acceptance-" + name + "-" + nonce()
 	cli := daggerCLI{socket: env.DaggerSocket}
@@ -52,7 +54,7 @@ func newScratchGraph(ctx context.Context, name string) *scratchGraph {
 			Slug string `json:"slug"`
 		} `json:"project"`
 	}
-	cli.json(ctx, &created, "project", "create", slug, "--slug", slug)
+	cli.json(ctx, &created, "project", "create", slug, "--slug", slug, "--vcs-url", vcsURL)
 	Expect(created.Project.Slug).To(Equal(slug))
 
 	graph := &scratchGraph{cli: daggerCLI{socket: env.DaggerSocket, project: slug}, Slug: slug}

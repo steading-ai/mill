@@ -123,7 +123,7 @@ var _ = Describe("Acceptance", Label("acceptance"), func() {
 		By("when the acceptance suite runs")
 		// It is running: the BeforeSuite started the dagger every scenario
 		// files into, and this scenario files as every other one does.
-		graph := newScratchGraph(ctx, "owns")
+		graph := newScratchGraph(ctx, "owns", placeholderVCSURL)
 
 		By("then it starts a dagger of its own and files its scratch projects there")
 		Expect(env.DaggerSocket).NotTo(BeEmpty(), "the BeforeSuite started a dagger")

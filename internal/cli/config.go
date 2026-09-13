@@ -42,7 +42,6 @@ type Config struct {
 	Tier         string   `yaml:"tier"`
 	WorkflowDir  string   `yaml:"workflow-dir"`
 	Sidecar      string   `yaml:"sidecar"`
-	VCSURL       string   `yaml:"vcs-url"`
 	Origin       string   `yaml:"origin"`
 	Ref          string   `yaml:"ref"`
 	Identity     string   `yaml:"identity"`
@@ -231,7 +230,6 @@ var configKeys = []configKey{
 	{"tier", "tier"},
 	{"workflow-dir", "workflow-dir"},
 	{"sidecar", "sidecar"},
-	{"vcs-url", "vcs-url"},
 	{"origin", "origin"},
 	{"ref", "ref"},
 	{"identity", "identity"},

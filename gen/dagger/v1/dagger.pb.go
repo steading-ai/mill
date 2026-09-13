@@ -546,7 +546,11 @@ type Project struct {
 	// The hold on this project, if it carries one. Every node in a held
 	// project leaves the ready set; unlike archiving, the project stays
 	// writable.
-	Hold          *Hold `protobuf:"bytes,9,opt,name=hold,proto3" json:"hold,omitempty"`
+	Hold *Hold `protobuf:"bytes,9,opt,name=hold,proto3" json:"hold,omitempty"`
+	// The clone URL of the repository the project delivers to, or empty.
+	// Dagger stores it for the orchestrators that work the project and never
+	// reads it itself: an absolute URL or nothing is all it checks.
+	VcsUrl        string `protobuf:"bytes,10,opt,name=vcs_url,json=vcsUrl,proto3" json:"vcs_url,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -642,6 +646,13 @@ func (x *Project) GetHold() *Hold {
 		return x.Hold
 	}
 	return nil
+}
+
+func (x *Project) GetVcsUrl() string {
+	if x != nil {
+		return x.VcsUrl
+	}
+	return ""
 }
 
 // Hold is the stored decision to park work: which principal applied it,
@@ -2326,7 +2337,7 @@ var File_dagger_v1_dagger_proto protoreflect.FileDescriptor
 
 const file_dagger_v1_dagger_proto_rawDesc = "" +
 	"\n" +
-	"\x16dagger/v1/dagger.proto\x12\tdagger.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xcb\x02\n" +
+	"\x16dagger/v1/dagger.proto\x12\tdagger.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xe4\x02\n" +
 	"\aProject\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06org_id\x18\x02 \x01(\tR\x05orgId\x12\x12\n" +
@@ -2338,7 +2349,9 @@ const file_dagger_v1_dagger_proto_rawDesc = "" +
 	"archivedAt\x129\n" +
 	"\n" +
 	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12#\n" +
-	"\x04hold\x18\t \x01(\v2\x0f.dagger.v1.HoldR\x04hold\"p\n" +
+	"\x04hold\x18\t \x01(\v2\x0f.dagger.v1.HoldR\x04hold\x12\x17\n" +
+	"\avcs_url\x18\n" +
+	" \x01(\tR\x06vcsUrl\"p\n" +
 	"\x04Hold\x12*\n" +
 	"\x02at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12\x0e\n" +
 	"\x02by\x18\x02 \x01(\tR\x02by\x12\x16\n" +

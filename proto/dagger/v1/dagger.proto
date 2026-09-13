@@ -166,6 +166,10 @@ message Project {
   // project leaves the ready set; unlike archiving, the project stays
   // writable.
   Hold hold = 9;
+  // The clone URL of the repository the project delivers to, or empty.
+  // Dagger stores it for the orchestrators that work the project and never
+  // reads it itself: an absolute URL or nothing is all it checks.
+  string vcs_url = 10;
 }
 
 // Hold is the stored decision to park work: which principal applied it,

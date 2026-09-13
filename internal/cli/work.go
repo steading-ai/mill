@@ -79,8 +79,7 @@ func bindWorkFlags(cmd *cobra.Command, opts *workOptions) {
 	f.StringVar(&opts.run.tier, "tier", "", "tier that workflow stands for, which gate policies compare against (default: quick-fix, or the assessed tier)")
 	f.StringVar(&opts.run.workflowDir, "workflow-dir", "", "directory the workflow was loaded from, for a check step's scripts")
 	f.StringVar(&opts.run.sidecar, "sidecar", envOr(sidecarEnv, claude.DefaultEntrypoint), "path of the harness sidecar's entrypoint (default: $"+sidecarEnv+")")
-	f.StringVar(&opts.run.vcsURL, "vcs-url", os.Getenv(vcsURLEnv), "repository the projects deliver to (default: $"+vcsURLEnv+")")
-	f.StringVar(&opts.run.origin, "origin", "", "repository a new workspace clones (default: the --vcs-url repository)")
+	f.StringVar(&opts.run.origin, "origin", "", "repository a new workspace clones (default: the project's repository)")
 	f.StringVar(&opts.run.ref, "ref", "", "ref a new workspace checks out (default: the repository's own HEAD)")
 	f.StringVar(&opts.run.workspaceDir, "workspace-dir", defaultWorkspaceDir(), "directory run workspaces are made under")
 	f.StringVar(&opts.run.workspace, "workspace", string(workspace.KindLocal), workspaceUsage)
@@ -142,7 +141,7 @@ func stringTargets(opts *workOptions) map[string]*string {
 		"socket": &opts.run.socket, "dagger-socket": &opts.run.daggerSocket,
 		"workflow": &opts.run.workflow, "tier": &opts.run.tier,
 		"workflow-dir": &opts.run.workflowDir, "sidecar": &opts.run.sidecar,
-		"vcs-url": &opts.run.vcsURL, "origin": &opts.run.origin, "ref": &opts.run.ref,
+		"origin": &opts.run.origin, "ref": &opts.run.ref,
 		"identity": &opts.run.identity, "name": &opts.run.name,
 		"workspace-dir": &opts.run.workspaceDir, "log-dir": &opts.run.logDir,
 		"workspace": &opts.run.workspace, "sandbox-root": &opts.run.sandboxRoot,
@@ -157,7 +156,7 @@ func stringValues(config Config) map[string]string {
 		"socket": config.Socket, "dagger-socket": config.DaggerSocket,
 		"workflow": config.Workflow, "tier": config.Tier,
 		"workflow-dir": config.WorkflowDir, "sidecar": config.Sidecar,
-		"vcs-url": config.VCSURL, "origin": config.Origin, "ref": config.Ref,
+		"origin": config.Origin, "ref": config.Ref,
 		"identity": config.Identity, "name": config.Name,
 		"workspace-dir": config.WorkspaceDir, "log-dir": config.LogDir,
 		"workspace": config.Workspace, "sandbox-root": config.SandboxRoot,
@@ -224,6 +223,14 @@ func newWorker(cmd *cobra.Command, opts *workOptions) (*run.Worker, error) {
 		if err != nil {
 			return nil, err
 		}
+		// A project with no repository is refused here, once, rather than
+		// at every claim: a worker that claimed, failed and released in a
+		// loop would spend leases on work it can never deliver. The run
+		// resolves the repository again from each claim, so a project
+		// given one later is honoured without a restart.
+		if _, err := projectRepository(cmd.Context(), runner.Dagger(), opts.run); err != nil {
+			return nil, fmt.Errorf("mill work: %w", err)
+		}
 		runners = append(runners, runner)
 	}
 	// What precedes the first claim: the machine backend's reconciliation
@@ -240,7 +247,7 @@ func newWorker(cmd *cobra.Command, opts *workOptions) (*run.Worker, error) {
 		return nil, err
 	}
 	log := slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: slog.LevelInfo}))
-	startup, err := workerStartup(kind, opts.run, projects[0], worker, cmd.OutOrStdout(), log)
+	startup, err := workerStartup(cmd.Context(), kind, opts.run, projects[0], worker, cmd.OutOrStdout(), log)
 	if err != nil {
 		return nil, err
 	}

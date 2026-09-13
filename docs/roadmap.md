@@ -154,7 +154,7 @@ Not mill's to build; mill's to wait on or work around.
 |---|---|---|
 | A notifier that carries gates to Slack (dagger plan nodes 11–12; thicket bridge consuming dagger events) | dagger, thicket | O1 — `thicket send` stopgap until then |
 | Approvals from Slack (`AskUserQuestion` re-ask bug #105, approvals #10) | thicket | O1's plan gate |
-| VCS URL on dagger's project model | dagger | O0 `forge` node reads a label until then |
+| VCS URL on dagger's project model | dagger | landed as `vcs_url` (dagger#23): a run delivers to its project's repository and the worker carries none of its own |
 | `dg admin` bootstrap so a second principal is not a `psql` job | dagger | O4 |
 | An orchestrator principal kind or stored delegation grants, and M2's "owns its own principal" wording reconciled with `onlyOrchestrators` | dagger | O4 |
 | tsnet enabled in dagger's deployment | dagger, homestead | O5 |

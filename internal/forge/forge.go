@@ -71,30 +71,19 @@ const (
 )
 
 // Project is a dagger project as the forge needs it: a name for errors, and
-// somewhere to find the repository it delivers to.
+// the repository it delivers to.
 //
-// dagger's project model carries neither a VCS URL field nor labels of its
-// own (dagger's docs/domain-model.md §Project), so there is one source for
-// the repository — what the operator passed the run — and VCSURL is it. The
-// field on dagger's project model is filed as dagger#23; until it lands,
-// [VCSURLFlag] and [VCSURLEnv] are what an error tells an operator to set.
+// VCSURL is dagger's own `vcs_url` on the project (dagger's
+// docs/domain-model.md §Project) and nothing else feeds it: the mill carries
+// no repository of its own, so two orchestrators and a person read the same
+// answer from the same place. A project with none is a [NoVCSURLError],
+// which names the `dg` command that sets it.
 type Project struct {
 	// Slug is the dagger project, named in every error this package raises.
 	Slug string
 	// VCSURL is the repository the project delivers to.
 	VCSURL string
 }
-
-// Where a repository URL comes from today, named in the error a project with
-// none raises. They are here rather than in the CLI because this package is
-// what refuses, and a refusal that cannot say what to set is a bug report
-// nobody can act on.
-const (
-	// VCSURLFlag is the flag `mill run` and `mill work` take it on.
-	VCSURLFlag = "--vcs-url"
-	// VCSURLEnv is the variable they read when the flag is absent.
-	VCSURLEnv = "MILL_VCS_URL"
-)
 
 // Repo is one repository on one forge: enough to reach its API and to push to
 // it, and nothing about the working copy.
@@ -345,9 +334,8 @@ type NoVCSURLError struct {
 }
 
 func (e *NoVCSURLError) Error() string {
-	return fmt.Sprintf("forge: project %s has no repository: pass %s or set %s; "+
-		"dagger's project model has no repository field yet (dagger#23)",
-		e.Project, VCSURLFlag, VCSURLEnv)
+	return fmt.Sprintf("forge: project %s has no repository: set it with `dg project update %s --vcs-url <url>`",
+		e.Project, e.Project)
 }
 
 // UnsupportedError is a repository on a forge the mill has no adapter for.

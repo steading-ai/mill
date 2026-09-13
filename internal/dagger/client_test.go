@@ -43,6 +43,19 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 			Expect(claimed.Lease.GetSessionRef()).To(Equal("spec"))
 		})
 
+		It("carries the project the node was claimed in, with the repository it delivers to", func() {
+			_, err := f.graph.UpdateProject(ctx, connect.NewRequest(&daggerv1.UpdateProjectRequest{
+				RequestId: "mill-spec-vcs-url", Project: projectSlug, VcsUrl: ptr("https://gitlab.example.test/group/thing.git"),
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			ref := f.node(ctx, "delivered", "body", daggerv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
+
+			claimed, err := f.mill.Claim(ctx, ref)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(claimed.Project.GetSlug()).To(Equal(projectSlug))
+			Expect(claimed.Project.GetVcsUrl()).To(Equal("https://gitlab.example.test/group/thing.git"))
+		})
+
 		It("leaves the node's labels as it found them", func() {
 			ref := f.node(ctx, "labelled", "body", daggerv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
 
@@ -186,6 +199,18 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 	})
 
 	Describe("Projects, for the reconciliation sweep", func() {
+		It("reads its own project by slug, with the repository it delivers to", func() {
+			_, err := f.graph.UpdateProject(ctx, connect.NewRequest(&daggerv1.UpdateProjectRequest{
+				RequestId: "mill-spec-vcs-url-get", Project: projectSlug, VcsUrl: ptr("https://gitlab.example.test/group/own.git"),
+			}))
+			Expect(err).NotTo(HaveOccurred())
+
+			project, err := f.mill.GetProject(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(project.GetSlug()).To(Equal(projectSlug))
+			Expect(project.GetVcsUrl()).To(Equal("https://gitlab.example.test/group/own.git"))
+		})
+
 		It("lists the active projects, archives one by slug, and says delete is not offered", func() {
 			_, err := f.graph.CreateProject(ctx, connect.NewRequest(&daggerv1.CreateProjectRequest{
 				RequestId: "mill-spec-scratch", Title: "scratch", Slug: "mill-acceptance-x-0badcafe",
@@ -234,3 +259,5 @@ func slugsOf(projects []*daggerv1.Project) []string {
 	}
 	return slugs
 }
+
+func ptr[T any](v T) *T { return &v }

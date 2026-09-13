@@ -12,6 +12,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/ivy/mill/internal/harness/claude"
+	"github.com/ivy/mill/internal/run"
 	"github.com/ivy/mill/internal/skill"
 	"github.com/ivy/mill/internal/version"
 	"github.com/ivy/mill/internal/workspace"
@@ -86,14 +87,14 @@ var _ = Describe("Choosing the workspace backend", Label("unit"), func() {
 		Expect(checkWorkspace(kind, opts)).To(Succeed())
 
 		By("when the run loop constructs its Workspaces function")
-		workspaces := workspacesFor(kind, opts, nil, redact.New())
+		workspaces := workspacesFor(kind, opts, redact.New())
 
 		By("then it is the local backend")
 		// The proof is what the function makes: a clone under the
 		// workspace directory, on the run's branch, recorded as local.
 		ws, err := workspaces(ctx, workspace.Spec{
 			RunID: "01SPECRUN0000000000000000A", NodeRef: "millspec#1", Origin: seedOrigin(), Ref: "main",
-		})
+		}, run.Repository{Origin: seedOrigin()})
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func(ctx context.Context) { Expect(ws.Destroy(ctx)).To(Succeed()) })
 		Expect(ws).To(BeAssignableToTypeOf(&local.Workspace{}))
@@ -113,9 +114,9 @@ var _ = Describe("Choosing the workspace backend", Label("unit"), func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(kind).To(Equal(workspace.KindMachine))
 
-		workspaces := workspacesFor(kind, opts, nil, redact.New())
+		workspaces := workspacesFor(kind, opts, redact.New())
 
-		_, err = workspaces(ctx, workspace.Spec{RunID: "01SPECRUN0000000000000000B", NodeRef: "millspec#1", Origin: "/nonexistent/origin.git"})
+		_, err = workspaces(ctx, workspace.Spec{RunID: "01SPECRUN0000000000000000B", NodeRef: "millspec#1", Origin: "/nonexistent/origin.git"}, run.Repository{})
 		Expect(err).To(MatchError(ContainSubstring("absent-sandbox")))
 	})
 

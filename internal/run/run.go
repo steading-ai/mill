@@ -89,8 +89,28 @@ type Workspace interface {
 }
 
 // Workspaces makes the workspace a run works in: reattached when this worker
-// left one behind, cloned from the run's branch when it did not.
-type Workspaces func(ctx context.Context, spec workspace.Spec) (Workspace, error)
+// left one behind, cloned from the run's branch when it did not. The
+// repository goes in with the spec because the `push` and `pr` verbs a
+// session reaches over the socket are the workspace's, and the workspace is
+// the run's.
+type Workspaces func(ctx context.Context, spec workspace.Spec, repo Repository) (Workspace, error)
+
+// Repository is where one run delivers and what its workspace clones,
+// resolved from the dagger project the claim came back with. It is the
+// run's and never the runner's: two runs of one worker may be on projects
+// whose repositories differ only in dagger.
+type Repository struct {
+	// Forge is the repository's forge, bound to the mill's credential.
+	Forge forge.Forge
+	// Origin is the URL a new workspace clones.
+	Origin string
+}
+
+// Repositories resolves a run's repository from its dagger project. It is
+// called once per run, after the run exists in the ledger and before its
+// workspace is cloned, so a project with no repository fails before it has
+// spent anything.
+type Repositories func(ctx context.Context, project *daggerv1.Project) (Repository, error)
 
 // inMachineSession is a workspace whose sessions run inside a sandbox, so
 // the paths a session's sidecar uses are the sandbox's and not the host's:
@@ -116,10 +136,6 @@ type inMachineSession interface {
 // worker drives at once never share an adapter or its execer.
 type HarnessesFor func(ws Workspace) (*harness.Registry, error)
 
-// Forges resolves the project's forge. It is a function rather than a value
-// because a run that never reaches a `forge` step should never need one.
-type Forges func(ctx context.Context) (forge.Forge, error)
-
 // Options is everything the runner is built from. Every field but the clock
 // and the log is required.
 type Options struct {
@@ -129,8 +145,8 @@ type Options struct {
 	Dagger *dagger.Client
 	// Workspaces makes the run's workspace.
 	Workspaces Workspaces
-	// Forges resolves the project's forge.
-	Forges Forges
+	// Repositories resolves the run's repository from its project.
+	Repositories Repositories
 	// Harnesses builds the adapter table a skill step's harness name is
 	// looked up in, for the run's workspace: on the machine backend a
 	// session's sidecar runs inside that workspace's machine, so the table
@@ -141,8 +157,6 @@ type Options struct {
 	// Workflow is the workflow name to select when a run has none. The
 	// project default, until the assessment step exists.
 	Workflow string
-	// Origin is the repository a new workspace clones.
-	Origin string
 	// WorkflowDir is the directory the workflow was loaded from, which a
 	// check step's relative command resolves against. Skill bodies come
 	// from the store; the scripts beside them do not, because the store
@@ -276,6 +290,9 @@ func New(options Options) *Runner {
 // well inside the window, so that one missed tick is not a lost node.
 func (r *Runner) Interval() time.Duration { return r.options.Interval }
 
+// Dagger is the runner's dagger client, scoped to its one project.
+func (r *Runner) Dagger() *dagger.Client { return r.options.Dagger }
+
 // state is one run in flight: what the loop carries between its stages.
 type state struct {
 	node      *daggerv1.Node
@@ -283,6 +300,9 @@ type state struct {
 	run       *millv1.Run
 	workflow  *millv1.Workflow
 	workspace Workspace
+	// repo is where this run delivers and what it cloned, resolved from the
+	// claim's project once per run.
+	repo Repository
 	// harnesses is the adapter table for this run's workspace, built once
 	// the workspace is opened (Options.Harnesses). A machine-backed run's
 	// sidecar runs inside its machine, so the table is the run's, not the
@@ -420,6 +440,16 @@ func (r *Runner) drive(ctx context.Context, claimed *dagger.Claimed, stopping <-
 	if err := r.openRun(ctx, s); err != nil {
 		return r.stop(ctx, s, err)
 	}
+	// The repository comes from the project the claim carried: read here,
+	// after the run exists and before anything is cloned, so a project
+	// with none stops through the same door as any other failure and the
+	// lease goes back.
+	repo, err := r.repository(ctx, claimed.Project)
+	if err != nil {
+		return r.stop(ctx, s, fmt.Errorf("run %s: %w", s.run.GetId(), err))
+	}
+	s.repo = repo
+	r.printf("delivers to %s\n", repo.Origin)
 
 	s.beat = r.startHeartbeat(ctx, s)
 	defer s.beat.stop()
@@ -567,10 +597,10 @@ func (r *Runner) openWorkspace(ctx context.Context, s *state) error {
 	ws, err := r.options.Workspaces(ctx, workspace.Spec{
 		RunID:   s.run.GetId(),
 		NodeRef: s.run.GetNodeRef(),
-		Origin:  r.options.Origin,
+		Origin:  s.repo.Origin,
 		Ref:     ref,
 		Egress:  r.options.Egress,
-	})
+	}, s.repo)
 	if errors.Is(err, workspace.ErrLostSandbox) {
 		return r.lostSandbox(ctx, s, err)
 	}
@@ -633,6 +663,20 @@ func (r *Runner) lostSandbox(ctx context.Context, s *state, cause error) error {
 	}
 	r.printf("%s: run %s failed: %s\n", s.node.GetReference(), s.run.GetId(), reason)
 	return fmt.Errorf("run %s: %w", s.run.GetId(), cause)
+}
+
+// repository resolves the run's repository: from the project the claim
+// carried, or from dagger when the claim carried none (a dagger older than
+// `vcs_url`).
+func (r *Runner) repository(ctx context.Context, project *daggerv1.Project) (Repository, error) {
+	if project == nil {
+		p, err := r.options.Dagger.GetProject(ctx)
+		if err != nil {
+			return Repository{}, err
+		}
+		project = p
+	}
+	return r.options.Repositories(ctx, project)
 }
 
 // runByNode reads the live run on a node, or nil.

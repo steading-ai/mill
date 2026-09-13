@@ -32,16 +32,21 @@ type machineStartup struct {
 // backend's pass, or nothing for the local one. The sweep's dagger client is
 // the worker's own — the configured socket and project, the worker's agent
 // ref — and never one the environment names.
-func workerStartup(kind workspace.Kind, opts runOptions, project, workerRef string, out io.Writer, log *slog.Logger) (run.Startup, error) {
+func workerStartup(ctx context.Context, kind workspace.Kind, opts runOptions, project, workerRef string, out io.Writer, log *slog.Logger) (run.Startup, error) {
 	if kind != workspace.KindMachine {
 		return nil, nil
 	}
-	config := machineConfig(opts, nil, nil)
-	externals := []machine.External{
-		sweep.Dagger(dagger.Dial(opts.daggerSocket, project, dagger.WithAgentRef(workerRef))),
-	}
+	config := machineConfig(opts, run.Repository{}, nil)
+	client := dagger.Dial(opts.daggerSocket, project, dagger.WithAgentRef(workerRef))
+	externals := []machine.External{sweep.Dagger(client)}
 	if opts.sandbox.scratchNamespace != "" {
-		repo, err := forge.RepoFor(forge.Project{Slug: project, VCSURL: opts.vcsURL})
+		// The scratch namespace is on the project's own forge, which the
+		// project names.
+		p, err := client.GetProject(ctx)
+		if err != nil {
+			return nil, err
+		}
+		repo, err := forge.RepoFor(forge.Project{Slug: project, VCSURL: p.GetVcsUrl()})
 		if err != nil {
 			return nil, err
 		}

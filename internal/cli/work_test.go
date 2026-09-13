@@ -22,7 +22,7 @@ import (
 
 var _ = Describe("mill serve --work", Label(testsupport.DBLabel), func() {
 	It("serves the store while a worker claims in the same process", func(ctx SpecContext) {
-		g := daggerNode(ctx)
+		g := daggerNodeWith(ctx, "https://forge.test/mill/mill.git")
 		databaseURL := pg.Database(ctx).Config().ConnString()
 		socket := filepath.Join(GinkgoT().TempDir(), "mill.sock")
 
@@ -47,7 +47,6 @@ var _ = Describe("mill serve --work", Label(testsupport.DBLabel), func() {
 			// driven.
 			"--label", "nothing-carries-this",
 			"--dagger-socket", g.service.Socket,
-			"--vcs-url", "https://forge.test/mill/mill.git",
 			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 			"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
 		})
@@ -90,11 +89,37 @@ var _ = Describe("mill serve --work", Label(testsupport.DBLabel), func() {
 		report, _ := runCLI(ctx, socket, "doctor",
 			"--dagger-socket", g.service.Socket, "--project", daggerProject,
 			"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
-			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
-			"--vcs-url", "")
+			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"))
 		for _, name := range []string{"socket", "schema", "dagger"} {
 			Expect(probeLine(report, name)).To(Equal("pass"), report)
 		}
+	})
+
+	// A project with no repository is refused at startup, once, rather
+	// than at every claim: a worker that claimed, failed and released in a
+	// loop would spend leases on work it can never deliver.
+	It("refuses to start on a project that names no repository", func(ctx SpecContext) {
+		g := daggerNode(ctx)
+		databaseURL := pg.Database(ctx).Config().ConnString()
+		config := filepath.Join(GinkgoT().TempDir(), "empty.yaml")
+		Expect(os.WriteFile(config, []byte("{}\n"), 0o600)).To(Succeed())
+
+		var stdout, stderr bytes.Buffer
+		root := cli.NewRootCommand(&stdout, &stderr)
+		root.SetArgs([]string{
+			"serve", "--work",
+			"--socket", filepath.Join(GinkgoT().TempDir(), "mill.sock"),
+			"--database-url", databaseURL,
+			"--config", config,
+			"--project", daggerProject,
+			"--dagger-socket", g.service.Socket,
+			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
+			"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
+		})
+
+		err := root.ExecuteContext(ctx)
+
+		Expect(err).To(MatchError(ContainSubstring("dg project update " + daggerProject + " --vcs-url")))
 	})
 })
 

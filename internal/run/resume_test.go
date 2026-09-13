@@ -48,11 +48,11 @@ var _ = Describe("Resume after a run died early", Label(testsupport.DBLabel), fu
 		var calls atomic.Int64
 		inner := f.workspaces()
 		err := f.runner(func(o *run.Options) {
-			o.Workspaces = func(ctx context.Context, spec workspace.Spec) (run.Workspace, error) {
+			o.Workspaces = func(ctx context.Context, spec workspace.Spec, repo run.Repository) (run.Workspace, error) {
 				if calls.Add(1) == 1 {
 					return nil, errors.New("the worker died making the workspace")
 				}
-				return inner(ctx, spec)
+				return inner(ctx, spec, repo)
 			}
 		}).Execute(ctx, f.nodeRef)
 		Expect(err).To(HaveOccurred(), "the run died before it chose a workflow")

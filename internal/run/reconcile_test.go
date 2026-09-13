@@ -146,7 +146,7 @@ var _ = Describe("Reconciliation on resume, in the loop", Label(testsupport.DBLa
 		By("when the worker starts and claims it")
 		f.script(f.quickFixScripts()...)
 		worker := f.workerOver(f.runner(quick, func(o *run.Options) {
-			o.Workspaces = func(context.Context, workspace.Spec) (run.Workspace, error) {
+			o.Workspaces = func(context.Context, workspace.Spec, run.Repository) (run.Workspace, error) {
 				opened.Add(1)
 				return nil, lost
 			}
@@ -180,7 +180,7 @@ var _ = Describe("Reconciliation on resume, in the loop", Label(testsupport.DBLa
 		f.script(f.quickFixScripts()...)
 		// Fail it the way a lost sandbox does, then claim again by hand.
 		err := f.runner(quick, func(o *run.Options) {
-			o.Workspaces = func(context.Context, workspace.Spec) (run.Workspace, error) {
+			o.Workspaces = func(context.Context, workspace.Spec, run.Repository) (run.Workspace, error) {
 				return nil, workspace.ErrLostSandbox
 			}
 		}).Execute(ctx, f.nodeRef)

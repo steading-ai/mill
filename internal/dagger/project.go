@@ -17,6 +17,16 @@ import (
 // sweep must reach exactly the dagger the worker was configured for and no
 // other (mill#49).
 
+// GetProject reads this client's project in full: the slug a bare reference
+// resolves in, and the repository it delivers to.
+func (c *Client) GetProject(ctx context.Context) (*daggerv1.Project, error) {
+	res, err := c.graph.GetProject(ctx, connect.NewRequest(&daggerv1.GetProjectRequest{Project: c.project}))
+	if err != nil {
+		return nil, wrap("dagger: get project "+c.project, err)
+	}
+	return res.Msg.GetProject(), nil
+}
+
 // ListProjects is every active project the principal can see, across every
 // page. Archived projects are not listed: they are already swept.
 func (c *Client) ListProjects(ctx context.Context) ([]*daggerv1.Project, error) {

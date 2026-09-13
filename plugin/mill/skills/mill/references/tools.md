@@ -395,7 +395,7 @@ line of reason. Takes no arguments; every probe is reported.
     {"name": "dagger", "ok": true, "reason": "/run/dagger/dg.sock answers; this account is a principal on mill, 1 node(s) ready for an agent"},
     {"name": "sidecar", "ok": false, "reason": "sidecar/dist/main.js did not answer: claude: the sidecar answered nothing before it exited"},
     {"name": "signing", "ok": false, "reason": "no signing key under ~/.local/state/mill/workspaces/signing"},
-    {"name": "forge", "ok": false, "reason": "no repository to probe: pass --vcs-url or set MILL_VCS_URL"},
+    {"name": "forge", "ok": false, "reason": "no repository to probe: forge: project mill has no repository: set it with `dg project update mill --vcs-url <url>`"},
     {"name": "notify", "ok": true, "reason": "contrib/notify/thicket-send.sh accepts a probe notice"}
   ]
 }

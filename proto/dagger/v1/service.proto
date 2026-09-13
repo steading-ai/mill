@@ -71,6 +71,9 @@ service GraphService {
   // ArchiveProject makes a project read-only. Keys stay valid forever and
   // existing edges keep their meaning.
   rpc ArchiveProject(ArchiveProjectRequest) returns (ArchiveProjectResponse);
+  // UpdateProject changes what a project carries about itself: today the
+  // repository it delivers to. Fields left unset are left alone.
+  rpc UpdateProject(UpdateProjectRequest) returns (UpdateProjectResponse);
   // HoldProject parks a project: every node in it leaves the ready set and
   // none of their statuses change. Unlike archiving, the project stays
   // writable, so parked work can still be planned.
@@ -702,6 +705,9 @@ message CreateProjectRequest {
   string slug = 3;
   // Advisory priority of the project. Dagger never sorts by it.
   Priority priority = 4;
+  // The clone URL of the repository the project delivers to. Optional; an
+  // absolute URL when given.
+  string vcs_url = 5;
 }
 
 // CreateProjectResponse is the created project.
@@ -753,6 +759,24 @@ message ArchiveProjectRequest {
 // ArchiveProjectResponse is the archived project.
 message ArchiveProjectResponse {
   // The project, with archived_at set.
+  Project project = 1;
+}
+
+// UpdateProjectRequest changes a project. A field that is unset is left
+// alone; one that is present and empty is cleared.
+message UpdateProjectRequest {
+  // Client-supplied idempotency key. Required.
+  string request_id = 1;
+  // The project, by slug, org/slug, or id.
+  string project = 2;
+  // New clone URL of the repository the project delivers to: an absolute
+  // URL, or the empty string to clear it.
+  optional string vcs_url = 3;
+}
+
+// UpdateProjectResponse is the project as it now stands.
+message UpdateProjectResponse {
+  // The project.
   Project project = 1;
 }
 
@@ -916,6 +940,9 @@ message ClaimNextResponse {
   // How much the claimed node's inputs come to. Unset when nothing was
   // claimed.
   InputsHint inputs = 3;
+  // The project the node was claimed in, so an orchestrator reads where the
+  // work delivers without a second call. Unset when nothing was claimed.
+  Project project = 4;
 }
 
 // HeartbeatRequest renews a lease.

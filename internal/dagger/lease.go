@@ -19,6 +19,11 @@ type Claimed struct {
 	// Lease is the claim. Its id is the fencing token every later write to
 	// the node carries.
 	Lease *daggerv1.Lease
+	// Project is the project the node was claimed in, as the claim
+	// response carried it: where the work delivers, read without a second
+	// call. Nil from a dagger older than the field, which [Client.GetProject]
+	// answers for.
+	Project *daggerv1.Project
 }
 
 // Claim takes a lease on one named node.
@@ -99,7 +104,7 @@ func (c *Client) claimLabelled(ctx context.Context, label, nodeID string) (*Clai
 		_ = c.Release(ctx, lease.GetId(), daggerv1.ReleaseReason_RELEASE_REASON_PREEMPTED, "mill: not the node asked for")
 		return nil, fmt.Errorf("dagger: claim returned %s, not the node asked for", node.GetReference())
 	}
-	return &Claimed{Node: node, Lease: lease}, nil
+	return &Claimed{Node: node, Lease: lease, Project: res.Msg.GetProject()}, nil
 }
 
 // Heartbeat renews a lease. A refusal is [ErrFenced]: the lease expired and
@@ -227,7 +232,7 @@ func (c *Client) ClaimNext(ctx context.Context, labels []string, wait time.Durat
 			return nil, wrap("dagger: claim next", err)
 		}
 		if node, lease := res.Msg.GetNode(), res.Msg.GetLease(); node != nil && lease != nil {
-			return &Claimed{Node: node, Lease: lease}, nil
+			return &Claimed{Node: node, Lease: lease, Project: res.Msg.GetProject()}, nil
 		}
 		if !time.Now().Before(deadline) {
 			return nil, nil

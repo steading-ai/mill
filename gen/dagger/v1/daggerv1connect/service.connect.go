@@ -90,6 +90,9 @@ const (
 	// GraphServiceArchiveProjectProcedure is the fully-qualified name of the GraphService's
 	// ArchiveProject RPC.
 	GraphServiceArchiveProjectProcedure = "/dagger.v1.GraphService/ArchiveProject"
+	// GraphServiceUpdateProjectProcedure is the fully-qualified name of the GraphService's
+	// UpdateProject RPC.
+	GraphServiceUpdateProjectProcedure = "/dagger.v1.GraphService/UpdateProject"
 	// GraphServiceHoldProjectProcedure is the fully-qualified name of the GraphService's HoldProject
 	// RPC.
 	GraphServiceHoldProjectProcedure = "/dagger.v1.GraphService/HoldProject"
@@ -147,6 +150,9 @@ type GraphServiceClient interface {
 	// ArchiveProject makes a project read-only. Keys stay valid forever and
 	// existing edges keep their meaning.
 	ArchiveProject(context.Context, *connect.Request[v1.ArchiveProjectRequest]) (*connect.Response[v1.ArchiveProjectResponse], error)
+	// UpdateProject changes what a project carries about itself: today the
+	// repository it delivers to. Fields left unset are left alone.
+	UpdateProject(context.Context, *connect.Request[v1.UpdateProjectRequest]) (*connect.Response[v1.UpdateProjectResponse], error)
 	// HoldProject parks a project: every node in it leaves the ready set and
 	// none of their statuses change. Unlike archiving, the project stays
 	// writable, so parked work can still be planned.
@@ -236,6 +242,12 @@ func NewGraphServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(graphServiceMethods.ByName("ArchiveProject")),
 			connect.WithClientOptions(opts...),
 		),
+		updateProject: connect.NewClient[v1.UpdateProjectRequest, v1.UpdateProjectResponse](
+			httpClient,
+			baseURL+GraphServiceUpdateProjectProcedure,
+			connect.WithSchema(graphServiceMethods.ByName("UpdateProject")),
+			connect.WithClientOptions(opts...),
+		),
 		holdProject: connect.NewClient[v1.HoldProjectRequest, v1.HoldProjectResponse](
 			httpClient,
 			baseURL+GraphServiceHoldProjectProcedure,
@@ -275,6 +287,7 @@ type graphServiceClient struct {
 	getProject     *connect.Client[v1.GetProjectRequest, v1.GetProjectResponse]
 	listProjects   *connect.Client[v1.ListProjectsRequest, v1.ListProjectsResponse]
 	archiveProject *connect.Client[v1.ArchiveProjectRequest, v1.ArchiveProjectResponse]
+	updateProject  *connect.Client[v1.UpdateProjectRequest, v1.UpdateProjectResponse]
 	holdProject    *connect.Client[v1.HoldProjectRequest, v1.HoldProjectResponse]
 	unholdProject  *connect.Client[v1.UnholdProjectRequest, v1.UnholdProjectResponse]
 	focus          *connect.Client[v1.FocusRequest, v1.FocusResponse]
@@ -331,6 +344,11 @@ func (c *graphServiceClient) ArchiveProject(ctx context.Context, req *connect.Re
 	return c.archiveProject.CallUnary(ctx, req)
 }
 
+// UpdateProject calls dagger.v1.GraphService.UpdateProject.
+func (c *graphServiceClient) UpdateProject(ctx context.Context, req *connect.Request[v1.UpdateProjectRequest]) (*connect.Response[v1.UpdateProjectResponse], error) {
+	return c.updateProject.CallUnary(ctx, req)
+}
+
 // HoldProject calls dagger.v1.GraphService.HoldProject.
 func (c *graphServiceClient) HoldProject(ctx context.Context, req *connect.Request[v1.HoldProjectRequest]) (*connect.Response[v1.HoldProjectResponse], error) {
 	return c.holdProject.CallUnary(ctx, req)
@@ -383,6 +401,9 @@ type GraphServiceHandler interface {
 	// ArchiveProject makes a project read-only. Keys stay valid forever and
 	// existing edges keep their meaning.
 	ArchiveProject(context.Context, *connect.Request[v1.ArchiveProjectRequest]) (*connect.Response[v1.ArchiveProjectResponse], error)
+	// UpdateProject changes what a project carries about itself: today the
+	// repository it delivers to. Fields left unset are left alone.
+	UpdateProject(context.Context, *connect.Request[v1.UpdateProjectRequest]) (*connect.Response[v1.UpdateProjectResponse], error)
 	// HoldProject parks a project: every node in it leaves the ready set and
 	// none of their statuses change. Unlike archiving, the project stays
 	// writable, so parked work can still be planned.
@@ -468,6 +489,12 @@ func NewGraphServiceHandler(svc GraphServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(graphServiceMethods.ByName("ArchiveProject")),
 		connect.WithHandlerOptions(opts...),
 	)
+	graphServiceUpdateProjectHandler := connect.NewUnaryHandler(
+		GraphServiceUpdateProjectProcedure,
+		svc.UpdateProject,
+		connect.WithSchema(graphServiceMethods.ByName("UpdateProject")),
+		connect.WithHandlerOptions(opts...),
+	)
 	graphServiceHoldProjectHandler := connect.NewUnaryHandler(
 		GraphServiceHoldProjectProcedure,
 		svc.HoldProject,
@@ -514,6 +541,8 @@ func NewGraphServiceHandler(svc GraphServiceHandler, opts ...connect.HandlerOpti
 			graphServiceListProjectsHandler.ServeHTTP(w, r)
 		case GraphServiceArchiveProjectProcedure:
 			graphServiceArchiveProjectHandler.ServeHTTP(w, r)
+		case GraphServiceUpdateProjectProcedure:
+			graphServiceUpdateProjectHandler.ServeHTTP(w, r)
 		case GraphServiceHoldProjectProcedure:
 			graphServiceHoldProjectHandler.ServeHTTP(w, r)
 		case GraphServiceUnholdProjectProcedure:
@@ -569,6 +598,10 @@ func (UnimplementedGraphServiceHandler) ListProjects(context.Context, *connect.R
 
 func (UnimplementedGraphServiceHandler) ArchiveProject(context.Context, *connect.Request[v1.ArchiveProjectRequest]) (*connect.Response[v1.ArchiveProjectResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("dagger.v1.GraphService.ArchiveProject is not implemented"))
+}
+
+func (UnimplementedGraphServiceHandler) UpdateProject(context.Context, *connect.Request[v1.UpdateProjectRequest]) (*connect.Response[v1.UpdateProjectResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("dagger.v1.GraphService.UpdateProject is not implemented"))
 }
 
 func (UnimplementedGraphServiceHandler) HoldProject(context.Context, *connect.Request[v1.HoldProjectRequest]) (*connect.Response[v1.HoldProjectResponse], error) {
