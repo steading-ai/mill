@@ -537,6 +537,44 @@ var _ = Describe("A machine on a real host", Label("live"), Serial, Ordered, fun
 		Expect(ws.EndStep(ctx, 1, false)).To(Succeed())
 	})
 
+	// Scenario: The checkout refuses a write under a read-only token
+	It("The checkout refuses a write under a read-only token", func(ctx context.Context) {
+		id := "acceptance-read-only-" + nonce
+		DeferCleanup(func() { sweep(id) })
+
+		By("given a live machine and a token that grants read and not write")
+		ws := machine.New(real, config)
+		_, err := ws.Create(ctx, workspace.Spec{RunID: id, NodeRef: "mill#91"})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func(ctx context.Context) { Expect(ws.Destroy(ctx)).To(Succeed()) })
+		Expect(ws.BeginStep(ctx, 1)).To(Succeed())
+		Expect(ws.Rotate(ctx, workspace.TokenFor("step-token-"+nonce, workspace.Read, workspace.Exec))).To(Succeed())
+
+		By("when the workspace execs touch /work/x")
+		process, err := ws.Exec(ctx, workspace.Command{Path: "touch", Args: []string{"/work/x"}})
+		Expect(err).NotTo(HaveOccurred())
+		_, stderr, result := drainProcess(process)
+
+		By("then the process exits non-zero and its stderr says the file system is read-only")
+		Expect(result.Status).NotTo(BeZero())
+		Expect(stderr).To(ContainSubstring("Read-only file system"))
+
+		By("and an exec of touch /tmp/x under the same token exits zero")
+		process, err = ws.Exec(ctx, workspace.Command{Path: "touch", Args: []string{"/tmp/x"}})
+		Expect(err).NotTo(HaveOccurred())
+		_, _, result = drainProcess(process)
+		Expect(result.Status).To(BeZero())
+
+		By("and under a token that grants write, touch /work/x exits zero")
+		Expect(ws.Rotate(ctx, workspace.TokenFor("step-token-w-"+nonce, workspace.Read, workspace.Write, workspace.Exec))).To(Succeed())
+		process, err = ws.Exec(ctx, workspace.Command{Path: "touch", Args: []string{"/work/x"}})
+		Expect(err).NotTo(HaveOccurred())
+		_, stderr, result = drainProcess(process)
+		Expect(result.Status).To(BeZero(), stderr)
+
+		Expect(ws.EndStep(ctx, 1, false)).To(Succeed())
+	})
+
 	// Scenario: The session dies with its step
 	It("The session dies with its step", func(ctx context.Context) {
 		id := "acceptance-session-dies-" + nonce

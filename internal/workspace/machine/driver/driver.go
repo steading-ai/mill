@@ -205,6 +205,11 @@ type ExecRequest struct {
 	Dir string
 	// User is who the process runs as inside the machine; `agent`.
 	User string
+	// ReadOnlyPaths are the paths the unit and everything it spawns see
+	// read-only, in a mount namespace of their own: `/work` for a step
+	// whose token lacks `write` (docs/sandbox.md §Exec). The helper admits
+	// exactly `/work`.
+	ReadOnlyPaths []string
 	// Env is the process's whole environment. There is no machine-wide
 	// environment for steps; what is not here is not set.
 	Env map[string]string

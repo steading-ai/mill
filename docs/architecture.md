@@ -179,7 +179,7 @@ Implementations behind the interface:
 
 | Kind | Checkout | Isolation | When |
 |---|---|---|---|
-| `local` | A clone under the mill's account | The account, the tool policy | MVP |
+| `local` | A clone under the mill's account | The account, the tool policy. A test backend — the specs and a laptop `mill run` — not one for production work | MVP |
 | `machine` | A clone on the host, bind-mounted into a `systemd-nspawn` machine booted per run from an ephemeral snapshot of the image the repo's `mill.toml` declares, so tests run their own services and containers inside it; `docs/sandbox.md` | The machine: a user namespace, its own network namespace behind the host's proxy, no credential inside | O2 |
 | `remote` | A clone on another host reached over the tailnet | That host's account | when a worker lives elsewhere |
 
@@ -191,7 +191,7 @@ The machine backend, `internal/workspace/machine`, reaches the host through one 
 
 A session gets the socket path and token, over the floor its harness's environment mode allows and nothing else (§"Skill steps: the harness adapter"). The adapter is the socket's client, not the session: the Claude sidecar holds the socket and re-exposes the verbs as an MCP server hosted in its own process, and the session's built-in `Read`/`Write`/`Edit`/`Bash` are removed by policy so the workspace's tools are the only filesystem and the only way to a process. A session cannot be pointed at the socket directly — the SDK's MCP transports are stdio, HTTP and in-process, and no URL spelling reaches a unix socket (`docs/spikes/mcp-workspace.md`). The mount is what makes every file and command one auditable call at a seam the mill owns; it is not what enforces. Enforcement is the process boundary `Workspace.Exec` sets — cwd, uid, environment — because a command run through `exec` is bounded by the process it spawns, not by the tool that spawned it.
 
-In MVP the adapter's tool allowlist is the **only** enforcement: the workspace's `local` implementation does not yet gate `exec` against `write`, so a reviewer allowed `Bash` to run tests can also write. MVP detects rather than prevents: a `clean-tree` check after every read-only step fails it if the tree changed, and the ledger says which session did it. The capability set becomes a second, independent layer with the machine workspace.
+On the `local` backend the adapter's tool allowlist is the **only** enforcement: the workspace's `local` implementation does not gate `exec` against `write`, so a reviewer allowed `Bash` to run tests can also write. It detects rather than prevents — a `clean-tree` check after every read-only step fails it if the tree changed, and the ledger says which session did it — which is fine for a test backend and is why it is not one for production work. On the `machine` backend the capability set is enforced on the filesystem: every process a step without `write` runs sees the checkout read-only (`docs/sandbox.md` §Exec), so a reviewer keeps its shell and cannot write.
 
 ## Identity and credentials
 

@@ -11,8 +11,9 @@
 # → commit → pr, so one context window and its cache hold the whole change.
 # The reviewer's carries review-plan and review: a reviewer that shared the
 # planner's context would be reviewing its own work, and R-38 gives the
-# reviewer no credential that can write. Feedback from either review returns
-# to the implementing session, which is where the work was done.
+# reviewer no credential that can write — on the machine backend, not even a
+# writable checkout (docs/sandbox.md §Exec). Feedback from either review
+# returns to the implementing session, which is where the work was done.
 #
 # Four skills are quick-fix's, referenced as `quick-fix/<name>`. A skill is
 # the portable part and carries nothing workflow-specific
@@ -133,7 +134,6 @@ steps:
           deny:
             - Write
             - Edit
-            - Bash
             - NotebookEdit
     on_failure: revise plan
     retries: 2
@@ -287,10 +287,13 @@ steps:
     retries: 2
     timeout: 15m
 
-  # The reviewer, in its own session and read-only on both halves: no write
-  # capability, so the workspace refuses fs.write and git.commit under this
-  # step's token, and a tool policy that keeps the write tools out of the
-  # session at all (docs/domain-model.md §Step, R-24, R-38). The reviewer is
+  # The reviewer, in its own session and read-only: no write capability, so
+  # the workspace refuses fs.write and git.commit under this step's token
+  # and the machine mounts the checkout read-only for every process the
+  # step runs (docs/sandbox.md §Exec); the tool policy keeps the write tools
+  # out of the session so no turn is spent on a write that would only fail.
+  # It has a shell: the diff, the suite and the files are its to read
+  # (docs/domain-model.md §Step, R-24, R-38). The reviewer is
   # asked again on its own two retries, and the third failure returns to
   # implement with the findings, which are the implementer's next prompt.
   #
@@ -313,7 +316,6 @@ steps:
           deny:
             - Write
             - Edit
-            - Bash
             - NotebookEdit
     on_failure: revise implement
     retries: 2

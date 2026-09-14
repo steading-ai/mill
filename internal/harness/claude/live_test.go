@@ -301,9 +301,9 @@ func reviewCheckout(satisfied bool) string {
 	return dir
 }
 
-// changed is the brief the mill puts in front of a reviewer: the change it
-// is judging, read out of the checkout, because a reviewer has no shell to
-// read it for itself (internal/run/verify.go).
+// changed stands in for the brief the mill puts in front of a reviewer
+// (internal/run/verify.go): here the change itself, inline, because this
+// spec's session has no checkout to run `git diff` in.
 func changed(dir string) string {
 	GinkgoHelper()
 

@@ -33,6 +33,17 @@ Verify the load-bearing claims. Open the files the plan names. A finding you
 did not check is a guess, and a guess sent back as blocking costs a whole
 attempt.
 
+## A revision
+
+When the plan comes back to you after a `revise`, the mill says so under
+*What changed since your last verdict*: which attempt, where the file is,
+and whether it changed. Read the plan again before you judge it — your
+findings are in your context, the revised plan is not until you open it.
+Judge the revision against the findings that sent it back and the same
+criteria as before. A blocking finding you did not raise the first time must
+be a gap the revision introduced; one you could have raised then is not
+blocking now, however true it is.
+
 ## The verdict
 
 Answer with the structured verdict the mill asks you for, and nothing else:

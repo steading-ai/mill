@@ -64,6 +64,63 @@ var _ = Describe("Exec into the machine", Label("unit"), func() {
 		Expect(ws.Rotate(ctx, workspace.TokenFor("the-step-bearer", workspace.Exec))).To(Succeed())
 	}
 
+	// Scenario: A step without write runs against a read-only checkout
+	// Scenario: A step with write runs against a writable checkout
+	//   (the request is the unit half; the live spec proves the mount.)
+	It("A step without write runs against a read-only checkout", func(ctx context.Context) {
+		create(ctx)
+		before := len(f.host.CallsTo(driver.Exec))
+		Expect(ws.BeginStep(ctx, 1)).To(Succeed())
+
+		By("given a machine workspace whose current token grants read and not write")
+		Expect(ws.Rotate(ctx, workspace.TokenFor("a-reviewer", workspace.Read, workspace.Exec))).To(Succeed())
+
+		By("when the workspace execs a command")
+		process, err := ws.Exec(ctx, workspace.Command{Path: "true"})
+		Expect(err).NotTo(HaveOccurred())
+		drainProcess(process)
+
+		By("then the exec request carries ReadOnlyPaths /work")
+		requests := execRequestsAfter(f.host, before)
+		Expect(requests).To(HaveLen(1))
+		Expect(requests[0].ReadOnlyPaths).To(Equal([]string{"/work"}))
+
+		By("and a rotation to a token that grants write lifts it")
+		Expect(ws.Rotate(ctx, workspace.TokenFor("an-implementer", workspace.Read, workspace.Write, workspace.Exec))).To(Succeed())
+		process, err = ws.Exec(ctx, workspace.Command{Path: "true"})
+		Expect(err).NotTo(HaveOccurred())
+		drainProcess(process)
+		requests = execRequestsAfter(f.host, before)
+		Expect(requests).To(HaveLen(2))
+		Expect(requests[1].ReadOnlyPaths).To(BeEmpty())
+	})
+
+	It("A step with write runs against a writable checkout", func(ctx context.Context) {
+		create(ctx)
+		before := len(f.host.CallsTo(driver.Exec))
+		Expect(ws.BeginStep(ctx, 1)).To(Succeed())
+
+		By("given a machine workspace whose current token grants write")
+		Expect(ws.Rotate(ctx, workspace.TokenFor("an-implementer", workspace.Write))).To(Succeed())
+
+		By("when the workspace execs a command")
+		process, err := ws.Exec(ctx, workspace.Command{Path: "true"})
+		Expect(err).NotTo(HaveOccurred())
+		drainProcess(process)
+
+		By("then the exec request carries no ReadOnlyPaths")
+		requests := execRequestsAfter(f.host, before)
+		Expect(requests).To(HaveLen(1))
+		Expect(requests[0].ReadOnlyPaths).To(BeEmpty())
+
+		By("and with no token installed at all the checkout is read-only")
+		Expect(ws.Rotate(ctx, workspace.Token{})).To(Succeed())
+		process, err = ws.Exec(ctx, workspace.Command{Path: "true"})
+		Expect(err).NotTo(HaveOccurred())
+		drainProcess(process)
+		Expect(execRequestsAfter(f.host, before)[1].ReadOnlyPaths).To(Equal([]string{"/work"}))
+	})
+
 	// Scenario: Stdout, stderr and the exit code come back intact and streamed
 	//   (the streaming itself is the live spec; here the fake spawns a real
 	//   process, so both streams and the status come back, and the exact

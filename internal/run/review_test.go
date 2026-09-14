@@ -123,6 +123,24 @@ var _ = Describe("The reviewer's verdict", Label(testsupport.DBLabel), func() {
 		Expect(next).To(ContainSubstring("AC-2"))
 		Expect(next).To(ContainSubstring("blocking"))
 
+		By("and the reviewer is told where the change is, not handed the diff")
+		first := calls[8].Prompt.Text
+		Expect(first).To(ContainSubstring("## The change you are reviewing"))
+		Expect(first).To(ContainSubstring("on branch " + f.runOf(ctx).GetBranch()))
+		base := stepRuns(detail, "implement")[0].GetBaseCommit()
+		Expect(base).NotTo(BeEmpty())
+		Expect(first).To(ContainSubstring("Run `git diff "+base[:7]), "the base is where implement's first attempt started")
+		Expect(first).To(ContainSubstring("session-1.txt"), "the files the run changed are named")
+		Expect(first).NotTo(ContainSubstring("```diff"), "the diff itself is the reviewer's to fetch")
+
+		By("and the reviewer's second prompt says implement ran again in answer to its findings, and names no file")
+		Expect(calls[8].Prompt.Text).NotTo(ContainSubstring("## What changed since your last verdict"),
+			"the first review is not a second look")
+		second := calls[13].Prompt.Text
+		Expect(second).To(ContainSubstring("## What changed since your last verdict"))
+		Expect(second).To(ContainSubstring("The `implement` step ran again (attempt 2) in answer to your findings"))
+		Expect(second).NotTo(ContainSubstring("The file you are judging"))
+
 		// And the run went on: the second verdict approved.
 		Expect(closedSteps(detail)).To(HaveKeyWithValue("review", millv1.EvidenceKind_EVIDENCE_KIND_VERDICT))
 		Expect(evidenceOf(detail, "review").GetVerdict().GetDecision()).
@@ -175,6 +193,97 @@ var _ = Describe("The reviewer's verdict", Label(testsupport.DBLabel), func() {
 		Expect(verdict).To(ContainSubstring(run.SessionID(f.runOf(ctx).GetContextId(), 1, "review")))
 		Expect(verdict).NotTo(ContainSubstring("the change is good"),
 			"the verdict is what the mill parsed, not what the session said")
+	})
+
+	// The reviewer's second look, after its own revise sent the work back.
+	// Its session is resumed, so the prompt it gets is the one it already
+	// answered plus what the mill has to say about the revision
+	// (docs/domain-model.md §Revise, "What the reviewer is told on its way
+	// back"). A run once spent three review rounds on one finding because
+	// the second and third prompts said nothing new and the reviewer
+	// answered them from memory (mill#90).
+	Describe("A second look", func() {
+		// writesAnotherPlan is a plan session that revised: different bytes
+		// from writesPlan's.
+		writesAnotherPlan := func(harness.Session) {
+			defer GinkgoRecover()
+			Expect(f.workspace.Write(context.Background(), planPath(f.nodeRef),
+				[]byte(planBody(f.runOf(context.Background()).GetId(), f.nodeRef)+"\n2. Revised.\n"))).To(Succeed())
+		}
+
+		// planRevised is a feature run whose first review-plan verdict is
+		// revise, whose plan step then runs again as replan, and whose
+		// second review-plan approves; then the rest of the workflow, with
+		// the review approving. Eleven calls: the second review-plan is the
+		// sixth.
+		planRevised := func(replan func(harness.Session)) []fake.Call {
+			GinkgoHelper()
+			scripts := pass()[:3]
+			scripts = append(scripts,
+				fake.Script{Terminal: fake.Terminal("", revises("AC-1", "the plan names no proof"), usage(5))},
+				fake.Script{Terminal: fake.Terminal("planned again", nil, usage(10)), Do: replan},
+				fake.Script{Terminal: fake.Terminal("", approves("AC-1", "the plan names its proof"), usage(5))},
+			)
+			scripts = append(scripts, pass()[4:]...)
+			scripts = append(scripts, fake.Script{Terminal: fake.Terminal("", approves("AC-1", "the change matches the plan"), usage(5))})
+			f.script(scripts...)
+			Expect(f.runner(func(o *run.Options) {
+				o.Workflow = "feature"
+				o.WorkflowDir = mustAbs(featureDir)
+			}).Execute(ctx, f.nodeRef)).To(Succeed())
+			calls := f.harness.Calls()
+			Expect(calls).To(HaveLen(11))
+			return calls
+		}
+
+		It("A reviewer's second look is told the plan was revised", func() {
+			By("given a feature run whose review-plan verdict was revise")
+			By("and the plan step ran again and wrote a different plan")
+			calls := planRevised(writesAnotherPlan)
+
+			By("when review-plan runs again")
+			second := calls[5].Prompt.Text
+
+			By("then its prompt says the plan step ran again in answer to its findings")
+			Expect(second).To(ContainSubstring("## What changed since your last verdict"))
+			Expect(second).To(ContainSubstring("The `plan` step ran again (attempt 2) in answer to your findings"))
+
+			By("and names the plan's path")
+			Expect(second).To(ContainSubstring(planPath(f.nodeRef)))
+
+			By("and says the file differs from the one it judged last")
+			Expect(second).To(ContainSubstring("differs from the one you judged last"))
+			Expect(second).NotTo(ContainSubstring("byte-identical"))
+		})
+
+		It("A plan the planner did not change is named as unchanged", func() {
+			By("given a feature run whose review-plan verdict was revise")
+			By("and the plan step ran again and wrote the same bytes")
+			calls := planRevised(writesPlan)
+
+			By("when review-plan runs again")
+			second := calls[5].Prompt.Text
+
+			By("then its prompt says the file is byte-identical to the one it judged last")
+			Expect(second).To(ContainSubstring("## What changed since your last verdict"))
+			Expect(second).To(ContainSubstring("byte-identical to the one you judged last"))
+			Expect(second).NotTo(ContainSubstring("differs"))
+		})
+
+		It("The first review of a plan is told where the plan is", func() {
+			By("given a feature run at its first review-plan attempt")
+			calls := planRevised(writesAnotherPlan)
+
+			By("when review-plan runs")
+			first := calls[3].Prompt.Text
+
+			By("then its prompt names the plan's path under \"The file you are judging\"")
+			Expect(first).To(ContainSubstring("## The file you are judging"))
+			Expect(first).To(ContainSubstring("`plan` step wrote `" + planPath(f.nodeRef) + "`"))
+
+			By("and carries no \"What changed since your last verdict\" heading")
+			Expect(first).NotTo(ContainSubstring("## What changed since your last verdict"))
+		})
 	})
 })
 

@@ -219,8 +219,11 @@ var _ = Describe("The systemd driver", Label("unit"), func() {
 				Slice:   "mill-step-2.slice",
 				Dir:     "/work",
 				User:    "agent",
-				Env:     map[string]string{"STEP_TOKEN": "t", "HOME": "/home/agent", "NO_PROXY": "a b"},
-				Argv:    []string{"sh", "-c", "cat"},
+				// A step without write: the checkout read-only for the
+				// unit (docs/sandbox.md §Exec).
+				ReadOnlyPaths: []string{"/work"},
+				Env:           map[string]string{"STEP_TOKEN": "t", "HOME": "/home/agent", "NO_PROXY": "a b"},
+				Argv:          []string{"sh", "-c", "cat"},
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -247,6 +250,7 @@ var _ = Describe("The systemd driver", Label("unit"), func() {
 				"-p", "Slice=mill-step-2.slice",
 				"-p", "WorkingDirectory=/work",
 				"-p", "User=agent",
+				"-p", "ReadOnlyPaths=/work",
 				"-p", "Environment=HOME=/home/agent",
 				"-p", "Environment=NO_PROXY=a b",
 				"-p", "Environment=STEP_TOKEN=t",

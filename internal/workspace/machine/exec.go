@@ -39,13 +39,23 @@ const execRetries = 1
 // §Network, §Credentials). There is no machine-wide environment for a step;
 // what is not here is not set.
 //
+// A step whose token lacks `write` — a reviewer, a check, the toolchain
+// step, or no token at all — runs against a read-only checkout: the exec's
+// unit gets `ReadOnlyPaths=/work`, so the unit and everything it spawns see
+// the checkout read-only in a mount namespace of their own, with `$HOME`,
+// `/tmp` and the cache binds writable and the machine itself untouched
+// (docs/sandbox.md §Exec). The capability set is the contract, whatever the
+// step kind; the socket enforces it for the verbs, and this enforces it for
+// the SDK's own file tools and the shell, which never reach the socket
+// (docs/domain-model.md §"Capability set").
+//
 // An exec with no step slice is refused before anything runs: nothing would
 // reap what it spawned, so it is a bug (docs/sandbox.md §Exec). Cancellation
 // is the helper's stop of the exec's own unit, not a kill of the local
 // client — killing the client leaves the unit running inside the machine.
 func (w *Workspace) Exec(ctx context.Context, command workspace.Command) (*workspace.Process, error) {
 	w.mu.RLock()
-	record, slice := w.record, w.slice
+	record, slice, token := w.record, w.slice, w.token
 	w.mu.RUnlock()
 	if record == nil {
 		return nil, ErrNotCreated
@@ -69,6 +79,9 @@ func (w *Workspace) Exec(ctx context.Context, command workspace.Command) (*works
 		User:    SessionUser,
 		Env:     w.execEnvironment(command),
 		Argv:    append([]string{w.inMachine(command.Path)}, command.Args...),
+	}
+	if !token.Grants(workspace.Write) {
+		request.ReadOnlyPaths = []string{config.Work}
 	}
 
 	process, err := w.execWithRetry(ctx, request)

@@ -561,14 +561,22 @@ func (r *Runner) prompt(ctx context.Context, s *state, step *millv1.Step, detail
 	if artifact != "" {
 		text += "\n\n" + artifact
 	}
-	// What a reviewer is judging, which it has no shell to fetch for
-	// itself (internal/run/verify.go).
+	// What a reviewer is judging, and where (internal/run/verify.go).
 	review, err := r.reviewBrief(ctx, s, step, detail)
 	if err != nil {
 		return harness.Prompt{}, err
 	}
 	if review != "" {
 		text += "\n\n" + review
+	}
+	// What a reviewer that already judged this work once is told about
+	// the revision it is looking at now (internal/run/verify.go).
+	revision, err := r.revisionBrief(s, step, detail)
+	if err != nil {
+		return harness.Prompt{}, err
+	}
+	if revision != "" {
+		text += "\n\n" + revision
 	}
 	if feedback != "" {
 		// A revise's feedback is the mill's own words about a check or a

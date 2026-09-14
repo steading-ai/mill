@@ -234,6 +234,9 @@ func (d *systemdDriver) Exec(ctx context.Context, request ExecRequest) (*workspa
 	if request.User != "" {
 		args = append(args, "-p", "User="+request.User)
 	}
+	for _, path := range request.ReadOnlyPaths {
+		args = append(args, "-p", "ReadOnlyPaths="+path)
+	}
 	for _, name := range slices.Sorted(maps.Keys(request.Env)) {
 		args = append(args, "-p", "Environment="+name+"="+request.Env[name])
 	}

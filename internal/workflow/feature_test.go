@@ -130,7 +130,10 @@ var _ = Describe("The feature workflow", Label("unit"), func() {
 
 	// The scenario. docs/domain-model.md §Step: a reviewer declares both
 	// halves — no write capability, and a tool policy that keeps the write
-	// tools out of the session at all.
+	// tools out of the session at all. Bash stays: on the machine backend
+	// the checkout is mounted read-only for a step without write
+	// (docs/sandbox.md §Exec), and the shell is how the reviewer fetches
+	// the diff and runs the suite.
 	Describe("The reviewer cannot write", func() {
 		It("The reviewer cannot write", func() {
 			By("given the feature workflow is loaded")
@@ -141,8 +144,8 @@ var _ = Describe("The feature workflow", Label("unit"), func() {
 			tools, ok := options["tools"].(map[string]any)
 			Expect(ok).To(BeTrue(), "the review step names a tool policy")
 
-			By("then Write, Edit and Bash are denied")
-			Expect(tools["deny"]).To(ConsistOf("Write", "Edit", "Bash", "NotebookEdit"))
+			By("then the write tools are denied, and the shell is not")
+			Expect(tools["deny"]).To(ConsistOf("Write", "Edit", "NotebookEdit"))
 			Expect(tools).NotTo(HaveKey("allow"), "an allow list beside a deny list is two answers to one question")
 
 			By("and the step's capabilities are read only")
