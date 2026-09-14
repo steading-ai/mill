@@ -76,7 +76,7 @@ func (r *Runner) beat(ctx context.Context, s *state) error {
 		}
 		return err
 	}
-	run, err := r.runByNode(ctx, s.node.GetId())
+	run, _, err := r.runByNode(ctx, s.node.GetId())
 	if err != nil {
 		// A store that cannot be read is not a reason to drop a lease that
 		// dagger just renewed. The next tick asks again.

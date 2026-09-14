@@ -210,6 +210,12 @@ message GetRunByNodeRequest {
 message GetRunByNodeResponse {
   // The live run, unset when there is none.
   Run run = 1;
+  // The generation a new run on this node takes: one past the newest run
+  // the node has had, abandoned ones included, so a claim after a restart
+  // — or after a restart that stopped short of creating the next
+  // generation — never collides with the record (Invariant 1). 1 when the
+  // node has never run.
+  int64 next_generation = 2;
 }
 
 // CreateRunRequest opens a run on a claimed node.

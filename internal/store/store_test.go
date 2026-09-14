@@ -80,6 +80,28 @@ var _ = Describe("SetLease", Label(testsupport.DBLabel), func() {
 		}, false),
 	)
 
+	// Scenario: The next generation counts the abandoned one
+	It("The next generation counts the abandoned one", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		By("given a node that has never run")
+		Expect(l.store.NextGeneration(ctx, "node-never")).To(Equal(int64(1)))
+
+		By("and a node whose only run a restart abandoned")
+		run, _ := l.runWithWorkflow(ctx, "mill#8")
+		_, err := l.store.Abandon(ctx, l.lease, run.GetId(), "restart")
+		Expect(err).NotTo(HaveOccurred())
+
+		By("when the next generation is asked for")
+		next, err := l.store.NextGeneration(ctx, run.GetNodeId())
+		Expect(err).NotTo(HaveOccurred())
+
+		By("then it is one past the abandoned generation, which GetRunByNode no longer returns")
+		Expect(next).To(Equal(int64(2)))
+		live, err := l.store.GetRunByNode(ctx, run.GetNodeId())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(live).To(BeNil())
+	}, SpecTimeout(time.Minute))
+
 	It("makes the new lease what later writes are compared against", func(ctx SpecContext) {
 		l := newLedger(ctx)
 		run, _ := l.runWithWorkflow(ctx, "mill#8")

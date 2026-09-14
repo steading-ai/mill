@@ -40,6 +40,12 @@ func (s *Service) GetRunByNode(ctx context.Context, nodeID string) (*millv1.Run,
 	return s.store.GetRunByNode(ctx, nodeID)
 }
 
+// NextGeneration is the generation a new run on the node takes: one past
+// the newest the node has had, abandoned included.
+func (s *Service) NextGeneration(ctx context.Context, nodeID string) (int64, error) {
+	return s.store.NextGeneration(ctx, nodeID)
+}
+
 // CreateRun opens a run in status selecting, holding the lease of the claim
 // that created it. A run has no prior status, so there is no transition to
 // judge; at most one live run per node is the store's Invariant 1.

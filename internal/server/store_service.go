@@ -33,7 +33,11 @@ func (s *StoreService) GetRunByNode(ctx context.Context, req *connect.Request[mi
 	if err != nil {
 		return nil, connectError(err)
 	}
-	return connect.NewResponse(&millv1.GetRunByNodeResponse{Run: run}), nil
+	next, err := s.svc.NextGeneration(ctx, req.Msg.GetNodeId())
+	if err != nil {
+		return nil, connectError(err)
+	}
+	return connect.NewResponse(&millv1.GetRunByNodeResponse{Run: run, NextGeneration: next}), nil
 }
 
 // CreateRun opens a run on a claimed node, in status selecting.

@@ -28,6 +28,11 @@ SELECT * FROM runs
 WHERE node_id = $1 AND status <> 'abandoned'
 ORDER BY generation DESC LIMIT 1;
 
+-- The generation the next run on a node takes: one past the newest of any
+-- status, because an abandoned generation keeps its row and its number.
+-- name: NextGenerationByNode :one
+SELECT COALESCE(MAX(generation), 0)::bigint + 1 FROM runs WHERE node_id = $1;
+
 -- name: InsertRun :one
 INSERT INTO runs (id, node_id, node_ref, generation, context_id, lease_id, worker_ref, branch)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)

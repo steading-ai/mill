@@ -367,6 +367,19 @@ func (q *Queries) MarkRunWaiting(ctx context.Context, arg MarkRunWaitingParams) 
 	return i, err
 }
 
+const nextGenerationByNode = `-- name: NextGenerationByNode :one
+SELECT COALESCE(MAX(generation), 0)::bigint + 1 FROM runs WHERE node_id = $1
+`
+
+// The generation the next run on a node takes: one past the newest of any
+// status, because an abandoned generation keeps its row and its number.
+func (q *Queries) NextGenerationByNode(ctx context.Context, nodeID string) (int32, error) {
+	row := q.db.QueryRow(ctx, nextGenerationByNode, nodeID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const parkRun = `-- name: ParkRun :one
 UPDATE runs
 SET status = 'parked', gate_node_id = $2, parked_reason = $3, lease_id = NULL

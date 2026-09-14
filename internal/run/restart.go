@@ -33,45 +33,49 @@ func (r *Runner) Restart(ctx context.Context, nodeRef, reason string) (*millv1.R
 	if node.GetAssigneeKind() == daggerv1.AssigneeKind_ASSIGNEE_KIND_USER {
 		return nil, &dagger.UserNodeError{Ref: nodeRef, Verb: "restart"}
 	}
-	old, err := r.runByNode(ctx, node.GetId())
+	old, next, err := r.runByNode(ctx, node.GetId())
 	if err != nil {
 		return nil, err
 	}
-	if old == nil {
+	switch {
+	case old == nil && next == 1:
 		return nil, fmt.Errorf("%w: %s has no run to restart", ErrRefused, nodeRef)
-	}
-	if old.GetStatus() == millv1.RunStatus_RUN_STATUS_ABANDONED {
-		return nil, fmt.Errorf("%w: run %s is already abandoned", ErrRefused, old.GetId())
-	}
+	case old == nil:
+		// The last generation is abandoned and nothing replaced it: a
+		// restart that got as far as the abandon and stopped — the forge
+		// refused to close the branch, say. Running it again finishes it;
+		// there is nothing left to take back, discard or close.
+		r.printf("%s has no live run; generation %d is abandoned, finishing its restart\n", nodeRef, next-1)
+	default:
+		if err := r.preempt(ctx, old, reason); err != nil {
+			return nil, err
+		}
+		if _, err := call(ctx, r.options.Store.Abandon, &millv1.AbandonRequest{
+			RunId:  old.GetId(),
+			Reason: reason,
+		}); err != nil {
+			return nil, err
+		}
+		r.printf("run %s of %s abandoned at generation %d\n", old.GetId(), nodeRef, old.GetGeneration())
 
-	if err := r.preempt(ctx, old, reason); err != nil {
-		return nil, err
-	}
-	if _, err := call(ctx, r.options.Store.Abandon, &millv1.AbandonRequest{
-		RunId:  old.GetId(),
-		Reason: reason,
-	}); err != nil {
-		return nil, err
-	}
-	r.printf("run %s of %s abandoned at generation %d\n", old.GetId(), nodeRef, old.GetGeneration())
-
-	// A restart closes the pull request and deletes the branch, so it needs
-	// the same repository a run has. A project with none still restarts;
-	// only the forge half is skipped.
-	repo, err := r.repository(ctx, nil)
-	if err != nil {
-		r.options.Log.Debug("no repository for the restart", "run", old.GetId(), "error", err)
-	}
-	r.discardWorkspace(ctx, old, repo)
-	if err := r.closeBranch(ctx, old, reason, repo); err != nil {
-		return nil, err
+		// A restart closes the pull request and deletes the branch, so it
+		// needs the same repository a run has. A project with none still
+		// restarts; only the forge half is skipped.
+		repo, err := r.repository(ctx, nil)
+		if err != nil {
+			r.options.Log.Debug("no repository for the restart", "run", old.GetId(), "error", err)
+		}
+		r.discardWorkspace(ctx, old, repo)
+		if err := r.closeBranch(ctx, old, reason, repo); err != nil {
+			return nil, err
+		}
 	}
 
 	created, err := call(ctx, r.options.Store.CreateRun, &millv1.CreateRunRequest{
 		NodeId:     node.GetId(),
 		NodeRef:    node.GetReference(),
 		ContextId:  node.GetContextId(),
-		Generation: old.GetGeneration() + 1,
+		Generation: next,
 		WorkerRef:  r.options.WorkerRef,
 		Branch:     workspace.BranchFor(node.GetReference()),
 	})

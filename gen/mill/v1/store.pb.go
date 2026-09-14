@@ -84,9 +84,15 @@ func (x *GetRunByNodeRequest) GetNodeId() string {
 type GetRunByNodeResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// The live run, unset when there is none.
-	Run           *Run `protobuf:"bytes,1,opt,name=run,proto3" json:"run,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Run *Run `protobuf:"bytes,1,opt,name=run,proto3" json:"run,omitempty"`
+	// The generation a new run on this node takes: one past the newest run
+	// the node has had, abandoned ones included, so a claim after a restart
+	// — or after a restart that stopped short of creating the next
+	// generation — never collides with the record (Invariant 1). 1 when the
+	// node has never run.
+	NextGeneration int64 `protobuf:"varint,2,opt,name=next_generation,json=nextGeneration,proto3" json:"next_generation,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *GetRunByNodeResponse) Reset() {
@@ -124,6 +130,13 @@ func (x *GetRunByNodeResponse) GetRun() *Run {
 		return x.Run
 	}
 	return nil
+}
+
+func (x *GetRunByNodeResponse) GetNextGeneration() int64 {
+	if x != nil {
+		return x.NextGeneration
+	}
+	return 0
 }
 
 // CreateRunRequest opens a run on a claimed node.
@@ -4896,9 +4909,10 @@ const file_mill_v1_store_proto_rawDesc = "" +
 	"\n" +
 	"\x13mill/v1/store.proto\x12\amill.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18harness/v1/harness.proto\x1a\x12mill/v1/mill.proto\".\n" +
 	"\x13GetRunByNodeRequest\x12\x17\n" +
-	"\anode_id\x18\x01 \x01(\tR\x06nodeId\"6\n" +
+	"\anode_id\x18\x01 \x01(\tR\x06nodeId\"_\n" +
 	"\x14GetRunByNodeResponse\x12\x1e\n" +
-	"\x03run\x18\x01 \x01(\v2\f.mill.v1.RunR\x03run\"\xd7\x01\n" +
+	"\x03run\x18\x01 \x01(\v2\f.mill.v1.RunR\x03run\x12'\n" +
+	"\x0fnext_generation\x18\x02 \x01(\x03R\x0enextGeneration\"\xd7\x01\n" +
 	"\x10CreateRunRequest\x12\x19\n" +
 	"\blease_id\x18\x01 \x01(\tR\aleaseId\x12\x17\n" +
 	"\anode_id\x18\x02 \x01(\tR\x06nodeId\x12\x19\n" +

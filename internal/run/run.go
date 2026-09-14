@@ -473,7 +473,7 @@ func (r *Runner) drive(ctx context.Context, claimed *dagger.Claimed, stopping <-
 // second `mill run` of the crash scenario ends here: it finds the node done,
 // marks the run done, and sends no second patch.
 func (r *Runner) reconcileDone(ctx context.Context, node *daggerv1.Node) error {
-	run, err := r.runByNode(ctx, node.GetId())
+	run, _, err := r.runByNode(ctx, node.GetId())
 	if err != nil {
 		return err
 	}
@@ -497,18 +497,22 @@ func (r *Runner) reconcileDone(ctx context.Context, node *daggerv1.Node) error {
 // openRun finds or creates the run and takes it over under this claim's
 // lease. It is the switch at the head of the resume algorithm.
 func (r *Runner) openRun(ctx context.Context, s *state) error {
-	run, err := r.runByNode(ctx, s.node.GetId())
+	run, next, err := r.runByNode(ctx, s.node.GetId())
 	if err != nil {
 		return err
 	}
 	switch {
 	case run == nil:
+		// No live run: the node's first, or the one after a restart —
+		// including a restart that abandoned the last generation and
+		// stopped before creating the next. The store says which number
+		// is free; guessing 1 would collide with the abandoned row.
 		created, err := call(ctx, r.options.Store.CreateRun, &millv1.CreateRunRequest{
 			LeaseId:    s.lease,
 			NodeId:     s.node.GetId(),
 			NodeRef:    s.node.GetReference(),
 			ContextId:  s.node.GetContextId(),
-			Generation: 1,
+			Generation: next,
 			WorkerRef:  r.options.WorkerRef,
 			Branch:     workspace.BranchFor(s.node.GetReference()),
 		})
@@ -680,12 +684,15 @@ func (r *Runner) repository(ctx context.Context, project *daggerv1.Project) (Rep
 }
 
 // runByNode reads the live run on a node, or nil.
-func (r *Runner) runByNode(ctx context.Context, nodeID string) (*millv1.Run, error) {
+// runByNode is the live run on a node, or nil, and beside it the
+// generation a new run would take: one past the newest the node has had,
+// abandoned included.
+func (r *Runner) runByNode(ctx context.Context, nodeID string) (*millv1.Run, int64, error) {
 	res, err := call(ctx, r.options.Store.GetRunByNode, &millv1.GetRunByNodeRequest{NodeId: nodeID})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return res.GetRun(), nil
+	return res.GetRun(), res.GetNextGeneration(), nil
 }
 
 // stop is the one exit. A fenced runner writes nothing more — not to the

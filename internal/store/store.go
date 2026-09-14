@@ -193,6 +193,18 @@ func (s *Store) GetRunByNode(ctx context.Context, nodeID string) (*millv1.Run, e
 	return runProto(row), nil
 }
 
+// NextGeneration is the generation a new run on the node takes: one past
+// the newest run it has had, abandoned included, and 1 for a node that has
+// never run. It is what CreateRun must be given after a restart, and what
+// a claim that finds no live run gives it.
+func (s *Store) NextGeneration(ctx context.Context, nodeID string) (int64, error) {
+	next, err := New(s.pool).NextGenerationByNode(ctx, nodeID)
+	if err != nil {
+		return 0, fmt.Errorf("next generation for node %s: %w", nodeID, err)
+	}
+	return int64(next), nil
+}
+
 // GetRun returns one run by id.
 func (s *Store) GetRun(ctx context.Context, runID string) (*millv1.Run, error) {
 	row, err := New(s.pool).GetRun(ctx, runID)
