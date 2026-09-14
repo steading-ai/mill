@@ -146,13 +146,15 @@ func (r *Runner) reviewed(ctx context.Context, s *state, step *millv1.Step, sr *
 }
 
 // attachVerdict puts the verdict on the node as a text artifact named for
-// the step and the attempt — `review-2.md` — carrying the decision, the
-// findings, and the id of the session that reviewed. It is the half of the
-// record a person reads: the ledger holds the same verdict as evidence, and
-// a node in dagger is where somebody looks when asking why a change was sent
-// back.
+// the step, the generation and the attempt — `review-1.2.md` — carrying the
+// decision, the findings, and the id of the session that reviewed. It is
+// the half of the record a person reads: the ledger holds the same verdict
+// as evidence, and a node in dagger is where somebody looks when asking why
+// a change was sent back. The generation is in the name because dagger
+// admits one artifact per name on a node and a restart's generation reviews
+// again from attempt 1 (mill#93).
 func (r *Runner) attachVerdict(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, verdict *millv1.Verdict) error {
-	name := fmt.Sprintf("%s-%d.md", step.GetName(), sr.GetAttempt())
+	name := fmt.Sprintf("%s-%d.%d.md", step.GetName(), s.run.GetGeneration(), sr.GetAttempt())
 	body := verdictDocument(s, step, sr, verdict)
 	return r.options.Dagger.AttachText(ctx,
 		dagger.RequestID(s.run.GetId(), name, sr.GetAttempt()), s.lease,
@@ -160,6 +162,7 @@ func (r *Runner) attachVerdict(ctx context.Context, s *state, step *millv1.Step,
 		map[string]any{
 			"run_id":     s.run.GetId(),
 			"step":       step.GetName(),
+			"generation": float64(s.run.GetGeneration()),
 			"attempt":    float64(sr.GetAttempt()),
 			"session_id": sr.GetSessionId(),
 			"decision":   decisionWord(verdict.GetDecision()),

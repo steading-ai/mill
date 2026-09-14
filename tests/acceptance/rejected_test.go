@@ -168,12 +168,13 @@ func reviewerWorkflow(ctx context.Context, project string) (name, dir string) {
 }
 
 // verdictPattern matches the artifacts the run attaches for each review
-// attempt that reached a verdict: `review-1.md` (internal/run/verify.go).
-var verdictPattern = regexp.MustCompile(`^review-(\d+)\.md$`)
+// attempt that reached a verdict: `review-<generation>.<attempt>.md`
+// (internal/run/verify.go); the capture is the attempt.
+var verdictPattern = regexp.MustCompile(`^review-\d+\.(\d+)\.md$`)
 
 // firstVerdict is the earliest review attempt that reached a verdict, and
 // the document the run put on the node for it. It is the earliest and not
-// simply `review-1.md` because an attempt whose output did not parse is
+// simply `review-1.1.md` because an attempt whose output did not parse is
 // judged nothing and records no verdict at all: the mill asks that reviewer
 // again, and the first verdict is the first one there is
 // (docs/domain-model.md §Verdict).

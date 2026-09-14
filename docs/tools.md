@@ -161,7 +161,7 @@ review          2        closed         verdict      approve (AC-2: the assertio
 
 A `revise` closes nothing, so the attempt it failed has no evidence and no
 value: that is the empty row above. The verdict behind it is on the node in
-dagger, as a text artifact named `<step>-<attempt>.md` carrying the decision,
+dagger, as a text artifact named `<step>-<generation>.<attempt>.md` carrying the decision,
 every finding, and the id of the session that reviewed
 ([domain-model.md](domain-model.md) §Verdict). The same findings are the next
 attempt's prompt, and `mill logs --step review` is the session that wrote

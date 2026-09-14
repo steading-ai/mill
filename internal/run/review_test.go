@@ -184,9 +184,9 @@ var _ = Describe("The reviewer's verdict", Label(testsupport.DBLabel), func() {
 		})
 
 		By("when the node is shown in dagger")
-		verdict := artifactNamed(f.artifactsOn(ctx), "review-1.md")
+		verdict := artifactNamed(f.artifactsOn(ctx), "review-1.1.md")
 
-		By("then a text artifact carries the verdict with its findings and the reviewing session's id")
+		By("then a text artifact named for the step, the generation and the attempt carries the verdict with its findings and the reviewing session's id")
 		Expect(verdict).To(ContainSubstring("decision: approve"))
 		Expect(verdict).To(ContainSubstring("the change matches the plan"))
 		Expect(verdict).To(ContainSubstring("AC-1"))
