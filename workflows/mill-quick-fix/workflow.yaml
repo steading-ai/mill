@@ -58,7 +58,7 @@ steps:
       - exec
     harness:
       claude:
-        model: opus
+        model: sonnet
         effort: high
         tools:
           allow:

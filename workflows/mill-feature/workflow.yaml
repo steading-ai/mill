@@ -58,7 +58,7 @@ steps:
       - read
     harness:
       claude:
-        model: opus
+        model: sonnet
         effort: high
         tools:
           allow:
@@ -86,7 +86,7 @@ steps:
       - write
     harness:
       claude:
-        model: opus
+        model: sonnet
         effort: high
         tools:
           allow:
@@ -182,7 +182,7 @@ steps:
       - exec
     harness:
       claude:
-        model: opus
+        model: sonnet
         effort: high
         tools:
           allow:
@@ -209,7 +209,7 @@ steps:
       - exec
     harness:
       claude:
-        model: opus
+        model: sonnet
         effort: medium
         tools:
           allow:
