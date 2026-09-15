@@ -177,7 +177,7 @@ The row is written twice by the worker: `RecordWorkspace` once the workspace is 
 
 ### `reconciliations`
 
-One row per pass a worker ran at start, before its first claim (`docs/sandbox.md` §Reconciliation): the worker, when the pass began, and its findings as `[{kind, name, action, detail}]` — orphans stopped, lost sandboxes noted, slices reaped for resume, leftovers removed, scratch projects swept, failures. A record of the host rather than of a run: an orphan machine has no live run to hang an event on, so it is its own table and no lease fences it. Append-only.
+One row per pass a worker ran: the host's, at start before its first claim (`docs/sandbox.md` §Reconciliation), and the sweep's, at start and between claims (§Sweep). The worker, when the pass began, and its findings as `[{kind, name, action, detail}]` — orphans stopped, lost sandboxes noted, slices reaped for resume, leftovers removed, scratch projects swept, stranded runs failed or caught up, failures. A record of the host and of the ledger against dagger rather than of a run: an orphan machine has no live run to hang an event on, so it is its own table and no lease fences it. Append-only.
 
 ### `events`
 
@@ -197,7 +197,7 @@ The store enforces these with constraints or in the writing transaction. A viola
 6. **Evidence is never updated or deleted.** No `UPDATE` or `DELETE` grants on the table for the application role.
 7. **Attempts are contiguous.** `attempt` for `(run_id, step_name)` is `max + 1`, assigned in the insert.
 8. **A live token belongs to a `running` step run.** Revocation is written in the same transaction that moves the step run out of `running`.
-9. **Every store write is fenced by the lease, atomically.** Every statement that mutates `step_runs`, `evidence`, `step_tokens`, `usage`, or `runs` for a run takes the `runs` row lock (`SELECT … FOR UPDATE`), re-reads `lease_id` in a separate statement after the lock is granted — a locked row is not re-read, so a lease a concurrent claim committed while waiting would otherwise be missed, which is exactly the trap dagger's `fence()` comments on — compares it to the lease the worker presented, and rolls back on mismatch. This is the mechanism behind "a stale worker cannot corrupt the record," and it lives in the store, not in the worker's good behaviour. The one exception is `SetLease` itself, which is the write that changes what later writes compare against; it takes the same lock and requires the run's current status to be one a new claim may take over (`selecting`, `running` with an expired lease, `waiting`, `parked`, or `done` with the node still open). `selecting` is among them for the same reason `running` is: a run created holding its claim's lease, whose worker then died before it chose a workflow, is otherwise a node no mill command can recover — and dagger, which grants a second lease only once the first is gone, has already decided who holds the node.
+9. **Every store write is fenced by the lease, atomically.** Every statement that mutates `step_runs`, `evidence`, `step_tokens`, `usage`, or `runs` for a run takes the `runs` row lock (`SELECT … FOR UPDATE`), re-reads `lease_id` in a separate statement after the lock is granted — a locked row is not re-read, so a lease a concurrent claim committed while waiting would otherwise be missed, which is exactly the trap dagger's `fence()` comments on — compares it to the lease the worker presented, and rolls back on mismatch. This is the mechanism behind "a stale worker cannot corrupt the record," and it lives in the store, not in the worker's good behaviour. The one exception is `SetLease` itself, which is the write that changes what later writes compare against; it takes the same lock and requires the run's current status to be one a new claim may take over (`selecting`, `running` with an expired lease, `waiting`, `parked`, or `done` with the node still open). A terminal write that presents no lease — `Abandon` after a restart's release, and the sweep's `Fail` or `Done` on a run whose node dagger has closed (§Sweep) — takes the same lock, compares nothing, and nulls `lease_id` as it ends the run, so whatever still believed it held the run is fenced by its next write; it is admitted because dagger's own fence has already proved no live lease exists. `selecting` is among them for the same reason `running` is: a run created holding its claim's lease, whose worker then died before it chose a workflow, is otherwise a node no mill command can recover — and dagger, which grants a second lease only once the first is gone, has already decided who holds the node.
 10. **`current_step` is derived.** There is no column to drift.
 11. **Dagger first, store second.** A run is marked `done` only after dagger has confirmed the completing patch; `gate_node_id` is recorded only after dagger has returned the gate's id and before the lease is released. The store never asserts a fact about dagger that dagger has not yet made true.
 12. **A gate is filed once per step run.** `gate_node_id` set and the current step a gate step means resume reads the gate; it never files another. Invariant 11's order leaves one window this cannot close on its own: the patch that files the gate lands and the process dies before the store write, so dagger has a gate the ledger knows nothing about. A worker therefore asks dagger before it files — the node's user-assigned children carrying the run's and the step's labels — and records what it finds instead of filing a second one. That is the only place in the loop where dagger's graph, rather than the ledger, decides what to write, and it is the only place it can be: the gate exists in exactly one of them.
@@ -306,6 +306,36 @@ Three properties fall out:
 
 `Complete` is not an RPC. It is `ApplyPatch` with a `complete_node` operation, and dagger releases the lease inside that same patch — which is why `ReportUsage` for the final step must precede it, why there is no separate `Release` on the done path, and why `store.Done` comes last.
 
+## Sweep
+
+Every way a run ends in §Resume happens inside a claim. A node dagger has closed — dropped, or completed by someone other than the run — never enters the ready set again, so no claim ever comes to end the run it strands: the run stays live in the ledger, its workspace retained, its branch on the forge, for as long as the ledger exists. The host's reconciliation (`docs/sandbox.md` §Reconciliation) cannot help; it compares machines with live runs and never asks dagger what became of a run's node. The sweep is that missing axis: the ledger reconciled against dagger.
+
+The worker runs it before its first claim, ahead of the host's pass, and again at the top of its claim loop whenever `sweep-interval` has elapsed — a busy worker between runs, an idle one every `wait` — with no timer and no goroutine of its own. A second process sweeping the same ledger would race the live worker, which is why it is the worker's and not a unit's.
+
+```
+for run in store.Status(live):                     # selecting, running, waiting, parked
+    if run.worker_ref != self: continue            # cleanup is host-local; another host's run is its own
+    if driving(run.node_id): continue              # this process is on it; its own goroutine writes its ending
+    if run.updated_at > now - TTL: continue        # another process on this host may be mid-write; by age, never by "not in the ledger" (mill#49)
+    node := dagger.Node(run.node_ref)              # the reference is stored qualified; any project's client reads it
+    error?             -> finding{failure}; continue
+    node.status open   -> continue                 # whatever its readiness: a parked run's node is blocked by its own gate
+    store.AbortOpenStepRuns(run)                   # no token outlives the run
+    switch:
+      dropped:                                   store.Fail(run, "node dropped underneath the run")
+      done and run.complete_request_id != nil:   store.Done(run)          # Invariant 11's crash window: the patch landed, the store missed it
+      done otherwise:                            store.Fail(run, "node completed outside the run")
+    ws.Destroy(); store.FinishWorkspace(run)       # through the attach-only seam: nothing is made in order to be destroyed
+    if failed and run.workflow_id != nil:          # a selecting run pushed nothing; a run that delivered has a merged PR to leave alone
+        forge.ClosePR(comment); forge.DeleteBranch()
+    finding{stranded, run, failed|done, node status and the ledger's step}
+store.RecordReconciliation(findings)
+```
+
+Two things make this safe to write under no lease. Dagger refuses `drop_node` and a user's `complete_node` on a node with a live lease, so a run whose node is closed is provably unleased there: nothing is driving it. And the store's terminal write with no lease presented takes the row lock alone and nulls `lease_id` as it ends the run (Invariant 9's leaseless door, the one Abandon uses), so a worker that still believed it held the run is fenced on its next write. No dagger write is made: a closed node is outside every ready set, nothing is held, and the ledger row with its `failed` event and the `reconciliations` row are the record. `mill run` on a closed node resolves its run the same way, through the same code, so the two cannot disagree; `mill restart` refuses a node that is not open, because a restart of one would open a run nothing can claim.
+
+What the sweep does not reach, and says so: a run whose `worker_ref` names a host that no longer exists stays until a person acts, and a `waiting` run whose node a person completed leaves its gate open in dagger, because the sweep writes nothing there.
+
 ## What goes to dagger, and when
 
 | To dagger | When | As |
@@ -330,7 +360,7 @@ Every artifact's metadata carries `run_id`. Every `ApplyPatch` mill sends uses `
 
 ## Queries the CLI needs
 
-- `status`: runs by state with `current_step`, elapsed, cost, and gate node for waiting ones — one query over `runs` joined to the latest `step_runs` and a usage rollup.
+- `status`: runs by state with `current_step`, elapsed, cost, and gate node for waiting ones — one query over `runs` joined to the latest `step_runs` and a usage rollup. The same query, unfiltered, is what the sweep reads, so a run `status` lists as live is one the sweep will ask dagger about.
 - `inspect <run>`: every step run in order with its evidence, exit, session, and usage.
 - `history <run>`: the `events` rows.
 - `cost --since`: usage rolled up by run, by workflow, by step name, by model, priced by the rate table.

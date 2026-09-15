@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -35,6 +36,7 @@ import (
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/gen/mill/v1/millv1connect"
 	"github.com/ivy/mill/internal/dagger"
+	"github.com/ivy/mill/internal/domain"
 	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/gateway"
 	"github.com/ivy/mill/internal/harness"
@@ -145,6 +147,12 @@ type Options struct {
 	Dagger *dagger.Client
 	// Workspaces makes the run's workspace.
 	Workspaces Workspaces
+	// Attach finds a workspace this host already has and never makes one.
+	// A restart and the stranded-run sweep destroy through it: cloning a
+	// repository or booting a machine in order to delete it would be
+	// absurd, and a run worked on another host has nothing here to
+	// destroy. Nil destroys nothing.
+	Attach Workspaces
 	// Repositories resolves the run's repository from its project.
 	Repositories Repositories
 	// Harnesses builds the adapter table a skill step's harness name is
@@ -397,12 +405,23 @@ func (r *Runner) Execute(ctx context.Context, nodeRef string) error {
 		return &dagger.UserNodeError{Ref: nodeRef, Verb: "claim"}
 	}
 
-	// A node already done in dagger is the crash window of Invariant 11: the
-	// completing patch landed and store.Done did not. Nothing is claimed —
-	// the node is not claimable and there is nothing left to do to it — and
-	// the run is simply caught up with what dagger already says.
-	if node.GetStatus() == daggerv1.Status_STATUS_DONE {
-		return r.reconcileDone(ctx, node)
+	// A node already closed in dagger is never claimed: there is nothing
+	// left to do to it. A done one is the crash window of Invariant 11 —
+	// the completing patch landed and store.Done did not — and a dropped
+	// one had its run stranded underneath it. Either way the run is caught
+	// up with what dagger already says, exactly as the sweep would catch it
+	// up (docs/ledger.md §Sweep).
+	if node.GetStatus() != daggerv1.Status_STATUS_OPEN {
+		run, _, err := r.runByNode(ctx, node.GetId())
+		if err != nil {
+			return err
+		}
+		if run == nil {
+			return fmt.Errorf("%w: %s is %s in dagger and the ledger has no run for it",
+				ErrRefused, node.GetReference(), daggerStatus(node.GetStatus()))
+		}
+		_, err = r.reconcileClosed(ctx, run, node)
+		return err
 	}
 
 	claimed, err := r.options.Dagger.Claim(ctx, nodeRef)
@@ -469,29 +488,101 @@ func (r *Runner) drive(ctx context.Context, claimed *dagger.Claimed, stopping <-
 	return r.stop(ctx, s, r.walk(s.beat.ctx, s))
 }
 
-// reconcileDone marks a run done whose node dagger already says is done. The
-// second `mill run` of the crash scenario ends here: it finds the node done,
-// marks the run done, and sends no second patch.
-func (r *Runner) reconcileDone(ctx context.Context, node *daggerv1.Node) error {
-	run, _, err := r.runByNode(ctx, node.GetId())
+// reconcileClosed catches a live run up with a node dagger says is closed,
+// and reports what it did: `done`, `failed`, or `already <status>` for a
+// run that had ended. It is the one place that decides what a closed node
+// means to its run, shared by `mill run` on such a node and by the sweep
+// (docs/ledger.md §Sweep), so the two cannot disagree.
+//
+// A done node with the run's own complete request id on record is the
+// crash window of Invariant 11 — the completing patch landed and store.Done
+// did not — and the run is marked done under the lease the ledger still
+// holds, which is the one that sent the patch. A done node with no such id
+// was completed by someone else, and a dropped node was dropped underneath
+// the run; both fail the run with the reason on the event, after every
+// open attempt is aborted so no token outlives it. Dagger's fence means a
+// node is closed underneath a run only while the run holds no live lease,
+// which is why the write presents none: there is no lease to compare
+// against, and the row lock alone serialises it (Invariant 9's leaseless
+// door, the one Abandon uses).
+//
+// Then what the run held is given back: its workspace, through the
+// attach-only seam, and — when it failed after pushing — its branch and
+// pull request. A run that delivered has a merged pull request to leave
+// alone, and a run that never chose a workflow pushed nothing. Neither
+// cleanup failing fails the reconciliation: the ledger is right, and the
+// host's reconciliation pass finishes what this could not.
+func (r *Runner) reconcileClosed(ctx context.Context, run *millv1.Run, node *daggerv1.Node) (string, error) {
+	ref := node.GetReference()
+	switch run.GetStatus() {
+	case millv1.RunStatus_RUN_STATUS_DONE, millv1.RunStatus_RUN_STATUS_FAILED, millv1.RunStatus_RUN_STATUS_ABANDONED:
+		r.printf("%s is already %s\n", ref, domain.RunStatusName(run.GetStatus()))
+		return "already " + domain.RunStatusName(run.GetStatus()), nil
+	}
+
+	var action, reason string
+	switch {
+	case node.GetStatus() == daggerv1.Status_STATUS_DONE && run.GetCompleteRequestId() != "":
+		if _, err := call(ctx, r.options.Store.Done, &millv1.DoneRequest{
+			LeaseId: run.GetLeaseId(),
+			RunId:   run.GetId(),
+		}); err != nil {
+			return "", err
+		}
+		action = "done"
+		r.printf("%s was completed in dagger; run %s marked done\n", ref, run.GetId())
+	case node.GetStatus() == daggerv1.Status_STATUS_DONE:
+		action, reason = "failed", "node completed outside the run"
+	case node.GetStatus() == daggerv1.Status_STATUS_DROPPED:
+		action, reason = "failed", "node dropped underneath the run"
+	default:
+		return "", fmt.Errorf("%w: %s is open; nothing to reconcile", ErrRefused, ref)
+	}
+	if action == "failed" {
+		if _, err := call(ctx, r.options.Store.AbortOpenStepRuns, &millv1.AbortOpenStepRunsRequest{
+			RunId:  run.GetId(),
+			Reason: reason,
+		}); err != nil {
+			return "", err
+		}
+		if _, err := call(ctx, r.options.Store.Fail, &millv1.FailRequest{
+			RunId:  run.GetId(),
+			Reason: reason,
+		}); err != nil {
+			return "", err
+		}
+		r.printf("%s: run %s failed: %s\n", ref, run.GetId(), reason)
+	}
+
+	repo, err := r.repositoryOf(ctx, run.GetNodeRef())
 	if err != nil {
-		return err
+		r.options.Log.Debug("no repository for the closed node's run", "run", run.GetId(), "error", err)
 	}
-	if run == nil {
-		return fmt.Errorf("%w: %s is done in dagger and the ledger has no run for it", ErrRefused, node.GetReference())
+	r.discardWorkspace(ctx, run, repo)
+	if action == "failed" && run.GetWorkflowId() != "" {
+		comment := fmt.Sprintf("Closed: run %s of %s ended because its %s (%s).",
+			run.GetId(), run.GetNodeRef(), reason, daggerStatus(node.GetStatus()))
+		if err := r.closeBranch(ctx, run, comment, repo); err != nil {
+			r.options.Log.Warn("closing the branch of a run whose node was closed", "run", run.GetId(), "error", err)
+		}
 	}
-	if run.GetStatus() == millv1.RunStatus_RUN_STATUS_DONE {
-		r.printf("%s is already done\n", node.GetReference())
-		return nil
+	return action, nil
+}
+
+// repositoryOf resolves the repository of the project a qualified node
+// reference names. The sweep needs it because a live run's node may be in
+// any project the ledger has seen, not only the one this runner's client
+// resolves bare references in.
+func (r *Runner) repositoryOf(ctx context.Context, nodeRef string) (Repository, error) {
+	slug, _, found := strings.Cut(nodeRef, "#")
+	if !found || slug == "" {
+		return r.repository(ctx, nil)
 	}
-	if _, err := call(ctx, r.options.Store.Done, &millv1.DoneRequest{
-		LeaseId: run.GetLeaseId(),
-		RunId:   run.GetId(),
-	}); err != nil {
-		return err
+	project, err := r.options.Dagger.ProjectNamed(ctx, slug)
+	if err != nil {
+		return Repository{}, err
 	}
-	r.printf("%s was completed in dagger; run %s marked done\n", node.GetReference(), run.GetId())
-	return nil
+	return r.options.Repositories(ctx, project)
 }
 
 // openRun finds or creates the run and takes it over under this claim's

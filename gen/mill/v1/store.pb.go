@@ -1989,12 +1989,12 @@ func (x *RecordReconciliationRequest) GetFindings() []*ReconciliationFinding {
 type ReconciliationFinding struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// What was found: `orphan`, `lost-sandbox`, `resumable`, `leftover`,
-	// `swept`, `failure`.
+	// `swept`, `disagreement`, `stranded`, `failure`.
 	Kind string `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
 	// The thing: a machine, a run id, a path, a project.
 	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	// What was done to it: `stopped`, `terminated`, `removed`, `archived`,
-	// `deleted`; empty when nothing was.
+	// `deleted`, `failed`, `done`; empty when nothing was.
 	Action string `protobuf:"bytes,3,opt,name=action,proto3" json:"action,omitempty"`
 	// What qualifies it: the run's step, the unit, why a delete was an
 	// archive.

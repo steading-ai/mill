@@ -36,18 +36,18 @@ selecting ──▶ running ──▶ done
                 │  ▲
                 │  └──── parked    (circuit breaker; lease released with reason `budget` or `crash`)
                 │
-                ├──────▶ failed    (terminal; gate denied, or the node was dropped)
+                ├──────▶ failed    (terminal; gate denied, or the node was closed underneath the run)
                 └──────▶ abandoned (terminal; a human restarted the node — a new generation exists)
 ```
 
-`abandoned` is reachable from every state a run can still be live in — `selecting`, `running`, `waiting`, `parked` — because [Restart](#restart) applies to the live run whatever it is doing, and a run waiting on a human is the ordinary thing to restart. `parked` returns to `running` the same way `waiting` does: the gate is answered, the node becomes ready, and the next claim resumes the run at the step it stopped on.
+`abandoned` and `failed` are reachable from every state a run can still be live in — `selecting`, `running`, `waiting`, `parked`. `abandoned` because [Restart](#restart) applies to the live run whatever it is doing, and a run waiting on a human is the ordinary thing to restart; `failed` because a node is closed underneath a run only while the run holds no live lease — dagger refuses to drop or complete a leased node — which is any of those states, and the sweep that records it finds the run wherever it stopped (`docs/ledger.md` §Sweep). `parked` returns to `running` the same way `waiting` does: the gate is answered, the node becomes ready, and the next claim resumes the run at the step it stopped on.
 
 - `selecting` — claimed, no workflow yet. The assessment step runs here.
 - `running` — a lease is held and a step is executing or about to.
 - `waiting` — a gate node exists and blocks this node. The run holds no lease and no worker. When the gate completes, the node becomes ready again, `ClaimNext` returns it, and the worker that gets it resumes this run: it finds `gate_node_id` set and the current step a gate step, reads the gate's result, and closes that step with `gate` evidence — it does not file the gate again.
 - `parked` — the circuit breaker fired. A comment with the last findings is on the node, a gate asks a human what to do, and the lease is released. Structurally identical to `waiting`; distinguished so `status` can say why.
 - `done` — the terminal step closed with evidence and `Complete` was accepted by dagger.
-- `failed` — a gate was denied, or the node was dropped underneath the run. Terminal to the run loop: nothing mill does on its own leaves this state. An operator's `mill rerun <run> --from <step>` does, by overruling the ending — it supersedes the span and returns the run to `running` holding no lease, so the next claim resumes it at that step. `abandoned` has no such door: a later generation already holds the node.
+- `failed` — a gate was denied, or the node was closed underneath the run: dropped, or completed by someone other than the run. The gate's denial is written by the worker holding the lease; a closed node is found by the worker's sweep of the ledger against dagger, which writes the reason and gives back what the run held (`docs/ledger.md` §Sweep). Terminal to the run loop: nothing mill does on its own leaves this state. An operator's `mill rerun <run> --from <step>` does, by overruling the ending — it supersedes the span and returns the run to `running` holding no lease, so the next claim resumes it at that step. `abandoned` has no such door: a later generation already holds the node.
 - `abandoned` — a human restarted the node. Terminal. The run's record stays; the new generation is a different run.
 
 ### Restart

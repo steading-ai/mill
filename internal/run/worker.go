@@ -83,6 +83,10 @@ type WorkerOptions struct {
 	// Wait is how long one claim blocks for work. Zero takes
 	// [DefaultWait]; dagger clamps it to five minutes.
 	Wait time.Duration
+	// SweepInterval is how long the worker goes between sweeps of the
+	// ledger against dagger (docs/ledger.md §Sweep). Zero takes
+	// [DefaultSweepInterval].
+	SweepInterval time.Duration
 	// Out is where the worker's own progress is written.
 	Out io.Writer
 	// Log is where diagnostics go. Nil discards them.
@@ -96,6 +100,13 @@ type Worker struct {
 	stopping chan struct{}
 	once     sync.Once
 	next     int
+	// lastSweep is when the ledger was last swept against dagger. Touched
+	// on the claim loop alone, like next.
+	lastSweep time.Time
+	// inFlight is every node this process is driving, by id. The sweep
+	// leaves those alone whatever dagger says of them: the run's own
+	// goroutine is the one that writes its ending.
+	inFlight sync.Map
 	// killed records that a run was still in flight when the kill context
 	// was cancelled, which is the only thing that makes a stop non-zero.
 	// The grace window elapsing after the last run has already stopped is
@@ -114,6 +125,9 @@ func NewWorker(options WorkerOptions) (*Worker, error) {
 	}
 	if options.Wait <= 0 {
 		options.Wait = DefaultWait
+	}
+	if options.SweepInterval <= 0 {
+		options.SweepInterval = DefaultSweepInterval
 	}
 	if options.Log == nil {
 		options.Log = slog.New(slog.DiscardHandler)
@@ -152,10 +166,21 @@ func (w *Worker) Run(ctx context.Context) error {
 	return err
 }
 
-// start is what precedes the first claim: reconciliation, then eviction,
-// in that order and both before any lease is taken (docs/sandbox.md
-// §Reconciliation).
+// start is what precedes the first claim: the sweep of the ledger against
+// dagger, then the host's reconciliation, then eviction, in that order and
+// all before any lease is taken (docs/ledger.md §Sweep, docs/sandbox.md
+// §Reconciliation). The sweep goes first so the host's pass sees the
+// ledger's truth: a run the sweep has just failed is no longer live, and
+// the machine it could not reach is an orphan and its directory a leftover
+// in the very next step.
+//
+// A ledger that cannot be swept stops the worker the way a host that
+// cannot be reconciled does: both are the store or dagger not answering,
+// and neither is a state to claim work in.
 func (w *Worker) start(ctx context.Context) error {
+	if err := w.sweep(ctx); err != nil {
+		return fmt.Errorf("work: sweep before claiming: %w", err)
+	}
 	if w.options.Startup == nil {
 		return nil
 	}
@@ -166,6 +191,26 @@ func (w *Worker) start(ctx context.Context) error {
 		w.options.Log.Warn("eviction at start", "error", err)
 	}
 	return nil
+}
+
+// sweep runs one pass of the sweep on the first runner — a dagger's nodes
+// are readable by qualified reference through any project's client — and
+// prints its findings, one line each. The pass is timed from its start
+// whatever it returned, so a ledger that will not answer is asked again at
+// the interval and not at every claim.
+func (w *Worker) sweep(ctx context.Context) error {
+	w.lastSweep = time.Now()
+	report, err := w.options.Runners[0].Sweep(ctx, w.driving)
+	for _, finding := range report.Findings {
+		w.printf("sweep: %s\n", finding)
+	}
+	return err
+}
+
+// driving reports whether this process is driving the node right now.
+func (w *Worker) driving(nodeID string) bool {
+	_, ok := w.inFlight.Load(nodeID)
+	return ok
 }
 
 // claim is the loop itself: a slot, a claim, a run, repeat.
@@ -190,6 +235,20 @@ func (w *Worker) claim(ctx context.Context, wg *sync.WaitGroup) error {
 		// would take either.
 		if w.stopped() || ctx.Err() != nil {
 			return nil
+		}
+
+		// The sweep rides the loop's own cadence rather than a timer of
+		// its own: a busy worker passes here between runs, an idle one
+		// every Wait, and either sweeps once the interval has elapsed. It
+		// runs under the kill context, not the claim's, so a graceful stop
+		// does not cut a pass off mid-write. A pass that fails is a warning
+		// here and a retry at the next interval, because a run stranded a
+		// little longer costs nothing and a worker that stopped claiming
+		// over it would.
+		if sweepDue(w.lastSweep, w.options.SweepInterval, time.Now()) {
+			if err := w.sweep(ctx); err != nil {
+				w.options.Log.Warn("sweeping the ledger against dagger", "error", err)
+			}
 		}
 
 		// The slot comes before the claim on purpose. A lease taken with
@@ -229,10 +288,13 @@ func (w *Worker) claim(ctx context.Context, wg *sync.WaitGroup) error {
 			return nil
 		}
 
+		nodeID := claimed.Node.GetId()
+		w.inFlight.Store(nodeID, struct{}{})
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			defer func() { <-w.slots }()
+			defer w.inFlight.Delete(nodeID)
 			w.drive(ctx, runner, claimed)
 		}()
 	}

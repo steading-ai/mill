@@ -35,6 +35,9 @@ type recordingStartup struct {
 	order []string
 	claim func() int64
 	fail  error
+	// also, when set, is something else the pass observes at each call and
+	// records beside it: the status of a run, say.
+	also func() string
 }
 
 func (s *recordingStartup) Reconcile(context.Context) error {
@@ -50,7 +53,11 @@ func (s *recordingStartup) Evict(context.Context) error {
 func (s *recordingStartup) note(what string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.order = append(s.order, fmt.Sprintf("%s (claims so far: %d)", what, s.claim()))
+	entry := fmt.Sprintf("%s (claims so far: %d)", what, s.claim())
+	if s.also != nil {
+		entry += " " + s.also()
+	}
+	s.order = append(s.order, entry)
 }
 
 func (s *recordingStartup) seen() []string {
@@ -248,6 +255,89 @@ var _ = Describe("Reconciliation on resume, in the loop", Label(testsupport.DBLa
 		Eventually(func() *millv1.Run { return f.runOfRef(ctx, f.nodeRef) }, 30*time.Second, 200*time.Millisecond).
 			ShouldNot(BeNil(), "the node was claimed")
 		Expect(startup.seen()).To(Equal([]string{"reconcile (claims so far: 0)", "evict (claims so far: 0)"}))
+	})
+
+	// Scenario: The sweep precedes the host's pass, and both precede the first claim
+	//   Given a live run whose node was dropped
+	//   When the worker starts
+	//   Then the run is failed before the host's reconciliation runs, and nothing was claimed
+	It("The sweep precedes the host's pass, and both precede the first claim", func() {
+		By("given a live run whose node was dropped, a lease TTL ago")
+		atStepTwo()
+		first := f.runOf(ctx)
+		f.drop(ctx, f.nodeRef)
+		time.Sleep(3*interval + time.Second)
+
+		By("when the worker starts")
+		client, counter := f.counted()
+		startup := &recordingStartup{claim: counter.claims.Load, also: func() string {
+			return f.inspectRun(ctx, first.GetId()).GetSummary().GetRun().GetStatus().String()
+		}}
+		worker := f.workerOver(f.runner(quick, func(o *run.Options) { o.Dagger = client }),
+			func(o *run.WorkerOptions) { o.Startup = startup })
+		done := startWorker(ctx, worker)
+		DeferCleanup(func() {
+			worker.Stop()
+			Eventually(done, time.Minute).Should(Receive())
+		})
+
+		By("then the run is failed before the host's reconciliation runs, and nothing was claimed")
+		Eventually(startup.seen, 30*time.Second, 200*time.Millisecond).Should(HaveLen(2))
+		Expect(startup.seen()).To(Equal([]string{
+			"reconcile (claims so far: 0) RUN_STATUS_FAILED",
+			"evict (claims so far: 0) RUN_STATUS_FAILED",
+		}))
+	})
+
+	// Scenario: A worker with no startup sweeps at start and again on the interval
+	//   Given a worker on the local backend
+	//   When a run is stranded after it has started
+	//   Then the run is failed once the sweep interval elapses, and not before
+	It("A worker with no startup sweeps at start and again on the interval", func() {
+		By("given a worker on the local backend, idle")
+		// A label nothing carries keeps the worker from claiming the node
+		// the spec is about to strand: a stranded run is one nobody will
+		// claim, and the worker sweeping it must not be the one racing to.
+		worker := f.workerOver(f.runner(quick), func(o *run.WorkerOptions) {
+			o.SweepInterval = interval
+			o.Labels = []string{"never-filed"}
+		})
+		done := startWorker(ctx, worker)
+		DeferCleanup(func() {
+			worker.Stop()
+			Eventually(done, time.Minute).Should(Receive())
+		})
+
+		By("when a run is stranded after it has started")
+		stray := f.selectingRun(ctx, f.worker)
+		f.drop(ctx, f.nodeRef)
+
+		By("then the run is failed once the sweep interval and the lease TTL have elapsed")
+		status := func() millv1.RunStatus {
+			return f.inspectRun(ctx, stray.GetId()).GetSummary().GetRun().GetStatus()
+		}
+		Consistently(status, 2*interval, 200*time.Millisecond).Should(Equal(millv1.RunStatus_RUN_STATUS_SELECTING),
+			"a run written to inside one lease TTL is left alone")
+		Eventually(status, 30*time.Second, 200*time.Millisecond).Should(Equal(millv1.RunStatus_RUN_STATUS_FAILED))
+	})
+
+	It("A worker sweeps no more often than its interval", func() {
+		worker := f.workerOver(f.runner(quick), func(o *run.WorkerOptions) {
+			o.SweepInterval = time.Hour
+			o.Labels = []string{"never-filed"}
+		})
+		done := startWorker(ctx, worker)
+		DeferCleanup(func() {
+			worker.Stop()
+			Eventually(done, time.Minute).Should(Receive())
+		})
+
+		stray := f.selectingRun(ctx, f.worker)
+		f.drop(ctx, f.nodeRef)
+
+		Consistently(func() millv1.RunStatus {
+			return f.inspectRun(ctx, stray.GetId()).GetSummary().GetRun().GetStatus()
+		}, 3*interval+2*time.Second, 250*time.Millisecond).Should(Equal(millv1.RunStatus_RUN_STATUS_SELECTING))
 	})
 
 	It("does not claim at all when reconciliation cannot run", func() {

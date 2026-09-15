@@ -100,13 +100,15 @@ service StoreService {
   // an operator to see which projects keep needing something `mill.toml`
   // does not name. It is not routed to a reviewer.
   rpc RecordInstall(RecordInstallRequest) returns (RecordInstallResponse);
-  // RecordReconciliation appends what one reconciliation pass found and did
-  // at worker start: the machines it told from the ledger's live runs —
+  // RecordReconciliation appends what one reconciliation pass found and did:
+  // at worker start, the machines it told from the ledger's live runs —
   // orphans stopped, lost sandboxes noted, slices reaped for resume — the
   // leftovers it removed, and the scratch projects it swept by name
-  // (docs/sandbox.md §Reconciliation, §"External state"). It is a record of
-  // the host, not of a run: no lease fences it, because the pass runs before
-  // the worker holds one.
+  // (docs/sandbox.md §Reconciliation, §"External state"); at start and
+  // between claims, the runs it found stranded under a node dagger had
+  // closed (docs/ledger.md §Sweep). It is a record of the host and of the
+  // ledger against dagger, not of a run: no lease fences it, because the
+  // pass runs while the worker holds none on what it touches.
   rpc RecordReconciliation(RecordReconciliationRequest) returns (RecordReconciliationResponse);
   // RecordWorkspace records the run's workspace once it is open: its kind,
   // where it is, the ref it was made at, and the machine behind it when
@@ -546,12 +548,12 @@ message RecordReconciliationRequest {
 // ReconciliationFinding is one line of a reconciliation pass.
 message ReconciliationFinding {
   // What was found: `orphan`, `lost-sandbox`, `resumable`, `leftover`,
-  // `swept`, `failure`.
+  // `swept`, `disagreement`, `stranded`, `failure`.
   string kind = 1;
   // The thing: a machine, a run id, a path, a project.
   string name = 2;
   // What was done to it: `stopped`, `terminated`, `removed`, `archived`,
-  // `deleted`; empty when nothing was.
+  // `deleted`, `failed`, `done`; empty when nothing was.
   string action = 3;
   // What qualifies it: the run's step, the unit, why a delete was an
   // archive.

@@ -27,6 +27,18 @@ func (c *Client) GetProject(ctx context.Context) (*daggerv1.Project, error) {
 	return res.Msg.GetProject(), nil
 }
 
+// ProjectNamed reads one project by slug, whichever project this client
+// resolves bare references in. The stranded-run sweep reads it: a run's
+// node reference is stored qualified, and the repository its branch is
+// closed on is that project's, not the worker's (docs/ledger.md §Sweep).
+func (c *Client) ProjectNamed(ctx context.Context, slug string) (*daggerv1.Project, error) {
+	res, err := c.graph.GetProject(ctx, connect.NewRequest(&daggerv1.GetProjectRequest{Project: slug}))
+	if err != nil {
+		return nil, wrap("dagger: get project "+slug, err)
+	}
+	return res.Msg.GetProject(), nil
+}
+
 // ListProjects is every active project the principal can see, across every
 // page. Archived projects are not listed: they are already swept.
 func (c *Client) ListProjects(ctx context.Context) ([]*daggerv1.Project, error) {

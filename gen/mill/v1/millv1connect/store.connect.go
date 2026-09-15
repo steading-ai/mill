@@ -210,13 +210,15 @@ type StoreServiceClient interface {
 	// an operator to see which projects keep needing something `mill.toml`
 	// does not name. It is not routed to a reviewer.
 	RecordInstall(context.Context, *connect.Request[v1.RecordInstallRequest]) (*connect.Response[v1.RecordInstallResponse], error)
-	// RecordReconciliation appends what one reconciliation pass found and did
-	// at worker start: the machines it told from the ledger's live runs —
+	// RecordReconciliation appends what one reconciliation pass found and did:
+	// at worker start, the machines it told from the ledger's live runs —
 	// orphans stopped, lost sandboxes noted, slices reaped for resume — the
 	// leftovers it removed, and the scratch projects it swept by name
-	// (docs/sandbox.md §Reconciliation, §"External state"). It is a record of
-	// the host, not of a run: no lease fences it, because the pass runs before
-	// the worker holds one.
+	// (docs/sandbox.md §Reconciliation, §"External state"); at start and
+	// between claims, the runs it found stranded under a node dagger had
+	// closed (docs/ledger.md §Sweep). It is a record of the host and of the
+	// ledger against dagger, not of a run: no lease fences it, because the
+	// pass runs while the worker holds none on what it touches.
 	RecordReconciliation(context.Context, *connect.Request[v1.RecordReconciliationRequest]) (*connect.Response[v1.RecordReconciliationResponse], error)
 	// RecordWorkspace records the run's workspace once it is open: its kind,
 	// where it is, the ref it was made at, and the machine behind it when
@@ -869,13 +871,15 @@ type StoreServiceHandler interface {
 	// an operator to see which projects keep needing something `mill.toml`
 	// does not name. It is not routed to a reviewer.
 	RecordInstall(context.Context, *connect.Request[v1.RecordInstallRequest]) (*connect.Response[v1.RecordInstallResponse], error)
-	// RecordReconciliation appends what one reconciliation pass found and did
-	// at worker start: the machines it told from the ledger's live runs —
+	// RecordReconciliation appends what one reconciliation pass found and did:
+	// at worker start, the machines it told from the ledger's live runs —
 	// orphans stopped, lost sandboxes noted, slices reaped for resume — the
 	// leftovers it removed, and the scratch projects it swept by name
-	// (docs/sandbox.md §Reconciliation, §"External state"). It is a record of
-	// the host, not of a run: no lease fences it, because the pass runs before
-	// the worker holds one.
+	// (docs/sandbox.md §Reconciliation, §"External state"); at start and
+	// between claims, the runs it found stranded under a node dagger had
+	// closed (docs/ledger.md §Sweep). It is a record of the host and of the
+	// ledger against dagger, not of a run: no lease fences it, because the
+	// pass runs while the worker holds none on what it touches.
 	RecordReconciliation(context.Context, *connect.Request[v1.RecordReconciliationRequest]) (*connect.Response[v1.RecordReconciliationResponse], error)
 	// RecordWorkspace records the run's workspace once it is open: its kind,
 	// where it is, the ref it was made at, and the machine behind it when

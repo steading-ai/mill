@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"os"
 
@@ -10,15 +9,19 @@ import (
 	"github.com/ivy/mill/internal/dagger"
 	"github.com/ivy/mill/internal/run"
 	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/local"
+	"github.com/ivy/mill/internal/workspace/machine"
+	"github.com/ivy/mill/internal/workspace/redact"
 )
 
 type restartOptions struct {
+	config       string
 	socket       string
 	daggerSocket string
 	project      string
-	workspaceDir string
 	reason       string
+	// run carries what the workspace the restart destroys is found by: the
+	// backend, its roots, and the identity the checkout was made under.
+	run runOptions
 }
 
 // newRestartCommand abandons a node's run and starts a new generation. It is
@@ -38,6 +41,10 @@ branch deleted, and the pull request closed with a comment naming the
 restart. The new generation's session ids derive from the generation, so
 every session in it is one the harness has never seen.
 
+The workspace is found on the backend the configuration names — the machine
+a run booted, or the checkout under the workspace directory — and never made
+in order to be destroyed. A node that is not open has nothing to restart.
+
 Never automatic. A step that fails repeatedly parks the run and costs a human
 decision; this is that decision.`,
 		Args: cobra.ExactArgs(1),
@@ -45,17 +52,29 @@ decision; this is that decision.`,
 			if opts.project == "" {
 				return fmt.Errorf("mill restart: a dagger project is required; pass --project or set %s", daggerProjectEnv)
 			}
+			if err := applyRestartConfig(cmd, &opts); err != nil {
+				return err
+			}
+			kind, err := workspace.ParseKind(opts.run.workspace)
+			if err != nil {
+				return fmt.Errorf("mill restart: --workspace: %w", err)
+			}
 			worker, err := workerRef()
 			if err != nil {
 				return err
+			}
+			opts.run.project = opts.project
+			if opts.run.identity == "" {
+				opts.run.identity = defaultIdentity()
 			}
 			runner := run.New(run.Options{
 				Store:  storeClient(opts.socket),
 				Dagger: dagger.Dial(opts.daggerSocket, opts.project, dagger.WithAgentRef(worker)),
 				// Attach-only: a restart destroys the workspace the run left
-				// behind and must never clone one in order to delete it.
-				Workspaces:   attachedWorkspaces(opts.workspaceDir),
-				Repositories: repositories(runOptions{project: opts.project}),
+				// behind and must never clone or boot one in order to
+				// delete it.
+				Attach:       attachOnlyWorkspaces(kind, opts.run, redact.New()),
+				Repositories: repositories(opts.run),
 				WorkerRef:    worker,
 				Out:          cmd.OutOrStdout(),
 			})
@@ -64,24 +83,50 @@ decision; this is that decision.`,
 		},
 	}
 	f := cmd.Flags()
+	f.StringVar(&opts.config, "config", defaultConfigPath(), "path of the configuration file, for the workspace backend and its roots (default: $"+configEnv+", else $XDG_CONFIG_HOME/mill/config.yaml)")
 	f.StringVar(&opts.socket, "socket", defaultSocketPath(), "path of the service's unix socket (default: $"+socketEnv+")")
 	f.StringVar(&opts.daggerSocket, "dagger-socket", envOr(daggerSocketEnv, defaultDaggerSocket), "path of dagger's unix socket (default: $"+daggerSocketEnv+")")
 	f.StringVar(&opts.project, "project", os.Getenv(daggerProjectEnv), "dagger project a bare #7 reference resolves in (default: $"+daggerProjectEnv+")")
-	f.StringVar(&opts.workspaceDir, "workspace-dir", defaultWorkspaceDir(), "directory run workspaces live under")
+	f.StringVar(&opts.run.workspaceDir, "workspace-dir", defaultWorkspaceDir(), "directory run workspaces live under")
+	f.StringVar(&opts.run.workspace, "workspace", string(workspace.KindLocal), workspaceUsage)
+	f.StringVar(&opts.run.sandboxRoot, "sandbox-root", machine.DefaultRoot, sandboxRootUsage)
 	f.StringVar(&opts.reason, "reason", "restart", "why, for the lease's release detail and the ledger")
 	return cmd
 }
 
-// attachedWorkspaces finds a workspace this host already has and never makes
-// one. Restart is the caller: cloning a repository in order to delete it
-// would be absurd, and a run worked on another host has nothing here to
-// destroy.
-func attachedWorkspaces(root string) run.Workspaces {
-	return func(ctx context.Context, spec workspace.Spec, _ run.Repository) (run.Workspace, error) {
-		ws := local.New(local.Options{Root: root})
-		if _, err := ws.Attach(ctx, spec); err != nil {
-			return nil, err
-		}
-		return ws, nil
+// applyRestartConfig fills in, from the configuration file, what finding
+// the run's workspace depends on and the command line left alone: the
+// backend, the workspace directory, the sandbox root and the machine
+// backend's settings, and the identity the checkout was made under. It is
+// the worker's own file, read the way the worker reads it, so a restart
+// looks where the worker put things.
+func applyRestartConfig(cmd *cobra.Command, opts *restartOptions) error {
+	if err := checkNamedConfig(cmd, opts.config); err != nil {
+		return err
 	}
+	config, err := LoadConfig(opts.config)
+	if err != nil {
+		return err
+	}
+	for name, setting := range map[string]struct {
+		target *string
+		value  string
+	}{
+		"workspace":     {&opts.run.workspace, config.Workspace},
+		"workspace-dir": {&opts.run.workspaceDir, config.WorkspaceDir},
+	} {
+		if setting.value != "" && unset(cmd, name) {
+			*setting.target = setting.value
+		}
+	}
+	opts.run.identity = config.Identity
+	opts.run.name = config.Name
+	if opts.run.name == "" {
+		opts.run.name = defaultForgeUser
+	}
+	opts.run.workflowDir = config.WorkflowDir
+	if err := resolveSandboxRoot(cmd, &opts.run.sandboxRoot, config.SandboxRoot); err != nil {
+		return err
+	}
+	return applySandboxConfig(config, &opts.run.sandbox)
 }

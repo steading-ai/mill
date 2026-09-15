@@ -1146,6 +1146,57 @@ Feature: Reconciliation on resume
   Scenario: Reconciliation precedes eviction
     When the worker starts
     Then orphans and leftovers are handled before eviction runs
+
+  @db
+  Scenario: A running run whose node was dropped after its lease was released fails
+    Given a run at step 2 whose lease was released
+    And its node dropped
+    When the worker sweeps
+    Then the run is failed with the drop as the reason, its workspace destroyed and its branch closed
+
+  @db
+  Scenario: A selecting run whose node was dropped fails with nothing to close on the forge
+    Given a run that never chose a workflow, holding no lease
+    And its node dropped
+    When the worker sweeps
+    Then the run is failed and the forge is not touched
+
+  @db
+  Scenario: A parked run whose node is open and blocked by its gate survives the sweep
+    Given a run parked with its gate unanswered
+    When the worker sweeps
+    Then the run is still parked and its workspace retained
+
+  @db
+  Scenario: A node completed by a person underneath a run fails the run
+    Given a run at step 2 whose lease was released
+    And its node completed by a person
+    When the worker sweeps
+    Then the run is failed as completed outside the run
+
+  @db
+  Scenario: A completion the store missed is caught up
+    Given a run whose completing patch landed and whose store write did not
+    When the worker sweeps
+    Then the run is marked done and nothing is closed on the forge
+
+  @db
+  Scenario: A run touched inside one lease TTL is left for its process
+    Given a stranded run written to moments ago
+    When the worker sweeps under its ordinary clock
+    Then the run is untouched until a TTL has passed
+
+  @db
+  Scenario: The sweep precedes the host's pass, and both precede the first claim
+    Given a live run whose node was dropped
+    When the worker starts
+    Then the run is failed before the host's reconciliation runs, and nothing was claimed
+
+  @db
+  Scenario: A worker with no startup sweeps at start and again on the interval
+    Given a worker on the local backend
+    When a run is stranded after it has started
+    Then the run is failed once the sweep interval elapses, and not before
 ```
 
 ## Feature: Privilege

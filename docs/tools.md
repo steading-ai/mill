@@ -72,6 +72,12 @@ Runs by state, with the step each is on, how long it has been going, what it
 has cost, and the gate a waiting one is blocked on. With no `--status`
 filter this is every run that has not ended.
 
+A run listed here whose node dagger has since closed — dropped, or completed
+by a person — does not stay: the worker's sweep fails it within a sweep
+interval (`--sweep-interval`, fifteen minutes by default) of noticing, and
+`history` then shows the `failed` event with the reason
+(`docs/ledger.md` §Sweep).
+
 ```
 $ mill status
 NODE       STATUS   STEP       ATTEMPT  ELAPSED  TOKENS       GATE
@@ -253,7 +259,10 @@ this tool has nothing to read.
 
 The run's audit trail, oldest first: what changed, when, and under which
 worker. The record of a run that has already ended, when `inspect` has been
-superseded by later attempts.
+superseded by later attempts. A run the sweep ended carries a `failed`
+event whose `reason` says why — `node dropped underneath the run`, or
+`node completed outside the run` — or a `done` one when the node's
+completion was the run's own and the store had missed it.
 
 ```
 $ mill history millcli#1

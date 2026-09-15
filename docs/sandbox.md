@@ -477,10 +477,11 @@ The rule: **a machine may only create external state that is swept by name from 
 | Forge scratch projects | `mill-acceptance-<scenario>-<nonce>` in the scratch namespace (`scratch-namespace` in worker configuration) | worker reconciliation: any matching project older than the suite's budget is deleted through the forge adapter's namespace verbs |
 | Workflow rows a suite derives | project scope, in the scenario's scratch project | swept with the project; never at org scope from a suite — `stageWorkflow` fails the scenario that asks for org scope |
 | Run directories, `.building` images | run id, derived digest | worker reconciliation |
+| Live runs whose node dagger has closed | the run's `node_ref`, asked of dagger by name | the worker's sweep (`docs/ledger.md` §Sweep): the run ends in the ledger and its workspace, branch and pull request go with it; never by readiness, only by dagger's closed status |
 
 The pattern is `^mill-acceptance-<scenario>-<nonce>$` with an eight-hex-digit nonce, and the budget is the suite's own timeout, 90 minutes unless `scratch-budget` says otherwise: a project younger than that may belong to a suite still running. A live run is one the ledger holds open; a scratch project a live run's node is in is not swept whatever its age. The sweep matches by name and age and never by "everything not in the ledger" (mill#49).
 
-Reconciliation runs the sweeps on the same pass it reconciles machines, and the pass is recorded in the ledger (`reconciliations`: the worker, when it started, and each finding — orphan, lost sandbox, resumable, leftover, swept, failure — with what was done). A suite that cannot name its state so that a sweep finds it has a bug in the suite, not a gap in the sweep.
+Reconciliation runs the sweeps on the same pass it reconciles machines, and the pass is recorded in the ledger (`reconciliations`: the worker, when it started, and each finding — orphan, lost sandbox, resumable, leftover, swept, stranded, failure — with what was done). A suite that cannot name its state so that a sweep finds it has a bug in the suite, not a gap in the sweep.
 
 ## Reconciliation on resume
 
@@ -488,9 +489,10 @@ The ledger records per run: machine name, machine unit, derived digest, veth nam
 
 On worker start, before the first claim and in this order:
 
+0. The sweep of the ledger against dagger (`docs/ledger.md` §Sweep): every live run of this worker's whose node dagger has closed is failed — or marked done, when its own completing patch had landed — its workspace destroyed through `Attach` and its branch closed. It goes first so the rest of the pass sees the ledger's truth: a run the sweep has just ended is no longer live, and the machine it could not reach is an orphan and its directory a leftover in the very next step. The same sweep runs again between claims, on its own interval.
 1. `machinectl list` and compare with live runs:
    - a machine with no live run is an **orphan** → stop its unit (as §Destroy does: stop only if `run.json` says it was ready, else terminate), delete its run directory, record the fact.
-   - a live run with no machine is a **lost sandbox** → the run fails with that as evidence — the machine's name and the ledger's step — when it is next claimed: `Attach` refuses with it, the run is failed in the ledger, the node is held in dagger under the same reason so it is not claimed into the same refusal again, and the lease is released. Nothing resumes into a fresh machine; the workspace's state is not the ledger's to reconstruct. The pass records it and leaves the run directory, because the record is what tells the claim a machine once existed. A run that never had a machine on this host — one still selecting, or another host's — is not a lost sandbox.
+   - a live run with no machine is a **lost sandbox** → the run fails with that as evidence — the machine's name and the ledger's step — when it is next claimed, or when the sweep finds its node closed: `Attach` refuses with it, the run is failed in the ledger, the node is held in dagger under the same reason so it is not claimed into the same refusal again, and the lease is released. Nothing resumes into a fresh machine; the workspace's state is not the ledger's to reconstruct. The pass records it and leaves the run directory, because the record is what tells the claim a machine once existed. A run that never had a machine on this host — one still selecting, or another host's — is not a lost sandbox.
    - a live run with its machine present resumes at the ledger's step after stopping and recreating the current slice. Whatever was running when the worker died is not trusted to still be the step: the pass stops the slice `run.json` names, `Attach` stops it again and recreates it under the same ordinal, so the run loop's count continues from where the dead worker's left off. The candidate snapshot from the last evidence-closed step is still valid and still promotes at finish.
 2. Delete `*.building` under `/var/lib/machines/` — found through the build locks the worker's own image directory holds, since the machines directory is root's — and any run directory with no live run.
 3. Sweep external state by name (§External state): stale `mill-acceptance-*` dagger and forge projects.
@@ -516,6 +518,7 @@ Polling `machinectl` is sufficient at run cadence. If it is not, host-side D-Bus
 | Step exceeds its budget | mill's timer | Stop the slice; no candidate snapshot; fail the step |
 | Machine dies mid-step | exec returns a connection error; `machinectl show` reports none | Fail the run: lost sandbox. Candidate from an earlier closed step still promotes |
 | Worker dies mid-step | §Reconciliation | Resume at the ledger's step with a fresh slice |
+| Node dropped or completed underneath a run holding no lease | the worker's sweep asks dagger (`docs/ledger.md` §Sweep) | Fail the run with the reason — or mark it done when its own completing patch had landed — destroy the workspace through `Attach`, close the branch; no dagger write |
 | Proxy unavailable | connections from the machine fail; the toolchain step's `mise install` is the first to hang | The toolchain step closes on its spent budget and the first session receives the finding; `mill doctor` does not probe the proxy, and squid's own log on the host is where the answer is |
 | Cache filesystem full | promotion or restore fails with ENOSPC | Run eviction, retry once; then the run finishes without promoting |
 | Lineage evicted mid-run | absent at promotion | Promote into a fresh lineage |

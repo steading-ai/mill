@@ -33,6 +33,14 @@ func (r *Runner) Restart(ctx context.Context, nodeRef, reason string) (*millv1.R
 	if node.GetAssigneeKind() == daggerv1.AssigneeKind_ASSIGNEE_KIND_USER {
 		return nil, &dagger.UserNodeError{Ref: nodeRef, Verb: "restart"}
 	}
+	// A closed node has no next generation to start: a restart of a
+	// dropped node would open a run nothing can ever claim, which is
+	// exactly the stranded run the sweep exists to end (docs/ledger.md
+	// §Sweep).
+	if node.GetStatus() != daggerv1.Status_STATUS_OPEN {
+		return nil, fmt.Errorf("%w: %s is %s, not open; nothing to restart",
+			ErrRefused, nodeRef, daggerStatus(node.GetStatus()))
+	}
 	old, next, err := r.runByNode(ctx, node.GetId())
 	if err != nil {
 		return nil, err
@@ -66,7 +74,10 @@ func (r *Runner) Restart(ctx context.Context, nodeRef, reason string) (*millv1.R
 			r.options.Log.Debug("no repository for the restart", "run", old.GetId(), "error", err)
 		}
 		r.discardWorkspace(ctx, old, repo)
-		if err := r.closeBranch(ctx, old, reason, repo); err != nil {
+		comment := fmt.Sprintf(
+			"Superseded: run %s of %s was restarted (%s). Generation %d starts from the default branch with fresh sessions.",
+			old.GetId(), old.GetNodeRef(), reason, old.GetGeneration()+1)
+		if err := r.closeBranch(ctx, old, comment, repo); err != nil {
 			return nil, err
 		}
 	}
@@ -126,11 +137,17 @@ func (r *Runner) preempt(ctx context.Context, old *millv1.Run, reason string) er
 	return nil
 }
 
-// discardWorkspace destroys the tree the abandoned run worked in. A
-// workspace this host never had is not an error: the restart is about the
-// run, and a worker elsewhere left its own behind for its own cleanup.
+// discardWorkspace destroys the tree a run that has ended worked in, through
+// the attach-only seam: it never makes a workspace in order to delete it. A
+// workspace this host never had is not an error: the restart or the sweep
+// is about the run, and a worker elsewhere left its own behind for its own
+// cleanup.
 func (r *Runner) discardWorkspace(ctx context.Context, old *millv1.Run, repo Repository) {
-	ws, err := r.options.Workspaces(ctx, workspace.Spec{
+	if r.options.Attach == nil {
+		r.options.Log.Debug("no attach-only workspaces; nothing destroyed", "run", old.GetId())
+		return
+	}
+	ws, err := r.options.Attach(ctx, workspace.Spec{
 		RunID:   old.GetId(),
 		NodeRef: old.GetNodeRef(),
 		Origin:  repo.Origin,
@@ -144,7 +161,7 @@ func (r *Runner) discardWorkspace(ctx context.Context, old *millv1.Run, repo Rep
 		r.options.Log.Warn("destroying the workspace", "run", old.GetId(), "error", err)
 		return
 	}
-	// The run is abandoned and holds no lease, which is what admits the
+	// The run has ended and holds no lease, which is what admits the
 	// record of its workspace's end. A run that recorded no workspace has
 	// no row to finish, and that is a note rather than a failure.
 	if err := r.finishWorkspaceOf(ctx, "", old.GetId(), ws); err != nil {
@@ -152,23 +169,21 @@ func (r *Runner) discardWorkspace(ctx context.Context, old *millv1.Run, repo Rep
 	}
 }
 
-// closeBranch takes the abandoned generation off the forge: the pull request
-// closed with a comment naming the restart, and the branch deleted. The new
-// generation pushes the same branch name from the default branch again, so
-// leaving the old one would have the next run build on work a human has
-// already declared a dead end.
+// closeBranch takes a run that has ended off the forge: the pull request
+// closed with the comment given, and the branch deleted. After a restart
+// the new generation pushes the same branch name from the default branch
+// again, so leaving the old one would have the next run build on work a
+// human has already declared a dead end; after a sweep nothing will push
+// it again, and a branch nobody will merge is noise on the forge.
 //
-// A project with no repository has nothing to close, and a restart is not
-// the moment to insist on one.
-func (r *Runner) closeBranch(ctx context.Context, old *millv1.Run, reason string, repo Repository) error {
+// A project with no repository has nothing to close, and neither moment is
+// one to insist on one.
+func (r *Runner) closeBranch(ctx context.Context, old *millv1.Run, comment string, repo Repository) error {
 	client := repo.Forge
 	if client == nil {
 		r.options.Log.Debug("no forge to close the branch on", "run", old.GetId())
 		return nil
 	}
-	comment := fmt.Sprintf(
-		"Superseded: run %s of %s was restarted (%s). Generation %d starts from the default branch with fresh sessions.",
-		old.GetId(), old.GetNodeRef(), reason, old.GetGeneration()+1)
 	pr, err := client.PR(ctx, old.GetBranch())
 	switch {
 	case errors.Is(err, forge.ErrNoPullRequest):

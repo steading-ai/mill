@@ -19,13 +19,14 @@ import (
 
 // workOptions is what the daemon needs on top of a run's own settings.
 type workOptions struct {
-	run         runOptions
-	config      string
-	projects    []string
-	labels      []string
-	concurrency int
-	wait        time.Duration
-	grace       time.Duration
+	run           runOptions
+	config        string
+	projects      []string
+	labels        []string
+	concurrency   int
+	wait          time.Duration
+	sweepInterval time.Duration
+	grace         time.Duration
 }
 
 // newWorkCommand is the worker face: ClaimNext against dagger, then drive
@@ -73,6 +74,7 @@ func bindWorkFlags(cmd *cobra.Command, opts *workOptions) {
 	f.StringSliceVar(&opts.labels, "label", nil, "only claim nodes carrying every one of these labels; repeat for more")
 	f.IntVar(&opts.concurrency, "concurrency", run.DefaultConcurrency, "how many runs to drive at once")
 	f.DurationVar(&opts.wait, "wait", run.DefaultWait, "how long one claim blocks for work before asking again")
+	f.DurationVar(&opts.sweepInterval, "sweep-interval", run.DefaultSweepInterval, "how long the worker goes between sweeps of the ledger against dagger, for runs whose node was closed underneath them")
 	f.DurationVar(&opts.grace, "grace", run.DefaultStopGrace, "how long a stopping worker gives its runs before a second signal kills them")
 	f.StringVar(&opts.run.daggerSocket, "dagger-socket", envOr(daggerSocketEnv, defaultDaggerSocket), "path of dagger's unix socket (default: $"+daggerSocketEnv+")")
 	f.StringVar(&opts.run.workflow, "workflow", "", "workflow to select when a run has none (default: assess the node and let the assessment name one)")
@@ -252,13 +254,14 @@ func newWorker(cmd *cobra.Command, opts *workOptions) (*run.Worker, error) {
 		return nil, err
 	}
 	return run.NewWorker(run.WorkerOptions{
-		Runners:     runners,
-		Startup:     startup,
-		Labels:      opts.labels,
-		Concurrency: opts.concurrency,
-		Wait:        opts.wait,
-		Out:         cmd.OutOrStdout(),
-		Log:         log,
+		Runners:       runners,
+		Startup:       startup,
+		Labels:        opts.labels,
+		Concurrency:   opts.concurrency,
+		Wait:          opts.wait,
+		SweepInterval: opts.sweepInterval,
+		Out:           cmd.OutOrStdout(),
+		Log:           log,
 	})
 }
 

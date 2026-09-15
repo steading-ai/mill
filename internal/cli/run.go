@@ -416,6 +416,7 @@ func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, 
 		Notifier:       notifier(opts.notifyCommand),
 		Dagger:         client,
 		Workspaces:     workspacesFor(kind, opts, redactor),
+		Attach:         attachOnlyWorkspaces(kind, opts, redactor),
 		Repositories:   repositories(opts),
 		Harnesses:      harnessesFor(kind, opts, envMode),
 		WorkerRef:      worker,
@@ -755,6 +756,36 @@ func machineWorkspaces(opts runOptions, redactor *redact.Redactor) run.Workspace
 			return nil, err
 		}
 		if _, err := ws.Create(ctx, spec); err != nil {
+			return nil, err
+		}
+		return ws, nil
+	}
+}
+
+// attachOnlyWorkspaces is the selector for a workspace this host already
+// has, on the configured backend, and never one made for the occasion: a
+// restart and the sweep destroy through it (run.Options.Attach). The
+// machine backend's Attach is already that — it reads the run's record and
+// asks machined, and a run this host has no record of is machine.ErrNoRecord
+// — and the local backend's is a stat of the checkout.
+func attachOnlyWorkspaces(kind workspace.Kind, opts runOptions, redactor *redact.Redactor) run.Workspaces {
+	return func(ctx context.Context, spec workspace.Spec, repo run.Repository) (run.Workspace, error) {
+		if kind == workspace.KindMachine {
+			ws := machine.New(machineDriver(), machineConfig(opts, repo, redactor))
+			if _, err := ws.Attach(ctx, spec); err != nil {
+				return nil, err
+			}
+			return ws, nil
+		}
+		ws := local.New(local.Options{
+			Root:     opts.workspaceDir,
+			Origin:   repo.Origin,
+			Forge:    repo.Forge,
+			Name:     opts.name,
+			Identity: opts.identity,
+			Redactor: redactor,
+		})
+		if _, err := ws.Attach(ctx, spec); err != nil {
 			return nil, err
 		}
 		return ws, nil

@@ -268,6 +268,7 @@ func (f *fixture) runner(options ...func(*run.Options)) *run.Runner {
 		Store:      f.store,
 		Dagger:     f.client,
 		Workspaces: f.workspaces(),
+		Attach:     f.attached(),
 		Repositories: func(context.Context, *daggerv1.Project) (run.Repository, error) {
 			return run.Repository{Forge: f.forge, Origin: f.origin}, nil
 		},
@@ -311,6 +312,52 @@ func (f *fixture) workspaces() run.Workspaces {
 		}
 		return ws, nil
 	}
+}
+
+// attached finds the workspace an earlier invocation left behind and never
+// makes one: the seam a restart and the sweep destroy through.
+func (f *fixture) attached() run.Workspaces {
+	return func(ctx context.Context, spec workspace.Spec, repo run.Repository) (run.Workspace, error) {
+		local := local.New(local.Options{
+			Root:     filepath.Join(f.root, "workspaces"),
+			Origin:   repo.Origin,
+			Forge:    repo.Forge,
+			Redactor: f.redactor,
+		})
+		if _, err := local.Attach(ctx, spec); err != nil {
+			return nil, err
+		}
+		return local, nil
+	}
+}
+
+// drop closes a node as a person does — no lease, no mill request id —
+// which dagger admits only once no live lease holds it. It is how a spec
+// strands a run: the node is gone from every ready set, and nothing will
+// claim it to end the run underneath.
+func (f *fixture) drop(ctx context.Context, ref string) {
+	GinkgoHelper()
+	_, err := f.graph.ApplyPatch(ctx, connect.NewRequest(&daggerv1.ApplyPatchRequest{
+		RequestId: "spec-drop-" + ref, Project: project,
+		Ops: []*daggerv1.PatchOp{{Op: &daggerv1.PatchOp_DropNode{DropNode: &daggerv1.DropNodeOp{
+			Node: ref, Reason: daggerv1.DropReason_DROP_REASON_SUPERSEDED, Detail: "the spec filed it again",
+		}}}},
+	}))
+	Expect(err).NotTo(HaveOccurred())
+}
+
+// selectingRun opens a run on the node holding no lease, as a restart that
+// created the next generation leaves it, under the worker named.
+func (f *fixture) selectingRun(ctx context.Context, workerRef string) *millv1.Run {
+	GinkgoHelper()
+	node, err := f.client.Node(ctx, f.nodeRef)
+	Expect(err).NotTo(HaveOccurred())
+	res, err := f.store.CreateRun(ctx, connect.NewRequest(&millv1.CreateRunRequest{
+		NodeId: node.GetId(), NodeRef: node.GetReference(), ContextId: node.GetContextId(),
+		Generation: 1, WorkerRef: workerRef, Branch: workspace.BranchFor(node.GetReference()),
+	}))
+	Expect(err).NotTo(HaveOccurred())
+	return res.Msg.GetRun()
 }
 
 // keeping is the run's workspace with Destroy taken out. A run that finishes
