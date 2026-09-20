@@ -162,7 +162,7 @@ One unit of a workflow. Four kinds.
 | `capabilities` | The capability set the step's workspace handle grants. See [Capability set](#capability-set) |
 | `harness` | Per-harness **options documents**, keyed by harness name. The adapter reads its own entry and mill reads none of them |
 | `on_failure` | What happens once `retries` are spent: `revise <step>` returns to a named earlier step in its session with the failure as the next prompt; `park` trips the breaker. Default `park`. See [Revise](#revise) |
-| `retries` | How many times *this* step may fail and be tried again before `on_failure` is consulted. Counted on this step's own attempts. Default 3 |
+| `retries` | How many times *this* step may fail and be tried again before `on_failure` is consulted. Counted on this step's own attempts. Default 3 for a skill or gate step, 0 for a check: a check gets no feedback between one attempt and the next — `runCheck` takes none — so retrying it changes nothing unless the world does, and a check that wants a retry anyway says so with an explicit `retries` |
 | `token_budget` | How many tokens one attempt may bill through the credential gateway — input, output, cache read and cache write summed — before the gateway refuses its requests and the attempt fails on the budget. Zero declares none. `docs/sandbox.md` §Credentials |
 | `models` | The models the step's sessions may reach through the gateway; an entry matches a model id it equals or that contains it, so `sonnet` pins every Sonnet. Empty admits every model. Mill's field, not the harness's: the harness's `model` is what the session asks for, this is what the gateway lets through |
 | `timeout` | Wall clock for the step, enforced by the worker. Independent of the dagger lease, which the worker heartbeats for the step's whole duration; a step may run longer than a lease TTL |
@@ -246,7 +246,7 @@ What each kind proves:
 
 | Kind | Closes | Verified how |
 |---|---|---|
-| `commit` | commit steps | A commit made in this step: `git cat-file -e <sha>` in the workspace succeeds, the SHA is on the run's branch, it descends from the attempt's `base_commit` without being it, and the mill is its author and its committer |
+| `commit` | commit steps | A commit made in this step: `git cat-file -e <sha>` in the workspace succeeds, the SHA is on the run's branch, and the mill is its author and its committer. Ordinarily it also descends from the attempt's `base_commit` without being it; the one exception is a head that has not moved from `base_commit` at all, which still closes when the tree is clean and the head already descends from (and is not) the step's *earliest* `base_commit` this generation — a `revise` that changed nothing on the branch, not a session that made no commit |
 | `exit` | check steps, build, test, lint | The process the workspace ran exited with the code the definition names |
 | `verdict` | review steps | The session's final output parsed as a verdict and its `decision` is `approve` |
 | `structured` | assessment, plan | The session's final output validated against the step's schema |
@@ -293,7 +293,7 @@ A deterministic command a step runs through the workspace.
 | `stdout` | `none`, `text`, or `json` with a schema. JSON on stdout, diagnostics on stderr, per the agent-skills script convention |
 | `feedback` | Whether a failure's stderr is returned to the session as the next prompt (`revise`) or parks the run |
 
-The canonical example: a `clean-tree` check after `commit` whose stderr on failure is *"Workspace is dirty: stage, delete, or ignore uncommitted files"* and whose `on_failure` is `revise implement`.
+The canonical example: a `clean-tree` check after `commit` whose stderr on failure is *"Workspace is dirty: stage, delete, or ignore uncommitted files"* and whose `on_failure` is `revise commit` — staging what is dirty is `commit`'s job, not `implement`'s, so a dirty tree goes back to the step that stages it.
 
 Checks are what make the workflow enforced. A skill can *recommend* a script; only a check step makes the mill run it and act on the result.
 

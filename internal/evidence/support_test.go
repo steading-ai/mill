@@ -95,6 +95,12 @@ func (r *repository) commit(name, content string) string {
 	return strings.TrimSpace(r.must("rev-parse", "HEAD"))
 }
 
+// write leaves a file in the working tree without staging or committing it,
+// the way a session that edited something and never committed would.
+func (r *repository) write(name, content string) {
+	Expect(os.WriteFile(filepath.Join(r.dir, name), []byte(content), 0o600)).To(Succeed())
+}
+
 // commitAs writes a file and commits it under an identity of the spec's
 // choosing, which is how a commit that arrived on the branch by some other
 // hand than the mill's is staged.

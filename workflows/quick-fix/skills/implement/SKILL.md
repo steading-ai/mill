@@ -61,8 +61,9 @@ say so in the summary with the evidence.
 ### 5. Leave the tree ready to commit
 
 Do not commit; the next step does. Delete scratch files, temporary scripts,
-and debug output. A check after the commit fails the run if the tree is
-dirty, and it sends the work back here.
+and debug output — but a plan under `docs/plans/` is not scratch: it is
+committed with the change. A check after the commit fails the run if the
+tree is dirty, and it sends the work back to the step that commits.
 
 ### 6. Summarize
 

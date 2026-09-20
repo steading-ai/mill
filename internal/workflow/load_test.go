@@ -70,6 +70,30 @@ steps:
 		Expect(step(loaded, "implement").GetRetries()).To(BeNumerically("==", 3), "the documented default")
 	})
 
+	It("defaults a skill's retries to three and a check's to zero", func() {
+		// runCheck takes no feedback from one attempt to the next, so a
+		// check that wants a retry says so; a skill gets one worth trying
+		// again by default (docs/domain-model.md §Step, `retries`).
+		loaded, _, err := workflow.Load(dir(`
+name: tiny
+steps:
+  - name: implement
+    timeout: 10m
+    kind: skill
+    session: implement
+    skill: implement
+    evidence: artifact
+  - name: check
+    timeout: 10m
+    kind: check
+    check: {command: [scripts/check]}
+    evidence: exit
+`, map[string]string{"implement": "Make the change."}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(step(loaded, "implement").GetRetries()).To(BeNumerically("==", 3))
+		Expect(step(loaded, "check").GetRetries()).To(BeZero())
+	})
+
 	It("A step without a budget does not load", func() {
 		By("given a workflow definition with a step lacking timeout")
 		root := dir(`
@@ -715,13 +739,14 @@ var _ = Describe("The quick-fix workflow", Label("unit"), func() {
 			[]millv1.Capability{millv1.Capability_CAPABILITY_FORGE}, millv1.EvidenceKind_EVIDENCE_KIND_URL),
 	)
 
-	It("clean-tree is a check whose failure revises implement", func() {
+	It("clean-tree is a check whose failure revises commit, and takes no retries of its own", func() {
 		s := step(loaded, "clean-tree")
 		Expect(s.GetKind()).To(Equal(millv1.StepKind_STEP_KIND_CHECK))
 		Expect(s.GetCheck().GetCommand()).To(Equal([]string{"scripts/clean-tree"}))
 		Expect(s.GetEvidence()).To(Equal(millv1.EvidenceKind_EVIDENCE_KIND_EXIT))
 		Expect(s.GetOnFailure().GetKind()).To(Equal(millv1.OnFailureKind_ON_FAILURE_KIND_REVISE))
-		Expect(s.GetOnFailure().GetReviseTarget()).To(Equal("implement"))
+		Expect(s.GetOnFailure().GetReviseTarget()).To(Equal("commit"))
+		Expect(s.GetRetries()).To(BeZero(), "explicit, and it is also the check default")
 	})
 
 	It("merge is a gate that auto-approves and closes on a status", func() {

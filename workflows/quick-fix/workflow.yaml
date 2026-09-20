@@ -97,11 +97,11 @@ steps:
     timeout: 15m
 
   # The tree has to be clean before the run leaves the workspace behind.
-  # This is the check that makes "exec can write" detectable in MVP. It runs
-  # again on its own three times first — a tree a second look finds clean
-  # costs nothing — and only a fourth dirty tree sends the session back to
-  # implement with the paths as the next prompt (docs/domain-model.md §Step,
-  # "retries first, then on_failure"; §Check).
+  # This is the check that makes "exec can write" detectable in MVP. A check
+  # gets no retries of its own by default — nothing changes between one
+  # attempt and the next unless commit runs again — so a dirty tree goes
+  # straight back to commit, the step that stages and closes on a commit
+  # (docs/domain-model.md §Step, §Check; §Evidence, `commit`).
   - name: clean-tree
     kind: check
     check:
@@ -114,8 +114,8 @@ steps:
     evidence: exit
     capabilities:
       - exec
-    on_failure: revise implement
-    retries: 3
+    on_failure: revise commit
+    retries: 0
     timeout: 2m
 
   - name: pr

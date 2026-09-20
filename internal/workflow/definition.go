@@ -170,8 +170,12 @@ func encode(doc document) ([]byte, error) {
 	return []byte(b.String()), nil
 }
 
-// defaultRetries is how many times a step may fail with revise before the
-// circuit breaker parks the run. docs/domain-model.md §Step.
+// defaultRetries is how many times a skill step may fail with revise before
+// the circuit breaker parks the run. docs/domain-model.md §Step.
+//
+// A check gets no such default: runCheck takes no feedback from one attempt
+// to the next, so retrying it changes nothing unless the world does, and a
+// check that wants a retry anyway says so with an explicit `retries`.
 const defaultRetries = 3
 
 // toProto turns the decoded document into the definition the store holds.
@@ -266,7 +270,7 @@ func (s stepYAML) toProto() (*millv1.Step, error) {
 		if s.Retries != 0 || s.OnFailure != "" {
 			return fail(fmt.Errorf("a preparatory step never fails, so it has no retries and no on_failure"))
 		}
-	} else if step.GetRetries() == 0 {
+	} else if step.GetRetries() == 0 && kind != millv1.StepKind_STEP_KIND_CHECK {
 		step.Retries = defaultRetries
 	}
 	if s.TokenBudget < 0 {

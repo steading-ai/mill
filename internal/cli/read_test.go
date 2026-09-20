@@ -404,7 +404,8 @@ var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 
 			Expect(rowFor(out, "implement")).To(ContainSubstring("artifact"))
 			Expect(rowFor(out, "implement")).To(ContainSubstring("read,write,exec"))
-			Expect(rowFor(out, "clean-tree")).To(ContainSubstring("revise:implement"))
+			Expect(rowFor(out, "clean-tree")).To(MatchRegexp(`\b0\s+revise:commit\b`),
+				"a check gets no retries of its own by default")
 		})
 
 		It("prints each step's harness options as the document they are stored as", func() {

@@ -46,6 +46,9 @@ Stage the files the change is made of, by path. Include:
 
 - Files the previous step edited.
 - Generated files the project commits, if the change regenerated them.
+- `docs/plans/`, if a plan step wrote one: the plan belongs with the change it
+  planned, not left as an uncommitted file the clean-tree check has to answer
+  for.
 
 Exclude, and report rather than commit:
 

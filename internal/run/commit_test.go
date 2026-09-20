@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -135,6 +136,85 @@ var _ = Describe("Commit evidence", Label(testsupport.DBLabel), func() {
 		Expect(f.comments(ctx)).To(ContainElement(ContainSubstring("Someone Else <else@example.test>")))
 	})
 
+	It("A revise that changes nothing still closes commit", func() {
+		By("given a clean-tree that fails once, then passes")
+		// A bare host command, resolved on PATH exactly as `scripts/clean-tree`
+		// is, that fails the first time it is asked and remembers to pass the
+		// second: the shape of a check whose complaint the revise round
+		// already answered.
+		marker := filepath.Join(GinkgoT().TempDir(), "revised")
+		workflow := f.variant(ctx, "revise-once", func(definition *millv1.Workflow) {
+			stepOf(definition, "clean-tree").GetCheck().Command = []string{
+				"sh", "-c", fmt.Sprintf(`test -f %q && exit 0 || { touch %q; exit 1; }`, marker, marker),
+			}
+		})
+
+		By("and a commit step whose resumed attempt makes no new commit")
+		f.keepWorkspace = true
+		f.script(
+			fake.Script{Terminal: fake.Terminal("context gathered", nil, usage(10)), Do: f.commits},
+			fake.Script{Terminal: fake.Terminal("the change is made", nil, usage(20)), Do: f.commits},
+			fake.Script{Terminal: fake.Terminal("committed", nil, usage(5)), Do: f.commits},
+			fake.Script{Terminal: fake.Terminal("nothing left to change", nil, usage(3))},
+			fake.Script{Terminal: fake.Terminal("opened the pull request", nil, usage(5)), Do: f.commits},
+		)
+
+		By("when clean-tree's first failure revises the work back to commit")
+		Expect(f.runner(func(o *run.Options) { o.Workflow = workflow }).Execute(ctx, f.nodeRef)).To(Succeed())
+
+		By("then the step closes on the commit the first attempt made")
+		made := f.commitsMade()
+		Expect(made).To(HaveLen(4), "the resumed attempt committed nothing of its own")
+		attempt := commitStep()
+		Expect(attempt.GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED))
+		Expect(attempt.GetBaseCommit()).To(Equal(made[2]),
+			"the resumed attempt's own base is the head it never moved from")
+		closed := evidenceOf(f.inspect(ctx), "commit")
+		Expect(closed.GetCommit()).To(Equal(made[2]))
+
+		By("and the first attempt's commit was superseded, not lost")
+		commits := stepRuns(f.inspect(ctx), "commit")
+		Expect(commits).To(HaveLen(2))
+		Expect(commits[0].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_SUPERSEDED))
+		Expect(commits[1].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED))
+
+		By("and clean-tree ran again and passed")
+		checks := stepRuns(f.inspect(ctx), "clean-tree")
+		Expect(checks).To(HaveLen(2))
+		Expect(checks[0].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_SUPERSEDED))
+		Expect(checks[1].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED))
+	})
+
+	It("Uncommitted work is never closed over", func() {
+		By("given a session that edits the tree without committing")
+		f.keepWorkspace = true
+		f.script(
+			fake.Script{Terminal: fake.Terminal("context gathered", nil, usage(10))},
+			fake.Script{Terminal: fake.Terminal("the change is made", nil, usage(20))},
+			fake.Script{Terminal: fake.Terminal("done, I think", nil, usage(5)), Do: f.writesWithoutCommitting},
+		)
+
+		By("when the session ends with the tree dirty and no commit made")
+		Expect(f.runner().Execute(ctx, f.nodeRef)).To(Succeed())
+
+		By("then the step run is failed, naming the head that did not move")
+		attempt := commitStep()
+		Expect(attempt.GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_FAILED))
+		head := f.head(ctx)
+		Expect(attempt.GetBaseCommit()).To(Equal(head), "the head never moved")
+		Expect(f.comments(ctx)).To(ContainElement(SatisfyAll(
+			ContainSubstring("the branch head is still"),
+			ContainSubstring(head),
+			ContainSubstring("the session made no commit"),
+		)))
+
+		By("and the uncommitted work is still in the tree, not discarded")
+		git := f.workspace.GitRunner()
+		status, err := git.Run(ctx, nil, "status", "--porcelain")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(strings.TrimSpace(status)).NotTo(BeEmpty())
+	})
+
 	It("closes a resumed step on the commit the interrupted attempt made, without a second session", func() {
 		// A worker killed between the session's commit and the write that
 		// closes the step: the commit is on the branch and the ledger says
@@ -177,6 +257,18 @@ var _ = Describe("Commit evidence", Label(testsupport.DBLabel), func() {
 			"one session in the second run: the pr step's, and none for commit")
 	})
 })
+
+// writesWithoutCommitting edits the checkout and stops, the way a session
+// that never reaches its `git.commit` call does. The file has to survive:
+// the point of the spec this backs is that an unmoved head is not always a
+// head with nothing behind it, and closing the step would discard the edit
+// along with the evidence that it happened.
+func (f *fixture) writesWithoutCommitting(harness.Session) {
+	defer GinkgoRecover()
+	ctx := context.Background()
+	Expect(f.workspace).NotTo(BeNil(), "the run made a workspace before the session ran")
+	Expect(f.workspace.Write(ctx, "left-behind.txt", []byte("nobody committed this\n"))).To(Succeed())
+}
 
 // commitsAsSomeoneElse advances the run's branch by a commit the mill did not
 // make. It goes round the workspace's git verb on purpose: that verb commits
