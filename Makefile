@@ -7,12 +7,22 @@
 MODULE  := github.com/ivy/mill
 BINARY  := mill
 
-# Version is the nearest v-prefixed tag, marked dirty when the tree has local
-# changes. Without a tag the build is a 0.0.0 pre-release carrying the commit,
-# so the string is always semver-shaped.
-GIT_DESCRIBE := $(shell git describe --tags --match 'v*' --dirty 2>/dev/null | sed 's/^v//')
-GIT_SHA      := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
-VERSION      ?= $(if $(GIT_DESCRIBE),$(GIT_DESCRIBE),0.0.0-dev+$(GIT_SHA))
+# Version is the nearest v-prefixed tag. A build from exactly that tag on a
+# clean tree is the release, `0.1.0`, and nothing else is: any other build
+# carries a development marker as semver build metadata — `0.1.0+dev.3.4bd4269`,
+# the commits past the tag and the commit, with `.dirty` when the tree has
+# local changes — so `mill version` and a package's file name both say what
+# they were built from, and rpm orders the build after the tag it grew from.
+# Without a tag the build is 0.0.0 with the same marker. `make version`
+# prints it.
+GIT_DESCRIBE := $(shell git describe --tags --match 'v*' --long --dirty 2>/dev/null)
+ifneq ($(GIT_DESCRIBE),)
+VERSION ?= $(shell echo '$(GIT_DESCRIBE)' | sed -E 's/^v//; s/-0-g[0-9a-f]+$$//; s/-([0-9]+)-g([0-9a-f]+)$$/+dev.\1.\2/; s/-([0-9]+)-g([0-9a-f]+)-dirty$$/+dev.\1.\2.dirty/')
+else
+GIT_SHA   := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+GIT_DIRTY := $(shell git diff-index --quiet HEAD -- 2>/dev/null || echo .dirty)
+VERSION   ?= 0.0.0+dev.0.$(GIT_SHA)$(GIT_DIRTY)
+endif
 
 LDFLAGS := -X $(MODULE)/internal/version.version=$(VERSION)
 
@@ -24,7 +34,7 @@ COMPOSE := podman compose
 # Silence podman's "executing external compose provider" banner.
 export PODMAN_COMPOSE_WARNING_LOGS = false
 
-.PHONY: all build check test test-unit test-db test-acceptance lint lint-contract check-breaking check-generated typecheck-ts generate sidecar-deps sidecar-build clean db-up db-down db-reset db-migrate
+.PHONY: all build version check test test-unit test-db test-acceptance lint lint-contract check-breaking check-generated typecheck-ts generate sidecar-deps sidecar-build clean db-up db-down db-reset db-migrate
 
 all: build
 
@@ -34,6 +44,10 @@ check: lint lint-contract test
 
 build:
 	go build -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/mill
+
+# The version a build from this tree carries, as `mill version` prints it.
+version:
+	@echo $(VERSION)
 
 # Every spec. Database specs need podman for testcontainers.
 test:
