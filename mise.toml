@@ -16,6 +16,7 @@ ginkgo = "2.32.1"
 node = "24.13.0"
 pnpm = "10.20.0"
 hk = "1.57.0"
+nfpm = "2.47.0"
 
 [env]
 _.python.venv = { path = "harness/.venv", create = true }
