@@ -62,7 +62,7 @@ free-space watermarks, lineages and images both (docs/sandbox.md
 		},
 	}
 	f := cmd.PersistentFlags()
-	f.StringVar(&opts.config, "config", defaultConfigPath(), "path of the configuration file (default: $"+configEnv+", else $XDG_CONFIG_HOME/mill/config.yaml)")
+	f.StringVar(&opts.config, "config", defaultConfigPath(), "path of the configuration file (default: $"+configEnv+", else $XDG_CONFIG_HOME/mill/config.yaml, else /etc/mill/config.yaml)")
 	f.StringVar(&opts.sandboxRoot, "sandbox-root", machine.DefaultRoot, "the sandbox root; lineages live under <root>/cache")
 	f.StringVar(&opts.globalCap, "global-cap", cache.FormatSize(cache.DefaultGlobalCap), "size estimate past which a global lineage is reset at promotion, such as 20G")
 	f.StringVar(&opts.repoCap, "repo-cap", cache.FormatSize(cache.DefaultRepoCap), "size estimate past which a repo-scoped lineage is flagged, such as 10G")

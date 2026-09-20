@@ -74,7 +74,7 @@ from and when a machine last booted it.
 		},
 	}
 	f := cmd.PersistentFlags()
-	f.StringVar(&opts.config, "config", defaultConfigPath(), "path of the configuration file (default: $"+configEnv+", else $XDG_CONFIG_HOME/mill/config.yaml)")
+	f.StringVar(&opts.config, "config", defaultConfigPath(), "path of the configuration file (default: $"+configEnv+", else $XDG_CONFIG_HOME/mill/config.yaml, else /etc/mill/config.yaml)")
 	f.StringVar(&opts.sandboxRoot, "sandbox-root", machine.DefaultRoot, "the sandbox root; image locks and records live under <root>/images")
 	f.StringVar(&opts.machinesDir, "machines-dir", machine.DefaultMachines, "directory the image subvolumes live in")
 	f.StringVar(&opts.registry, "image-registry", image.DefaultRegistry, "the Harbor host the base is published to and pulled from")

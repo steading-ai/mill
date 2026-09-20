@@ -822,7 +822,9 @@ An eviction that fails part way prints what it deleted before the error.
 
 A worker's settings are the long tail of a systemd `ExecStart` line, so they
 may live in a file: `$MILL_CONFIG`, else `$XDG_CONFIG_HOME/mill/config.yaml`,
-else `~/.config/mill/config.yaml`, or whatever `--config` names. Its keys are
+else `~/.config/mill/config.yaml`, else — when the account has none and the
+package installed one — `/etc/mill/config.yaml`, or whatever `--config`
+names. Its keys are
 the long flag names, with the exceptions the table spells — `env_mode`,
 `notify_command`, `nested_repos`, `dagger_checkout` and
 `model_credential_minted` are written the way the deployment that sets them

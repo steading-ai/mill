@@ -125,11 +125,25 @@ type Config struct {
 	ModelCredentialMinted string `yaml:"model_credential_minted"`
 }
 
-// defaultConfigPath is where the file lives when nothing names one.
+// systemConfigPath is where the package installs the file (nfpm.yaml), for
+// a host that runs mill from a system unit rather than an account.
+const systemConfigPath = "/etc/mill/config.yaml"
+
+// defaultConfigPath is where the file lives when nothing names one:
+// $MILL_CONFIG; else the account's own, under $XDG_CONFIG_HOME or
+// ~/.config; else the system's, when the account has none and the package
+// installed one. The account's wins so an operator's file is never
+// shadowed by the package's; the system's is found so `mill doctor` on a
+// packaged host reads the settings the service runs with.
 func defaultConfigPath() string {
 	if path := os.Getenv(configEnv); path != "" {
 		return path
 	}
+	return configPath(userConfigPath(), systemConfigPath)
+}
+
+// userConfigPath is the account's own file, whether or not it exists.
+func userConfigPath() string {
 	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
 		return filepath.Join(dir, "mill", "config.yaml")
 	}
@@ -138,6 +152,21 @@ func defaultConfigPath() string {
 		return ""
 	}
 	return filepath.Join(home, ".config", "mill", "config.yaml")
+}
+
+// configPath picks between the account's file and the system's: the
+// account's when it exists or the system's does not, so a host with neither
+// still reports the account's path as the place a file would be read from.
+func configPath(user, system string) string {
+	if user != "" {
+		if _, err := os.Stat(user); err == nil {
+			return user
+		}
+	}
+	if _, err := os.Stat(system); err == nil {
+		return system
+	}
+	return user
 }
 
 // LoadConfig reads the file at path. A path that does not exist yields the
