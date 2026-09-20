@@ -23,6 +23,7 @@ var _ = Describe("What a procedure needs", Label("unit"), func() {
 		Entry("Status", millv1connect.StoreServiceStatusProcedure),
 		Entry("Inspect", millv1connect.StoreServiceInspectProcedure),
 		Entry("WhoAmI", millv1connect.StoreServiceWhoAmIProcedure),
+		Entry("WorkerService.Probe", millv1connect.WorkerServiceProbeProcedure),
 	)
 
 	DescribeTable("the verbs a human or an agent drives need operate",

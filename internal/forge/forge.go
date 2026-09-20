@@ -349,6 +349,16 @@ type Prober interface {
 	Probe(ctx context.Context) (Account, error)
 }
 
+// ContentReader is a forge that can read one file off a repository's
+// default branch without cloning it. `mill doctor`'s signing probe asks it
+// for `allowed_signers` when the host has no checkout to look in yet — a
+// fresh host, before its first run, still has a key and a repository, and
+// this is the cheap way to ask the repository rather than a run's own git
+// clone. [ErrNoSuchFile] is what a repository with no such file answers.
+type ContentReader interface {
+	ReadFile(ctx context.Context, path string) (string, error)
+}
+
 // Scratch is a forge's scratch namespace: the group a suite makes its
 // throwaway projects in, named `mill-acceptance-<scenario>-<nonce>`, and
 // the verbs the worker's reconciliation sweep needs to take them out again
@@ -383,6 +393,8 @@ type ScratchProject struct {
 var (
 	// ErrNoPullRequest is a branch with no pull request on the forge.
 	ErrNoPullRequest = errors.New("forge: no pull request for the branch")
+	// ErrNoSuchFile is a path a ContentReader's repository does not have.
+	ErrNoSuchFile = errors.New("forge: no such file in the repository")
 	// ErrNotMerged is a merge commit asked for before the merge.
 	ErrNotMerged = errors.New("forge: the pull request has not merged")
 )

@@ -3,12 +3,14 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -16,6 +18,8 @@ import (
 	"github.com/ivy/mill/internal/cli"
 	"github.com/ivy/mill/internal/forge/github"
 	"github.com/ivy/mill/internal/testsupport"
+	"github.com/ivy/mill/internal/workspace"
+	"github.com/ivy/mill/internal/workspace/signing"
 )
 
 // The GitHub forge as the mill reaches it: selected from the project's
@@ -38,17 +42,19 @@ var _ = Describe("The GitHub forge through the mill", Label(testsupport.DBLabel)
 		GinkgoT().Setenv("MILL_FORGE_TOKEN", "ghp_spec_token") // gitleaks:allow
 	})
 
-	// forgeProbe is the forge line of doctor's report: the verdict and
+	// probeReason is one probe's line of doctor's report: the verdict and
 	// the reason.
-	forgeProbe := func(output string) (verdict, reason string) {
+	probeReason := func(output, name string) (verdict, reason string) {
 		for _, line := range lines(output) {
 			fields := strings.Fields(line)
-			if len(fields) > 2 && fields[1] == "forge" {
+			if len(fields) > 2 && fields[1] == name {
 				return fields[0], strings.Join(fields[2:], " ")
 			}
 		}
 		return "", ""
 	}
+	// forgeProbe is the forge line of doctor's report.
+	forgeProbe := func(output string) (verdict, reason string) { return probeReason(output, "forge") }
 
 	// githubStub is a recorded api.github.com answering the reads doctor
 	// makes, installed as the adapter's HTTP client for the spec.
@@ -166,6 +172,89 @@ var _ = Describe("The GitHub forge through the mill", Label(testsupport.DBLabel)
 		verdict, reason := forgeProbe(doctorOn(g, "--forge", "github"))
 		Expect(verdict).To(Equal("pass"), reason)
 		Expect(reason).To(ContainSubstring("as octocat"))
+	})
+
+	It("mill doctor's sidecar, signing and forge probes are answered by the worker behind the socket, not by doctor's own local flags", func(ctx SpecContext) {
+		// The worker's own signing key, generated ahead of a `serve --work`
+		// that will hold it — no checkout ever exists for it to be found
+		// in, so it can only pass through the repository fallback.
+		workspaceDir := GinkgoT().TempDir()
+		key, err := signing.Generate(ctx, workspace.Spawner{Floor: []string{"PATH=" + os.Getenv("PATH")}},
+			filepath.Join(workspaceDir, "signing"), "mill", "mill@example.test")
+		Expect(err).NotTo(HaveOccurred())
+
+		answers := everything()
+		answers["GET "+repoAPI+"/contents/allowed_signers"] = githubAnswer{
+			status: 200,
+			body:   `{"encoding":"base64","content":"` + base64.StdEncoding.EncodeToString([]byte(key.AllowedSignersLine()+"\n")) + `"}`,
+		}
+		githubStub(answers)
+		g := daggerNodeWith(ctx, scratchRepo)
+
+		databaseURL := pg.Database(ctx).Config().ConnString()
+		socket := filepath.Join(GinkgoT().TempDir(), "mill.sock")
+		config := filepath.Join(GinkgoT().TempDir(), "empty.yaml")
+		Expect(os.WriteFile(config, []byte("{}\n"), 0o600)).To(Succeed())
+		// Absent, so the reason it fails to start is the worker's own
+		// sidecar path — the point of this spec is which path is named,
+		// not whether a real sidecar answers.
+		workerSidecar := filepath.Join(GinkgoT().TempDir(), "worker-sidecar.js")
+
+		var stdout, stderr bytes.Buffer
+		root := cli.NewRootCommand(&stdout, &stderr)
+		root.SetArgs([]string{
+			"serve", "--work",
+			"--socket", socket,
+			"--database-url", databaseURL,
+			"--config", config,
+			"--project", daggerProject,
+			// A label no node carries: what is under test is WorkerService
+			// answering beside the worker, not what the worker claims.
+			"--label", "nothing-carries-this",
+			"--dagger-socket", g.service.Socket,
+			"--sidecar", workerSidecar,
+			"--identity", "mill@example.test",
+			"--name", "mill",
+			"--workspace-dir", workspaceDir,
+			"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
+		})
+
+		serveCtx, stop := context.WithCancel(ctx)
+		served := make(chan error, 1)
+		go func() {
+			defer GinkgoRecover()
+			served <- root.ExecuteContext(serveCtx)
+		}()
+		DeferCleanup(func() {
+			stop()
+			Eventually(served, time.Minute).Should(Receive(BeNil()), stderr.String())
+		})
+		Eventually(func() error {
+			_, err := os.Stat(socket)
+			return err
+		}, time.Minute, 50*time.Millisecond).Should(Succeed(), stderr.String())
+
+		// doctor's own flags name none of the worker's settings — a
+		// different project, a different sidecar, a different workspace —
+		// so a worker-answered probe is distinguishable from one this host
+		// would have produced on its own.
+		out, _ := runCLI(ctx, socket, "doctor",
+			"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
+			"--sidecar", filepath.Join(GinkgoT().TempDir(), "not-the-workers-sidecar.js"),
+			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "not-the-workers-workspace"),
+			"--config", filepath.Join(GinkgoT().TempDir(), "no-config.yaml"),
+			"--project", "")
+
+		verdict, reason := forgeProbe(out)
+		Expect(verdict).To(Equal("pass"), reason)
+		Expect(reason).To(ContainSubstring("as octocat"), "the worker's forge credential answered, not doctor's own unconfigured project")
+
+		verdict, reason = probeReason(out, "signing")
+		Expect(verdict).To(Equal("pass"), reason)
+		Expect(reason).To(ContainSubstring("trusted by the project's repository"), "the worker's key, trusted by the repository fallback with no checkout")
+
+		_, reason = probeReason(out, "sidecar")
+		Expect(reason).To(ContainSubstring(workerSidecar), "the worker's own sidecar is the one probed, not doctor's --sidecar flag")
 	})
 
 	Describe("An unrecognised forge in configuration", func() {

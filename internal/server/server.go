@@ -63,10 +63,17 @@ type Server struct {
 	listener net.Listener
 }
 
-// New builds a server over store. A nil handler is mounted as
-// unimplemented, which answers every call with a Connect Unimplemented
-// error rather than a 404.
-func New(cfg Config, store millv1connect.StoreServiceHandler) *Server {
+// New builds a server over store. A nil store is mounted as unimplemented,
+// which answers every call with a Connect Unimplemented error rather than a
+// 404.
+//
+// worker is optional: a nil worker mounts no route for WorkerService at all,
+// so a caller against a mill serve with no worker in it gets a plain 404,
+// which connect-go's client turns into the same CodeUnimplemented a mounted
+// UnimplementedWorkerServiceHandler would answer with. Callers that need to
+// tell "no worker here" apart from "worker refused" do not need to: both are
+// this code.
+func New(cfg Config, store millv1connect.StoreServiceHandler, worker millv1connect.WorkerServiceHandler) *Server {
 	if cfg.SocketMode == 0 {
 		cfg.SocketMode = DefaultSocketMode
 	}
@@ -83,6 +90,10 @@ func New(cfg Config, store millv1connect.StoreServiceHandler) *Server {
 	s := &Server{cfg: cfg, log: cfg.Logger, mux: http.NewServeMux()}
 	s.mux.Handle(millv1connect.NewStoreServiceHandler(store,
 		connect.WithInterceptors(cfg.Interceptors...)))
+	if worker != nil {
+		s.mux.Handle(millv1connect.NewWorkerServiceHandler(worker,
+			connect.WithInterceptors(cfg.Interceptors...)))
+	}
 	s.http = &http.Server{
 		Handler:           s.mux,
 		ReadHeaderTimeout: 10 * time.Second,

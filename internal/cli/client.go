@@ -17,10 +17,23 @@ const socketURL = "http://mill"
 // identified by the socket's peer uid, so no credential is carried here:
 // see docs/architecture.md §"Identity and credentials".
 func storeClient(socket string) millv1connect.StoreServiceClient {
-	client := &http.Client{Transport: &http.Transport{
+	return millv1connect.NewStoreServiceClient(unixHTTPClient(socket), socketURL)
+}
+
+// workerClient talks to a worker mounted beside `mill serve`, over the same
+// unix socket `storeClient` reaches the store on. A `mill serve` with no
+// `--work` in it mounts no route for this service at all, which answers
+// CodeUnimplemented: see internal/server.New's doc comment.
+func workerClient(socket string) millv1connect.WorkerServiceClient {
+	return millv1connect.NewWorkerServiceClient(unixHTTPClient(socket), socketURL)
+}
+
+// unixHTTPClient dials socket whatever the request URL says, the transport
+// storeClient and workerClient share.
+func unixHTTPClient(socket string) *http.Client {
+	return &http.Client{Transport: &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "unix", socket)
 		},
 	}}
-	return millv1connect.NewStoreServiceClient(client, socketURL)
 }

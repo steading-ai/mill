@@ -118,7 +118,7 @@ var _ = Describe("The unix socket", Label(testsupport.DBLabel), func() {
 			Logger:     specLogger(),
 			Interceptors: []connect.Interceptor{interceptor.NewRoles(
 				interceptor.RoleMap{ServiceUID: os.Getuid()}, server.Requirement())},
-		}, server.NewStoreService(domain.New(pool)))
+		}, server.NewStoreService(domain.New(pool)), nil)
 		Expect(srv.Listen()).To(Succeed())
 
 		serveCtx, stop := context.WithCancel(ctx)

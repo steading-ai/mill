@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
@@ -136,5 +137,59 @@ var _ = Describe("mill serve", Label(testsupport.DBLabel), func() {
 		root := cli.NewRootCommand(&stdout, &stderr)
 		root.SetArgs([]string{"serve", "--socket", filepath.Join(GinkgoT().TempDir(), "o.sock")})
 		Expect(root.ExecuteContext(ctx)).To(MatchError(ContainSubstring("database URL is required")))
+	})
+
+	It("mounts WorkerService only when a worker runs in this process", func(ctx SpecContext) {
+		m := serving(ctx)
+		client := millv1connect.NewWorkerServiceClient(unixClient(m.socket), "http://mill")
+		_, err := client.Probe(ctx, connect.NewRequest(&millv1.ProbeRequest{}))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnimplemented),
+			"a bare `serve` has no worker to answer sidecar/signing/forge from")
+	})
+
+	It("answers WorkerService.Probe from this process's own worker once --work runs one", func(ctx SpecContext) {
+		g := daggerNodeWith(ctx, "https://forge.test/mill/mill.git")
+		databaseURL := pg.Database(ctx).Config().ConnString()
+		socket := filepath.Join(GinkgoT().TempDir(), "mill.sock")
+		config := filepath.Join(GinkgoT().TempDir(), "empty.yaml")
+		Expect(os.WriteFile(config, []byte("{}\n"), 0o600)).To(Succeed())
+
+		var stdout, stderr bytes.Buffer
+		root := cli.NewRootCommand(&stdout, &stderr)
+		root.SetArgs([]string{
+			"serve", "--work",
+			"--socket", socket,
+			"--database-url", databaseURL,
+			"--config", config,
+			"--project", daggerProject,
+			// A label no node carries: what is under test is WorkerService
+			// answering beside the worker, not what the worker claims.
+			"--label", "nothing-carries-this",
+			"--dagger-socket", g.service.Socket,
+			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
+			"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
+		})
+
+		serveCtx, stop := context.WithCancel(ctx)
+		served := make(chan error, 1)
+		go func() {
+			defer GinkgoRecover()
+			served <- root.ExecuteContext(serveCtx)
+		}()
+		DeferCleanup(func() {
+			stop()
+			Eventually(served, time.Minute).Should(Receive(BeNil()), stderr.String())
+		})
+		Eventually(func() error {
+			_, err := os.Stat(socket)
+			return err
+		}, time.Minute, 50*time.Millisecond).Should(Succeed(), stderr.String())
+
+		client := millv1connect.NewWorkerServiceClient(unixClient(socket), "http://mill")
+		var err error
+		Eventually(func() error {
+			_, err = client.Probe(ctx, connect.NewRequest(&millv1.ProbeRequest{}))
+			return err
+		}, time.Minute, 100*time.Millisecond).Should(Succeed(), stderr.String())
 	})
 })

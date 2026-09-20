@@ -1,0 +1,52 @@
+// WorkerService, in its own file rather than store.proto's because
+// store.proto's contract is exactly the resume algorithm's surface
+// (docs/ledger.md) — an RPC with no caller there does not belong in it, and
+// WorkerService has no part in resume.
+
+syntax = "proto3";
+
+package mill.v1;
+
+option go_package = "github.com/ivy/mill/gen/mill/v1;millv1";
+
+// WorkerService is the worker's own door, mounted only in a process
+// actually running one (`mill serve --work`; docs/architecture.md §"One
+// binary, two faces"). `mill doctor` calls it first for the three probes
+// only the worker's own process can answer honestly — the sidecar it would
+// spawn, the signing key it would sign with, the forge credential it would
+// deliver with — so a client reaching a worker over a forwarded socket gets
+// the worker's state rather than its own. A `mill serve` with no worker in
+// it does not mount this service at all, which answers CodeUnimplemented;
+// that is the client's cue to fall back to probing locally.
+service WorkerService {
+  // Probe answers the sidecar, signing, and forge probes from the worker's
+  // own configuration and process.
+  rpc Probe(ProbeRequest) returns (ProbeResponse);
+}
+
+// ProbeRequest asks the worker to run its own local-only probes. It takes
+// nothing: the worker answers for its own configuration, not one the caller
+// names.
+message ProbeRequest {
+  // Reserved: the worker probes itself, not a configuration the caller
+  // names.
+}
+
+// ProbeResponse carries the three probes only the worker's own process can
+// answer, in the shape `mill doctor` already prints a line for.
+message ProbeResponse {
+  // The sidecar probe, from the worker's own process.
+  ProbeResult sidecar = 1;
+  // The signing probe, from the worker's own signing key and workspace.
+  ProbeResult signing = 2;
+  // The forge probe, from the worker's own credential and project.
+  ProbeResult forge = 3;
+}
+
+// ProbeResult is one probe's answer.
+message ProbeResult {
+  // Whether it passed.
+  bool ok = 1;
+  // The one line a human reads, pass or fail.
+  string reason = 2;
+}

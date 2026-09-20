@@ -13,7 +13,9 @@ import (
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
+	"github.com/ivy/mill/gen/mill/v1/millv1connect"
 	"github.com/ivy/mill/internal/domain"
+	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/sdnotify"
 	"github.com/ivy/mill/internal/server"
 	"github.com/ivy/mill/internal/server/interceptor"
@@ -140,6 +142,26 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 	}
 	defer svc.Close()
 
+	// WorkerService is mounted only when a worker actually runs in this
+	// process: it answers the sidecar, signing and forge probes from this
+	// process's own settings, and a bare `serve` has none of those to
+	// answer from (docs/architecture.md §"One binary, two faces").
+	var workerHandler millv1connect.WorkerServiceHandler
+	if opts.work {
+		identity := opts.worker.run.identity
+		if identity == "" {
+			identity = defaultIdentity()
+		}
+		workerHandler = server.NewWorkerService(server.WorkerServiceConfig{
+			SidecarEntrypoint: opts.worker.run.sidecar,
+			EnvMode:           opts.worker.run.envMode,
+			WorkspaceDir:      opts.worker.run.workspaceDir,
+			Name:              opts.worker.run.name,
+			Identity:          identity,
+			Forge:             workerForgeResolver(&opts.worker),
+		})
+	}
+
 	srv := server.New(server.Config{
 		SocketPath:      opts.socket(),
 		ShutdownTimeout: opts.shutdownTimeout,
@@ -147,7 +169,7 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 		Interceptors: []connect.Interceptor{
 			interceptor.NewRoles(roles, server.Requirement()),
 		},
-	}, server.NewStoreService(svc))
+	}, server.NewStoreService(svc), workerHandler)
 
 	log.Info("mill serve starting", "version", version.String(), "socket", opts.socket())
 	if err := srv.Listen(); err != nil {
@@ -221,5 +243,38 @@ func announceReady(ctx context.Context, svc *domain.Service, log *slog.Logger) {
 func notifySystemd(log *slog.Logger, states ...string) {
 	if _, err := sdnotify.Send(states...); err != nil {
 		log.Warn("notify systemd", "err", err)
+	}
+}
+
+// workerForgeResolver is WorkerServiceConfig's Forge, over --work's own
+// settings: the first configured project, the way newWorker picks one for
+// workerStartup, since the RPC answers for this process's one worker and
+// not a project named per call. Resolved fresh on every probe — through
+// resolveForgeProject, the same resolution probeForge and
+// signingContentReader use — so a rotated credential is the one reported.
+func workerForgeResolver(opts *workOptions) func(context.Context) (forge.Forge, string, string, error) {
+	projects := opts.projects
+	if len(projects) == 0 {
+		if fallback := os.Getenv(daggerProjectEnv); fallback != "" {
+			projects = []string{fallback}
+		}
+	}
+	return func(ctx context.Context) (forge.Forge, string, string, error) {
+		if len(projects) == 0 {
+			return nil, "", "", fmt.Errorf("no project to read a repository from: pass --project or set %s", daggerProjectEnv)
+		}
+		token, err := loadForgeToken()
+		if err != nil {
+			return nil, "", "", err
+		}
+		if token.value == "" {
+			return nil, "", "", fmt.Errorf("the mill holds no forge credential: deliver %s to the credential store or set $%s",
+				forgeCredentialName, forgeTokenEnv)
+		}
+		f, repositoryURL, err := resolveForgeProject(ctx, opts.run.daggerSocket, projects[0], opts.run.forge)
+		if err != nil {
+			return nil, "", "", err
+		}
+		return f, token.source, repositoryURL, nil
 	}
 }
