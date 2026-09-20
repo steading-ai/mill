@@ -50,10 +50,30 @@ type Kind string
 const (
 	// KindGitLab is a self-hosted GitLab, the forge O0 delivers to.
 	KindGitLab Kind = "gitlab"
-	// KindGitHub is github.com. Not implemented; it is named so that a
-	// project pointing at one fails by name rather than by silence.
+	// KindGitHub is github.com: one host, so nothing about it is
+	// configured but the credential (internal/forge/github).
 	KindGitHub Kind = "github"
 )
+
+// Kinds is every forge the mill has an adapter for, in the order a message
+// lists them.
+var Kinds = []Kind{KindGitHub, KindGitLab}
+
+// ParseKind reads a configured forge kind. Empty is not an error: it means
+// the repository's host decides. Anything else must name an adapter, and
+// what does not is an *[UnknownKindError] naming what was written.
+func ParseKind(raw string) (Kind, error) {
+	kind := Kind(strings.ToLower(strings.TrimSpace(raw)))
+	if kind == "" {
+		return "", nil
+	}
+	for _, known := range Kinds {
+		if kind == known {
+			return kind, nil
+		}
+	}
+	return "", &UnknownKindError{Raw: raw}
+}
 
 // Status is what the checks on a commit amount to, flattened to the three
 // answers a `ci` step can act on. Anything a forge reports that has not
@@ -83,6 +103,11 @@ type Project struct {
 	Slug string
 	// VCSURL is the repository the project delivers to.
 	VCSURL string
+	// Kind is the forge the configuration names, when it names one. Empty
+	// means the repository's host decides, which is right for the hosts
+	// the mill can recognise; a GitLab on a host that says nothing about
+	// itself is what the setting is for.
+	Kind Kind
 }
 
 // Repo is one repository on one forge: enough to reach its API and to push to
@@ -200,6 +225,28 @@ type GitAuth struct {
 	Env map[string]string
 }
 
+// Environment variable names the credential helper reads. They exist only
+// in the git child's environment, for the length of one command.
+const (
+	EnvUsername = "MILL_FORGE_USERNAME"
+	EnvToken    = "MILL_FORGE_TOKEN" //nolint:gosec // the name of a variable, not a credential
+)
+
+// HelperAuth is a credential as git reads it: a credential helper, written
+// inline so nothing has to be installed on the host, that answers git's own
+// prompt from the environment. The empty helper first clears any inherited
+// one, so the mill's answer is the only one; the helper itself contains no
+// secret, which is why it is safe in argv. Every adapter hands git its
+// credential this way, so a token appears in neither a remote URL nor a
+// process listing whichever forge it is for.
+func HelperAuth(credential Credential) GitAuth {
+	const helper = `!f() { test "$1" = get && printf 'username=%s\npassword=%s\n' "$` + EnvUsername + `" "$` + EnvToken + `"; }; f`
+	return GitAuth{
+		Args: []string{"-c", "credential.helper=", "-c", "credential.helper=" + helper},
+		Env:  map[string]string{EnvUsername: credential.Username, EnvToken: credential.Token},
+	}
+}
+
 // Step is the step a credential is minted for: the bottom rung of the
 // credential ladder, identified by what the store keeps rather than by the
 // bearer, so a minter never needs the bearer itself.
@@ -287,6 +334,21 @@ type Forge interface {
 	DeleteBranch(ctx context.Context, branch string) error
 }
 
+// Account is who a forge says a credential belongs to, for `mill doctor`.
+type Account struct {
+	// Login is the account's name on the forge.
+	Login string
+}
+
+// Prober is a forge that can say whether a credential will serve a
+// delivery before a run spends work finding out. `mill doctor` asks it: the
+// answer names the account the credential authenticates as, and a failure
+// names what the credential lacks — an expiry, a permission the repository
+// needs — rather than the round trip that surfaced it.
+type Prober interface {
+	Probe(ctx context.Context) (Account, error)
+}
+
 // Scratch is a forge's scratch namespace: the group a suite makes its
 // throwaway projects in, named `mill-acceptance-<scenario>-<nonce>`, and
 // the verbs the worker's reconciliation sweep needs to take them out again
@@ -336,6 +398,23 @@ type NoVCSURLError struct {
 func (e *NoVCSURLError) Error() string {
 	return fmt.Sprintf("forge: project %s has no repository: set it with `dg project update %s --vcs-url <url>`",
 		e.Project, e.Project)
+}
+
+// UnknownKindError is a configured forge that names no adapter. It carries
+// what was written, verbatim, because the fix is in the configuration and
+// the message has to point at the value rather than at the concept.
+type UnknownKindError struct {
+	// Raw is the value as configured.
+	Raw string
+}
+
+func (e *UnknownKindError) Error() string {
+	names := make([]string, len(Kinds))
+	for i, kind := range Kinds {
+		names[i] = string(kind)
+	}
+	return fmt.Sprintf("forge: %q is not a forge this mill has an adapter for: %s",
+		e.Raw, strings.Join(names, ", "))
 }
 
 // UnsupportedError is a repository on a forge the mill has no adapter for.
@@ -528,6 +607,9 @@ func RepoFor(project Project) (Repo, error) {
 	repo, err := ParseRepo(raw)
 	if err != nil {
 		return Repo{}, fmt.Errorf("forge: project %s: %w", project.Slug, err)
+	}
+	if project.Kind != "" {
+		repo.Kind = project.Kind
 	}
 	return repo, nil
 }

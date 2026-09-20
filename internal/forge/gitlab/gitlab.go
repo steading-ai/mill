@@ -213,7 +213,10 @@ func (c *Client) Authenticate(ctx context.Context) (forge.GitAuth, error) {
 	if err != nil {
 		return forge.GitAuth{}, err
 	}
-	return forge.GitAuth{Args: credentialArgs(), Env: credentialEnv(credential)}, nil
+	if credential.Username == "" {
+		credential.Username = "oauth2"
+	}
+	return forge.HelperAuth(credential), nil
 }
 
 // Push puts the branch on the forge with a credential minted for this call.
@@ -243,31 +246,6 @@ func (c *Client) Push(ctx context.Context, request forge.PushRequest) (string, e
 		return "", fmt.Errorf("gitlab: read %s: %w", request.Branch, err)
 	}
 	return strings.TrimSpace(head), nil
-}
-
-// Environment variable names the credential helper below reads. They exist
-// only in the git child's environment, for the length of one push.
-const (
-	envUsername = "MILL_FORGE_USERNAME"
-	envToken    = "MILL_FORGE_TOKEN" //nolint:gosec // the name of a variable, not a credential
-)
-
-// credentialArgs configure git to answer its own credential prompt from the
-// environment. The empty helper first clears any inherited one, so the
-// mill's answer is the only one; the helper itself contains no secret, which
-// is why it is safe in argv.
-func credentialArgs() []string {
-	const helper = `!f() { test "$1" = get && printf 'username=%s\npassword=%s\n' "$` + envUsername + `" "$` + envToken + `"; }; f`
-	return []string{"-c", "credential.helper=", "-c", "credential.helper=" + helper}
-}
-
-// credentialEnv is what the helper reads.
-func credentialEnv(credential forge.Credential) map[string]string {
-	username := credential.Username
-	if username == "" {
-		username = "oauth2"
-	}
-	return map[string]string{envUsername: username, envToken: credential.Token}
 }
 
 // OpenPR opens a merge request for the branch, or returns the one already
