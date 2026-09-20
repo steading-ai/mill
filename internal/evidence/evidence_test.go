@@ -20,7 +20,7 @@ import (
 // the node this work was filed as.
 const branch = "mill/mill-14"
 
-var _ = Describe("The commit verifier", Label("unit"), func() {
+var _ = Describe("The commit verifier (verifyCommit)", Label("unit"), func() {
 	var (
 		ctx  context.Context
 		repo *repository
@@ -156,6 +156,55 @@ var _ = Describe("The commit verifier", Label("unit"), func() {
 
 		Expect(err).To(MatchError(ContainSubstring("is not a git object name")))
 		Expect(repo.calls).To(BeEmpty())
+	})
+
+	Describe("an unmoved head after a revise", func() {
+		// onBranch stands for the commit an earlier attempt at this step
+		// made; the branch has not moved since. The step's earliest base —
+		// where it started before any revise — is `base`, and this
+		// attempt's own base (the head it was handed) is `onBranch` itself.
+		It("closes on the head when the tree is clean and it descends from the step's earliest base", func() {
+			step := evidence.Step{Name: "commit", Branch: branch, Base: onBranch, EarliestBase: base,
+				Committer: mill, Git: repo, Claim: onBranch}
+
+			result, err := evidence.Verify(ctx, millv1.EvidenceKind_EVIDENCE_KIND_COMMIT, step)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Value.GetCommit()).To(Equal(onBranch))
+		})
+
+		It("refuses a dirty tree, naming the session's failure to commit", func() {
+			repo.write("scratch.txt", "an edit nobody committed")
+			step := evidence.Step{Name: "commit", Branch: branch, Base: onBranch, EarliestBase: base,
+				Committer: mill, Git: repo, Claim: onBranch}
+
+			result, err := evidence.Verify(ctx, millv1.EvidenceKind_EVIDENCE_KIND_COMMIT, step)
+
+			Expect(result.Value).To(BeNil())
+			Expect(err).To(MatchError(ContainSubstring(
+				"the branch head is still " + onBranch + ": the session made no commit")))
+		})
+
+		It("refuses a head that is the earliest base itself", func() {
+			step := evidence.Step{Name: "commit", Branch: branch, Base: base, EarliestBase: base,
+				Committer: mill, Git: repo, Claim: base}
+
+			result, err := evidence.Verify(ctx, millv1.EvidenceKind_EVIDENCE_KIND_COMMIT, step)
+
+			Expect(result.Value).To(BeNil())
+			Expect(err).To(MatchError(ContainSubstring(base + " is the head the step started at")))
+		})
+
+		It("refuses a commit made under another identity, even though the head has not moved", func() {
+			theirs := repo.commitAs("Someone Else", "else@example.test", "theirs.txt", "not the mill's work")
+			step := evidence.Step{Name: "commit", Branch: branch, Base: theirs, EarliestBase: base,
+				Committer: mill, Git: repo, Claim: theirs}
+
+			result, err := evidence.Verify(ctx, millv1.EvidenceKind_EVIDENCE_KIND_COMMIT, step)
+
+			Expect(result.Value).To(BeNil())
+			Expect(err).To(MatchError(ContainSubstring("Someone Else <else@example.test>")))
+		})
 	})
 })
 

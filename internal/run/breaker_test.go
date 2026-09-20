@@ -103,8 +103,11 @@ var _ = Describe("The circuit breaker", Label(testsupport.DBLabel), func() {
 
 	Describe("A check that sends the work back", func() {
 		It("supersedes the target and everything after it, and runs the target again", func() {
-			// clean-tree's on_failure is `revise implement`, so a dirty
-			// tree sends the session back to the step that made it.
+			// clean-tree's on_failure is `revise commit`, so a dirty tree
+			// sends the session back to the step that stages, not to
+			// implement — and a check gets no retries of its own by
+			// default, so the very first failure is the one with nowhere
+			// left to go.
 			workflow := f.variant(ctx, "dirty-fix", func(definition *millv1.Workflow) {
 				stepOf(definition, "clean-tree").GetCheck().Command = []string{"false"}
 			})
@@ -114,24 +117,31 @@ var _ = Describe("The circuit breaker", Label(testsupport.DBLabel), func() {
 				Execute(ctx, f.nodeRef)).To(Succeed())
 
 			detail := f.inspect(ctx)
+			// implement is not implicated: the revise target is commit, not
+			// implement, so implement's one attempt stands.
+			Expect(stepRuns(detail, "implement")).To(HaveLen(1))
 			Expect(stepRuns(detail, "implement")[0].GetStatus()).
-				To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_SUPERSEDED))
-			Expect(stepRuns(detail, "commit")[0].GetStatus()).
-				To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_SUPERSEDED))
-			// The check's own attempts failed; the one that spent the last
-			// of them is the one the revise superseded.
-			checks := stepRuns(detail, "clean-tree")
-			Expect(checks[0].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_FAILED))
-			Expect(checks[3].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_SUPERSEDED))
+				To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED))
 
-			// The current step went backwards to the revise target, which
-			// the ledger says by what answered what: implement's second
-			// attempt is the check's fourth failure's, and the three before
-			// it were the check's own.
-			Expect(stepRuns(detail, "clean-tree")).To(HaveLen(5))
-			Expect(stepRuns(detail, "implement")).To(HaveLen(2))
-			Expect(stepRuns(detail, "implement")[1].GetFeedbackFrom()).
-				To(Equal(stepRuns(detail, "clean-tree")[3].GetId()))
+			commits := stepRuns(detail, "commit")
+			Expect(commits).To(HaveLen(2))
+			Expect(commits[0].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_SUPERSEDED))
+			Expect(commits[1].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED))
+
+			// The check's own attempt failed and, having no retries of its
+			// own, spent immediately: that first attempt is the one the
+			// revise superseded. Commit runs again, and clean-tree runs a
+			// second time on the tree it left — still dirty, because the
+			// script never fixed it — and that second failure has nowhere
+			// left to go: the revise-once rule means it parks rather than
+			// revising commit a second time.
+			checks := stepRuns(detail, "clean-tree")
+			Expect(checks).To(HaveLen(2))
+			Expect(checks[0].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_SUPERSEDED))
+			Expect(checks[1].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_FAILED))
+
+			Expect(commits[1].GetFeedbackFrom()).To(Equal(checks[0].GetId()),
+				"the revise answers the check's failure")
 			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_PARKED))
 		})
 	})

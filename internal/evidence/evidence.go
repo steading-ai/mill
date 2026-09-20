@@ -190,8 +190,14 @@ type Step struct {
 	// Base is the head of the run's branch when this attempt started, as the
 	// ledger recorded it. `commit` evidence has to descend from it and not
 	// be it: a step closes on a commit it made, not on whatever the branch
-	// already pointed at.
+	// already pointed at. The one exception is an attempt whose head has
+	// not moved from Base at all: see EarliestBase.
 	Base string
+	// EarliestBase is the base commit of this step's earliest attempt in this
+	// generation, before any revise — the head the step was first handed.
+	// Empty behaves as if this were the earliest attempt, i.e. the same as
+	// Base; see verifyCommit for how an unmoved head is judged against it.
+	EarliestBase string
 	// Committer is the identity the mill commits under. `commit` evidence
 	// has to carry it as both author and committer.
 	Committer Committer
@@ -333,6 +339,17 @@ var verifiers = map[millv1.EvidenceKind]func(context.Context, Step) (Evidence, e
 // identity is what stops a commit that arrived on the branch some other way
 // — a fetch, a merge, a person pushing — from counting as the step's.
 //
+// The one exception is a head that has not moved this attempt. A revise can
+// hand the step back a branch that already carries its earlier commit,
+// because nothing since has changed it, and the step still closes — naming
+// that commit — when three things hold: the working tree is clean, so
+// nothing the session did is being dropped; the head is not, but does
+// descend from, EarliestBase, the base of the step's first attempt this
+// generation, so the fact stays the step's own and not merely the branch's;
+// and the mill is still the head's author and committer. A tree that is
+// dirty, or a head that is EarliestBase itself, or one that does not descend
+// from it, is refused exactly as if nothing had moved at all.
+//
 // Each clause refuses in its own words, because "this commit is not the
 // step's" is several different repairs, and which one it is is what a
 // failed step's message has to say.
@@ -370,9 +387,28 @@ func verifyCommit(ctx context.Context, step Step) (Evidence, error) {
 		return refuse(fmt.Sprintf("%s is not on %s", sha, step.Branch), err)
 	}
 	if sha == base {
-		return refuse(fmt.Sprintf("%s is the head the step started at: the session made no commit", sha), nil)
-	}
-	if _, err := step.Git.Run(ctx, nil, "merge-base", "--is-ancestor", base, sha); err != nil {
+		// The head has not moved this attempt. That is still the step's work
+		// when the tree is clean and the head already descends from the
+		// step's earliest base — a revise that changed nothing on the
+		// branch. Anything else refuses in the usual words.
+		status, err := step.Git.Run(ctx, nil, "status", "--porcelain")
+		if err != nil {
+			return refuse("the checkout would not say whether the tree is clean", err)
+		}
+		if strings.TrimSpace(status) != "" {
+			return refuse(fmt.Sprintf("the branch head is still %s: the session made no commit", sha), nil)
+		}
+		earliest := strings.TrimSpace(step.EarliestBase)
+		if earliest == "" {
+			earliest = base
+		}
+		if sha == earliest {
+			return refuse(fmt.Sprintf("%s is the head the step started at: the session made no commit", sha), nil)
+		}
+		if _, err := step.Git.Run(ctx, nil, "merge-base", "--is-ancestor", earliest, sha); err != nil {
+			return refuse(fmt.Sprintf("%s does not descend from %s, the earliest base of this step", sha, earliest), err)
+		}
+	} else if _, err := step.Git.Run(ctx, nil, "merge-base", "--is-ancestor", base, sha); err != nil {
 		return refuse(fmt.Sprintf("%s does not descend from %s, the head the step started at", sha, base), err)
 	}
 	if err := verifyCommitter(ctx, step, sha); err != nil {

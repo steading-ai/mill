@@ -320,20 +320,12 @@ func (r *Runner) observe(ctx context.Context, s *state, step *millv1.Step, sr *m
 	switch step.GetEvidence() {
 	case millv1.EvidenceKind_EVIDENCE_KIND_COMMIT:
 		// The head of the run's branch after the session, read through the
-		// workspace. A head that is still the one the attempt started at is
-		// not offered at all: there is no commit to claim, and offering the
-		// base would close the step on work the session did not do. The
-		// verifier proves the rest — that the object exists, is on the
-		// branch, descends from the base, and is the mill's.
-		head, err := r.head(ctx, s)
-		if err != nil {
-			return "", err
-		}
-		if head != "" && head == sr.GetBaseCommit() {
-			return "", fmt.Errorf("step %s: the branch head is still %s: the session made no commit",
-				step.GetName(), head)
-		}
-		return head, nil
+		// workspace, offered whether or not it moved. Whether an unmoved
+		// head is still the step's work — a revise that changed nothing, as
+		// against a session that simply made no commit — is not this
+		// function's to judge: it is what the verifier's seams (a clean
+		// tree, the step's earliest base) are for.
+		return r.head(ctx, s)
 
 	case millv1.EvidenceKind_EVIDENCE_KIND_URL:
 		pr, err := r.pullRequest(ctx, s)

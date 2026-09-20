@@ -23,6 +23,7 @@ func (r *Runner) verify(ctx context.Context, s *state, step *millv1.Step, sr *mi
 		Claim:        res.claim,
 		AutoApproved: autoApprovedBy(step, res),
 		Base:         sr.GetBaseCommit(),
+		EarliestBase: earliestBase(step, detail),
 		Committer:    committer(s.workspace),
 		Exit:         res.exit,
 		Session:      res.session,
@@ -412,4 +413,15 @@ func firstBase(detail *millv1.InspectResponse, step string) string {
 		}
 	}
 	return ""
+}
+
+// earliestBase is the base commit of a step's earliest attempt this
+// generation, for `commit` evidence to judge an unmoved head against
+// (evidence.Step.EarliestBase). No other evidence kind reads it, so the scan
+// only runs for a commit step.
+func earliestBase(step *millv1.Step, detail *millv1.InspectResponse) string {
+	if step.GetEvidence() != millv1.EvidenceKind_EVIDENCE_KIND_COMMIT {
+		return ""
+	}
+	return firstBase(detail, step.GetName())
 }
