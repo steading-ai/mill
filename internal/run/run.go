@@ -745,6 +745,22 @@ func (r *Runner) lostSandbox(ctx context.Context, s *state, cause error) error {
 		step = "(selecting)"
 	}
 	reason := fmt.Sprintf("lost sandbox: %v; the ledger's step is %s", cause, step)
+	return r.failRun(ctx, s, dagger.RequestID(s.run.GetId(), "lost-sandbox", s.run.GetGeneration()), reason,
+		fmt.Errorf("run %s: %w", s.run.GetId(), cause))
+}
+
+// failRun ends a run that a person, not a retry, must answer for: the run
+// fails with reason as its evidence, and the node is held under the same
+// reason and lease so it leaves the ready set rather than being claimed
+// straight back into the failure that just ended it. The hold write is
+// logged rather than failed on: a run this deterministic should not stay
+// resumable just because the second of its two writes did not land.
+//
+// cause is returned unchanged (on the ordinary path) so callers can pass it
+// straight to their own return statement; requestKey is the caller's, so
+// each call site's key varies with whatever actually distinguishes one
+// occurrence of the failure from the next.
+func (r *Runner) failRun(ctx context.Context, s *state, requestKey, reason string, cause error) error {
 	if _, err := call(ctx, r.options.Store.Fail, &millv1.FailRequest{
 		LeaseId: s.lease,
 		RunId:   s.run.GetId(),
@@ -752,12 +768,11 @@ func (r *Runner) lostSandbox(ctx context.Context, s *state, cause error) error {
 	}); err != nil {
 		return err
 	}
-	if err := r.options.Dagger.Hold(ctx, dagger.RequestID(s.run.GetId(), "lost-sandbox", s.run.GetGeneration()),
-		s.lease, s.node.GetReference(), reason); err != nil {
-		r.options.Log.Warn("holding the node of a lost sandbox", "node", s.node.GetReference(), "error", err)
+	if err := r.options.Dagger.Hold(ctx, requestKey, s.lease, s.node.GetReference(), reason); err != nil {
+		r.options.Log.Warn("holding the node of a failed run", "node", s.node.GetReference(), "error", err)
 	}
 	r.printf("%s: run %s failed: %s\n", s.node.GetReference(), s.run.GetId(), reason)
-	return fmt.Errorf("run %s: %w", s.run.GetId(), cause)
+	return cause
 }
 
 // repository resolves the run's repository: from the project the claim

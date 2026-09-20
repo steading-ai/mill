@@ -315,6 +315,16 @@ leftover rather than the wrong workflow it caused to be chosen.
   whose squash option is not `never`, replaces that commit with one GitLab
   wrote; the suite pins both at creation, so a failure here means the
   namespace overrode them.
+- **A run fails outside the suite, on a live node, and the node is not
+  reclaimed.** Selection ending in a bad config (an unknown workflow, a
+  missing or malformed `build-workflow` definition, an assessment that
+  exhausted its retries) or the run's machine going missing (a lost
+  sandbox) leaves the run `failed` and holds the node in dagger under the
+  failure's own reason — `dg node show <node>` says why. Holding is
+  independent of a node's open/closed status, so `mill restart <node>` (a
+  fresh generation) or `mill rerun <run> --from <step>` (retrying this one)
+  do not by themselves make the node claimable again; a person clears the
+  hold first, with `dg unhold <node> --reason ...`.
 
 ## A feature is delivered through the gate
 

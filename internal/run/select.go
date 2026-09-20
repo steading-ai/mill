@@ -11,6 +11,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	millv1 "github.com/ivy/mill/gen/mill/v1"
+	"github.com/ivy/mill/internal/dagger"
 	"github.com/ivy/mill/internal/workspace"
 )
 
@@ -81,7 +82,8 @@ func (r *Runner) selectDefault(ctx context.Context, s *state, name string) error
 		return err
 	}
 	if workflow == nil {
-		return fmt.Errorf("run %s: no workflow named %q", s.run.GetId(), name)
+		cause := fmt.Errorf("run %s: no workflow named %q", s.run.GetId(), name)
+		return r.failRun(ctx, s, r.selectFailedKey(s), cause.Error(), cause)
 	}
 	sr, err := r.startSelection(ctx, s)
 	if err != nil {
@@ -103,7 +105,8 @@ func (r *Runner) selectAssessed(ctx context.Context, s *state) error {
 		return err
 	}
 	if len(candidates) == 0 {
-		return fmt.Errorf("run %s: there is no workflow %s could choose between", s.run.GetId(), scopeOf(s))
+		cause := fmt.Errorf("run %s: there is no workflow %s could choose between", s.run.GetId(), scopeOf(s))
+		return r.failRun(ctx, s, r.selectFailedKey(s), cause.Error(), cause)
 	}
 	step, err := r.assessmentDefinition(ctx, s)
 	if err != nil {
@@ -237,8 +240,10 @@ func (r *Runner) assess(ctx context.Context, s *state, step *millv1.Step, candid
 				s.recordAttempt(step, sr, exit, lastWords(res, cause.Error()), true)
 				r.printf("  failed: %v\n", cause)
 				if sr.GetAttempt() > int64(step.GetRetries()) {
-					return false, fmt.Errorf("run %s: the assessment did not close after %d attempts: %w",
+					exhausted := fmt.Errorf("run %s: the assessment did not close after %d attempts: %w",
 						s.run.GetId(), sr.GetAttempt(), cause)
+					return false, r.failRun(ctx, s, dagger.RequestID(s.run.GetId(), "assess-exhausted", sr.GetAttempt()),
+						exhausted.Error(), exhausted)
 				}
 				feedback, feedbackFrom = cause.Error(), sr.GetId()
 				retry = true
@@ -279,12 +284,14 @@ func (r *Runner) assessmentDefinition(ctx context.Context, s *state) (*millv1.St
 		return nil, err
 	}
 	if workflow == nil {
-		return nil, fmt.Errorf("run %s: %s has no project default and no workflow named %q to assess with",
+		cause := fmt.Errorf("run %s: %s has no project default and no workflow named %q to assess with",
 			s.run.GetId(), scopeOf(s), AssessmentWorkflow)
+		return nil, r.failRun(ctx, s, r.selectFailedKey(s), cause.Error(), cause)
 	}
 	step := stepNamed(workflow, AssessmentStep)
 	if step == nil {
-		return nil, fmt.Errorf("run %s: workflow %s has no step %q", s.run.GetId(), AssessmentWorkflow, AssessmentStep)
+		cause := fmt.Errorf("run %s: workflow %s has no step %q", s.run.GetId(), AssessmentWorkflow, AssessmentStep)
+		return nil, r.failRun(ctx, s, r.selectFailedKey(s), cause.Error(), cause)
 	}
 	if err := r.requireHarnessesOf(s, workflow); err != nil {
 		return nil, err
@@ -453,6 +460,13 @@ func (r *Runner) closeSelection(ctx context.Context, s *state, sr *millv1.StepRu
 	return nil
 }
 
+// selectFailedKey is the idempotency key for a run failed before any
+// `select` attempt was opened, so the generation is all that distinguishes
+// one occurrence from the next.
+func (r *Runner) selectFailedKey(s *state) string {
+	return dagger.RequestID(s.run.GetId(), "select-failed", s.run.GetGeneration())
+}
+
 // failSelection fails the `select` attempt and reports why. The run stops
 // here: there is no workflow, so there is nothing to walk and no step whose
 // retries could be spent on trying again.
@@ -465,7 +479,7 @@ func (r *Runner) failSelection(ctx context.Context, s *state, sr *millv1.StepRun
 		return err
 	}
 	r.printf("  failed: %v\n", cause)
-	return cause
+	return r.failRun(ctx, s, dagger.RequestID(s.run.GetId(), "select-failed", sr.GetAttempt()), cause.Error(), cause)
 }
 
 // scopeOf names the scope a workflow is resolved in, for the message a

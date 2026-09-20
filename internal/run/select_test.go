@@ -167,6 +167,12 @@ var _ = Describe("Selection by assessment", Label(testsupport.DBLabel), func() {
 		for _, step := range []string{"gather-context", "implement", "commit", "pr"} {
 			Expect(stepRuns(detail, step)).To(BeEmpty(), "the run walked "+step)
 		}
+
+		By("and the run is failed, with the node held rather than claimed again")
+		Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_FAILED))
+		node, err := f.client.Node(ctx, f.nodeRef)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(node.GetHold().GetReason()).To(ContainSubstring("not in scope"))
 	})
 
 	Describe("Output that does not match the schema", func() {
@@ -199,6 +205,12 @@ var _ = Describe("Selection by assessment", Label(testsupport.DBLabel), func() {
 			detail := f.inspect(ctx)
 			Expect(closedSteps(detail)).NotTo(HaveKey("assess"))
 			Expect(stepRuns(detail, "assess")).To(HaveLen(3), "the step spent its own retries and no more")
+
+			By("and the run is failed, with the node held rather than reclaimed into the same failure")
+			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_FAILED))
+			node, err := f.client.Node(ctx, f.nodeRef)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(node.GetHold().GetReason()).To(ContainSubstring("the assessment did not close"))
 		})
 	})
 
@@ -256,6 +268,36 @@ var _ = Describe("Selection by assessment", Label(testsupport.DBLabel), func() {
 			Expect(first.Prompt.OutputSchema).To(ContainSubstring(`"signals"`))
 			Expect(first.Session.Options).To(HaveKeyWithValue("model", "sonnet"))
 		})
+	})
+})
+
+// Scenario: A project default naming no workflow fails the run and holds
+// the node
+//
+//	Given a project default pinned to a workflow that does not exist
+//	When the run starts
+//	Then the run fails, naming the workflow
+//	And the node is held rather than claimed again
+var _ = Describe("Selection by project default", Label(testsupport.DBLabel), func() {
+	var f *fixture
+	var ctx context.Context
+
+	BeforeEach(func() {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(context.Background())
+		DeferCleanup(cancel)
+		f = start(ctx)
+		f.node(ctx, "one line change", "Change the README's first line.")
+	})
+
+	It("A project default naming no workflow fails the run and holds the node", func() {
+		err := f.runner(func(o *run.Options) { o.Workflow = "no-such-workflow" }).Execute(ctx, f.nodeRef)
+
+		Expect(err).To(MatchError(ContainSubstring(`no workflow named "no-such-workflow"`)))
+		Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_FAILED))
+		node, err := f.client.Node(ctx, f.nodeRef)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(node.GetHold().GetReason()).To(ContainSubstring(`no workflow named "no-such-workflow"`))
 	})
 })
 
