@@ -5,13 +5,29 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/forge/gitlab"
 	"github.com/ivy/mill/internal/workspace"
 )
+
+// shortSocketDir is a directory to bind a unix socket under, short enough
+// that even a long file name inside it stays under the kernel's sun_path
+// limit. GinkgoT().TempDir() nests under $TMPDIR, which on macOS is itself
+// long enough to leave no room; /tmp is not.
+func shortSocketDir() string {
+	GinkgoHelper()
+	dir, err := os.MkdirTemp("/tmp", "mill-sock-*")
+	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(os.RemoveAll, dir)
+	return dir
+}
 
 // tree is a workspace whose verbs record what reached them, so a spec can
 // assert that a refused verb never touched the checkout. It is not the local

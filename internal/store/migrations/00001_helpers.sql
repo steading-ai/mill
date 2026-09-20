@@ -29,12 +29,24 @@ $$;
 -- The privilege set the mill runs under, granted table by table in
 -- 00012_grants.sql. It is a group role with no login of its own: a
 -- deployment grants its login user membership, and a spec reaches it with
--- SET ROLE. Roles are cluster-wide, so this is created only when absent.
+-- SET ROLE. Roles are cluster-wide, so this is created only when absent —
+-- and the check is not atomic with the create, so a second session racing
+-- this migration against the same cluster (parallel specs each migrating
+-- their own database) can pass the check before the first session's CREATE
+-- ROLE commits. The loser's "already exists" surfaces as duplicate_object
+-- when CreateRole's own catalog scan catches it, or as unique_violation
+-- when both sessions instead reach the pg_authid_rolname_index insert
+-- together; the nested block catches either rather than aborting its
+-- migration.
 -- +goose StatementBegin
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'mill_app') THEN
-        CREATE ROLE mill_app NOLOGIN;
+        BEGIN
+            CREATE ROLE mill_app NOLOGIN;
+        EXCEPTION WHEN duplicate_object OR unique_violation THEN
+            NULL;
+        END;
     END IF;
 END
 $$;

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -20,6 +21,7 @@ func checkout() string {
 	dir := GinkgoT().TempDir()
 	cmd := exec.Command("sh", "-euc",
 		`git ls-files -z --cached --others --exclude-standard | tar --null --files-from - -cf - | tar -C "$0" -xf -`, dir)
+	cmd.Env = scratchEnv()
 	session, err := gexec.Start(cmd, GinkgoWriter, GinkgoWriter)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(session.Wait(time.Minute)).To(gexec.Exit(0))
@@ -57,7 +59,25 @@ func makeTarget(dir, target string) *gexec.Session {
 	GinkgoHelper()
 	cmd := exec.Command("make", target)
 	cmd.Dir = dir
+	cmd.Env = scratchEnv()
 	session, err := gexec.Start(cmd, GinkgoWriter, GinkgoWriter)
 	Expect(err).NotTo(HaveOccurred())
 	return session.Wait(3 * time.Minute)
+}
+
+// scratchEnv is the environment for a subprocess that operates on a scratch
+// checkout rather than the repository this suite runs from. Under a git
+// hook the process inherits GIT_DIR, GIT_INDEX_FILE and the rest of git's
+// GIT_* variables, and every git command a scratch-checkout subprocess runs
+// — directly, or indirectly through a make target — would otherwise act on
+// the real repository regardless of the subprocess's own working directory.
+func scratchEnv(extra ...string) []string {
+	env := os.Environ()
+	clean := make([]string, 0, len(env)+len(extra))
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, "GIT_") {
+			clean = append(clean, kv)
+		}
+	}
+	return append(clean, extra...)
 }

@@ -23,7 +23,7 @@ type checkout struct {
 }
 
 func newCheckout() *checkout {
-	return &checkout{dir: GinkgoT().TempDir()}
+	return &checkout{dir: GinkgoT().TempDir(), spawner: workspace.Spawner{Floor: scratchEnv()}}
 }
 
 func (c *checkout) Exec(ctx context.Context, command workspace.Command) (*workspace.Process, error) {
@@ -38,9 +38,24 @@ func (c *checkout) git(args ...string) {
 	GinkgoHelper()
 	cmd := exec.Command("git", args...) //nolint:gosec // a spec's own arguments
 	cmd.Dir = c.dir
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+	cmd.Env = scratchEnv("GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
 	out, err := cmd.CombinedOutput()
 	Expect(err).NotTo(HaveOccurred(), string(out))
+}
+
+// scratchEnv is the environment for the checkout's own git, with the host's
+// GIT_* variables cleared: under a git hook the process inherits GIT_DIR and
+// GIT_INDEX_FILE, and this git would otherwise act on the hook's repository
+// rather than the checkout, whatever cmd.Dir says.
+func scratchEnv(extra ...string) []string {
+	env := os.Environ()
+	clean := make([]string, 0, len(env)+len(extra))
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, "GIT_") {
+			clean = append(clean, kv)
+		}
+	}
+	return append(clean, extra...)
 }
 
 // repository makes the checkout a git repository with one commit and a clean

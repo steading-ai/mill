@@ -39,7 +39,7 @@ var _ = Describe("A socket path the kernel cannot hold", Label("unit"), func() {
 
 	It("refuses to listen on one, rather than failing on the bind", func() {
 		server := socket.New(nil)
-		path := filepath.Join(GinkgoT().TempDir(), strings.Repeat("d", socket.MaxPathLen), "ws.sock")
+		path := filepath.Join(shortSocketDir(), strings.Repeat("d", socket.MaxPathLen), "ws.sock")
 
 		err := server.Listen(path)
 

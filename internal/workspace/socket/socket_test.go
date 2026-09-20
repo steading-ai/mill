@@ -47,7 +47,7 @@ var _ = Describe("The workspace socket", Label("unit"), func() {
 		log = &bytes.Buffer{}
 		redactor = redact.New()
 		server = socket.New(verbs, socket.WithLog(log, redactor))
-		path = filepath.Join(GinkgoT().TempDir(), "ws.sock")
+		path = filepath.Join(shortSocketDir(), "ws.sock")
 		Expect(server.Listen(path)).To(Succeed())
 		DeferCleanup(func(ctx context.Context) { Expect(server.Close(ctx)).To(Succeed()) })
 	})
@@ -166,7 +166,7 @@ var _ = Describe("The workspace socket", Label("unit"), func() {
 		By("given a workspace that keeps the shim's reports")
 		reporter := &reporting{tree: verbs}
 		server = socket.New(reporter, socket.WithLog(log, redactor))
-		path = filepath.Join(GinkgoT().TempDir(), "report.sock")
+		path = filepath.Join(shortSocketDir(), "report.sock")
 		Expect(server.Listen(path)).To(Succeed())
 		DeferCleanup(func(ctx context.Context) { Expect(server.Close(ctx)).To(Succeed()) })
 		step := live("report-bearer")
