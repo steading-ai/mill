@@ -51,6 +51,13 @@ EnvironmentFile=-%E/mill/env
 # file above (docs/sandbox.md §Credentials). Uncomment once the file exists;
 # a LoadCredential= that names a missing file fails the unit's start.
 #LoadCredential=claude-oauth:%E/mill/claude-oauth
+# The forge token the same way: delivered as $CREDENTIALS_DIRECTORY/forge-token
+# and read before MILL_FORGE_TOKEN, so it need not be in the environment file
+# at all. ImportCredential= finds it in the system credential store —
+# /etc/credstore/forge-token, or encrypted under /etc/credstore.encrypted —
+# and, unlike LoadCredential=, a missing one does not fail the start.
+# Uncomment once the file is delivered (docs/tools.md §Forges).
+#ImportCredential=forge-token
 ConfigurationDirectory=mill
 StateDirectory=mill
 StateDirectoryMode=0750
@@ -67,8 +74,8 @@ RuntimeDirectoryMode=0750
 #
 # --env-mode strict is what a deployment wants: a session's sidecar is given
 # a named floor plus what its step asked for, and not this unit's own
-# environment — which carries DATABASE_URL and MILL_FORGE_TOKEN from the
-# EnvironmentFile above. The default, inherit, is for a person running
+# environment — which carries DATABASE_URL, and MILL_FORGE_TOKEN when the
+# EnvironmentFile above still sets it. The default, inherit, is for a person running
 # `mill run` from their shell. A step that needs more than the floor names it
 # in its workflow, as `env.passthrough` (docs/architecture.md §"Skill steps:
 # the harness adapter").

@@ -34,6 +34,7 @@ var workerEnvironment = []string{
 	"MILL_FORGE_TOKEN",
 	"MILL_FORGE_USER",
 	"MILL_CONFIG",
+	"CREDENTIALS_DIRECTORY",
 }
 
 // scrubEnvironment removes those variables for the rest of the current spec

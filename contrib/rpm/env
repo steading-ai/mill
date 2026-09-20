@@ -7,4 +7,10 @@
 #DATABASE_URL=postgres://mill:secret@127.0.0.1:5432/mill?sslmode=disable
 
 # The forge credential a run pushes and opens pull requests with.
+# MILL_FORGE_TOKEN is the fallback for a token the credential store does not
+# hold. Prefer the store: put the token at
+# /etc/credstore/forge-token and uncomment ImportCredential=forge-token on
+# the unit, and it reaches the worker as $CREDENTIALS_DIRECTORY/forge-token
+# without ever being in this environment (docs/tools.md §Forges). A stored
+# token wins over this variable.
 #MILL_FORGE_TOKEN=

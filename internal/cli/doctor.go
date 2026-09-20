@@ -399,20 +399,31 @@ func keyBlob(publicKey string) string {
 	return fields[1]
 }
 
-// probeForge asks the forge whether the credential in $MILL_FORGE_TOKEN
-// will serve a delivery, before a run spends a session finding out. The
-// repository is the project's, read from dagger the way a run reads it, so
-// the probe needs the project and nothing else; the adapter is the one a
-// run would use, resolved the same way, so a `forge:` that names no
-// adapter fails here too.
+// probeForge asks the forge whether the credential the mill holds — the
+// credential store's forge-token, else $MILL_FORGE_TOKEN — will serve a
+// delivery, before a run spends a session finding out. The repository is
+// the project's, read from dagger the way a run reads it, so the probe
+// needs the project and nothing else; the adapter is the one a run would
+// use, resolved the same way, so a `forge:` that names no adapter fails
+// here too.
 //
 // A forge that can say who the credential is (forge.Prober) is asked, and
 // the account it names is on the line; one that cannot is asked about a
-// branch nothing has ever pushed, and "no pull request" is it answering. A
-// failure names the credential, because the credential is what to replace.
+// branch nothing has ever pushed, and "no pull request" is it answering.
+// Every line names where the credential came from: a passing one so an
+// operator can see the store is in use, a failing one because the
+// credential is what to replace.
 func probeForge(ctx context.Context, opts doctorOptions) probe {
 	if opts.project == "" {
 		return fail("forge", "no project to read the repository from: pass --project or set %s", daggerProjectEnv)
+	}
+	token, err := loadForgeToken()
+	if err != nil {
+		return fail("forge", "%v", err)
+	}
+	if token.value == "" {
+		return fail("forge", "the mill holds no forge credential: deliver %s to the credential store or set $%s",
+			forgeCredentialName, forgeTokenEnv)
 	}
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
@@ -431,15 +442,15 @@ func probeForge(ctx context.Context, opts doctorOptions) probe {
 	if prober, ok := f.(forge.Prober); ok {
 		account, err := prober.Probe(ctx)
 		if err != nil {
-			return fail("forge", "%s refused the credential in $%s: %v", project.GetVcsUrl(), forgeTokenEnv, err)
+			return fail("forge", "%s refused %s: %v", project.GetVcsUrl(), token.source, err)
 		}
-		return pass("forge", "%s accepts the credential in $%s as %s", project.GetVcsUrl(), forgeTokenEnv, account.Login)
+		return pass("forge", "%s accepts %s as %s", project.GetVcsUrl(), token.source, account.Login)
 	}
 	_, err = f.PR(ctx, "mill-doctor-probe")
 	if err == nil || errors.Is(err, forge.ErrNoPullRequest) {
-		return pass("forge", "%s accepts the credential in $%s", project.GetVcsUrl(), forgeTokenEnv)
+		return pass("forge", "%s accepts %s", project.GetVcsUrl(), token.source)
 	}
-	return fail("forge", "%s refused the credential in $%s: %v", project.GetVcsUrl(), forgeTokenEnv, err)
+	return fail("forge", "%s refused %s: %v", project.GetVcsUrl(), token.source, err)
 }
 
 // probeNotify runs the configured notify command with a probe notice. It is

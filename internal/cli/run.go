@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -60,15 +61,61 @@ const (
 const defaultDaggerSocket = "/run/dagger/dg.sock"
 
 // The forge credential the mill holds for the repositories it delivers to.
-// It is read from the environment rather than from a flag so it never
-// reaches a process listing, and it is the bottom rung of the credential
-// ladder until a secrets service can mint one per step
-// (docs/architecture.md §"Identity and credentials").
+// It is never a flag, so it reaches no process listing. It is read from the
+// credential store first — $CREDENTIALS_DIRECTORY/forge-token, delivered to
+// the unit by ImportCredential= or LoadCredential= the way the gateway's
+// claude-oauth is, so it enters no environment at all — and from
+// $MILL_FORGE_TOKEN when the store holds no such file, which is how a
+// laptop and the deployments before the store supply it. It is the bottom
+// rung of the credential ladder until a secrets service can mint one per
+// step (docs/architecture.md §"Identity and credentials").
 const (
 	forgeTokenEnv = "MILL_FORGE_TOKEN" //nolint:gosec // the name of a variable, not a credential
 	forgeUserEnv  = "MILL_FORGE_USER"
+	// forgeCredentialName is the file under $CREDENTIALS_DIRECTORY holding
+	// the token, beside the gateway's claude-oauth.
+	forgeCredentialName = "forge-token"
 	// The forge names this one, because the forge is what refuses a project
 	// with no repository and its refusal has to say where a URL comes from.
+)
+
+// forgeToken is the token the mill holds for the forge, and where it came
+// from, as `mill doctor` reports it. The value is empty when neither source
+// holds one.
+type forgeToken struct {
+	value  string
+	source string
+}
+
+// loadForgeToken reads the token from the credential store when the store
+// holds one, else from the environment. A file that is there and cannot be
+// read, or is empty, is an error rather than a fall-through: somebody
+// delivered it, and a mill that quietly pushed with a different credential
+// would be the wrong kind of surprise. Surrounding whitespace is dropped,
+// because a file written by hand ends in a newline.
+func loadForgeToken() (forgeToken, error) {
+	if dir := os.Getenv(gateway.CredentialsDirectoryEnv); dir != "" {
+		path := filepath.Join(dir, forgeCredentialName)
+		raw, err := os.ReadFile(path) //nolint:gosec // the path is systemd's credential directory
+		switch {
+		case err == nil:
+			value := strings.TrimSpace(string(raw))
+			if value == "" {
+				return forgeToken{}, fmt.Errorf("mill: the forge credential %s is empty", path)
+			}
+			return forgeToken{value: value, source: forgeStoreSource}, nil
+		case !errors.Is(err, fs.ErrNotExist):
+			return forgeToken{}, fmt.Errorf("mill: read the forge credential %s: %w", path, err)
+		}
+	}
+	return forgeToken{value: os.Getenv(forgeTokenEnv), source: forgeEnvSource}, nil
+}
+
+// The two sources, as the doctor's forge line names them.
+const (
+	forgeStoreSource = "the credential store's " + forgeCredentialName +
+		" ($" + gateway.CredentialsDirectoryEnv + "/" + forgeCredentialName + ")"
+	forgeEnvSource = "the credential in $" + forgeTokenEnv
 )
 
 // sidecarEnv names the harness sidecar's entrypoint. The adapter's default
@@ -877,11 +924,20 @@ func forgeProject(project *daggerv1.Project, configured string) (forge.Project, 
 }
 
 // forgeMinter is the credential the mill holds for the repositories it
-// delivers to, as the forge asks for it: the token in $MILL_FORGE_TOKEN,
+// delivers to, as the forge asks for it: the token loadForgeToken finds,
 // under the username in $MILL_FORGE_USER. Both forges take the same pair;
-// GitHub ignores the username and GitLab wants a placeholder.
+// GitHub ignores the username and GitLab wants a placeholder. The token is
+// read at each mint rather than once, so a credential the store rotates is
+// the one the next command pushes with.
 func forgeMinter() forge.Minter {
-	return forge.Static(envOr(forgeUserEnv, defaultForgeUser), os.Getenv(forgeTokenEnv))
+	username := envOr(forgeUserEnv, defaultForgeUser)
+	return forge.MinterFunc(func(ctx context.Context, step forge.Step) (forge.Credential, error) {
+		token, err := loadForgeToken()
+		if err != nil {
+			return forge.Credential{}, err
+		}
+		return forge.Static(username, token.value).Mint(ctx, step)
+	})
 }
 
 // repositoryFor is where a run on the project delivers and what its

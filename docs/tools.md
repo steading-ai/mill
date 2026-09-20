@@ -432,7 +432,7 @@ pass  schema     migration 18, current
 pass  dagger     /run/dagger/dg.sock answers; this account is a principal on mill, 1 node(s) ready for an agent
 fail  sidecar    sidecar/dist/main.js did not answer: claude: the sidecar answered nothing before it exited
 fail  signing    no signing key under ~/.local/state/mill/workspaces/signing
-pass  forge      https://github.com/octo-org/thing.git accepts the credential in $MILL_FORGE_TOKEN as octocat
+pass  forge      https://github.com/octo-org/thing.git accepts the credential store's forge-token ($CREDENTIALS_DIRECTORY/forge-token) as octocat
 pass  notify     contrib/notify/thicket-send.sh accepts a probe notice
 pass  workspace  local: a clone under the mill's account
 pass  space      local: no sandbox volume to watch
@@ -446,7 +446,7 @@ warn  gateway    https://api.anthropic.com answers a token count through the gat
 | `dagger` | Dagger answers, and this account resolves to a principal that may read the project |
 | `sidecar` | The harness sidecar starts, parses one frame, and answers |
 | `signing` | The commit signing key exists and some project's `allowed_signers` names it |
-| `forge` | The forge accepts the credential in `$MILL_FORGE_TOKEN`, through the adapter a run would deliver with. On GitHub the line names the account the token authenticates as, and a token that has expired, or lacks one of the permissions §Forges lists, fails naming the credential and what it lacks. A `forge` setting that names no adapter fails here too |
+| `forge` | The forge accepts the credential the mill holds — the credential store's `forge-token`, else `$MILL_FORGE_TOKEN` (§Forges) — through the adapter a run would deliver with. The line names where the credential came from. On GitHub it names the account the token authenticates as, and a token that has expired, or lacks one of the permissions §Forges lists, fails naming the credential and what it lacks. A `forge` setting that names no adapter fails here too |
 | `notify` | The configured notify command runs and accepts a probe notice |
 | `workspace` | Which workspace backend a run works in, and for `machine` whether the sandbox root is btrfs |
 | `space` | For `machine`, free space on the sandbox volume against the eviction watermarks (`cache-high-watermark`, `cache-low-watermark`): pass above the low one, warn between, fail below the high one — eviction runs at every promotion and the host is short of space |
@@ -950,13 +950,17 @@ the worker at startup:
 mill: --forge: forge: "gitbucket" is not a forge this mill has an adapter for: github, gitlab
 ```
 
-The credential is the same pair on either forge, read from the worker's
-environment and never from a flag, so it reaches no process listing:
+The credential is the same pair on either forge, never a flag, so it
+reaches no process listing. The token is read from the credential store
+first and the environment second:
 
-| Variable | What it is |
+| Source | What it is |
 |---|---|
-| `MILL_FORGE_TOKEN` | The token. Every API call and every git command the mill makes against the forge is authenticated with it, minted per request through the credential helper `internal/forge` installs, so it appears in neither a remote URL nor argv |
+| `$CREDENTIALS_DIRECTORY/forge-token` | The token, as systemd delivers it: `ImportCredential=forge-token` on the unit finds `/etc/credstore/forge-token` (or the encrypted `/etc/credstore.encrypted/forge-token`), and `LoadCredential=forge-token:<path>` names a file outright, beside the gateway's `claude-oauth` (`docs/sandbox.md` §Credentials). The token then enters no environment at all, which is what the store exists for. A file that is delivered and empty, or cannot be read, is an error rather than a fall-through |
+| `MILL_FORGE_TOKEN` | The token, when the store holds no `forge-token`: a laptop exports it, and `/etc/mill/env` may still carry it. Every API call and every git command the mill makes against the forge is authenticated with the token, minted per request through the credential helper `internal/forge` installs, so it appears in neither a remote URL nor argv |
 | `MILL_FORGE_USER` | The username git is given beside the token. GitLab wants a placeholder and the default `mill` is one; GitHub ignores it |
+
+`mill doctor`'s `forge` probe says which of the two the token came from.
 
 ### GitHub
 
@@ -990,9 +994,10 @@ else does, so it is not in the list.
 `mill doctor`'s `forge` probe reads, with the token, everything a delivery
 reads — the account, the repository, its default branch, the checks and
 statuses on that branch's head, its pull requests — and reports the account
-it authenticated as. A token GitHub no longer honours fails the probe naming
-`$MILL_FORGE_TOKEN` and the remedy; a token that lacks one of the reads
-fails naming the permission as the token page spells it. A write is proven
+it authenticated as and where the token came from. A token GitHub no longer
+honours fails the probe naming the token's source and the remedy; a token
+that lacks one of the reads fails naming the permission as the token page
+spells it. A write is proven
 only by writing, and the push is the first write a run makes, before any
 session is spent.
 

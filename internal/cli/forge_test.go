@@ -109,6 +109,26 @@ var _ = Describe("The GitHub forge through the mill", Label(testsupport.DBLabel)
 		Expect(reason).To(ContainSubstring("$MILL_FORGE_TOKEN"), "the credential is named either way")
 	})
 
+	It("mill doctor names the credential store when the token came from it", func() {
+		// The token is delivered as $CREDENTIALS_DIRECTORY/forge-token, the
+		// way ImportCredential=forge-token on the unit delivers it, and
+		// MILL_FORGE_TOKEN is unset: the probe passes on the stored token
+		// and says so.
+		githubStub(everything())
+		g := daggerNodeWith(ctx, scratchRepo)
+		store := GinkgoT().TempDir()
+		Expect(os.WriteFile(filepath.Join(store, "forge-token"), []byte("ghp_from_the_store\n"), 0o600)).To(Succeed()) // gitleaks:allow
+		GinkgoT().Setenv("CREDENTIALS_DIRECTORY", store)
+		Expect(os.Unsetenv("MILL_FORGE_TOKEN")).To(Succeed())
+
+		verdict, reason := forgeProbe(doctorOn(g))
+		Expect(verdict).To(Equal("pass"), reason)
+		Expect(reason).To(ContainSubstring("as octocat"))
+		Expect(reason).To(ContainSubstring("credential store"))
+		Expect(reason).To(ContainSubstring("$CREDENTIALS_DIRECTORY/forge-token"))
+		Expect(reason).NotTo(ContainSubstring("$MILL_FORGE_TOKEN"))
+	})
+
 	It("An expired token is diagnosed before a run wastes work", func() {
 		githubStub(map[string]githubAnswer{
 			"GET /user": {status: 401, body: `{"message":"Bad credentials"}`},
