@@ -15,10 +15,24 @@ import (
 var _ = Describe("The version", Label("unit"), func() {
 	var repo string
 
+	// Under a git hook the process inherits GIT_DIR and GIT_INDEX_FILE, and
+	// every git command below would then act on the real repository rather
+	// than the scratch one, whatever its working directory. The scratch
+	// repository is named by its directory alone.
+	in := func(name string, args ...string) *exec.Cmd {
+		cmd := exec.Command(name, args...)
+		cmd.Dir = repo
+		for _, kv := range os.Environ() {
+			if !strings.HasPrefix(kv, "GIT_") {
+				cmd.Env = append(cmd.Env, kv)
+			}
+		}
+		return cmd
+	}
+
 	git := func(args ...string) string {
 		GinkgoHelper()
-		cmd := exec.Command("git", append([]string{"-c", "user.name=spec", "-c", "user.email=spec@example.invalid"}, args...)...)
-		cmd.Dir = repo
+		cmd := in("git", append([]string{"-c", "user.name=spec", "-c", "user.email=spec@example.invalid"}, args...)...)
 		out, err := cmd.CombinedOutput()
 		Expect(err).NotTo(HaveOccurred(), string(out))
 		return strings.TrimSpace(string(out))
@@ -26,9 +40,7 @@ var _ = Describe("The version", Label("unit"), func() {
 
 	version := func() string {
 		GinkgoHelper()
-		cmd := exec.Command("make", "-s", "version")
-		cmd.Dir = repo
-		out, err := cmd.CombinedOutput()
+		out, err := in("make", "-s", "version").CombinedOutput()
 		Expect(err).NotTo(HaveOccurred(), string(out))
 		return strings.TrimSpace(string(out))
 	}

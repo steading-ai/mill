@@ -26,10 +26,13 @@ endif
 
 LDFLAGS := -X $(MODULE)/internal/version.version=$(VERSION)
 
-# What `make package` produces, and what node calls each CPU.
+# What `make package` produces, where, and what node calls each CPU. A
+# packager overrides PACKAGE_ARCHES to build one architecture and DESTDIR
+# to say where the finished rpms go; the staging tree stays under dist/.
 DIST           := dist
 STAGE          := $(DIST)/stage
-PACKAGE_ARCHES := arm64 amd64
+DESTDIR        ?= $(DIST)
+PACKAGE_ARCHES ?= arm64 amd64
 NODE_CPU_arm64 := arm64
 NODE_CPU_amd64 := x64
 
@@ -163,7 +166,8 @@ sidecar-deps:
 sidecar-build: sidecar-deps
 	pnpm --dir sidecar run build
 
-# The packages: one rpm per architecture under dist/, from nfpm.yaml. A
+# The packages: one rpm per architecture under DESTDIR, dist/ by default,
+# from nfpm.yaml. A
 # package is the binary, the built sidecar with its production dependencies,
 # the workflows, the system unit and the default configuration, so a host
 # installs it with no checkout, no Go toolchain and no pnpm (contrib/rpm/).
@@ -191,7 +195,8 @@ package-%: sidecar-build
 	printf 'nodeLinker: hoisted\nsupportedArchitectures:\n  os: [linux]\n  cpu: [%s]\n' $(NODE_CPU_$*) > $(STAGE)/sidecar/pnpm-workspace.yaml
 	pnpm install --dir $(STAGE)/sidecar --prod --frozen-lockfile --prefer-offline --silent
 	rm -rf $(STAGE)/sidecar/node_modules/@anthropic-ai/claude-agent-sdk-linux-*-musl
-	MILL_VERSION=$(VERSION) MILL_ARCH=$* nfpm package --packager rpm --target $(DIST)/
+	mkdir -p $(DESTDIR)
+	MILL_VERSION=$(VERSION) MILL_ARCH=$* nfpm package --packager rpm --target $(DESTDIR)/
 
 clean:
 	rm -f $(BINARY)
