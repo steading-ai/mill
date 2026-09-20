@@ -33,6 +33,76 @@ type Command struct {
 	ClearEnv bool
 }
 
+// FloorNames are the variables of the mill's own environment that a child
+// under the local backend inherits, and that a sidecar keeps in strict mode:
+// enough for a process to start and run git and the project's toolchain,
+// and nothing that authenticates the mill to anything else. A check step's
+// `make test` or `mise exec` resolves on this PATH; without it a shell falls
+// back to its built-in default and the toolchain a deployment put on the
+// unit's PATH is not there.
+//
+// It is the same list as ENVIRONMENT_PASSTHROUGH in sidecar/src/session.ts,
+// which is the same question one hop further along — what the session's
+// tools inherit from the sidecar. The two are stated separately because they
+// are two boundaries; change one and look at the other. What the workspace
+// decided is not part of either: the git identity, the proxy and the model
+// gateway are set past the floor, from the workspace's environment.
+//
+//	HOME             the shell, the SDK's transcripts under
+//	                 ~/.claude/projects, and the harness's own state. Not a
+//	                 login: in a machine there is none, and the model is
+//	                 reached through the gateway the workspace names. Not
+//	                 git's identity: the workspace's GIT_CONFIG_GLOBAL
+//	                 displaces the account's configuration on every session
+//	PATH             the sidecar finds node, the SDK its claude binary, the
+//	                 session git, and a check and a session the project's
+//	                 toolchain
+//	LANG, LC_ALL     encoding; without them Node and git fall back to ASCII
+//	                 and mangle non-ASCII in bodies and diffs
+//	LOGNAME, USER    the account a tool reports itself running as
+//	SHELL            the SDK's Bash tool runs the account's shell
+//	TERM             tools that check for a terminal behave predictably
+//	TMPDIR           the SDK and git write temporary files; a deployment
+//	                 points it inside the runtime directory
+//	TZ               timestamps in commits and logs match the host's
+//	XDG_RUNTIME_DIR  the sidecar's own sockets and the SDK's IPC live there
+var FloorNames = []string{
+	"HOME",
+	"LANG",
+	"LC_ALL",
+	"LOGNAME",
+	"PATH",
+	"SHELL",
+	"TERM",
+	"TMPDIR",
+	"TZ",
+	"USER",
+	"XDG_RUNTIME_DIR",
+}
+
+// Floor is the entries of environ whose names are on [FloorNames], in
+// environ's order. It is never nil, so a [Spawner] given it inherits
+// nothing more.
+func Floor(environ []string) []string {
+	floor := []string{}
+	for _, entry := range environ {
+		if OnFloor(nameOf(entry)) {
+			floor = append(floor, entry)
+		}
+	}
+	return floor
+}
+
+// OnFloor reports whether name is one of [FloorNames].
+func OnFloor(name string) bool {
+	for _, one := range FloorNames {
+		if one == name {
+			return true
+		}
+	}
+	return false
+}
+
 // Result is how a spawned process ended: the raw facts, with none of the
 // adapter's "never ran" convention layered on. Status is -1 when a signal
 // ended the process, which is what Signal then says.

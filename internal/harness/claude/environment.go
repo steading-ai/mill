@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/ivy/mill/internal/harness"
+	"github.com/ivy/mill/internal/workspace"
 )
 
 // The environment a sidecar is spawned with.
@@ -56,48 +57,11 @@ func ParseEnvMode(name string) (EnvMode, error) {
 	}
 }
 
-// envFloor is what a sidecar keeps of the mill's environment in strict mode:
-// enough for a process to start and run git and the project's toolchain, and
-// nothing that authenticates the mill to anything else.
-//
-// It is the same list as ENVIRONMENT_PASSTHROUGH in sidecar/src/session.ts,
-// which is the same question one hop further along — what the session's
-// tools inherit from the sidecar. The two are stated separately because they
-// are two boundaries; change one and look at the other. What the workspace
-// decided is not part of either: the git identity, the proxy and the model
-// gateway are set past the floor in both files, from the workspace's
-// environment here and from the sidecar's own in session.ts.
-//
-//	HOME             the shell, the SDK's transcripts under
-//	                 ~/.claude/projects, and the harness's own state. Not a
-//	                 login: in a machine there is none, and the model is
-//	                 reached through the gateway the workspace names. Not
-//	                 git's identity: the workspace's GIT_CONFIG_GLOBAL
-//	                 displaces the account's configuration on every session
-//	PATH             the sidecar finds node, the SDK its claude binary, the
-//	                 session git and the project's toolchain
-//	LANG, LC_ALL     encoding; without them Node and git fall back to ASCII
-//	                 and mangle non-ASCII in bodies and diffs
-//	LOGNAME, USER    the account a tool reports itself running as
-//	SHELL            the SDK's Bash tool runs the account's shell
-//	TERM             tools that check for a terminal behave predictably
-//	TMPDIR           the SDK and git write temporary files; a deployment
-//	                 points it inside the runtime directory
-//	TZ               timestamps in commits and logs match the host's
-//	XDG_RUNTIME_DIR  the sidecar's own sockets and the SDK's IPC live there
-var envFloor = []string{
-	"HOME",
-	"LANG",
-	"LC_ALL",
-	"LOGNAME",
-	"PATH",
-	"SHELL",
-	"TERM",
-	"TMPDIR",
-	"TZ",
-	"USER",
-	"XDG_RUNTIME_DIR",
-}
+// envFloor is what a sidecar keeps of the mill's environment in strict mode.
+// It is the workspace's floor, [workspace.FloorNames], stated there with the
+// reason for each variable: the same list the local backend gives every
+// child, so a session and a check step stand on one PATH.
+var envFloor = workspace.FloorNames
 
 // deniedNames and deniedPrefixes are what never reaches a sidecar or a
 // session, in either mode, whatever a step asks for.
@@ -279,7 +243,7 @@ func passthroughOf(options map[string]any) []string {
 	return names
 }
 
-func onFloor(name string) bool { return contains(envFloor, name) }
+func onFloor(name string) bool { return workspace.OnFloor(name) }
 
 func contains(names []string, name string) bool {
 	for _, one := range names {

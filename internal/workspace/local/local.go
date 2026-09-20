@@ -128,10 +128,13 @@ func New(options Options) *Workspace {
 	}
 	w.execer = options.Execer
 	if w.execer == nil {
-		// A floor of no variables at all, so every child — git, ssh-keygen,
-		// a step's own command — sees exactly what this package names for
-		// it and nothing the mill's own process happens to carry.
-		w.execer = workspace.Spawner{Floor: []string{}}
+		// The floor every child — git, ssh-keygen, a step's own command —
+		// stands on is the mill's own environment cut to
+		// [workspace.FloorNames]: PATH, so a check finds the toolchain the
+		// deployment put on the unit's PATH; the locale and the account;
+		// and nothing that names a credential, a database or a project.
+		// The rest of what a child sees is what this package names for it.
+		w.execer = workspace.Spawner{Floor: workspace.Floor(os.Environ())}
 	}
 	if w.options.Name == "" {
 		w.options.Name = "mill"
