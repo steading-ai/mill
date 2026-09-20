@@ -22,11 +22,7 @@ var _ = Describe("The version", Label("unit"), func() {
 	in := func(name string, args ...string) *exec.Cmd {
 		cmd := exec.Command(name, args...)
 		cmd.Dir = repo
-		for _, kv := range os.Environ() {
-			if !strings.HasPrefix(kv, "GIT_") {
-				cmd.Env = append(cmd.Env, kv)
-			}
-		}
+		cmd.Env = scratchEnv()
 		return cmd
 	}
 

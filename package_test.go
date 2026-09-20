@@ -27,6 +27,7 @@ var _ = Describe("The package", Label("unit", "slow"), Ordered, func() {
 		By("when make package runs")
 		cmd := exec.Command("make", "package")
 		cmd.Dir = dir
+		cmd.Env = scratchEnv()
 		session, err := gexec.Start(cmd, GinkgoWriter, GinkgoWriter)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(session.Wait(10 * time.Minute)).To(gexec.Exit(0))

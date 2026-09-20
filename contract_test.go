@@ -114,7 +114,7 @@ func gitSession(dir string, args ...string) *gexec.Session {
 	GinkgoHelper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
+	cmd.Env = scratchEnv(
 		"GIT_AUTHOR_NAME=mill specs", "GIT_AUTHOR_EMAIL=specs@mill.invalid",
 		"GIT_COMMITTER_NAME=mill specs", "GIT_COMMITTER_EMAIL=specs@mill.invalid",
 		"HK_CONFIG_DIR="+GinkgoT().TempDir())
@@ -129,6 +129,7 @@ func makeIn(dir string, timeout time.Duration, target string) *gexec.Session {
 	GinkgoHelper()
 	cmd := exec.Command("make", target)
 	cmd.Dir = dir
+	cmd.Env = scratchEnv()
 	session, err := gexec.Start(cmd, GinkgoWriter, GinkgoWriter)
 	Expect(err).NotTo(HaveOccurred())
 	return session.Wait(timeout)

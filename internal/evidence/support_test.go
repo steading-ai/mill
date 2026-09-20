@@ -55,7 +55,7 @@ func (r *repository) Run(ctx context.Context, env map[string]string, args ...str
 	r.mu.Unlock()
 	cmd := exec.CommandContext(ctx, "git", args...) //nolint:gosec // a spec's own arguments
 	cmd.Dir = r.dir
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+	cmd.Env = scratchEnv("GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
 	for name, value := range millIdentity {
 		cmd.Env = append(cmd.Env, name+"="+value)
 	}
@@ -64,6 +64,21 @@ func (r *repository) Run(ctx context.Context, env map[string]string, args ...str
 	}
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// scratchEnv is the environment for the fixture's own git, with the host's
+// GIT_* variables cleared: under a git hook the process inherits GIT_DIR and
+// GIT_INDEX_FILE, and this git would otherwise act on the hook's repository
+// rather than the fixture, whatever cmd.Dir says.
+func scratchEnv(extra ...string) []string {
+	env := os.Environ()
+	clean := make([]string, 0, len(env)+len(extra))
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, "GIT_") {
+			clean = append(clean, kv)
+		}
+	}
+	return append(clean, extra...)
 }
 
 var _ evidence.Git = (*repository)(nil)
