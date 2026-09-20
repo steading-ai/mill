@@ -1,0 +1,1 @@
+{ "state": "failure", "total_count": 1, "statuses": [ { "state": "failure", "context": "buildkite/thing" } ], "sha": "9a1f0c3f2b6d4e5a7c8b9d0e1f2a3b4c5d6e7f80" }

@@ -916,6 +916,76 @@ read the file for their own keys — `doctor`, `cache` and `image` for the
 sandbox and cache settings, `mcp` for the credential's age — and are outside
 this table.
 
+## Forges
+
+A run delivers to the repository its dagger project names in `vcs_url`, and
+the forge is read off that URL's host: `github.com` is GitHub, and any other
+host is a GitLab, because a self-hosted GitLab has no name the mill could
+recognise. `forge` in the configuration file — `--forge` on `run`, `work`
+and `doctor` — names the adapter outright, `github` or `gitlab`, for a
+repository whose host says the wrong thing. A value that names neither stops
+the worker at startup:
+
+```
+mill: --forge: forge: "gitbucket" is not a forge this mill has an adapter for: github, gitlab
+```
+
+The credential is the same pair on either forge, read from the worker's
+environment and never from a flag, so it reaches no process listing:
+
+| Variable | What it is |
+|---|---|
+| `MILL_FORGE_TOKEN` | The token. Every API call and every git command the mill makes against the forge is authenticated with it, minted per request through the credential helper `internal/forge` installs, so it appears in neither a remote URL nor argv |
+| `MILL_FORGE_USER` | The username git is given beside the token. GitLab wants a placeholder and the default `mill` is one; GitHub ignores it |
+
+### GitHub
+
+GitHub is one host, so nothing about it is configured but the token. The
+mill delivers as the person: a GitHub App needs an organisation
+administrator to install it, and the people this serves are engineers who
+are not administrators of the organisations they work in. The token is
+either of:
+
+- **The OAuth token the `gh` CLI holds.** `gh auth token` prints it after
+  `gh auth login`, and it is sufficient: its `repo` scope covers every
+  permission below. `MILL_FORGE_TOKEN="$(gh auth token)" mill doctor` is
+  the whole of the setup on a laptop.
+- **A fine-grained personal access token**, made at
+  https://github.com/settings/personal-access-tokens for the repositories
+  the mill delivers to, with exactly these permissions:
+
+| Permission | Access | Used for |
+|---|---|---|
+| Contents | read and write | clone the repository, push the run's branch, delete it after the merge |
+| Pull requests | read and write | open the pull request, comment on it, merge it or close it |
+| Checks | read | read the check runs on the run's head |
+| Commit statuses | read | read the commit statuses on the run's head |
+| Metadata | read | read the repository's default branch and merge settings; GitHub grants it with any other |
+
+The table is the list `internal/forge/github` probes against, and a spec
+holds the two to the same words. A run that changes a file under
+`.github/workflows/` needs **Workflows: read and write** as well; nothing
+else does, so it is not in the list.
+
+`mill doctor`'s `forge` probe reads, with the token, everything a delivery
+reads — the account, the repository, its default branch, the checks and
+statuses on that branch's head, its pull requests — and reports the account
+it authenticated as. A token GitHub no longer honours fails the probe naming
+`$MILL_FORGE_TOKEN` and the remedy; a token that lacks one of the reads
+fails naming the permission as the token page spells it. A write is proven
+only by writing, and the push is the first write a run makes, before any
+session is spent.
+
+A pull request merges by the method the repository allows, in the order
+GitHub's own button offers them — a merge commit, else a squash, else a
+rebase — and a merge GitHub declines for the repository's own reasons is
+reported in GitHub's words and not retried.
+
+### GitLab
+
+A personal, group or project access token with the `api` scope, or an OAuth
+token, on the self-hosted GitLab the project's URL names.
+
 ## Identity
 
 Identity on the store's socket is the peer uid, mapped by configuration to a

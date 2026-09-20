@@ -1,0 +1,4 @@
+{ "total_count": 2, "check_runs": [
+  { "id": 1, "status": "completed", "conclusion": "success" },
+  { "id": 2, "status": "completed", "conclusion": "failure" }
+] }

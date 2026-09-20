@@ -1,0 +1,10 @@
+{
+  "id": 1296269,
+  "full_name": "octo-org/thing",
+  "private": true,
+  "default_branch": "main",
+  "allow_squash_merge": true,
+  "allow_merge_commit": true,
+  "allow_rebase_merge": true,
+  "delete_branch_on_merge": false
+}
