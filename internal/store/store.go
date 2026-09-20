@@ -1326,10 +1326,12 @@ func stepSpan(workflow *millv1.Workflow, fromStep, throughStep string) ([]string
 	names := make([]string, 0, len(workflow.GetSteps()))
 	for i, step := range workflow.GetSteps() {
 		names = append(names, step.GetName())
-		switch step.GetName() {
-		case fromStep:
+		// Both ends may be the same step: a rerun from the step a run is
+		// parked on is a span of one.
+		if step.GetName() == fromStep {
 			from = i
-		case throughStep:
+		}
+		if step.GetName() == throughStep {
 			through = i
 		}
 	}
