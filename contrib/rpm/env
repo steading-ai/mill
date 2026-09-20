@@ -1,0 +1,10 @@
+# Environment for mill.service, one KEY=value per line, read by systemd
+# before the service drops to its account. Nothing here reaches a session:
+# the unit runs the worker with --env-mode strict.
+
+# Where the store keeps the record of its runs. The service applies its
+# migrations on start and is not ready until the database has answered.
+#DATABASE_URL=postgres://mill:secret@127.0.0.1:5432/mill?sslmode=disable
+
+# The forge credential a run pushes and opens pull requests with.
+#MILL_FORGE_TOKEN=

@@ -26,6 +26,13 @@ endif
 
 LDFLAGS := -X $(MODULE)/internal/version.version=$(VERSION)
 
+# What `make package` produces, and what node calls each CPU.
+DIST           := dist
+STAGE          := $(DIST)/stage
+PACKAGE_ARCHES := arm64 amd64
+NODE_CPU_arm64 := arm64
+NODE_CPU_amd64 := x64
+
 GINKGO := ginkgo -r -p --randomize-all --fail-on-pending --keep-going
 
 MIGRATIONS := internal/store/migrations
@@ -34,7 +41,7 @@ COMPOSE := podman compose
 # Silence podman's "executing external compose provider" banner.
 export PODMAN_COMPOSE_WARNING_LOGS = false
 
-.PHONY: all build version check test test-unit test-db test-acceptance lint lint-contract check-breaking check-generated typecheck-ts generate sidecar-deps sidecar-build clean db-up db-down db-reset db-migrate
+.PHONY: all build version check test test-unit test-db test-acceptance lint lint-contract check-breaking check-generated typecheck-ts generate sidecar-deps sidecar-build package clean db-up db-down db-reset db-migrate
 
 all: build
 
@@ -156,9 +163,39 @@ sidecar-deps:
 sidecar-build: sidecar-deps
 	pnpm --dir sidecar run build
 
+# The packages: one rpm per architecture under dist/, from nfpm.yaml. A
+# package is the binary, the built sidecar with its production dependencies,
+# the workflows, the system unit and the default configuration, so a host
+# installs it with no checkout, no Go toolchain and no pnpm (contrib/rpm/).
+# The architectures share one staging tree, so they are built one after the
+# other whatever -j says.
+package: sidecar-build
+	@for arch in $(PACKAGE_ARCHES); do $(MAKE) --no-print-directory package-$$arch || exit 1; done
+
+# One architecture's package, from the staging tree nfpm.yaml reads: the
+# binary cross-compiled, the sidecar's dependencies resolved for linux on
+# that CPU, and nfpm over the two. Both products are pure Go and plain
+# JavaScript, so this builds on any host.
+#
+# The Claude Agent SDK carries its command as one native package per
+# platform, chosen by pnpm from what the staging tree says it supports.
+# The lockfile records a platform's CPU and OS but not its C library, so
+# the musl variant lands beside the glibc one and is removed: the package
+# is for Fedora, and the variant is two hundred megabytes of binary nothing
+# there loads.
+package-%: sidecar-build
+	rm -rf $(STAGE)
+	mkdir -p $(STAGE)/sidecar
+	GOOS=linux GOARCH=$* CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(STAGE)/mill ./cmd/mill
+	cp -R sidecar/dist sidecar/package.json sidecar/pnpm-lock.yaml $(STAGE)/sidecar/
+	printf 'nodeLinker: hoisted\nsupportedArchitectures:\n  os: [linux]\n  cpu: [%s]\n' $(NODE_CPU_$*) > $(STAGE)/sidecar/pnpm-workspace.yaml
+	pnpm install --dir $(STAGE)/sidecar --prod --frozen-lockfile --prefer-offline --silent
+	rm -rf $(STAGE)/sidecar/node_modules/@anthropic-ai/claude-agent-sdk-linux-*-musl
+	MILL_VERSION=$(VERSION) MILL_ARCH=$* nfpm package --packager rpm --target $(DIST)/
+
 clean:
 	rm -f $(BINARY)
-	rm -rf dist sidecar/dist
+	rm -rf $(DIST) sidecar/dist
 
 # Development database. See compose.yaml.
 

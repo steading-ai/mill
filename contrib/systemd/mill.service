@@ -1,17 +1,34 @@
-# The mill service, as a user unit: it runs as the operator's own account,
-# which is what makes it the operator's dagger principal (see the Principal
-# section of docs/domain-model.md). Callers on the host reach its store over
-# the socket in that account's runtime directory. Install with
+# The mill service: the store and a worker in one process, as a system unit
+# under the `mill` account the package's sysusers fragment creates. The
+# package installs it as /usr/lib/systemd/system/mill.service; from a
+# checkout,
 #
-#   install -Dm644 contrib/systemd/mill.service ~/.config/systemd/user/mill.service
-#   systemctl --user enable --now mill.service
+#   install -Dm644 contrib/systemd/mill.service /etc/systemd/system/mill.service
 #
-# DATABASE_URL and any other settings come from ~/.config/mill/env, one
-# KEY=value per line. See .env.example in the repository for the shape.
+# dagger identifies a caller by the numeric user id on its socket and has no
+# principal kind for an orchestrator, so the account this unit runs as is the
+# dagger principal every claim is made by (docs/domain-model.md §Principal).
+# A deployment that wants mill to act as the operator overrides the account
+# with a drop-in and nothing else:
 #
-# What the worker claims — its projects, its labels, its concurrency — comes
-# from ~/.config/mill/config.yaml, whose keys are the long flag names. A flag
-# on the ExecStart line below wins over the file.
+#   # /etc/systemd/system/mill.service.d/user.conf
+#   [Service]
+#   User=<operator>
+#   Group=<operator>
+#
+# That works because nothing is owned by `mill` at install time. The state
+# and runtime directories are declared below rather than made by a
+# scriptlet, so systemd creates /var/lib/mill and /run/mill at start and
+# gives them to whichever account the unit runs as — chowning what an
+# earlier account left there. The overriding account needs to reach dagger's
+# socket, which is a matter of dagger's group.
+#
+# DATABASE_URL and any other environment come from /etc/mill/env, one
+# KEY=value per line, read by systemd and never by a session. What the
+# worker claims and how it runs — its projects, its labels, the sidecar and
+# workflow paths, the workspace backend — is /etc/mill/config.yaml, whose
+# keys are the long flag names. A flag on the ExecStart line below wins over
+# the file.
 #
 # Readiness is sd_notify: the unit is active only once the service has bound
 # its socket, applied its migrations, and had the database answer, so
@@ -25,6 +42,8 @@ After=network.target dagger.service
 [Service]
 Type=notify
 NotifyAccess=main
+User=mill
+Group=mill
 EnvironmentFile=-%E/mill/env
 # The credential gateway's upstream credential, when `gateway: true` is in
 # the configuration file: a `claude setup-token`, delivered as a file under
@@ -32,6 +51,9 @@ EnvironmentFile=-%E/mill/env
 # file above (docs/sandbox.md §Credentials). Uncomment once the file exists;
 # a LoadCredential= that names a missing file fails the unit's start.
 #LoadCredential=claude-oauth:%E/mill/claude-oauth
+ConfigurationDirectory=mill
+StateDirectory=mill
+StateDirectoryMode=0750
 RuntimeDirectory=mill
 RuntimeDirectoryMode=0750
 # Other accounts reach the store only if a role map names them; add
@@ -50,7 +72,7 @@ RuntimeDirectoryMode=0750
 # `mill run` from their shell. A step that needs more than the floor names it
 # in its workflow, as `env.passthrough` (docs/architecture.md §"Skill steps:
 # the harness adapter").
-ExecStart=%h/.local/bin/mill serve --work --env-mode strict --socket %t/mill/mill.sock
+ExecStart=/usr/bin/mill serve --work --env-mode strict --socket %t/mill/mill.sock --config %E/mill/config.yaml
 # On stop the worker goes first — it releases its lease as a preemption with
 # detail "shutdown" and leaves its run resumable — and the store drains
 # after it. That is the worker's --grace (30s by default) plus serve's
@@ -65,4 +87,4 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

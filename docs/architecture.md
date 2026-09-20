@@ -238,13 +238,16 @@ wellspring                              mill account
 
 Workspaces live under the account on the `local` backend. Under `workspace: machine` the account is the one that starts machines, through the root-owned template unit it drives under polkit (`docs/sandbox.md` §Privilege), and the host carries what mill cannot ship, as homestead roles (`docs/sandbox.md` §"What the host provides"): `mill_storage`, the btrfs volume at `/var/lib/mill`; `mill_machine`, the template unit, its helper, policy, polkit and sudoers rules; `mill_egress`, the `mill-host` link, the `inet mill` table and squid; `mill_selinux`, the file context; and `mill`, which deploys the units below, writes `~/.config/mill/config.yaml` with `workspace: machine` and the sandbox keys, delivers the model credential and the Harbor robot credential by `LoadCredential`, makes `/run/mill` the account's through `tmpfiles.d`, and keeps a clone of dagger's `main` at `/var/lib/mill/dagger` for nested machines.
 
-`contrib/systemd/` holds every unit, all of them user units under the account:
+`contrib/systemd/` holds every unit. `mill.service` is a system unit, the one
+the package installs; the timers are user units under the account:
 
 | Unit | What |
 |---|---|
-| `contrib/systemd/mill.service` | `mill serve --work --env-mode strict`: the store and a worker in one process, `Type=notify`, `LoadCredential=claude-oauth` for the gateway |
+| `contrib/systemd/mill.service` | `mill serve --work --env-mode strict`: the store and a worker in one process, `Type=notify`, `LoadCredential=claude-oauth` for the gateway. `User=mill`, with `/etc/mill`, `/var/lib/mill` and `/run/mill` declared on the unit, so a drop-in that sets `User=` to the operator's account — which is what makes mill the operator's dagger principal — works without a chown |
 | `contrib/systemd/mill-image-build.service`, `contrib/systemd/mill-image-build.timer` | `mill image build-base --push` weekly, from the checkout `images/base` is in, `LoadCredential=harbor-robot` — one line, `robot:secret`; homestead renders the same unit as `mill-image.service` |
 | `contrib/systemd/mill-cache-prune.service`, `contrib/systemd/mill-cache-prune.timer` | `mill cache prune` daily: expiry, then least recently used under the watermarks, lineages and images both |
+
+The package is the other way in: `make package` builds an rpm per architecture from `nfpm.yaml` — the binary, the built sidecar with its dependencies under `/usr/lib/mill/sidecar`, the workflows under `/usr/share/mill/workflows`, the unit, a `sysusers.d` fragment for the `mill` account and a default `/etc/mill/config.yaml` on the `local` backend that names the installed paths. It carries none of the sandbox's host half (`docs/sandbox.md` §"What the host provides"); `workspace: machine` is homestead's to provision.
 
 The mill never runs across zones; it is one more thing in the operator's account that reaches dagger over the socket — which is why dagger sees the operator, and why `harness: mill` on every lease is not optional.
 
