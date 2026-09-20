@@ -457,7 +457,11 @@ and `--project` for dagger, `--sidecar` and `--env-mode` for the sidecar,
 `--workspace-dir`, `--identity` and `--name` for the signing key, `--project`
 for the forge — the repository is the dagger project's `vcs_url` — `--notify-command`, `--workspace` and `--sandbox-root`, and the
 gateway's — so a host is probed as its worker is configured, or as a flag
-says to try it.
+says to try it. The deployment's configuration file (§Configuration) fills
+the flags the command line left alone for the settings a deployment keeps
+there and nowhere else: `sidecar`, `env_mode` and `workspace-dir`, so a
+packaged host's installed sidecar and state directory are what is probed;
+`workspace` and `sandbox-root`; `notify_command`; and the gateway's.
 
 The sidecar probe sends a `cancel` request on stdin. Cancellation reaches a
 running sidecar as SIGTERM, so a cancel on stdin is a frame the sidecar

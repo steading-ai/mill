@@ -184,6 +184,35 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 		Expect(reason).To(HavePrefix("machine: sandbox root " + root + " is "))
 	})
 
+	It("probes the sidecar, the environment mode and the workspace directory the file names", func() {
+		m := serving(ctx)
+
+		// A packaged host names its installed sidecar and its state
+		// directory in the file and nowhere else, so the file is what the
+		// doctor reads them from when the command line does not.
+		sidecar := filepath.Join(GinkgoT().TempDir(), "installed", "dist", "main.js")
+		workspaces := filepath.Join(GinkgoT().TempDir(), "state", "workspaces")
+		path := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+		Expect(os.WriteFile(path, []byte("sidecar: "+sidecar+"\nenv_mode: strict\nworkspace-dir: "+workspaces+"\n"), 0o600)).To(Succeed())
+
+		out, _ := runCLI(ctx, m.socket, "doctor", "--project", "", "--config", path,
+			"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"))
+		verdict, reason := probe(out, "sidecar")
+		Expect(verdict).To(Equal("fail"), out)
+		Expect(reason).To(ContainSubstring(sidecar), "the file's sidecar is the one probed")
+		Expect(reason).To(ContainSubstring("environment mode strict"), "the file's environment mode is the one probed under")
+		_, reason = probe(out, "signing")
+		Expect(reason).To(ContainSubstring(workspaces), "the signing key is looked for under the file's workspace directory")
+
+		// A flag still wins over the file.
+		flagged := filepath.Join(GinkgoT().TempDir(), "flagged.js")
+		out, _ = runCLI(ctx, m.socket, "doctor", "--project", "", "--config", path,
+			"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
+			"--sidecar", flagged)
+		_, reason = probe(out, "sidecar")
+		Expect(reason).To(ContainSubstring(flagged))
+	})
+
 	Describe("the gateway probe", func() {
 		// One cheap request through the credential gateway a run would put
 		// its sessions behind: a token count, which bills nothing. The

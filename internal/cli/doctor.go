@@ -136,7 +136,7 @@ failed; a warning does not fail it.`,
 	f.StringVar(&opts.sandboxRoot, "sandbox-root", machine.DefaultRoot, sandboxRootUsage)
 	f.StringVar(&opts.identity, "identity", "", "address the mill commits under (default: mill@<host>)")
 	f.StringVar(&opts.name, "name", defaultForgeUser, "name on the mill's commits")
-	f.StringVar(&opts.config, "config", defaultConfigPath(), "path of the configuration file the notify command and the workspace kind are read from when no flag names them")
+	f.StringVar(&opts.config, "config", defaultConfigPath(), "path of the configuration file the notify command, the workspace kind and directory, the sidecar and the environment mode are read from when no flag names them")
 	f.StringVar(&opts.notifyCommand, "notify-command", "", notifyCommandUsage)
 	bindGatewayFlags(cmd, &opts.gateway)
 	return cmd
@@ -153,7 +153,11 @@ func runDoctor(cmd *cobra.Command, opts doctorOptions) error {
 	// The notify command and the workspace kind are a deployment's settings
 	// and live in its configuration file; a doctor that probed only what
 	// the command line repeated would report on a notifier no run uses and
-	// a workspace no run works in.
+	// a workspace no run works in. The sidecar, the environment mode and
+	// the workspace directory likewise: a packaged host names its installed
+	// sidecar and its state directory in the file and nowhere else, so the
+	// defaults would be a sidecar no run spawns and a signing key no run
+	// signs with.
 	config, err := LoadConfig(opts.config)
 	if err != nil {
 		return err
@@ -163,6 +167,15 @@ func runDoctor(cmd *cobra.Command, opts doctorOptions) error {
 	}
 	if config.Workspace != "" && unset(cmd, "workspace") {
 		opts.workspace = config.Workspace
+	}
+	if config.Sidecar != "" && unset(cmd, "sidecar") {
+		opts.sidecar = config.Sidecar
+	}
+	if config.EnvMode != "" && unset(cmd, "env-mode") {
+		opts.envMode = config.EnvMode
+	}
+	if config.WorkspaceDir != "" && unset(cmd, "workspace-dir") {
+		opts.workspaceDir = config.WorkspaceDir
 	}
 	if err := resolveSandboxRoot(cmd, &opts.sandboxRoot, config.SandboxRoot); err != nil {
 		return err
