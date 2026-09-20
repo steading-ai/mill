@@ -81,6 +81,7 @@ type doctorOptions struct {
 	sandboxRoot   string
 	identity      string
 	name          string
+	forge         string
 	config        string
 	notifyCommand string
 	gateway       gatewayOptions
@@ -107,7 +108,9 @@ func newDoctorCommand() *cobra.Command {
   sidecar   the harness sidecar starts, under the environment mode a run
             would spawn it with, and answers a no-op
   signing   the commit signing key exists and some project trusts it
-  forge     the forge credential is accepted
+  forge     the forge accepts the credential, and says which account it
+            is: a token that has expired, or lacks a permission the
+            repository needs, fails here naming the credential
   notify    the configured notify command runs and accepts a probe notice
   workspace the workspace kind in effect and, for machine, whether the
             sandbox root is btrfs
@@ -136,7 +139,8 @@ failed; a warning does not fail it.`,
 	f.StringVar(&opts.sandboxRoot, "sandbox-root", machine.DefaultRoot, sandboxRootUsage)
 	f.StringVar(&opts.identity, "identity", "", "address the mill commits under (default: mill@<host>)")
 	f.StringVar(&opts.name, "name", defaultForgeUser, "name on the mill's commits")
-	f.StringVar(&opts.config, "config", defaultConfigPath(), "path of the configuration file the notify command, the workspace kind and directory, the sidecar and the environment mode are read from when no flag names them")
+	f.StringVar(&opts.forge, "forge", "", forgeUsage)
+	f.StringVar(&opts.config, "config", defaultConfigPath(), "path of the configuration file the notify command, the workspace kind and directory, the sidecar, the environment mode and the forge are read from when no flag names them")
 	f.StringVar(&opts.notifyCommand, "notify-command", "", notifyCommandUsage)
 	bindGatewayFlags(cmd, &opts.gateway)
 	return cmd
@@ -176,6 +180,9 @@ func runDoctor(cmd *cobra.Command, opts doctorOptions) error {
 	}
 	if config.WorkspaceDir != "" && unset(cmd, "workspace-dir") {
 		opts.workspaceDir = config.WorkspaceDir
+	}
+	if config.Forge != "" && unset(cmd, "forge") {
+		opts.forge = config.Forge
 	}
 	if err := resolveSandboxRoot(cmd, &opts.sandboxRoot, config.SandboxRoot); err != nil {
 		return err
@@ -392,11 +399,17 @@ func keyBlob(publicKey string) string {
 	return fields[1]
 }
 
-// probeForge asks the forge about a branch that does not exist. The answer
-// does not matter; being answered does. A credential the forge rejects fails
-// here rather than four steps into a run. The repository is the project's,
-// read from dagger the way a run reads it, so the probe needs the project
-// and nothing else.
+// probeForge asks the forge whether the credential in $MILL_FORGE_TOKEN
+// will serve a delivery, before a run spends a session finding out. The
+// repository is the project's, read from dagger the way a run reads it, so
+// the probe needs the project and nothing else; the adapter is the one a
+// run would use, resolved the same way, so a `forge:` that names no
+// adapter fails here too.
+//
+// A forge that can say who the credential is (forge.Prober) is asked, and
+// the account it names is on the line; one that cannot is asked about a
+// branch nothing has ever pushed, and "no pull request" is it answering. A
+// failure names the credential, because the credential is what to replace.
 func probeForge(ctx context.Context, opts doctorOptions) probe {
 	if opts.project == "" {
 		return fail("forge", "no project to read the repository from: pass --project or set %s", daggerProjectEnv)
@@ -407,19 +420,26 @@ func probeForge(ctx context.Context, opts doctorOptions) probe {
 	if err != nil {
 		return fail("forge", "no repository to probe: %v", err)
 	}
-	f, err := forges().For(
-		forge.Project{Slug: project.GetSlug(), VCSURL: project.GetVcsUrl()},
-		forge.Static(envOr(forgeUserEnv, defaultForgeUser), os.Getenv(forgeTokenEnv)))
+	p, err := forgeProject(project, opts.forge)
+	if err != nil {
+		return fail("forge", "%v", err)
+	}
+	f, err := forges().For(p, forgeMinter())
 	if err != nil {
 		return fail("forge", "no repository to probe: %v", err)
 	}
-	// A branch nothing has ever pushed. "No pull request" is the forge
-	// answering, which is what the credential is being probed for.
+	if prober, ok := f.(forge.Prober); ok {
+		account, err := prober.Probe(ctx)
+		if err != nil {
+			return fail("forge", "%s refused the credential in $%s: %v", project.GetVcsUrl(), forgeTokenEnv, err)
+		}
+		return pass("forge", "%s accepts the credential in $%s as %s", project.GetVcsUrl(), forgeTokenEnv, account.Login)
+	}
 	_, err = f.PR(ctx, "mill-doctor-probe")
 	if err == nil || errors.Is(err, forge.ErrNoPullRequest) {
-		return pass("forge", "%s accepts the credential", project.GetVcsUrl())
+		return pass("forge", "%s accepts the credential in $%s", project.GetVcsUrl(), forgeTokenEnv)
 	}
-	return fail("forge", "%s refused the credential: %v", project.GetVcsUrl(), err)
+	return fail("forge", "%s refused the credential in $%s: %v", project.GetVcsUrl(), forgeTokenEnv, err)
 }
 
 // probeNotify runs the configured notify command with a probe notice. It is

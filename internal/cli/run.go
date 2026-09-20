@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"net/http"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -23,6 +24,7 @@ import (
 	"github.com/ivy/mill/gen/mill/v1/millv1connect"
 	"github.com/ivy/mill/internal/dagger"
 	"github.com/ivy/mill/internal/forge"
+	"github.com/ivy/mill/internal/forge/github"
 	"github.com/ivy/mill/internal/forge/gitlab"
 	"github.com/ivy/mill/internal/gateway"
 	"github.com/ivy/mill/internal/harness"
@@ -143,6 +145,9 @@ func skillOverrides(overrides map[string]string, out io.Writer) (map[string]*mil
 // defaultForgeUser is the basic-auth username GitLab wants beside a token.
 const defaultForgeUser = "mill"
 
+// forgeUsage is what --forge says for itself on every command that has it.
+const forgeUsage = "forge the project's repository is delivered through: github or gitlab (default: whichever the repository's host is)"
+
 type runOptions struct {
 	socket        string
 	daggerSocket  string
@@ -153,6 +158,7 @@ type runOptions struct {
 	sidecar       string
 	origin        string
 	ref           string
+	forge         string
 	identity      string
 	name          string
 	workspaceDir  string
@@ -215,6 +221,7 @@ between.`,
 	f.StringVar(&opts.sidecar, "sidecar", envOr(sidecarEnv, claude.DefaultEntrypoint), "path of the harness sidecar's entrypoint (default: $"+sidecarEnv+")")
 	f.StringVar(&opts.origin, "origin", "", "repository a new workspace clones (default: the project's repository)")
 	f.StringVar(&opts.ref, "ref", "", "ref a new workspace checks out (default: the repository's own HEAD)")
+	f.StringVar(&opts.forge, "forge", "", forgeUsage)
 	f.StringVar(&opts.workspaceDir, "workspace-dir", defaultWorkspaceDir(), "directory run workspaces are made under")
 	f.StringVar(&opts.workspace, "workspace", string(workspace.KindLocal), workspaceUsage)
 	f.StringVar(&opts.sandboxRoot, "sandbox-root", machine.DefaultRoot, sandboxRootUsage)
@@ -846,10 +853,35 @@ func machineConfig(opts runOptions, repo run.Repository, redactor *redact.Redact
 // (docs/roadmap.md §"Adding a forge is configuration").
 func forges() *forge.Registry {
 	registry := forge.NewRegistry()
-	registry.Register(forge.KindGitLab, func(repo forge.Repo, minter forge.Minter) (forge.Forge, error) {
-		return gitlab.New(repo, minter), nil
-	})
+	gitlab.Register(registry)
+	github.Register(registry, github.WithHTTPClient(forgeHTTP))
 	return registry
+}
+
+// forgeHTTP is the HTTP client the GitHub adapter is built with, nil for
+// the adapter's own. It exists for the specs, which stand a recorded
+// GitHub in for the one host through it; nothing in the binary sets it.
+var forgeHTTP *http.Client
+
+// forgeProject is the dagger project as the forge resolves it: its slug,
+// its `vcs_url`, and the forge kind the configuration names, if it names
+// one. A configured kind that names no adapter is refused here, which is
+// the first thing `run`, `work` and `doctor` do with a project, so a
+// misspelt `forge:` stops the worker at startup naming what it found.
+func forgeProject(project *daggerv1.Project, configured string) (forge.Project, error) {
+	kind, err := forge.ParseKind(configured)
+	if err != nil {
+		return forge.Project{}, fmt.Errorf("mill: --forge: %w", err)
+	}
+	return forge.Project{Slug: project.GetSlug(), VCSURL: project.GetVcsUrl(), Kind: kind}, nil
+}
+
+// forgeMinter is the credential the mill holds for the repositories it
+// delivers to, as the forge asks for it: the token in $MILL_FORGE_TOKEN,
+// under the username in $MILL_FORGE_USER. Both forges take the same pair;
+// GitHub ignores the username and GitLab wants a placeholder.
+func forgeMinter() forge.Minter {
+	return forge.Static(envOr(forgeUserEnv, defaultForgeUser), os.Getenv(forgeTokenEnv))
 }
 
 // repositoryFor is where a run on the project delivers and what its
@@ -859,8 +891,11 @@ func forges() *forge.Registry {
 // The credential is the one the mill account holds, handed out per request
 // by [forge.Static].
 func repositoryFor(project *daggerv1.Project, opts runOptions) (run.Repository, error) {
-	p := forge.Project{Slug: project.GetSlug(), VCSURL: project.GetVcsUrl()}
-	f, err := forges().For(p, forge.Static(envOr(forgeUserEnv, defaultForgeUser), os.Getenv(forgeTokenEnv)))
+	p, err := forgeProject(project, opts.forge)
+	if err != nil {
+		return run.Repository{}, err
+	}
+	f, err := forges().For(p, forgeMinter())
 	if err != nil {
 		return run.Repository{}, err
 	}

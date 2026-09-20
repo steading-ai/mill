@@ -630,6 +630,7 @@ func (s *mcpServer) doctorOptions() doctorOptions {
 		sandboxRoot:   config.SandboxRoot,
 		identity:      defaultIdentity(),
 		name:          defaultForgeUser,
+		forge:         config.Forge,
 		notifyCommand: config.NotifyCommand,
 		gateway: gatewayOptions{
 			enabled:        config.Gateway,

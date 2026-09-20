@@ -44,11 +44,15 @@ type Config struct {
 	Sidecar      string   `yaml:"sidecar"`
 	Origin       string   `yaml:"origin"`
 	Ref          string   `yaml:"ref"`
-	Identity     string   `yaml:"identity"`
-	Name         string   `yaml:"name"`
-	WorkspaceDir string   `yaml:"workspace-dir"`
-	Workspace    string   `yaml:"workspace"`
-	SandboxRoot  string   `yaml:"sandbox-root"`
+	// Forge names the adapter every project's repository is delivered
+	// through, `github` or `gitlab`; empty leaves it to the repository's
+	// host. A value that names no adapter stops the worker at startup.
+	Forge        string `yaml:"forge"`
+	Identity     string `yaml:"identity"`
+	Name         string `yaml:"name"`
+	WorkspaceDir string `yaml:"workspace-dir"`
+	Workspace    string `yaml:"workspace"`
+	SandboxRoot  string `yaml:"sandbox-root"`
 	// The machine backend's images (docs/sandbox.md §Images): where the
 	// subvolumes are, which Harbor they come from, a pin that stands in
 	// for `latest`, how long a derived build may take, and how long an
@@ -261,6 +265,7 @@ var configKeys = []configKey{
 	{"sidecar", "sidecar"},
 	{"origin", "origin"},
 	{"ref", "ref"},
+	{"forge", "forge"},
 	{"identity", "identity"},
 	{"name", "name"},
 	{"workspace-dir", "workspace-dir"},

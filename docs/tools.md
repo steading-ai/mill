@@ -432,7 +432,7 @@ pass  schema     migration 18, current
 pass  dagger     /run/dagger/dg.sock answers; this account is a principal on mill, 1 node(s) ready for an agent
 fail  sidecar    sidecar/dist/main.js did not answer: claude: the sidecar answered nothing before it exited
 fail  signing    no signing key under ~/.local/state/mill/workspaces/signing
-fail  forge      no repository to probe: forge: project mill has no repository: set it with `dg project update mill --vcs-url <url>`
+pass  forge      https://github.com/octo-org/thing.git accepts the credential in $MILL_FORGE_TOKEN as octocat
 pass  notify     contrib/notify/thicket-send.sh accepts a probe notice
 pass  workspace  local: a clone under the mill's account
 pass  space      local: no sandbox volume to watch
@@ -446,7 +446,7 @@ warn  gateway    https://api.anthropic.com answers a token count through the gat
 | `dagger` | Dagger answers, and this account resolves to a principal that may read the project |
 | `sidecar` | The harness sidecar starts, parses one frame, and answers |
 | `signing` | The commit signing key exists and some project's `allowed_signers` names it |
-| `forge` | The forge accepts the credential |
+| `forge` | The forge accepts the credential in `$MILL_FORGE_TOKEN`, through the adapter a run would deliver with. On GitHub the line names the account the token authenticates as, and a token that has expired, or lacks one of the permissions §Forges lists, fails naming the credential and what it lacks. A `forge` setting that names no adapter fails here too |
 | `notify` | The configured notify command runs and accepts a probe notice |
 | `workspace` | Which workspace backend a run works in, and for `machine` whether the sandbox root is btrfs |
 | `space` | For `machine`, free space on the sandbox volume against the eviction watermarks (`cache-high-watermark`, `cache-low-watermark`): pass above the low one, warn between, fail below the high one — eviction runs at every promotion and the host is short of space |
@@ -455,7 +455,8 @@ warn  gateway    https://api.anthropic.com answers a token count through the gat
 The probes take the worker's own flags for what they check — `--dagger-socket`
 and `--project` for dagger, `--sidecar` and `--env-mode` for the sidecar,
 `--workspace-dir`, `--identity` and `--name` for the signing key, `--project`
-for the forge — the repository is the dagger project's `vcs_url` — `--notify-command`, `--workspace` and `--sandbox-root`, and the
+and `--forge` for the forge — the repository is the dagger project's
+`vcs_url`, the adapter is the file's `forge` or the host's — `--notify-command`, `--workspace` and `--sandbox-root`, and the
 gateway's — so a host is probed as its worker is configured, or as a flag
 says to try it. The deployment's configuration file (§Configuration) fills
 the flags the command line left alone for the settings a deployment keeps
@@ -872,6 +873,7 @@ flag added or removed without this table changing is a failing spec.
 | `sidecar` | | yes | yes |
 | `origin` | | yes | yes |
 | `ref` | | yes | yes |
+| `forge` | | yes | yes |
 | `identity` | | yes | yes |
 | `name` | | yes | yes |
 | `workspace-dir` | | yes | yes |
@@ -915,6 +917,7 @@ turned on by `--work` and only by it. `model_credential_minted` is read by
 read the file for their own keys — `doctor`, `cache` and `image` for the
 sandbox and cache settings, `mcp` for the credential's age — and are outside
 this table.
+
 
 ## Forges
 

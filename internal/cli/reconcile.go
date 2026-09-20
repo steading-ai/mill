@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/ivy/mill/internal/dagger"
@@ -50,8 +49,7 @@ func workerStartup(ctx context.Context, kind workspace.Kind, opts runOptions, pr
 		if err != nil {
 			return nil, err
 		}
-		externals = append(externals, sweep.Forge(gitlab.NewScratch(repo.BaseURL, opts.sandbox.scratchNamespace,
-			forge.Static(envOr(forgeUserEnv, defaultForgeUser), os.Getenv(forgeTokenEnv)))))
+		externals = append(externals, sweep.Forge(gitlab.NewScratch(repo.BaseURL, opts.sandbox.scratchNamespace, forgeMinter())))
 	}
 	return &machineStartup{
 		reconciler: machine.NewReconciler(machineDriver(), config, externals...),

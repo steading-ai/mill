@@ -91,7 +91,6 @@ Adding a workflow, a project, a forge, or a harness is configuration.
 | `dependency-bump` workflow — the Renovate pipeline: ingest-class review emits a verdict artifact; deterministic gates; a separate identity merges | bet *Deliver means running* |
 | Workflow router: choose a workflow by skill `description` where no project default applies; eval suite per the agent-skills guidance (20 queries × 3 runs, 0.5 trigger threshold) | C8, agentskills analysis |
 | Second project onboarded with only a project default | O3 done-when in PRD |
-| GitHub forge adapter for public repos | `forge` node Notes |
 | Second harness (Codex) behind the adapter interface; skills used as prompts, translated by the adapter | B4, C9 |
 | Skill evals: a workflow definition ships with fixture nodes; `mill run --dry-run` and single-run mode are the harness | R-47 |
 | `decompose` workflow — gather-context → think → patch of child nodes → parent becomes a grouping node → run ends; the path to seeding a big idea as a project | C5, post-MVP |

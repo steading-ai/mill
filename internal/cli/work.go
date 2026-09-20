@@ -83,6 +83,7 @@ func bindWorkFlags(cmd *cobra.Command, opts *workOptions) {
 	f.StringVar(&opts.run.sidecar, "sidecar", envOr(sidecarEnv, claude.DefaultEntrypoint), "path of the harness sidecar's entrypoint (default: $"+sidecarEnv+")")
 	f.StringVar(&opts.run.origin, "origin", "", "repository a new workspace clones (default: the project's repository)")
 	f.StringVar(&opts.run.ref, "ref", "", "ref a new workspace checks out (default: the repository's own HEAD)")
+	f.StringVar(&opts.run.forge, "forge", "", forgeUsage)
 	f.StringVar(&opts.run.workspaceDir, "workspace-dir", defaultWorkspaceDir(), "directory run workspaces are made under")
 	f.StringVar(&opts.run.workspace, "workspace", string(workspace.KindLocal), workspaceUsage)
 	f.StringVar(&opts.run.sandboxRoot, "sandbox-root", machine.DefaultRoot, sandboxRootUsage)
@@ -143,7 +144,7 @@ func stringTargets(opts *workOptions) map[string]*string {
 		"socket": &opts.run.socket, "dagger-socket": &opts.run.daggerSocket,
 		"workflow": &opts.run.workflow, "tier": &opts.run.tier,
 		"workflow-dir": &opts.run.workflowDir, "sidecar": &opts.run.sidecar,
-		"origin": &opts.run.origin, "ref": &opts.run.ref,
+		"origin": &opts.run.origin, "ref": &opts.run.ref, "forge": &opts.run.forge,
 		"identity": &opts.run.identity, "name": &opts.run.name,
 		"workspace-dir": &opts.run.workspaceDir, "log-dir": &opts.run.logDir,
 		"workspace": &opts.run.workspace, "sandbox-root": &opts.run.sandboxRoot,
@@ -158,7 +159,7 @@ func stringValues(config Config) map[string]string {
 		"socket": config.Socket, "dagger-socket": config.DaggerSocket,
 		"workflow": config.Workflow, "tier": config.Tier,
 		"workflow-dir": config.WorkflowDir, "sidecar": config.Sidecar,
-		"origin": config.Origin, "ref": config.Ref,
+		"origin": config.Origin, "ref": config.Ref, "forge": config.Forge,
 		"identity": config.Identity, "name": config.Name,
 		"workspace-dir": config.WorkspaceDir, "log-dir": config.LogDir,
 		"workspace": config.Workspace, "sandbox-root": config.SandboxRoot,
