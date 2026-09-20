@@ -584,7 +584,7 @@ func (d *systemdDriver) Statfs(path string) (Filesystem, error) {
 	}
 	size := uint64(stat.Bsize) //nolint:gosec // a block size is never negative
 	return Filesystem{
-		Type:  filesystemName(int64(stat.Type)), //nolint:gosec // int64 on linux, uint32 on darwin; both fit
+		Type:  filesystemName(int64(stat.Type)), //nolint:gosec,unconvert // int64 on linux, uint32 on darwin; both fit, and the conversion is needed on one
 		Free:  stat.Bavail * size,
 		Total: stat.Blocks * size,
 	}, nil
