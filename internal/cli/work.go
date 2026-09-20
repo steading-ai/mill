@@ -98,17 +98,22 @@ func bindWorkFlags(cmd *cobra.Command, opts *workOptions) {
 }
 
 // applyConfig fills in every worker flag the command line left alone. Every
-// key it reads has a flag bindWorkFlags declared on the same command —
-// `socket` included, which is why `work` and `serve --work` honour it alike
-// — or is one of the machine backend's, which has no flag and is the file's
+// key it reads has a flag bindWorkFlags declared on the same command — or
+// is one of the machine backend's, which has no flag and is the file's
 // alone. configKeys is the list, and docs/tools.md §Configuration is the
-// same list as an operator reads it.
+// same list as an operator reads it. The sockets go through the resolver
+// every face shares (sockets.go), so `work` and `serve --work` reach the
+// service the way `status` does: the flag, then the variable, then the
+// file.
 func applyConfig(cmd *cobra.Command, opts *workOptions) error {
 	if err := checkNamedConfig(cmd, opts.config); err != nil {
 		return err
 	}
 	config, err := LoadConfig(opts.config)
 	if err != nil {
+		return err
+	}
+	if err := resolveSockets(cmd, config); err != nil {
 		return err
 	}
 	values := stringValues(config)
@@ -138,10 +143,10 @@ func applyConfig(cmd *cobra.Command, opts *workOptions) error {
 // stringTargets is where each string-valued flag's setting lives, by flag
 // name; stringValues is what the file says for each. The two are keyed the
 // same so a key added to one without the other is a spec failure, not a
-// silently dropped setting.
+// silently dropped setting. The sockets are not here: resolveSockets owns
+// them, because the environment outranks the file for those alone.
 func stringTargets(opts *workOptions) map[string]*string {
 	return map[string]*string{
-		"socket": &opts.run.socket, "dagger-socket": &opts.run.daggerSocket,
 		"workflow": &opts.run.workflow, "tier": &opts.run.tier,
 		"workflow-dir": &opts.run.workflowDir, "sidecar": &opts.run.sidecar,
 		"origin": &opts.run.origin, "ref": &opts.run.ref, "forge": &opts.run.forge,
@@ -156,7 +161,6 @@ func stringTargets(opts *workOptions) map[string]*string {
 
 func stringValues(config Config) map[string]string {
 	return map[string]string{
-		"socket": config.Socket, "dagger-socket": config.DaggerSocket,
 		"workflow": config.Workflow, "tier": config.Tier,
 		"workflow-dir": config.WorkflowDir, "sidecar": config.Sidecar,
 		"origin": config.Origin, "ref": config.Ref, "forge": config.Forge,

@@ -64,6 +64,10 @@ ledger; "mill doctor" probes what a run depends on; "mill cancel" stops one.
 "mill mcp" serves those same tools to a session over stdio.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		// Every face that dials resolves its sockets here, before it
+		// runs, so the configuration file reaches all of them through
+		// one resolver (sockets.go).
+		PersistentPreRunE: applySocketConfig,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
 		},

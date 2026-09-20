@@ -209,10 +209,17 @@ func deploymentConfig() Config {
 }
 
 // unset reports whether the command line left a flag alone, which is the
-// only case the file speaks to.
+// only case the file speaks to. A flag the command does not declare is not
+// unset: there is nothing for the file to fill.
 func unset(cmd *cobra.Command, name string) bool {
 	flag := cmd.Flags().Lookup(name)
 	return flag != nil && !flag.Changed
+}
+
+// changed reports whether the command line set a flag the command declares.
+func changed(cmd *cobra.Command, name string) bool {
+	flag := cmd.Flags().Lookup(name)
+	return flag != nil && flag.Changed
 }
 
 // checkNamedConfig refuses a configuration file the operator named and that
@@ -227,7 +234,7 @@ func unset(cmd *cobra.Command, name string) bool {
 // claiming from a project the operator never named. A typo is a mistake, not
 // a default.
 func checkNamedConfig(cmd *cobra.Command, path string) error {
-	if path == "" || (unset(cmd, "config") && os.Getenv(configEnv) == "") {
+	if path == "" || (!changed(cmd, "config") && os.Getenv(configEnv) == "") {
 		return nil
 	}
 	if _, err := os.Stat(path); err != nil {
@@ -248,11 +255,12 @@ type configKey struct {
 	flag string
 }
 
-// configKeys is every key applyConfig reads. A command honours one when it
-// reads the file at all — it declares --config — and declares the key's
-// flag, or the key has none; configKeyTable renders that per command and
-// docs/tools.md §Configuration carries the rendering. The order is the
-// Config struct's.
+// configKeys is every key applyConfig and the socket resolver read. A
+// command honours one when it reads the file at all — it declares --config —
+// and declares the key's flag, or the key has none; the two socket keys any
+// command that declares their flag honours (sockets.go). configKeyTable
+// renders that per command and docs/tools.md §Configuration carries the
+// rendering. The order is the Config struct's.
 var configKeys = []configKey{
 	{"socket", "socket"},
 	{"dagger-socket", "dagger-socket"},
@@ -308,15 +316,30 @@ var configKeys = []configKey{
 // them out.
 var unreadKeys = []string{"work", "model_credential_minted"}
 
-// honoursKey reports whether a command reads key from the file: it reads
-// the file at all, and the key's flag — the one the file's value fills when
-// the command line leaves it alone — is among the command's, or the key has
-// none.
+// honoursKey reports whether a command reads key from the file. The socket
+// keys are read by every command that declares their flag, through the
+// root's resolver (sockets.go), whether or not it declares --config. Every
+// other key needs the command to read the file at all — it declares
+// --config — and to declare the key's flag, the one the file's value fills
+// when the command line leaves it alone, or the key has none.
 func honoursKey(cmd *cobra.Command, key configKey) bool {
+	if isSocketKey(key.key) {
+		return cmd.Flags().Lookup(key.flag) != nil
+	}
 	if cmd.Flags().Lookup("config") == nil {
 		return false
 	}
 	return key.flag == "" || cmd.Flags().Lookup(key.flag) != nil
+}
+
+// isSocketKey reports whether key is one the socket resolver reads.
+func isSocketKey(key string) bool {
+	for _, socket := range socketKeys {
+		if socket.flag == key {
+			return true
+		}
+	}
+	return false
 }
 
 // configKeyTable renders which of the file's keys each of `run`, `work`

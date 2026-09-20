@@ -462,7 +462,11 @@ says to try it. The deployment's configuration file (§Configuration) fills
 the flags the command line left alone for the settings a deployment keeps
 there and nowhere else: `sidecar`, `env_mode` and `workspace-dir`, so a
 packaged host's installed sidecar and state directory are what is probed;
-`workspace` and `sandbox-root`; `notify_command`; and the gateway's.
+`workspace` and `sandbox-root`; `notify_command`; and the gateway's. The
+sockets resolve as they do for every face — `--socket` and
+`--dagger-socket`, then `$MILL_SOCKET` and `$DG_SOCKET`, then the file's
+`socket` and `dagger-socket`, then the default — so a host whose file names
+the paths is probed with no flag and no variable.
 
 The sidecar probe sends a `cancel` request on stdin. Cancellation reaches a
 running sidecar as SIGTERM, so a cancel on stdin is a frame the sidecar
@@ -850,11 +854,24 @@ a key fills the flag of the same name, and of whether it reads the file at
 all. The mechanism is one: `bindWorkFlags` declares the worker's flags —
 `--config` and `--socket` among them — on `work` and on `serve` alike, and
 `applyConfig` fills in every one the command line left alone. `run` declares
-no `--config` and reads no file: it is flags and environment only. `serve`
-reads the file only with `--work`, before it binds, because `socket` is one
-of the keys and the listener is built from it. A key with no flag of its own
-— the machine backend's — is the file's alone, and is read whenever the file
-is.
+no `--config`: it reads the file for the two socket keys and nothing else.
+A key with no flag of its own — the machine backend's — is the file's alone,
+and is read whenever the file is.
+
+**`socket` and `dagger-socket` reach every command that dials.** The
+readers, `doctor`, `run`, `cancel`, `rerun`, `restart`, `workspace`,
+`workflow`, `mcp`, `work` and `serve` resolve each socket through one
+resolver, in one order: the flag, then the variable (`$MILL_SOCKET`,
+`$DG_SOCKET`), then the file's key, then the default
+(`$XDG_RUNTIME_DIR/mill/mill.sock` or `/run/mill/mill.sock`, and
+`/run/dagger/dg.sock`). A command with no `--config` of its own reads the
+file at the default location. The file sits *below* the environment on
+purpose: a deployment that sets `MILL_SOCKET` on a unit or a plugin
+registration keeps reaching the service it named whatever a file on the host
+says, while a host whose file names the paths — a Mac reaching a daemon
+through forwarded sockets — needs no variable at all. The table below shows
+the two keys under `run` for that reason; the commands it does not have a
+column for honour them the same way.
 
 The table is hand-kept, and a spec in `internal/cli` renders the same table
 from the commands' declared flags and asserts the two are the same, so a
@@ -862,8 +879,8 @@ flag added or removed without this table changing is a failing spec.
 
 | Key | `run` | `work` | `serve --work` |
 |---|---|---|---|
-| `socket` | | yes | yes |
-| `dagger-socket` | | yes | yes |
+| `socket` | yes | yes | yes |
+| `dagger-socket` | yes | yes | yes |
 | `project` | | yes | yes |
 | `label` | | yes | yes |
 | `concurrency` | | yes | yes |
@@ -1046,10 +1063,11 @@ named, what the views mean, and that a gate is a person's to answer. Reading
 them is enough to use the rest.
 
 The socket resolves as it does for every other face: `--socket`, then
-`$MILL_SOCKET`, then `$XDG_RUNTIME_DIR/mill/mill.sock`, then
-`/run/mill/mill.sock`. The environment variable is what a plugin has, since a
+`$MILL_SOCKET`, then the configuration file's `socket`, then
+`$XDG_RUNTIME_DIR/mill/mill.sock`, then `/run/mill/mill.sock`
+(§Configuration). The environment variable is what a plugin has, since a
 registration is a command line fixed at install time and not one an operator
-edits per host.
+edits per host; the file is what a host has when nothing sets a variable.
 
 `mill mcp --describe` prints the tool list as JSON — name, description and
 input schema, exactly what `tools/list` answers — and connects to nothing. It
