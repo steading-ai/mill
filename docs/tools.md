@@ -445,12 +445,29 @@ warn  gateway    https://api.anthropic.com answers a token count through the gat
 | `schema` | The database is migrated to the schema this binary carries |
 | `dagger` | Dagger answers, and this account resolves to a principal that may read the project |
 | `sidecar` | The harness sidecar starts, parses one frame, and answers |
-| `signing` | The commit signing key exists and some project's `allowed_signers` names it |
+| `signing` | The commit signing key exists and some project's `allowed_signers` names it — a checkout's, or the project's repository directly when no checkout exists yet |
 | `forge` | The forge accepts the credential the mill holds — the credential store's `forge-token`, else `$MILL_FORGE_TOKEN` (§Forges) — through the adapter a run would deliver with. The line names where the credential came from. On GitHub it names the account the token authenticates as, and a token that has expired, or lacks one of the permissions §Forges lists, fails naming the credential and what it lacks. A `forge` setting that names no adapter fails here too |
 | `notify` | The configured notify command runs and accepts a probe notice |
 | `workspace` | Which workspace backend a run works in, and for `machine` whether the sandbox root is btrfs |
 | `space` | For `machine`, free space on the sandbox volume against the eviction watermarks (`cache-high-watermark`, `cache-low-watermark`): pass above the low one, warn between, fail below the high one — eviction runs at every promotion and the host is short of space |
 | `gateway` | The credential gateway's upstream answers one token count through it with the configured credential, and the credential's age against `model_credential_minted` |
+
+`sidecar`, `signing` and `forge` ask the worker behind `--socket` to run
+themselves, over the same `WorkerService` a run's own store connects
+through, and report the worker's own verdict verbatim: this is what makes
+`mill doctor` on a client host — a Mac reaching a Linux worker through a
+forwarded socket, say — report the worker's sidecar, signing key and forge
+credential, not a search of files that were never going to be on the
+client's disk (docs/architecture.md §"One binary, two faces"). A `mill
+serve` with no `--work` in it, or an older one, mounts no route for that
+service; against one of those, the three probes fall back to the file search
+below, run on the host `doctor` itself is on. `doctor` run on the worker's
+own host asks the same RPC first and gets the same answer a remote client
+would, which is the more authoritative one: it reads `--work`'s actual
+configuration rather than `doctor`'s own flags, which may not agree with it.
+Either way the reported line does not say which path answered it: the two
+are meant to agree, since the RPC runs the same checks below in the worker's
+own process.
 
 The probes take the worker's own flags for what they check — `--dagger-socket`
 and `--project` for dagger, `--sidecar` and `--env-mode` for the sidecar,
@@ -472,6 +489,15 @@ The sidecar probe sends a `cancel` request on stdin. Cancellation reaches a
 running sidecar as SIGTERM, so a cancel on stdin is a frame the sidecar
 understands and refuses by contract: it never starts a session, never reaches
 the Claude API, and bills nothing. Its refusal is the answer the probe wants.
+
+The signing probe looks for the key in an `allowed_signers` file of a
+project checked out under `--workspace-dir`. A fresh host has a key —
+homestead makes it at provisioning — and no checkout yet, nothing for that
+scan to find; when the forge `--project` names implements the contents API
+(GitHub today, not GitLab), the probe asks the project's repository
+directly for the same file before failing, so such a host is green before
+its first run. Neither a checkout nor a repository naming the key is a
+plain failure, same as today.
 
 The notify probe runs the deployment's `--notify-command` — the file's
 `notify_command`, when no flag names one — with `{"kind":"probe"}` on its
@@ -525,6 +551,15 @@ is absent, and naming the upstream's status when it refuses:
 fail  gateway    gateway: no upstream credential: /run/credentials/mill.service/claude-oauth: open …: no such file or directory
 fail  gateway    gateway: api.anthropic.com answered 401 to the probe: {"type":"error","error":{"type":"authentication_error",…
 ```
+
+The request carries every header mill itself sets on a real session's
+request too — `Authorization`, `Content-Type` and `anthropic-version` — and
+no more. Headers a real session also carries, like `anthropic-beta` and
+`user-agent`, are chosen by the Claude Agent SDK inside the sidecar process
+at request time, not by anything mill holds, so the probe cannot mirror them
+without hardcoding a guess that would drift, unnoticed, the moment the SDK
+changes what it sends. A credential the upstream would only accept alongside
+one of those headers can fail this probe and still pass a real run.
 
 The credential is a `claude setup-token`, which lasts a year, and the CLI's
 own three-day expiry warning applies only to `/login` credentials, so the

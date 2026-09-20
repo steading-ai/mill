@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -16,6 +14,7 @@ import (
 	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/dagger"
+	"github.com/ivy/mill/internal/doctor"
 	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/gateway"
 	"github.com/ivy/mill/internal/harness/claude"
@@ -24,7 +23,6 @@ import (
 	"github.com/ivy/mill/internal/workspace/machine"
 	"github.com/ivy/mill/internal/workspace/machine/cache"
 	"github.com/ivy/mill/internal/workspace/machine/driver"
-	"github.com/ivy/mill/internal/workspace/signing"
 )
 
 // `mill doctor` is the one tool that asks whether the mill could work at
@@ -35,10 +33,6 @@ import (
 // A probe never fails the command by erroring: it reports. `mill doctor`
 // exits non-zero when any probe failed, which is what a health check wants,
 // and prints every probe either way, which is what a human wants.
-
-// probeTimeout bounds one probe. A probe that hangs is a failed probe: the
-// point is to answer, not to wait.
-const probeTimeout = 10 * time.Second
 
 // ProbeNames is every probe, in the order `mill doctor` reports them. The
 // command's usage text and docs/tools.md §doctor name each of them, and a
@@ -193,7 +187,7 @@ func runDoctor(cmd *cobra.Command, opts doctorOptions) error {
 	if err := applyEvictionConfig(config, &expiry, &opts.highWatermark, &opts.lowWatermark); err != nil {
 		return err
 	}
-	probes := doctor(cmd.Context(), opts)
+	probes := runProbes(cmd.Context(), opts)
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	healthy := true
 	for _, result := range probes {
@@ -215,23 +209,69 @@ func runDoctor(cmd *cobra.Command, opts doctorOptions) error {
 	return nil
 }
 
-// doctor runs every probe in order and returns what each found. It is the
-// value `mill mcp` renders too, so an agent asked to look at a sick host is
-// told the same nine things.
-func doctor(ctx context.Context, opts doctorOptions) []probe {
+// runProbes runs every probe in order and returns what each found. It is
+// the value `mill mcp` renders too, so an agent asked to look at a sick
+// host is told the same nine things.
+func runProbes(ctx context.Context, opts doctorOptions) []probe {
 	socket, schema := probeService(ctx, opts)
+	worker, workerErr := workerProbe(ctx, opts.socket)
 	return []probe{
 		socket,
 		schema,
 		probeDagger(ctx, opts),
-		probeSidecar(ctx, opts),
-		probeSigning(opts),
-		probeForge(ctx, opts),
+		probeSidecar(ctx, opts, worker, workerErr),
+		probeSigning(ctx, opts, worker, workerErr),
+		probeForge(ctx, opts, worker, workerErr),
 		probeNotify(ctx, opts),
 		probeWorkspace(opts, driver.NewSystemd(workspace.Spawner{}, driver.Commands{})),
 		probeSpace(opts, driver.NewSystemd(workspace.Spawner{}, driver.Commands{})),
 		probeGateway(ctx, opts, time.Now()),
 	}
+}
+
+// workerProbe asks the worker behind opts.socket to run the sidecar,
+// signing and forge probes itself, so a client reaching a worker over a
+// forwarded socket is told the worker's own state rather than whatever
+// files happen to sit on the caller's host (docs/architecture.md §"One
+// binary, two faces"). This also covers doctor running on the worker's own
+// host: it gets the same RPC answer a remote client would, which is the
+// more authoritative one since it reads --work's actual configuration
+// rather than doctor's own possibly-drifted flags.
+//
+// A (nil, nil) return means no worker answered this socket —
+// CodeUnimplemented or CodeNotFound, an old server or a bare `mill serve`
+// with no --work, where the RPC is simply not mounted — and the caller
+// should fall back to probing this host directly. Any other error is the
+// worker's own answer: it ran and could not be reached or refused, and that
+// failure is reported verbatim rather than papered over by a local probe
+// that would answer a different question.
+func workerProbe(ctx context.Context, socket string) (*millv1.ProbeResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, doctor.ProbeTimeout)
+	defer cancel()
+	res, err := workerClient(socket).Probe(ctx, connect.NewRequest(&millv1.ProbeRequest{}))
+	switch connect.CodeOf(err) {
+	case connect.CodeUnimplemented, connect.CodeNotFound:
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return res.Msg, nil
+}
+
+// fromWorkerOr reports the worker's own verdict for name — its answer
+// verbatim, or its unreachability as a failure — when workerProbe found one;
+// ok is false when no worker answered this socket and the caller should
+// probe its own host instead, per workerProbe's doc comment.
+func fromWorkerOr(name string, opts doctorOptions, worker *millv1.ProbeResponse, workerErr error, get func(*millv1.ProbeResponse) *millv1.ProbeResult) (result probe, ok bool) {
+	if workerErr != nil {
+		return fail(name, "%s: %v", opts.socket, workerErr), true
+	}
+	if worker != nil {
+		r := get(worker)
+		return probe{Name: name, OK: r.GetOk(), Reason: r.GetReason()}, true
+	}
+	return probe{}, false
 }
 
 // probeGateway makes one cheap request through the credential gateway a run
@@ -258,7 +298,7 @@ func probeGateway(ctx context.Context, opts doctorOptions, now time.Time) probe 
 	if err != nil {
 		return fail("gateway", "%v", err)
 	}
-	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, doctor.ProbeTimeout)
 	defer cancel()
 	if err := g.Probe(ctx); err != nil {
 		return fail("gateway", "%v", err)
@@ -271,7 +311,7 @@ func probeGateway(ctx context.Context, opts doctorOptions, now time.Time) probe 
 // probeService asks the service about itself: one call answers both whether
 // the socket is there and whether the schema is current.
 func probeService(ctx context.Context, opts doctorOptions) (socket, schema probe) {
-	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, doctor.ProbeTimeout)
 	defer cancel()
 	res, err := storeClient(opts.socket).Health(ctx, connect.NewRequest(&millv1.HealthRequest{}))
 	if err != nil {
@@ -306,7 +346,7 @@ func probeDagger(ctx context.Context, opts doctorOptions) probe {
 	if opts.project == "" {
 		return fail("dagger", "no project to probe: pass --project or set %s", daggerProjectEnv)
 	}
-	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, doctor.ProbeTimeout)
 	defer cancel()
 	nodes, err := dagger.Dial(opts.daggerSocket, opts.project).Ready(ctx, daggerv1.AssigneeKind_ASSIGNEE_KIND_AGENT)
 	if err != nil {
@@ -316,87 +356,56 @@ func probeDagger(ctx context.Context, opts doctorOptions) probe {
 		opts.daggerSocket, opts.project, len(nodes))
 }
 
-// probeSidecar starts the harness sidecar and asks it for a no-op. Nothing
-// short of running it proves it runs: the entrypoint may be missing, node may
-// be absent, the bundle may be stale.
-//
-// It is spawned under the environment mode a run would spawn it with, and the
-// line says which — a sidecar that starts under `inherit` and not under
-// `strict` is a mode away from a run that cannot start a session, and the
-// probe is where that difference is meant to show up.
-func probeSidecar(ctx context.Context, opts doctorOptions) probe {
-	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+// probeSidecar starts the harness sidecar and asks it for a no-op — the
+// logic lives in internal/doctor, so internal/server's WorkerService can
+// answer the same question from the worker's own process. When a worker
+// answered workerProbe, its answer is reported instead of probing this
+// host: see workerProbe's doc comment.
+func probeSidecar(ctx context.Context, opts doctorOptions, worker *millv1.ProbeResponse, workerErr error) probe {
+	if result, ok := fromWorkerOr("sidecar", opts, worker, workerErr, (*millv1.ProbeResponse).GetSidecar); ok {
+		return result
+	}
+	ctx, cancel := context.WithTimeout(ctx, doctor.ProbeTimeout)
 	defer cancel()
-	mode, err := claude.ParseEnvMode(opts.envMode)
-	if err != nil {
-		return fail("sidecar", "%v", err)
-	}
-	adapter := claude.New(claude.WithEntrypoint(claude.DefaultCommand, opts.sidecar), claude.WithEnvMode(mode))
-	terminal, err := adapter.Probe(ctx)
-	if err != nil {
-		return fail("sidecar", "%s did not answer under environment mode %s: %v", opts.sidecar, mode, err)
-	}
-	return pass("sidecar", "%s starts under environment mode %s and answers: %s",
-		opts.sidecar, mode, firstLine(terminal.FinalMessage))
+	result := doctor.Sidecar(ctx, opts.sidecar, opts.envMode)
+	return probe{Name: "sidecar", OK: result.OK, Reason: result.Reason}
 }
 
 // probeSigning finds the mill's signing key and looks for its public key in
-// an allowed_signers file of a project the mill has checked out. A key
-// nothing trusts signs commits nobody can verify, which is the failure this
-// probe exists to catch (docs/architecture.md §"Identity and credentials").
-func probeSigning(opts doctorOptions) probe {
-	dir := filepath.Join(opts.workspaceDir, "signing")
-	key, err := signing.Load(dir, opts.name, opts.identity)
-	if err != nil {
-		return fail("signing", "no signing key under %s: %v", dir, err)
+// an allowed_signers file of a project the mill has checked out, falling
+// back to the project's repository when a fresh host has no checkout yet —
+// the logic lives in internal/doctor, so internal/server's WorkerService can
+// answer the same question from the worker's own process. When a worker
+// answered workerProbe, its answer is reported instead of probing this
+// host: see workerProbe's doc comment.
+func probeSigning(ctx context.Context, opts doctorOptions, worker *millv1.ProbeResponse, workerErr error) probe {
+	if result, ok := fromWorkerOr("signing", opts, worker, workerErr, (*millv1.ProbeResponse).GetSigning); ok {
+		return result
 	}
-	blob := keyBlob(key.PublicKey)
-	trusted, err := trustedBy(opts.workspaceDir, blob)
-	if err != nil {
-		return fail("signing", "key %s: %v", opts.identity, err)
-	}
-	if len(trusted) == 0 {
-		return fail("signing", "key %s is present but no project's allowed_signers names it", opts.identity)
-	}
-	return pass("signing", "key %s is present and trusted by %s", opts.identity, strings.Join(trusted, ", "))
+	ctx, cancel := context.WithTimeout(ctx, doctor.ProbeTimeout)
+	defer cancel()
+	result := doctor.Signing(ctx, opts.workspaceDir, opts.name, opts.identity, signingContentReader(ctx, opts))
+	return probe{Name: "signing", OK: result.OK, Reason: result.Reason}
 }
 
-// trustedBy is the projects whose checkout carries an allowed_signers file
-// naming the key. Checkouts are the only copy of a project's repository this
-// host has, so they are where the question is asked.
-func trustedBy(workspaceDir, blob string) ([]string, error) {
-	entries, err := os.ReadDir(workspaceDir)
+// signingContentReader resolves the project's forge for the signing probe's
+// repository fallback, the same way probeForge resolves it for its own
+// probe. A project or forge that cannot be resolved simply means the
+// fallback does not fire — that failure is probeForge's to report, not
+// signing's.
+func signingContentReader(ctx context.Context, opts doctorOptions) forge.ContentReader {
+	if opts.project == "" {
+		return nil
+	}
+	f, _, err := resolveForgeProject(ctx, opts.daggerSocket, opts.project, opts.forge)
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", workspaceDir, err)
+		return nil
 	}
-	var trusted []string
-	for _, entry := range entries {
-		if !entry.IsDir() || entry.Name() == "signing" {
-			continue
-		}
-		for _, name := range []string{"allowed_signers", ".allowed_signers"} {
-			path := filepath.Join(workspaceDir, entry.Name(), "checkout", name)
-			raw, err := os.ReadFile(path) //nolint:gosec // a path under the worker's own workspace directory
-			if err != nil {
-				continue
-			}
-			if blob != "" && strings.Contains(string(raw), blob) {
-				trusted = append(trusted, entry.Name())
-				break
-			}
-		}
+	reader, ok := f.(forge.ContentReader)
+	if !ok {
+		return nil
 	}
-	return trusted, nil
-}
-
-// keyBlob is the base64 body of an SSH public key: the part an
-// allowed_signers line must carry, without the comment that follows it.
-func keyBlob(publicKey string) string {
-	fields := strings.Fields(publicKey)
-	if len(fields) < 2 {
-		return ""
-	}
-	return fields[1]
+	return reader
 }
 
 // probeForge asks the forge whether the credential the mill holds — the
@@ -413,7 +422,14 @@ func keyBlob(publicKey string) string {
 // Every line names where the credential came from: a passing one so an
 // operator can see the store is in use, a failing one because the
 // credential is what to replace.
-func probeForge(ctx context.Context, opts doctorOptions) probe {
+//
+// When a worker answered workerProbe, its answer is reported instead of
+// resolving the project and credential on this host: see workerProbe's doc
+// comment.
+func probeForge(ctx context.Context, opts doctorOptions, worker *millv1.ProbeResponse, workerErr error) probe {
+	if result, ok := fromWorkerOr("forge", opts, worker, workerErr, (*millv1.ProbeResponse).GetForge); ok {
+		return result
+	}
 	if opts.project == "" {
 		return fail("forge", "no project to read the repository from: pass --project or set %s", daggerProjectEnv)
 	}
@@ -425,32 +441,14 @@ func probeForge(ctx context.Context, opts doctorOptions) probe {
 		return fail("forge", "the mill holds no forge credential: deliver %s to the credential store or set $%s",
 			forgeCredentialName, forgeTokenEnv)
 	}
-	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, doctor.ProbeTimeout)
 	defer cancel()
-	project, err := dagger.Dial(opts.daggerSocket, opts.project).GetProject(ctx)
-	if err != nil {
-		return fail("forge", "no repository to probe: %v", err)
-	}
-	p, err := forgeProject(project, opts.forge)
+	f, repositoryURL, err := resolveForgeProject(ctx, opts.daggerSocket, opts.project, opts.forge)
 	if err != nil {
 		return fail("forge", "%v", err)
 	}
-	f, err := forges().For(p, forgeMinter())
-	if err != nil {
-		return fail("forge", "no repository to probe: %v", err)
-	}
-	if prober, ok := f.(forge.Prober); ok {
-		account, err := prober.Probe(ctx)
-		if err != nil {
-			return fail("forge", "%s refused %s: %v", project.GetVcsUrl(), token.source, err)
-		}
-		return pass("forge", "%s accepts %s as %s", project.GetVcsUrl(), token.source, account.Login)
-	}
-	_, err = f.PR(ctx, "mill-doctor-probe")
-	if err == nil || errors.Is(err, forge.ErrNoPullRequest) {
-		return pass("forge", "%s accepts %s", project.GetVcsUrl(), token.source)
-	}
-	return fail("forge", "%s refused %s: %v", project.GetVcsUrl(), token.source, err)
+	result := doctor.Forge(ctx, f, token.source, repositoryURL)
+	return probe{Name: "forge", OK: result.OK, Reason: result.Reason}
 }
 
 // probeNotify runs the configured notify command with a probe notice. It is
@@ -551,13 +549,4 @@ func probeSpace(opts doctorOptions, host driver.Driver) probe {
 	default:
 		return pass("space", "%s", summary)
 	}
-}
-
-// firstLine is a message trimmed to one line, for a probe's reason.
-func firstLine(text string) string {
-	line, _, _ := strings.Cut(strings.TrimSpace(text), "\n")
-	if line == "" {
-		return "(no message)"
-	}
-	return line
 }

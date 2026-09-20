@@ -45,6 +45,14 @@ func (g *Gateway) Probe(ctx context.Context) error {
 	req.Header.Set("Authorization", "Bearer "+bearer)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("anthropic-version", "2023-06-01")
+	// This is every header mill itself sets on a real session's request too:
+	// a session gets no more. Headers like anthropic-beta and user-agent are
+	// not here because they are not mill's to set — the Claude Agent SDK
+	// inside the sidecar process chooses them at request time
+	// (internal/harness/claude carries no such constant today), so this
+	// probe cannot mirror them without hardcoding a guess that would drift,
+	// unnoticed, the moment the SDK changes what it sends. A future
+	// mill-owned toggle that changes the SDK's request belongs here too.
 	rec := &recorder{header: http.Header{}}
 	g.ServeHTTP(rec, req)
 	if rec.status != http.StatusOK {

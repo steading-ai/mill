@@ -488,7 +488,7 @@ harness sidecar, the commit signing key, and the forge credential.`,
 				if err := decodeArgs(raw, &args); err != nil {
 					return nil, err
 				}
-				return map[string]any{"probes": doctor(ctx, s.doctorOptions())}, nil
+				return map[string]any{"probes": runProbes(ctx, s.doctorOptions())}, nil
 			},
 		},
 		{

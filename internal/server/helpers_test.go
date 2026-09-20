@@ -65,7 +65,7 @@ func newService(ctx context.Context) *service {
 	srv := server.New(server.Config{
 		Logger:       specLogger(),
 		Interceptors: []connect.Interceptor{interceptor.NewRoles(roles, server.Requirement())},
-	}, server.NewStoreService(domain.New(pool)))
+	}, server.NewStoreService(domain.New(pool)), nil)
 	return &service{pool: pool, handler: srv.Handler(), clients: map[int]millv1connect.StoreServiceClient{}}
 }
 

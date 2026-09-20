@@ -264,7 +264,7 @@ func readerSocket(ctx context.Context, m mill) mill {
 				ServiceUID: -1,
 				Roles:      map[int]interceptor.Role{os.Getuid(): interceptor.RoleReader},
 			}, server.Requirement())},
-	}, server.NewStoreService(svc))
+	}, server.NewStoreService(svc), nil)
 	Expect(srv.Listen()).To(Succeed())
 
 	serveCtx, stop := context.WithCancel(ctx)

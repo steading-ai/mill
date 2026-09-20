@@ -923,6 +923,27 @@ func forgeProject(project *daggerv1.Project, configured string) (forge.Project, 
 	return forge.Project{Slug: project.GetSlug(), VCSURL: project.GetVcsUrl(), Kind: kind}, nil
 }
 
+// resolveForgeProject dials dagger for the project's repository and builds
+// the forge adapter mill run would use against it — the resolution
+// probeForge and signingContentReader both need, and what a worker-side
+// probe answered through internal/server's WorkerService resolves the same
+// way (workerForgeResolver in serve.go).
+func resolveForgeProject(ctx context.Context, daggerSocket, project, forgeName string) (forge.Forge, string, error) {
+	repo, err := dagger.Dial(daggerSocket, project).GetProject(ctx)
+	if err != nil {
+		return nil, "", fmt.Errorf("no repository to probe: %w", err)
+	}
+	p, err := forgeProject(repo, forgeName)
+	if err != nil {
+		return nil, "", err
+	}
+	f, err := forges().For(p, forgeMinter())
+	if err != nil {
+		return nil, "", fmt.Errorf("no repository to probe: %w", err)
+	}
+	return f, repo.GetVcsUrl(), nil
+}
+
 // forgeMinter is the credential the mill holds for the repositories it
 // delivers to, as the forge asks for it: the token loadForgeToken finds,
 // under the username in $MILL_FORGE_USER. Both forges take the same pair;
