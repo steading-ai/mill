@@ -252,7 +252,7 @@ func runProbes(ctx context.Context, opts doctorOptions) []probe {
 		probeSigning(ctx, opts, worker, workerErr),
 		probeForge(ctx, opts, worker, workerErr),
 		probeNotify(ctx, opts),
-		probeWorkspace(opts, driver.NewSystemd(workspace.Spawner{}, driver.Commands{})),
+		probeWorkspace(ctx, opts, driver.NewSystemd(workspace.Spawner{}, driver.Commands{})),
 		probeIsolation(ctx, opts),
 		probeSpace(opts, driver.NewSystemd(workspace.Spawner{}, driver.Commands{})),
 		probeGateway(ctx, opts, time.Now()),
@@ -598,7 +598,7 @@ func probeNotify(ctx context.Context, opts doctorOptions) probe {
 //
 // The driver is the seam the backend reaches the host through, so what the
 // probe asks is what a run would ask.
-func probeWorkspace(opts doctorOptions, host driver.Driver) probe {
+func probeWorkspace(ctx context.Context, opts doctorOptions, host driver.Driver) probe {
 	kind, err := workspace.ParseKind(opts.workspace)
 	if err != nil {
 		return fail("workspace", "%v", err)
@@ -613,6 +613,14 @@ func probeWorkspace(opts doctorOptions, host driver.Driver) probe {
 	if !fs.Btrfs() {
 		return fail("workspace", "%s: sandbox root %s is %s, not %s (docs/sandbox.md §Storage)",
 			kind, opts.sandboxRoot, fs.Type, driver.TypeBtrfs)
+	}
+	if !machine.InsideMachine(ctx, host) {
+		if reason, err := host.SandboxReady(ctx, opts.sandboxRoot, driver.DefaultMachines); err != nil || reason != "" {
+			if err != nil {
+				reason = err.Error()
+			}
+			return fail("workspace", "%s: %s", kind, reason)
+		}
 	}
 	return pass("workspace", "%s: sandbox root %s is %s", kind, opts.sandboxRoot, fs.Type)
 }

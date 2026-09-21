@@ -16,6 +16,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/ivy/mill/internal/testsupport"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/machine/cache"
 	"github.com/ivy/mill/internal/workspace/machine/driver"
@@ -53,6 +54,7 @@ func liveRoot(ctx context.Context) string {
 	GinkgoHelper()
 	host := driver.NewSystemd(workspace.Spawner{}, driver.Commands{})
 	if manager, err := host.Container(ctx); err != nil || manager != driver.ContainerNspawn {
+		testsupport.SkipUnlessSandboxReady(ctx, host, hostRoot, driver.DefaultMachines)
 		return hostRoot
 	}
 	Expect(driver.EnsureNestedRoot(ctx, host, driver.NestedRoot)).To(Succeed())
