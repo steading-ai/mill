@@ -754,6 +754,12 @@ func (w *Workspace) CaptureTwin(ctx context.Context, sessionID string) (io.Reade
 // what the `commit` verifier asks about the repository.
 func (w *Workspace) GitRunner() forge.Git { return w.verbs.Runner() }
 
+// CatchUp brings the run's branch up to date with request.Target, the merge
+// gate's own act (internal/run/gate.go).
+func (w *Workspace) CatchUp(ctx context.Context, request workspace.CatchUpRequest) (workspace.CatchUpResult, error) {
+	return w.verbs.CatchUp(ctx, request)
+}
+
 // Candidate snapshots the run's cache copies as the promotion candidate of
 // an evidence-closed step (workspace.CacheCandidate).
 func (w *Workspace) Candidate(ctx context.Context, step string) error {

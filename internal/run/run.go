@@ -73,6 +73,9 @@ type Workspace interface {
 	Handle() *workspace.Handle
 	// GitRunner runs git in the checkout, through the same chokepoint.
 	GitRunner() forge.Git
+	// CatchUp brings the run's branch up to date with a target that moved
+	// since it branched, the merge gate's own act.
+	CatchUp(ctx context.Context, request workspace.CatchUpRequest) (workspace.CatchUpResult, error)
 	// Committer is the identity the workspace's own commits carry. The
 	// `commit` verifier compares a commit's author and committer against
 	// it, and it comes from the workspace rather than from this loop's

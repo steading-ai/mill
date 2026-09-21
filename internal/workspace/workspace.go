@@ -531,6 +531,34 @@ type ChecksResult struct {
 	Status forge.Status `json:"status"`
 }
 
+// CatchUpRequest is the merge gate's own act, never a session's: bring the
+// run's branch up to date with a target that moved since it branched. It is
+// a plain type, not a method on [ForgeVerbs] — reached the same way a merge
+// itself is, directly from the run loop, never through the socket.
+type CatchUpRequest struct {
+	// Target is the branch to catch up with. Empty means the repository's
+	// default branch.
+	Target string `json:"target"`
+}
+
+// CatchUpResult is what catching up found and did.
+type CatchUpResult struct {
+	// UpToDate is whether the branch already contained Target's head; every
+	// other field is zero when this is true.
+	UpToDate bool `json:"up_to_date"`
+	// Merged is whether catch-up merged, signed and pushed the result
+	// itself: the two sides touched no file in common, so no reviewer's
+	// approval is invalidated by finishing this without them.
+	Merged bool `json:"merged"`
+	// SHA is the new head, when Merged is true.
+	SHA string `json:"sha,omitempty"`
+	// Overlap is the files both sides changed since the branches' merge
+	// base, when catch-up instead left the merge staged — cleanly, or with
+	// conflict markers on unmerged paths — for `implement` and `commit` to
+	// finish. Non-empty exactly when Merged and UpToDate are both false.
+	Overlap []string `json:"overlap,omitempty"`
+}
+
 // ForgeVerbs is the forge half of the workspace's verbs, each gated by the
 // `forge` capability. The session never holds the forge credential: it asks
 // for a push or a pull request, and the workspace mints a credential for the
