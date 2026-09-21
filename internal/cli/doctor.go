@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/ivy/mill/internal/gateway"
 	"github.com/ivy/mill/internal/harness/claude"
 	"github.com/ivy/mill/internal/notify"
+	"github.com/ivy/mill/internal/run"
 	"github.com/ivy/mill/internal/workflow"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/machine"
@@ -42,7 +44,7 @@ import (
 // spec holds both to this list.
 var ProbeNames = []string{
 	"socket", "schema", "dagger", "sidecar", "signing",
-	"forge", "notify", "workspace", "isolation", "space", "gateway", "mcp", "workflows",
+	"forge", "notify", "workspace", "isolation", "space", "activity", "gateway", "mcp", "workflows",
 }
 
 // probe is one check and what it found.
@@ -94,6 +96,13 @@ type doctorOptions struct {
 	// mcpServers is the host's own mcp-servers, from the configuration
 	// file: file-only, like McpServers itself (no flag spelling).
 	mcpServers map[string]McpServerConfig
+	// logDir is where step logs — frames and twins — are written, the same
+	// --log-dir run and work declare. retention and retentionProjects are
+	// the deployment default and per-project override the activity probe
+	// reports, from the configuration file: file-only, like mcpServers.
+	logDir            string
+	retention         run.Policy
+	retentionProjects map[string]run.Policy
 }
 
 func newDoctorCommand() *cobra.Command {
@@ -121,6 +130,9 @@ func newDoctorCommand() *cobra.Command {
   space     free space on the sandbox volume against the eviction
             watermarks: a warning below the low one, a failure below the
             high one
+  activity  frames and twins held under --log-dir: the count of each,
+            their bytes, the oldest one's age, and the retention policy
+            in force
   gateway   the credential gateway's upstream answers one token count
             through it, and a warning once the credential is eleven
             months old
@@ -153,6 +165,7 @@ failed; a warning does not fail it.`,
 	f.StringVar(&opts.config, "config", defaultConfigPath(), "path of the configuration file the notify command, the workspace kind and directory, the sidecar, the environment mode and the forge are read from when no flag names them")
 	f.StringVar(&opts.notifyCommand, "notify-command", "", notifyCommandUsage)
 	f.StringVar(&opts.workflowsRoot, "workflows-root", "", "directory of workflow subdirectories to check against the store (default: none, meaning nothing is checked)")
+	f.StringVar(&opts.logDir, "log-dir", defaultLogDir(), "directory step logs are written under, one file per attempt")
 	bindGatewayFlags(cmd, &opts.gateway)
 	return cmd
 }
@@ -197,6 +210,15 @@ func runDoctor(cmd *cobra.Command, opts doctorOptions) error {
 	}
 	if config.WorkflowsRoot != "" && unset(cmd, "workflows-root") {
 		opts.workflowsRoot = config.WorkflowsRoot
+	}
+	if config.LogDir != "" && unset(cmd, "log-dir") {
+		opts.logDir = config.LogDir
+	}
+	if opts.retention, err = run.ParsePolicy(config.Retention); err != nil {
+		return err
+	}
+	if opts.retentionProjects, err = parseRetentionProjects(config.RetentionProjects); err != nil {
+		return err
 	}
 	// opts.project's flag default is already $DG_PROJECT (newDoctorCommand
 	// declares it that way), so empty here means neither the flag nor the
@@ -256,6 +278,7 @@ func runProbes(ctx context.Context, opts doctorOptions) []probe {
 		probeWorkspace(ctx, opts, driver.NewSystemd(workspace.Spawner{}, driver.Commands{})),
 		probeIsolation(ctx, opts),
 		probeSpace(opts, driver.NewSystemd(workspace.Spawner{}, driver.Commands{})),
+		probeActivity(opts),
 		probeGateway(ctx, opts, time.Now()),
 	}
 	probes = append(probes, probeMcp(ctx, opts)...)
@@ -706,4 +729,51 @@ func probeSpace(opts doctorOptions, host driver.Driver) probe {
 	default:
 		return pass("space", "%s", summary)
 	}
+}
+
+// probeActivity reports what --log-dir holds: the frames and twins sealed
+// there, their bytes, the oldest one's age, and the retention policy in
+// force for --project (docs/activity.md §Lifecycle "Retention"). It only
+// reads — SweepRetention is what acts on the policy, on worker start and on
+// the sweep interval (internal/run/worker.go) — so a doctor run never
+// mutates what it reports. A host with no --log-dir configured passes, the
+// way probeWorkspace's local backend and probeSpace's non-machine backend
+// do.
+func probeActivity(opts doctorOptions) probe {
+	if opts.logDir == "" {
+		return pass("activity", "no log directory configured")
+	}
+	matches, err := filepath.Glob(filepath.Join(opts.logDir, "*", "*.zst"))
+	if err != nil {
+		return fail("activity", "%s: %v", opts.logDir, err)
+	}
+	var frames, twins int
+	var size int64
+	var oldest time.Time
+	for _, path := range matches {
+		base := filepath.Base(path)
+		switch {
+		case strings.HasSuffix(base, run.FrameSuffix):
+			frames++
+		case strings.HasSuffix(base, run.TwinSuffix):
+			twins++
+		default:
+			continue
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		size += info.Size()
+		if oldest.IsZero() || info.ModTime().Before(oldest) {
+			oldest = info.ModTime()
+		}
+	}
+	policy := run.PolicyFor(opts.retention, opts.retentionProjects, opts.project).String()
+	if frames == 0 && twins == 0 {
+		return pass("activity", "%s: nothing held; policy %s", opts.logDir, policy)
+	}
+	age := int(time.Since(oldest).Hours() / 24)
+	return pass("activity", "%s: %d frame(s), %d twin(s), %s, oldest %d day(s) old; policy %s",
+		opts.logDir, frames, twins, cache.FormatSize(uint64(size)), age, policy)
 }

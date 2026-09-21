@@ -2423,6 +2423,47 @@ func (s *Store) History(ctx context.Context, p InspectParams) ([]*millv1.Event, 
 	return events, nil
 }
 
+// LatestEventCursor is the position a fresh WatchRuns subscription opens
+// at: the newest event already on record, by the database's own clock. The
+// zero time and an empty id when the table holds no event yet.
+func (s *Store) LatestEventCursor(ctx context.Context) (time.Time, string, error) {
+	row, err := New(s.pool).LatestEventCursor(ctx)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, "", nil
+	}
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("latest event cursor: %w", err)
+	}
+	return row.OccurredAt, row.ID, nil
+}
+
+// WatchableEvent is one events-table row as WatchRuns reads it: the wire
+// RunEvent, plus the id the cursor advances by. events.id breaks ties
+// within occurred_at (WatchableEventsRow.ID) but RunEvent's wire shape
+// carries no more than a subscriber needs, so it travels alongside the
+// proto rather than in it.
+type WatchableEvent struct {
+	ID    string
+	Event *millv1.RunEvent
+}
+
+// WatchableEvents reads events across every run, from after (exclusive) in
+// (occurred_at, id) order, optionally narrowed to one dagger project. What
+// WatchRuns streams from a cursor. See docs/ledger.md §events.
+func (s *Store) WatchableEvents(ctx context.Context, after time.Time, afterID, project string) ([]WatchableEvent, error) {
+	rows, err := New(s.pool).WatchableEvents(ctx, WatchableEventsParams{
+		AfterOccurredAt: after, AfterID: afterID, Project: nullable(project),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("watchable events: %w", err)
+	}
+	out := make([]WatchableEvent, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, WatchableEvent{ID: row.ID, Event: runEventProto(row)})
+	}
+	return out, nil
+}
+
 // CostParams is the window `mill cost` asks about.
 type CostParams struct {
 	// Since bounds the window below. Zero means every row ever recorded.

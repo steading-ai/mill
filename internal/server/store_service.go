@@ -26,6 +26,10 @@ type StoreService struct {
 	logDir     string
 	mcpServers map[string]struct{}
 	rates      Rates
+	// watchRunsWindow and watchRunsKeepalive configure WatchRuns; see
+	// WithWatchRunsWindow and WithWatchRunsKeepalive.
+	watchRunsWindow    time.Duration
+	watchRunsKeepalive time.Duration
 }
 
 // StoreServiceOption configures a collaborator of the store's handlers
@@ -47,13 +51,30 @@ func WithRates(rates Rates) StoreServiceOption {
 	return func(s *StoreService) { s.rates = rates }
 }
 
+// WithWatchRunsWindow bounds how old a WatchRuns cursor may be before it is
+// refused with FailedPrecondition (docs/ledger.md §events). Unset defaults
+// to DefaultWatchRunsWindow.
+func WithWatchRunsWindow(window time.Duration) StoreServiceOption {
+	return func(s *StoreService) { s.watchRunsWindow = window }
+}
+
+// WithWatchRunsKeepalive sets how often an otherwise-idle WatchRuns stream
+// sends a cursor-only message, so a proxy does not close it. Unset defaults
+// to DefaultWatchRunsKeepalive.
+func WithWatchRunsKeepalive(interval time.Duration) StoreServiceOption {
+	return func(s *StoreService) { s.watchRunsKeepalive = interval }
+}
+
 // NewStoreService mounts svc as the store's handlers. observer is signalled
 // on every write that changes what a followed Logs stream waits on
 // (docs/activity.md §Observer). logDir is where Logs reads an attempt's
 // activity record from — the same directory the worker's --log-dir writes
 // it under. opts configure collaborators beyond those.
 func NewStoreService(svc *domain.Service, observer *Observer, logDir string, opts ...StoreServiceOption) *StoreService {
-	s := &StoreService{svc: svc, observer: observer, logDir: logDir}
+	s := &StoreService{
+		svc: svc, observer: observer, logDir: logDir,
+		watchRunsWindow: DefaultWatchRunsWindow, watchRunsKeepalive: DefaultWatchRunsKeepalive,
+	}
 	for _, opt := range opts {
 		opt(s)
 	}

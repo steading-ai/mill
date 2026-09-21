@@ -1123,16 +1123,24 @@ message VerbStarted {
   string name = 1;
   // The verb's arguments, mill's own and never a session's free text.
   map<string, string> arguments = 2;
+  // Identifies this verb invocation, so its verb_output and verb records —
+  // and no concurrent verb's — attribute back to it (docs/activity.md
+  // §Redaction).
+  int64 verb_id = 3;
 }
 
 // Output is one chunk of a stream, produced by a verb or a check as it ran.
 // Shared by `verb_output` and `check_output`.
 message Output {
-  // The stream's name: `stdout`, `stderr`, or a verb's own key.
+  // The stream's name: `stdout` or `stderr`.
   string stream = 1;
   // The chunk. Whole lines only; a trailing partial line is held back by
   // the writer until it completes (docs/activity.md §Redaction).
   bytes data = 2;
+  // verb_output only: the verb_id of the VerbStarted this chunk belongs to,
+  // so concurrent verbs sharing a stream never blend. Unset on check_output,
+  // which has no concurrent siblings to disambiguate from.
+  int64 verb_id = 3;
 }
 
 // Verb is the outcome of a workspace verb that has finished.
@@ -1143,6 +1151,8 @@ message Verb {
   string result = 2;
   // What the verb failed with, when it did not.
   string error = 3;
+  // The verb_id of the VerbStarted this outcome belongs to.
+  int64 verb_id = 4;
 }
 
 // CheckStarted marks the beginning of a check step's command.
@@ -1218,6 +1228,15 @@ message AttemptEnded {
   string reason = 3;
 }
 
+// Compacted is the rendered summary lines a compacted frame keeps in place
+// of the bodies retention dropped — exactly what `RenderedLog` produced for
+// this attempt before compaction, docs/activity.md §Lifecycle "Retention".
+message Compacted {
+  // text is the frame's rendered summary, the same lines mill logs prints,
+  // stored as the compacted frame's only content.
+  string text = 1;
+}
+
 // Activity is one event inside an attempt. The worker assigns seq, turn and
 // at as the event arrives; the body is the harness's, the workspace's, the
 // check's or the mill's own, redacted before it is written.
@@ -1283,6 +1302,8 @@ message Activity {
     AttemptStarted attempt_started = 25;
     // The attempt ended.
     AttemptEnded attempt_ended = 26;
+    // Retention compacted this frame to its rendered summary.
+    Compacted compacted = 27;
   }
 }
 

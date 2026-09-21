@@ -44,33 +44,34 @@ func (r *recorder) Exec(ctx context.Context, command workspace.Command) (*worksp
 // order, for a spec to read back.
 type fakeSink struct {
 	mu      sync.Mutex
-	started []string
+	started []sunk
 	output  []sunk
 	ended   []sunk
 }
 
 type sunk struct {
 	verb, stream string
+	verbID       int64
 	data         []byte
 	err          error
 }
 
-func (f *fakeSink) Started(verb string, _ map[string]string) {
+func (f *fakeSink) Started(verb string, verbID int64, _ map[string]string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.started = append(f.started, verb)
+	f.started = append(f.started, sunk{verb: verb, verbID: verbID})
 }
 
-func (f *fakeSink) Output(verb, stream string, data []byte) {
+func (f *fakeSink) Output(verb string, verbID int64, stream string, data []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.output = append(f.output, sunk{verb: verb, stream: stream, data: data})
+	f.output = append(f.output, sunk{verb: verb, verbID: verbID, stream: stream, data: data})
 }
 
-func (f *fakeSink) Ended(verb string, err error) {
+func (f *fakeSink) Ended(verb string, verbID int64, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.ended = append(f.ended, sunk{verb: verb, err: err})
+	f.ended = append(f.ended, sunk{verb: verb, verbID: verbID, err: err})
 }
 
 // repository is a checkout with one commit on main.
@@ -156,12 +157,12 @@ var _ = Describe("Git on the host", Label("unit"), func() {
 		host.Sink = sink
 		out, err := host.Run(ctx, dir, nil, "rev-parse", "--abbrev-ref", "HEAD")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(sink.started).To(Equal([]string{"git.rev-parse"}))
-		Expect(sink.output).To(Equal([]sunk{{verb: "git.rev-parse", stream: "stdout", data: []byte(out)}}),
+		Expect(sink.started).To(HaveLen(1))
+		Expect(sink.started[0].verb).To(Equal("git.rev-parse"))
+		verbID := sink.started[0].verbID
+		Expect(sink.output).To(Equal([]sunk{{verb: "git.rev-parse", verbID: verbID, stream: "stdout", data: []byte(out)}}),
 			"no call for the empty stderr stream")
-		Expect(sink.ended).To(HaveLen(1))
-		Expect(sink.ended[0].verb).To(Equal("git.rev-parse"))
-		Expect(sink.ended[0].err).NotTo(HaveOccurred())
+		Expect(sink.ended).To(Equal([]sunk{{verb: "git.rev-parse", verbID: verbID}}))
 	})
 
 	It("sinks a verb's stderr and ends it with the command's own error, on failure", func(ctx context.Context) {
@@ -169,11 +170,25 @@ var _ = Describe("Git on the host", Label("unit"), func() {
 		host.Sink = sink
 		_, err := host.Run(ctx, dir, nil, "show", "does-not-exist")
 		Expect(err).To(HaveOccurred())
-		Expect(sink.started).To(Equal([]string{"git.show"}))
+		Expect(sink.started).To(HaveLen(1))
+		Expect(sink.started[0].verb).To(Equal("git.show"))
+		verbID := sink.started[0].verbID
 		Expect(sink.output).To(HaveLen(1), "no call for the empty stdout stream")
 		Expect(sink.output[0].verb).To(Equal("git.show"))
+		Expect(sink.output[0].verbID).To(Equal(verbID))
 		Expect(sink.output[0].stream).To(Equal("stderr"))
-		Expect(sink.ended).To(Equal([]sunk{{verb: "git.show", err: err}}))
+		Expect(sink.ended).To(Equal([]sunk{{verb: "git.show", verbID: verbID, err: err}}))
+	})
+
+	It("mints a distinct verb id for each invocation on the same host", func(ctx context.Context) {
+		sink := &fakeSink{}
+		host.Sink = sink
+		_, err := host.Run(ctx, dir, nil, "rev-parse", "--abbrev-ref", "HEAD")
+		Expect(err).NotTo(HaveOccurred())
+		_, err = host.Run(ctx, dir, nil, "rev-parse", "--abbrev-ref", "HEAD")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(sink.started).To(HaveLen(2))
+		Expect(sink.started[0].verbID).NotTo(Equal(sink.started[1].verbID))
 	})
 
 	It("tells the same repository under the suffixes git ignores", func() {

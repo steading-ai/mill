@@ -31,6 +31,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/workspace"
@@ -84,25 +85,31 @@ func (v *SinkVar) get() workspace.Sink {
 	return v.target
 }
 
-func (v *SinkVar) Started(verb string, args map[string]string) {
+func (v *SinkVar) Started(verb string, verbID int64, args map[string]string) {
 	if s := v.get(); s != nil {
-		s.Started(verb, args)
+		s.Started(verb, verbID, args)
 	}
 }
 
-func (v *SinkVar) Output(verb, stream string, data []byte) {
+func (v *SinkVar) Output(verb string, verbID int64, stream string, data []byte) {
 	if s := v.get(); s != nil {
-		s.Output(verb, stream, data)
+		s.Output(verb, verbID, stream, data)
 	}
 }
 
-func (v *SinkVar) Ended(verb string, err error) {
+func (v *SinkVar) Ended(verb string, verbID int64, err error) {
 	if s := v.get(); s != nil {
-		s.Ended(verb, err)
+		s.Ended(verb, verbID, err)
 	}
 }
 
 var _ workspace.Sink = (*SinkVar)(nil)
+
+// verbIDs mints the id that identifies one Host.Run invocation
+// (docs/activity.md §Redaction): global to the process, so it stays unique
+// across every concurrent invocation regardless of which Host copy
+// (gitVerbs, forgeVerbs, runner) made the call.
+var verbIDs atomic.Int64
 
 // Run runs one git command against dir and returns its standard output.
 //
@@ -125,12 +132,18 @@ func (h Host) Run(ctx context.Context, dir string, extra map[string]string, args
 	}
 	subcommand := gitVerb(args)
 	verb := "git." + subcommand
+	// verbID identifies this call among any others running concurrently
+	// through other goroutines on the workspace socket, so the sink's
+	// Output/Ended calls below attribute to the same invocation as Started,
+	// and never a concurrent one sharing verb or stream (docs/activity.md
+	// §Redaction).
+	verbID := verbIDs.Add(1)
 	if h.Sink != nil {
 		// No arguments: there is no verb-agnostic way to turn raw argv into
 		// VerbStarted's "never a session's free text" (a commit's own
 		// `--message` is exactly that), so this chokepoint reports none.
-		h.Sink.Started(verb, nil)
-		defer func() { h.Sink.Ended(verb, err) }()
+		h.Sink.Started(verb, verbID, nil)
+		defer func() { h.Sink.Ended(verb, verbID, err) }()
 	}
 	env := map[string]string{
 		"PATH":                os.Getenv("PATH"),
@@ -170,10 +183,10 @@ func (h Host) Run(ctx context.Context, dir string, extra map[string]string, args
 	result := process.Wait()
 	if h.Sink != nil {
 		if len(stdout) > 0 {
-			h.Sink.Output(verb, "stdout", stdout)
+			h.Sink.Output(verb, verbID, "stdout", stdout)
 		}
 		if len(stderr) > 0 {
-			h.Sink.Output(verb, "stderr", stderr)
+			h.Sink.Output(verb, verbID, "stderr", stderr)
 		}
 	}
 	if stdoutErr != nil {
