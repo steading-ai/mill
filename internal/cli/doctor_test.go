@@ -525,6 +525,70 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 		Expect(verdict).To(Equal("pass"), out)
 		Expect(reason).To(ContainSubstring("this account is a principal on " + daggerProject))
 	})
+
+	Describe("the project setting", func() {
+		// The file's `project` key is a list, since `work` claims from
+		// several; doctor probes one project, so it reads the first entry —
+		// same precedence as the sockets (flag, then $DG_PROJECT, then the
+		// file), applied to a single value instead of a set.
+		It("reads the file's project when neither the flag nor $DG_PROJECT names one", func() {
+			m := serving(ctx)
+			g := daggerNode(ctx)
+			scrubEnvironment()
+
+			config := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+			Expect(os.WriteFile(config, []byte("project: ["+daggerProject+"]\n"), 0o600)).To(Succeed())
+
+			out, _ := runCLI(ctx, m.socket, "doctor",
+				"--dagger-socket", g.service.Socket,
+				"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
+				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
+				"--config", config)
+
+			verdict, reason := probe(out, "dagger")
+			Expect(verdict).To(Equal("pass"), out)
+			Expect(reason).To(ContainSubstring("this account is a principal on " + daggerProject))
+		})
+
+		It("--project still wins over the file", func() {
+			m := serving(ctx)
+			g := daggerNode(ctx)
+			scrubEnvironment()
+
+			config := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+			Expect(os.WriteFile(config, []byte("project: [not-the-project]\n"), 0o600)).To(Succeed())
+
+			out, _ := runCLI(ctx, m.socket, "doctor",
+				"--dagger-socket", g.service.Socket, "--project", daggerProject,
+				"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
+				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
+				"--config", config)
+
+			verdict, reason := probe(out, "dagger")
+			Expect(verdict).To(Equal("pass"), out)
+			Expect(reason).To(ContainSubstring("this account is a principal on " + daggerProject))
+		})
+
+		It("$DG_PROJECT still wins over the file", func() {
+			m := serving(ctx)
+			g := daggerNode(ctx)
+			scrubEnvironment()
+			GinkgoT().Setenv("DG_PROJECT", daggerProject)
+
+			config := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+			Expect(os.WriteFile(config, []byte("project: [not-the-project]\n"), 0o600)).To(Succeed())
+
+			out, _ := runCLI(ctx, m.socket, "doctor",
+				"--dagger-socket", g.service.Socket,
+				"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
+				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
+				"--config", config)
+
+			verdict, reason := probe(out, "dagger")
+			Expect(verdict).To(Equal("pass"), out)
+			Expect(reason).To(ContainSubstring("this account is a principal on " + daggerProject))
+		})
+	})
 })
 
 // countTokensUpstream is a stand-in for the API that answers a token count,

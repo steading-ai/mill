@@ -587,7 +587,11 @@ packaged host's installed sidecar and state directory are what is probed;
 sockets resolve as they do for every face — `--socket` and
 `--dagger-socket`, then `$MILL_SOCKET` and `$DG_SOCKET`, then the file's
 `socket` and `dagger-socket`, then the default — so a host whose file names
-the paths is probed with no flag and no variable.
+the paths is probed with no flag and no variable. `--project` resolves the
+same way — the flag, then `$DG_PROJECT`, then the file's `project` (its
+first entry, when the file names more than one) — so a host whose file
+names the project, and nothing else, still has `dagger`, `signing` and
+`forge` probed against it.
 
 The sidecar probe sends a `cancel` request on stdin. Cancellation reaches a
 running sidecar as SIGTERM, so a cancel on stdin is a frame the sidecar
