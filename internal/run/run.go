@@ -389,9 +389,23 @@ func (s *state) record(step, findings string) {
 }
 
 // attemptsAt is how many attempts at a step count against its retries: every
-// attempt since the last one a human paid for.
-func (s *state) attemptsAt(step string, attempt int64) int64 {
-	return attempt - s.retried[step]
+// attempt since the last one a human paid for, less the ones a worker's stop
+// aborted. An aborted attempt is not the step failing — it was never
+// answered — and retries are "how many times this step may fail and be
+// tried again" (docs/domain-model.md §Step), so a restart under a running
+// step costs the run nothing but the time.
+func (s *state) attemptsAt(detail *millv1.InspectResponse, step string, attempt int64) int64 {
+	counted := attempt - s.retried[step]
+	for _, d := range detail.GetSteps() {
+		sr := d.GetStepRun()
+		if sr.GetStepName() != step || sr.GetAttempt() <= s.retried[step] || sr.GetAttempt() >= attempt {
+			continue
+		}
+		if sr.GetStatus() == millv1.StepRunStatus_STEP_RUN_STATUS_ABORTED {
+			counted--
+		}
+	}
+	return counted
 }
 
 // Execute drives one node from a claim to a result. It is docs/ledger.md

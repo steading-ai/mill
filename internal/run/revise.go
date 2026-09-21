@@ -55,7 +55,7 @@ func (r *Runner) failStep(ctx context.Context, s *state, step *millv1.Step, sr *
 	s.recordAttempt(step, sr, exit, lastWords(res, findings), true)
 	r.printf("  failed: %v\n", cause)
 
-	attempts := s.attemptsAt(step.GetName(), sr.GetAttempt())
+	attempts := s.attemptsAt(detail, step.GetName(), sr.GetAttempt())
 	retries := int64(step.GetRetries())
 	target := step.GetOnFailure().GetReviseTarget()
 	revising := step.GetOnFailure().GetKind() == millv1.OnFailureKind_ON_FAILURE_KIND_REVISE && target != ""
