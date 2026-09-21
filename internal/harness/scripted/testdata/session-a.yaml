@@ -1,0 +1,12 @@
+- events:
+    - kind: text
+      request_id: r1
+      text: a turn one
+  terminal:
+    final_message: a-1
+- events:
+    - kind: text
+      request_id: r2
+      text: a turn two
+  terminal:
+    final_message: a-2

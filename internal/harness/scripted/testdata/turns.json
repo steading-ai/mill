@@ -1,0 +1,11 @@
+[
+  {
+    "events": [
+      {"kind": "text", "request_id": "r1", "text": "reviewing"}
+    ],
+    "terminal": {
+      "final_message": "reviewed",
+      "structured_output": {"decision": "approve", "findings": []}
+    }
+  }
+]

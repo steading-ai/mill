@@ -1,0 +1,47 @@
+- events:
+    - kind: text
+      request_id: r1
+      text: gathering context
+    - kind: tool_call
+      request_id: r1
+      call_id: call-1
+      name: Read
+      arguments:
+        path: README.md
+    - kind: tool_result
+      call_id: call-1
+      content: "# mill"
+    - kind: usage
+      request_id: r1
+      usage:
+        claude-opus-5:
+          input: 100
+          output: 20
+          cache_read: 5
+          cache_write: 1
+    - kind: heartbeat
+      request_id: r1
+      strike: 1
+      strikes: 3
+      waiting_seconds: 30
+      tasks:
+        - reading the repo
+  terminal:
+    final_message: gathered
+- events:
+    - kind: tool_call
+      request_id: r2
+      call_id: call-2
+      name: fs.write
+      dispatch: fs.write
+      arguments:
+        path: "${artifact_path}"
+        content: "# Plan"
+  terminal:
+    final_message: wrote the plan
+- events: []
+  terminal:
+    final_message: never ran
+    exit:
+      status: -1
+      reason: refused

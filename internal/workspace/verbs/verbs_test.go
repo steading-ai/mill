@@ -15,6 +15,7 @@ import (
 	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/redact"
+	"github.com/ivy/mill/internal/workspace/signing"
 	"github.com/ivy/mill/internal/workspace/verbs"
 )
 
@@ -28,6 +29,14 @@ func (r *recorder) Exec(ctx context.Context, command workspace.Command) (*worksp
 	r.mu.Lock()
 	r.commands = append(r.commands, command)
 	r.mu.Unlock()
+	// No identity leaks in from the developer's own git configuration: a
+	// production checkout has none, and git finds ~/.gitconfig through the
+	// account even with no HOME in the environment.
+	env := map[string]string{"GIT_CONFIG_GLOBAL": os.DevNull, "GIT_CONFIG_SYSTEM": os.DevNull}
+	for k, v := range command.Env {
+		env[k] = v
+	}
+	command.Env = env
 	return workspace.Spawner{Floor: []string{}}.Exec(ctx, command)
 }
 
@@ -321,7 +330,24 @@ var _ = Describe("Catching up with a target branch", Label("unit"), func() {
 		Expect(os.WriteFile(filepath.Join(origin, "README.md"), []byte("theirs\n"), 0o600)).To(Succeed())
 		runGit(origin, "commit", "--quiet", "--no-gpg-sign", "--all", "--message", "theirs")
 
-		result, err := verbsOf().CatchUp(ctx, workspace.CatchUpRequest{Target: "main"})
+		// A production checkout carries no identity of its own: the mill's
+		// is the signer's, passed per invocation. git refuses to begin even
+		// a --no-commit merge without one, so the staged merge must carry
+		// it the way the finished merge and the commit verb do.
+		runGit(clone, "config", "--unset", "user.name")
+		runGit(clone, "config", "--unset", "user.email")
+		// Ask git not to guess one from the account and hostname either,
+		// which it does on a developer's Mac and not on a guest whose
+		// hostname has no domain: the spec must fail the same way anywhere.
+		runGit(clone, "config", "user.useConfigOnly", "true")
+		key, err := signing.Generate(ctx, workspace.Spawner{Floor: []string{"PATH=" + os.Getenv("PATH")}},
+			GinkgoT().TempDir(), "mill", "mill@example.test")
+		Expect(err).NotTo(HaveOccurred())
+		signed := verbs.Verbs{Host: host, Forge: f, Checkout: func() (verbs.Checkout, error) {
+			return verbs.Checkout{Dir: clone, Branch: "feature-x", Signer: key}, nil
+		}}
+
+		result, err := signed.CatchUp(ctx, workspace.CatchUpRequest{Target: "main"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result.UpToDate).To(BeFalse())
 		Expect(result.Merged).To(BeFalse())

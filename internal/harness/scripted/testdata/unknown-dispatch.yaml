@@ -1,0 +1,7 @@
+- events:
+    - kind: tool_call
+      call_id: call-1
+      name: forge.pr
+      dispatch: forge.pr
+      arguments:
+        title: not a verb this harness can call
