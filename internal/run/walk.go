@@ -225,9 +225,11 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 		Capabilities: step.GetCapabilities(),
 	})
 	if err != nil {
+		abortActivity(s)
 		return outcome{}, err
 	}
 	if err := s.workspace.Rotate(ctx, workspace.TokenFromProto(token.GetStepToken())); err != nil {
+		abortActivity(s)
 		return outcome{}, fmt.Errorf("run %s: rotate the workspace token: %w", s.run.GetId(), err)
 	}
 	r.rotateGateway(s, step, sr, token.GetStepToken())
@@ -272,6 +274,16 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 		abortActivity(s)
 		return outcome{}, r.stopped(ctx, s)
 	}
+
+	// Every path below here either closes the attempt on evidence
+	// (closeStep), aborts it on a pending re-check (the endActivity call
+	// below), or fails it (failStep) — all of which already close the
+	// writer themselves. This defer only catches the gap: an error
+	// returned between here and whichever of those runs, which would
+	// otherwise leave the writer open and the verb sink attached
+	// (mill#30). abortActivity is idempotent, so it is a no-op when one of
+	// those calls already closed the attempt.
+	defer abortActivity(s)
 
 	// What the session installed into its machine with the shim goes into
 	// the run's provenance whether the attempt closes or fails: the install

@@ -167,6 +167,43 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 			Expect(evidenceOf(detail, "merge").GetGate()).To(Equal(gate.GetId()))
 			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_DONE))
 		})
+
+		// mill#30: resumeGate reopens the attempt it is about to close or
+		// fail before either of those has a chance to run, so a failure in
+		// between is this branch's own leak point, not one the rest of the
+		// loop already covers.
+		It("aborts the reopened attempt when the gate's evidence does not verify", func() {
+			workflow := asks("verdict.decision == approve")
+			logDir := GinkgoT().TempDir()
+			runner := f.runner(func(o *run.Options) {
+				o.Workflow = workflow
+				o.LogDir = logDir
+			})
+			Expect(runner.Execute(ctx, f.nodeRef)).To(Succeed())
+			gate := f.theGate(ctx)
+
+			// A gate done with nothing attached is not evidence `gate` can
+			// verify (internal/evidence.verifyGate), the way a person who
+			// completed it with no comment at the terminal would leave it.
+			f.approveGateEmpty(ctx, gate.GetReference())
+			Expect(runner.Execute(ctx, f.nodeRef)).To(HaveOccurred())
+			f.assertWriterClosed(ctx, logDir, "merge")
+		})
+
+		It("aborts the reopened attempt when denyGate's own Complete fails", func() {
+			workflow := asks("verdict.decision == approve")
+			logDir := GinkgoT().TempDir()
+			person := &answerer{approve: false}
+			client := f.failingPatches(func(op *daggerv1.PatchOp) bool { return op.GetCompleteNode() != nil })
+
+			err := f.runner(withAnswers(person), func(o *run.Options) {
+				o.Workflow = workflow
+				o.LogDir = logDir
+				o.Dagger = client
+			}).Execute(ctx, f.nodeRef)
+			Expect(err).To(HaveOccurred())
+			f.assertWriterClosed(ctx, logDir, "merge")
+		})
 	})
 
 	Describe("The gate's activity record", func() {
