@@ -646,13 +646,17 @@ type Workspace interface {
 // owns, and verbs already imports this package: a Sink declared over there
 // and referenced from here would be an import cycle.
 type Sink interface {
-	// Started is called once, before the verb's command spawns.
-	Started(verb string, args map[string]string)
+	// Started is called once, before the verb's command spawns. verbID
+	// identifies this invocation — minted by the caller, stable across its
+	// Started/Output/Ended calls, and distinct from any concurrent verb's —
+	// so a sink whose verbs can overlap never has to guess which invocation
+	// a later Output or Ended call belongs to.
+	Started(verb string, verbID int64, args map[string]string)
 	// Output is called once per non-empty stream, with the whole buffer.
-	Output(verb, stream string, data []byte)
+	Output(verb string, verbID int64, stream string, data []byte)
 	// Ended is called once the command has exited or failed to run, with the
 	// error Run itself returns — nil on success.
-	Ended(verb string, err error)
+	Ended(verb string, verbID int64, err error)
 }
 
 // ActivitySink is a workspace whose verbs can record onto an attempt's

@@ -93,9 +93,9 @@ message Activity {
 | `tool_result` | harness | `call_id`, `content`, `is_error` | 240 chars of 4,096 |
 | `usage` | harness | per-model counts, per turn | a line |
 | `heartbeat` | harness | strike, strikes, waiting, tasks | a line |
-| `verb_started` | workspace | `name` (`git.commit`, `git.push`, `forge.pr`, …), arguments | absent |
-| `verb_output` | workspace | `stream` (stdout, stderr), `data`: a chunk as the verb produced it | absent |
-| `verb` | workspace | `name`, result, error, `ended_at` set | absent; the outcome is evidence in the ledger |
+| `verb_started` | workspace | `name` (`git.commit`, `git.push`, `forge.pr`, …), arguments, `verb_id` | absent |
+| `verb_output` | workspace | `stream` (stdout, stderr), `data`: a chunk as the verb produced it, `verb_id` | absent |
+| `verb` | workspace | `name`, result, error, `verb_id`, `ended_at` set | absent; the outcome is evidence in the ledger |
 | `check_started` | check | the command and its contract | absent |
 | `check_output` | check | as `verb_output` | absent |
 | `check` | check | exit status, the reason when it failed, `ended_at` set | the whole thing, as text, at exit |
@@ -134,7 +134,7 @@ Unchanged in guarantee, moved in mechanism. Today the redactor is a byte stream 
 
 The hold-back is what keeps that true for records that arrive in pieces, and it is the writer's, not the seal's:
 
-- `check_output` and `verb_output` are chunked by line. A chunk is the complete lines a read produced; the trailing partial line is held until its newline arrives or the stream ends, and is flushed with `check` or `verb`. This is the redactor's rule applied to a new stream, and it decides the chunking.
+- `check_output` and `verb_output` are chunked by line. A chunk is the complete lines a read produced; the trailing partial line is held until its newline arrives or the stream ends, and is flushed with `check` or `verb`. This is the redactor's rule applied to a new stream, and it decides the chunking. Verbs run concurrently, so `verb_output`'s hold-back is kept per `(verb_id, stream)`, not per stream alone — two verbs writing the same stream never share a trailing partial line. Checks run one at a time per attempt, so `check_output` stays keyed by stream.
 - `text` and `thinking` deltas have no newlines to wait for. The writer holds back the last L − 1 bytes of each block's accumulated text, where L is the longest registered value, and releases them with the next delta or with `final`. A delta as written may therefore be a few bytes behind the delta as received, and never contains half a secret.
 
 The redactor's tests move from lines to bodies, and gain one per path above: a value split across two reads, and across two deltas, that never reaches the file.
@@ -180,7 +180,7 @@ The live file has no index rows. Live reads go to the file and are ordered by `s
 
 ### Caps
 
-One ceiling per attempt on raw activity bytes, default 64 MB, after which a `tool_result` body is stored as its summary line with `truncated` set, further `check_output` and `verb_output` chunks of a stream are dropped behind one `truncated` marker record per stream, and everything else continues. A loop of large outputs is the only way to reach it. There is no per-result cap in the record: the harness bounds a single result at a few hundred KB before the sidecar sees it, and the sidecar's own 4,096-character cap is removed. A per-result cap exists only where a body reaches a terminal (`Logs` with `follow` cuts a body at 64 KiB with `truncated` set); the frame never cuts, and the whole record is one read away (§The RPC).
+One ceiling per attempt on raw activity bytes, default 64 MB, after which a `tool_result` body is stored as its summary line with `truncated` set, further `check_output` chunks of a stream and further `verb_output` chunks of a `(verb_id, stream)` are dropped behind one `truncated` marker record per stream (per verb, for `verb_output`), and everything else continues. A loop of large outputs is the only way to reach it. There is no per-result cap in the record: the harness bounds a single result at a few hundred KB before the sidecar sees it, and the sidecar's own 4,096-character cap is removed. A per-result cap exists only where a body reaches a terminal (`Logs` with `follow` cuts a body at 64 KiB with `truncated` set); the frame never cuts, and the whole record is one read away (§The RPC).
 
 ### Observer
 

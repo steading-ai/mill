@@ -4797,7 +4797,11 @@ type VerbStarted struct {
 	// The verb's name, such as `git.commit` or `git.push`.
 	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	// The verb's arguments, mill's own and never a session's free text.
-	Arguments     map[string]string `protobuf:"bytes,2,rep,name=arguments,proto3" json:"arguments,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Arguments map[string]string `protobuf:"bytes,2,rep,name=arguments,proto3" json:"arguments,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Identifies this verb invocation, so its verb_output and verb records —
+	// and no concurrent verb's — attribute back to it (docs/activity.md
+	// §Redaction).
+	VerbId        int64 `protobuf:"varint,3,opt,name=verb_id,json=verbId,proto3" json:"verb_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4846,15 +4850,26 @@ func (x *VerbStarted) GetArguments() map[string]string {
 	return nil
 }
 
+func (x *VerbStarted) GetVerbId() int64 {
+	if x != nil {
+		return x.VerbId
+	}
+	return 0
+}
+
 // Output is one chunk of a stream, produced by a verb or a check as it ran.
 // Shared by `verb_output` and `check_output`.
 type Output struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The stream's name: `stdout`, `stderr`, or a verb's own key.
+	// The stream's name: `stdout` or `stderr`.
 	Stream string `protobuf:"bytes,1,opt,name=stream,proto3" json:"stream,omitempty"`
 	// The chunk. Whole lines only; a trailing partial line is held back by
 	// the writer until it completes (docs/activity.md §Redaction).
-	Data          []byte `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
+	Data []byte `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
+	// verb_output only: the verb_id of the VerbStarted this chunk belongs to,
+	// so concurrent verbs sharing a stream never blend. Unset on check_output,
+	// which has no concurrent siblings to disambiguate from.
+	VerbId        int64 `protobuf:"varint,3,opt,name=verb_id,json=verbId,proto3" json:"verb_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4903,6 +4918,13 @@ func (x *Output) GetData() []byte {
 	return nil
 }
 
+func (x *Output) GetVerbId() int64 {
+	if x != nil {
+		return x.VerbId
+	}
+	return 0
+}
+
 // Verb is the outcome of a workspace verb that has finished.
 type Verb struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -4911,7 +4933,9 @@ type Verb struct {
 	// What the verb returned, when it succeeded.
 	Result string `protobuf:"bytes,2,opt,name=result,proto3" json:"result,omitempty"`
 	// What the verb failed with, when it did not.
-	Error         string `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
+	Error string `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
+	// The verb_id of the VerbStarted this outcome belongs to.
+	VerbId        int64 `protobuf:"varint,4,opt,name=verb_id,json=verbId,proto3" json:"verb_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4965,6 +4989,13 @@ func (x *Verb) GetError() string {
 		return x.Error
 	}
 	return ""
+}
+
+func (x *Verb) GetVerbId() int64 {
+	if x != nil {
+		return x.VerbId
+	}
+	return 0
 }
 
 // CheckStarted marks the beginning of a check step's command.
@@ -6360,20 +6391,23 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"ToolResult\x12\x17\n" +
 	"\acall_id\x18\x01 \x01(\tR\x06callId\x12\x18\n" +
 	"\acontent\x18\x02 \x01(\tR\acontent\x12\x19\n" +
-	"\bis_error\x18\x03 \x01(\bR\aisError\"\xa2\x01\n" +
+	"\bis_error\x18\x03 \x01(\bR\aisError\"\xbb\x01\n" +
 	"\vVerbStarted\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12A\n" +
-	"\targuments\x18\x02 \x03(\v2#.mill.v1.VerbStarted.ArgumentsEntryR\targuments\x1a<\n" +
+	"\targuments\x18\x02 \x03(\v2#.mill.v1.VerbStarted.ArgumentsEntryR\targuments\x12\x17\n" +
+	"\averb_id\x18\x03 \x01(\x03R\x06verbId\x1a<\n" +
 	"\x0eArgumentsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"4\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"M\n" +
 	"\x06Output\x12\x16\n" +
 	"\x06stream\x18\x01 \x01(\tR\x06stream\x12\x12\n" +
-	"\x04data\x18\x02 \x01(\fR\x04data\"H\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data\x12\x17\n" +
+	"\averb_id\x18\x03 \x01(\x03R\x06verbId\"a\n" +
 	"\x04Verb\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x16\n" +
 	"\x06result\x18\x02 \x01(\tR\x06result\x12\x14\n" +
-	"\x05error\x18\x03 \x01(\tR\x05error\"T\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\x12\x17\n" +
+	"\averb_id\x18\x04 \x01(\x03R\x06verbId\"T\n" +
 	"\fCheckStarted\x12\x18\n" +
 	"\acommand\x18\x01 \x03(\tR\acommand\x12*\n" +
 	"\bcontract\x18\x02 \x01(\v2\x0e.mill.v1.CheckR\bcontract\"R\n" +
