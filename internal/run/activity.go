@@ -293,30 +293,30 @@ func (w *activityWriter) EndCheckOutput(stream string) error {
 	})
 }
 
-// EndVerbOutput flushes stream's trailing partial line — held back because
-// it never got a newline — and records it as one last verb_output, the
-// frame docs/activity.md §Redaction calls "flushed with verb": the caller
-// runs this once a verb has returned, before it records the verb's own
-// terminal result.
-func (w *activityWriter) EndVerbOutput(stream string) error {
+// EndVerbOutput flushes verbID's trailing partial line on stream — held back
+// because it never got a newline — and records it as one last verb_output,
+// the frame docs/activity.md §Redaction calls "flushed with verb": the
+// caller runs this once a verb has returned, before it records the verb's
+// own terminal result.
+func (w *activityWriter) EndVerbOutput(verbID int64, stream string) error {
 	if w == nil {
 		return nil
 	}
-	return w.endOutput(w.verbChunks, stream, func(tail []byte) *millv1.Activity {
+	return w.endOutput(w.verbChunks, verbChunkKey(verbID, stream), func(tail []byte) *millv1.Activity {
 		return &millv1.Activity{
 			Source: millv1.ActivitySource_ACTIVITY_SOURCE_WORKSPACE,
-			Body:   &millv1.Activity_VerbOutput{VerbOutput: &millv1.Output{Stream: stream, Data: tail}},
+			Body:   &millv1.Activity_VerbOutput{VerbOutput: &millv1.Output{Stream: stream, Data: tail, VerbId: verbID}},
 		}
 	})
 }
 
-// endOutput is EndCheckOutput and EndVerbOutput's shared shape: close
-// stream's chunker, and if it held anything back, build and append the one
-// record that flushes it.
-func (w *activityWriter) endOutput(chunkers map[string]*redact.Chunker, stream string, build func(tail []byte) *millv1.Activity) error {
+// endOutput is EndCheckOutput and EndVerbOutput's shared shape: close key's
+// chunker, and if it held anything back, build and append the one record
+// that flushes it.
+func (w *activityWriter) endOutput(chunkers map[string]*redact.Chunker, key string, build func(tail []byte) *millv1.Activity) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	c, ok := chunkers[stream]
+	c, ok := chunkers[key]
 	if !ok {
 		return nil
 	}
@@ -334,7 +334,7 @@ func (w *activityWriter) endOutput(chunkers map[string]*redact.Chunker, stream s
 func (w *activityWriter) dropped(a *millv1.Activity) bool {
 	switch body := a.GetBody().(type) {
 	case *millv1.Activity_VerbOutput:
-		return w.truncatedStreams["verb:"+body.VerbOutput.GetStream()]
+		return w.truncatedStreams["verb:"+verbChunkKey(body.VerbOutput.GetVerbId(), body.VerbOutput.GetStream())]
 	case *millv1.Activity_CheckOutput:
 		return w.truncatedStreams["check:"+body.CheckOutput.GetStream()]
 	default:
@@ -344,8 +344,9 @@ func (w *activityWriter) dropped(a *millv1.Activity) bool {
 
 // applyCeiling shrinks a's body once the file has grown past the ceiling
 // (§Caps): a tool result is replaced by its own summary, a verb or check
-// output chunk is blanked and its stream marked so every later chunk on it
-// is dropped outright rather than adding a second marker.
+// output chunk is blanked and its stream (a verb's own stream, not every
+// concurrent verb's) marked so every later chunk on it is dropped outright
+// rather than adding a second marker.
 func (w *activityWriter) applyCeiling(a *millv1.Activity) {
 	switch body := a.GetBody().(type) {
 	case *millv1.Activity_ToolResult:
@@ -354,7 +355,7 @@ func (w *activityWriter) applyCeiling(a *millv1.Activity) {
 	case *millv1.Activity_VerbOutput:
 		body.VerbOutput.Data = nil
 		a.Truncated = true
-		w.truncatedStreams["verb:"+body.VerbOutput.GetStream()] = true
+		w.truncatedStreams["verb:"+verbChunkKey(body.VerbOutput.GetVerbId(), body.VerbOutput.GetStream())] = true
 	case *millv1.Activity_CheckOutput:
 		body.CheckOutput.Data = nil
 		a.Truncated = true
@@ -435,9 +436,11 @@ func (w *activityWriter) assignTurn(a *millv1.Activity) {
 
 // redactBody applies the redactor to a's body as its kind requires
 // (docs/activity.md §Redaction): a streamed text or thinking delta goes
-// through the delta hold-back keyed by its block id, a verb or check output
-// chunk goes through the line chunker keyed by its stream, and every other
-// kind — arriving whole in one Record call — is walked once by
+// through the delta hold-back keyed by its block id, a check output chunk
+// goes through the line chunker keyed by its stream, a verb output chunk
+// goes through the line chunker keyed by its verb id and stream together —
+// concurrent verbs never share one, even on the same stream — and every
+// other kind — arriving whole in one Record call — is walked once by
 // [redact.Redactor.Message].
 func (w *activityWriter) redactBody(a *millv1.Activity) {
 	switch body := a.GetBody().(type) {
@@ -446,7 +449,8 @@ func (w *activityWriter) redactBody(a *millv1.Activity) {
 	case *millv1.Activity_Thinking:
 		body.Thinking.Text = w.thinkingHoldback.Add(body.Thinking.GetBlockId(), body.Thinking.GetText(), body.Thinking.GetFinal())
 	case *millv1.Activity_VerbOutput:
-		body.VerbOutput.Data = w.chunker(w.verbChunks, body.VerbOutput.GetStream()).Write(body.VerbOutput.GetData())
+		key := verbChunkKey(body.VerbOutput.GetVerbId(), body.VerbOutput.GetStream())
+		body.VerbOutput.Data = w.chunker(w.verbChunks, key).Write(body.VerbOutput.GetData())
 	case *millv1.Activity_CheckOutput:
 		body.CheckOutput.Data = w.chunker(w.checkChunks, body.CheckOutput.GetStream()).Write(body.CheckOutput.GetData())
 	default:
@@ -454,13 +458,22 @@ func (w *activityWriter) redactBody(a *millv1.Activity) {
 	}
 }
 
-func (w *activityWriter) chunker(chunkers map[string]*redact.Chunker, stream string) *redact.Chunker {
-	c, ok := chunkers[stream]
+func (w *activityWriter) chunker(chunkers map[string]*redact.Chunker, key string) *redact.Chunker {
+	c, ok := chunkers[key]
 	if !ok {
 		c = redact.NewChunker(w.redactor)
-		chunkers[stream] = c
+		chunkers[key] = c
 	}
 	return c
+}
+
+// verbChunkKey is verbChunks' and the verb half of truncatedStreams' map
+// key: a verb's stream alone is not enough, since two verbs running
+// concurrently through the workspace socket can both write "stdout" at
+// once, and each must hold back its own trailing partial line rather than
+// the other's (docs/activity.md §Redaction).
+func verbChunkKey(verbID int64, stream string) string {
+	return fmt.Sprintf("%d|%s", verbID, stream)
 }
 
 // activityBodyOneof is Activity's "body" oneof descriptor, resolved once:

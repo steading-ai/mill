@@ -368,17 +368,17 @@ type verbSink struct {
 	activity *activityWriter
 }
 
-func (s verbSink) Started(verb string, args map[string]string) {
+func (s verbSink) Started(verb string, verbID int64, args map[string]string) {
 	_ = s.activity.Record(&millv1.Activity{
 		Source: millv1.ActivitySource_ACTIVITY_SOURCE_WORKSPACE,
-		Body:   &millv1.Activity_VerbStarted{VerbStarted: &millv1.VerbStarted{Name: verb, Arguments: args}},
+		Body:   &millv1.Activity_VerbStarted{VerbStarted: &millv1.VerbStarted{Name: verb, Arguments: args, VerbId: verbID}},
 	})
 }
 
-func (s verbSink) Output(verb, stream string, data []byte) {
+func (s verbSink) Output(verb string, verbID int64, stream string, data []byte) {
 	_ = s.activity.Record(&millv1.Activity{
 		Source: millv1.ActivitySource_ACTIVITY_SOURCE_WORKSPACE,
-		Body:   &millv1.Activity_VerbOutput{VerbOutput: &millv1.Output{Stream: stream, Data: data}},
+		Body:   &millv1.Activity_VerbOutput{VerbOutput: &millv1.Output{Stream: stream, Data: data, VerbId: verbID}},
 	})
 }
 
@@ -386,16 +386,16 @@ func (s verbSink) Output(verb, stream string, data []byte) {
 // verb's own terminal result, the same order runCheck keeps by hand for a
 // check's output and result: the tail belongs to the record it completes,
 // not the one that follows it.
-func (s verbSink) Ended(verb string, err error) {
-	_ = s.activity.EndVerbOutput("stdout")
-	_ = s.activity.EndVerbOutput("stderr")
+func (s verbSink) Ended(verb string, verbID int64, err error) {
+	_ = s.activity.EndVerbOutput(verbID, "stdout")
+	_ = s.activity.EndVerbOutput(verbID, "stderr")
 	var errText string
 	if err != nil {
 		errText = err.Error()
 	}
 	_ = s.activity.Record(&millv1.Activity{
 		Source: millv1.ActivitySource_ACTIVITY_SOURCE_WORKSPACE,
-		Body:   &millv1.Activity_Verb{Verb: &millv1.Verb{Name: verb, Error: errText}},
+		Body:   &millv1.Activity_Verb{Verb: &millv1.Verb{Name: verb, Error: errText, VerbId: verbID}},
 	})
 }
 

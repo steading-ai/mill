@@ -376,6 +376,56 @@ var _ = Describe("The activity writer", Label("unit"), func() {
 		Expect(whole.String()).To(HavePrefix("the token is "), "text already released before the value was registered is untouched")
 	})
 
+	It("keeps two concurrent verbs' partial lines on one stream from crossing", func() {
+		w := open()
+		Expect(w.Record(&millv1.Activity{
+			Source: millv1.ActivitySource_ACTIVITY_SOURCE_WORKSPACE,
+			Body:   &millv1.Activity_VerbStarted{VerbStarted: &millv1.VerbStarted{Name: "git.a", VerbId: 1}},
+		})).To(Succeed())
+		Expect(w.Record(&millv1.Activity{
+			Source: millv1.ActivitySource_ACTIVITY_SOURCE_WORKSPACE,
+			Body:   &millv1.Activity_VerbStarted{VerbStarted: &millv1.VerbStarted{Name: "git.b", VerbId: 2}},
+		})).To(Succeed())
+
+		// Verb 1's read completes one line and starts a second, held back
+		// with no newline; verb 2's read interleaves its own unterminated
+		// line on the same stream before either verb's tail is flushed —
+		// exactly the overlap two goroutines racing through Host.Run can
+		// produce.
+		Expect(w.Record(&millv1.Activity{
+			Source: millv1.ActivitySource_ACTIVITY_SOURCE_WORKSPACE,
+			Body: &millv1.Activity_VerbOutput{VerbOutput: &millv1.Output{
+				Stream: "stdout", Data: []byte("verb-1 line one\nverb-1 tail"), VerbId: 1,
+			}},
+		})).To(Succeed())
+		Expect(w.Record(&millv1.Activity{
+			Source: millv1.ActivitySource_ACTIVITY_SOURCE_WORKSPACE,
+			Body: &millv1.Activity_VerbOutput{VerbOutput: &millv1.Output{
+				Stream: "stdout", Data: []byte("verb-2 tail"), VerbId: 2,
+			}},
+		})).To(Succeed())
+
+		// Ending verb 1 first flushes only its own held-back tail, never
+		// verb 2's, and never glues the two together; verb 2's own end
+		// flushes its own tail afterward.
+		Expect(w.EndVerbOutput(1, "stdout")).To(Succeed())
+		Expect(w.EndVerbOutput(2, "stdout")).To(Succeed())
+		Expect(w.Close()).To(Succeed())
+
+		var outputs []*millv1.Output
+		for _, a := range read() {
+			if out := a.GetVerbOutput(); out != nil {
+				outputs = append(outputs, out)
+			}
+		}
+		Expect(outputs).To(HaveLen(3), "verb 1's whole first line, verb 1's flushed tail, then verb 2's flushed tail")
+		Expect(outputs[0]).To(Equal(&millv1.Output{Stream: "stdout", Data: []byte("verb-1 line one\n"), VerbId: 1}))
+		Expect(outputs[1]).To(Equal(&millv1.Output{Stream: "stdout", Data: []byte("verb-1 tail"), VerbId: 1}),
+			"verb 1's own tail, not glued onto verb 2's")
+		Expect(outputs[2]).To(Equal(&millv1.Output{Stream: "stdout", Data: []byte("verb-2 tail"), VerbId: 2}),
+			"verb 2's tail survives, attributed to verb 2, even though verb 1 ended first")
+	})
+
 	It("names the file under the run, the step and the attempt", func() {
 		Expect(ActivityPath(dir, "run-1", "gather-context", 2)).
 			To(Equal(filepath.Join(dir, "run-1", "gather-context.2.activity")))

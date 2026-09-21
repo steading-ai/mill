@@ -224,7 +224,9 @@ func redactList(r *Redactor, fd protoreflect.FieldDescriptor, l protoreflect.Lis
 // halves — [Redactor.Writer]'s rule, restated for a caller that wants
 // discrete redacted chunks back instead of an io.Writer, such as a check or
 // a verb streaming its output to the activity record. One Chunker is kept
-// per stream (`stdout`, `stderr`, or a verb's own key).
+// per stream (`stdout`, `stderr`); a caller whose streams can run
+// concurrently, such as two verbs sharing a stream name, keys its map by
+// more than the stream alone so no two invocations share one Chunker.
 type Chunker struct {
 	redactor *Redactor
 	partial  []byte
