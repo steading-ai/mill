@@ -1103,10 +1103,12 @@ func (f *fixture) reviewedFix(ctx context.Context, model string) string {
 func (f *fixture) gatesOnNode(ctx context.Context, ref string) []*daggerv1.Node {
 	GinkgoHelper()
 	res, err := f.graph.ListNodes(ctx, connect.NewRequest(&daggerv1.ListNodesRequest{
-		Project:      project,
-		Parent:       ref,
-		AssigneeKind: daggerv1.AssigneeKind_ASSIGNEE_KIND_USER,
-		View:         daggerv1.View_VIEW_FULL,
+		Filter: &daggerv1.NodeFilter{
+			Projects:     []string{project},
+			Parent:       ref,
+			AssigneeKind: daggerv1.AssigneeKind_ASSIGNEE_KIND_USER,
+		},
+		View: daggerv1.View_VIEW_FULL,
 	}))
 	Expect(err).NotTo(HaveOccurred())
 	return res.Msg.GetNodes()

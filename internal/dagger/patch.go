@@ -255,11 +255,13 @@ const GateLabel = "mill-gate"
 // gate precisely when it is about to file a second.
 func (c *Client) Gates(ctx context.Context, parent string, labels ...string) ([]*daggerv1.Node, error) {
 	res, err := c.graph.ListNodes(ctx, connect.NewRequest(&daggerv1.ListNodesRequest{
-		Project:      c.project,
-		Parent:       parent,
-		AssigneeKind: daggerv1.AssigneeKind_ASSIGNEE_KIND_USER,
-		Labels:       labels,
-		View:         daggerv1.View_VIEW_FULL,
+		Filter: &daggerv1.NodeFilter{
+			Projects:     []string{c.project},
+			Parent:       parent,
+			AssigneeKind: daggerv1.AssigneeKind_ASSIGNEE_KIND_USER,
+			Labels:       labels,
+		},
+		View: daggerv1.View_VIEW_FULL,
 	}))
 	if err != nil {
 		return nil, wrap("dagger: list the gates on "+parent, err)

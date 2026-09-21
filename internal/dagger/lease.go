@@ -83,8 +83,7 @@ func (c *Client) Claim(ctx context.Context, ref string) (*Claimed, error) {
 func (c *Client) claimLabelled(ctx context.Context, label, nodeID string) (*Claimed, error) {
 	res, err := c.work.ClaimNext(ctx, connect.NewRequest(&daggerv1.ClaimNextRequest{
 		RequestId:  nonce("claim"),
-		Project:    c.project,
-		Labels:     []string{label},
+		Filter:     &daggerv1.NodeFilter{Projects: []string{c.project}, Labels: []string{label}},
 		Ttl:        durationOrNil(c.options.ttl),
 		Harness:    HarnessName,
 		AgentRef:   c.options.agentRef,
@@ -181,9 +180,8 @@ func durationOrNil(d time.Duration) *durationpb.Duration {
 // it as a principal.
 func (c *Client) Ready(ctx context.Context, kind daggerv1.AssigneeKind) ([]*daggerv1.Node, error) {
 	res, err := c.work.Ready(ctx, connect.NewRequest(&daggerv1.ReadyRequest{
-		Project:      c.project,
-		AssigneeKind: kind,
-		View:         daggerv1.View_VIEW_REFS,
+		Filter: &daggerv1.NodeFilter{Projects: []string{c.project}, AssigneeKind: kind},
+		View:   daggerv1.View_VIEW_REFS,
 	}))
 	if err != nil {
 		return nil, fmt.Errorf("dagger: ready: %w", err)
@@ -218,15 +216,17 @@ func (c *Client) ClaimNext(ctx context.Context, labels []string, wait time.Durat
 	deadline := time.Now().Add(wait)
 	for {
 		res, err := c.work.ClaimNext(ctx, connect.NewRequest(&daggerv1.ClaimNextRequest{
-			RequestId:    requestID,
-			Project:      c.project,
-			AssigneeKind: daggerv1.AssigneeKind_ASSIGNEE_KIND_AGENT,
-			Labels:       labels,
-			Wait:         durationpb.New(max(min(claimChunk, time.Until(deadline)), 0)),
-			Ttl:          durationOrNil(c.options.ttl),
-			Harness:      HarnessName,
-			AgentRef:     c.options.agentRef,
-			SessionRef:   c.options.sessionRef,
+			RequestId: requestID,
+			Filter: &daggerv1.NodeFilter{
+				Projects:     []string{c.project},
+				AssigneeKind: daggerv1.AssigneeKind_ASSIGNEE_KIND_AGENT,
+				Labels:       labels,
+			},
+			Wait:       durationpb.New(max(min(claimChunk, time.Until(deadline)), 0)),
+			Ttl:        durationOrNil(c.options.ttl),
+			Harness:    HarnessName,
+			AgentRef:   c.options.agentRef,
+			SessionRef: c.options.sessionRef,
 		}))
 		if err != nil {
 			return nil, wrap("dagger: claim next", err)

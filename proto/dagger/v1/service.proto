@@ -1,12 +1,3 @@
-// Vendored from github.com/ivy/dagger, the service mill is a client of. The
-// file below is dagger's own, unchanged but for its go_package option, so
-// that `make generate` produces the same Connect client dagger generates for
-// itself. Every "docs/" reference in it is dagger's, not mill's.
-//
-// Dagger is not importable as a Go module here, so the contract is carried
-// as proto and generated rather than depended on. It is copied, never
-// edited: a change to dagger's contract is re-copied from that repository.
-//
 // The dagger.v1 services: three faces over one contract. GraphService reads
 // and mutates the graph, WorkService hands out and manages leases, and
 // EventService serves the change stream. docs/domain-model.md is the
@@ -529,25 +520,46 @@ message InputsHint {
   int64 bytes = 2;
 }
 
-// ListNodesRequest pages through one project's nodes.
-message ListNodesRequest {
-  // The project, by slug, org/slug, or id. Required.
-  string project = 1;
-  // Only nodes in this status. Unset means every status.
-  Status status = 2;
-  // Only nodes of this kind. Empty means every kind.
-  string kind = 3;
-  // Only nodes assignable to this kind of principal. Unset means any.
-  AssigneeKind assignee_kind = 4;
+// NodeFilter scopes and filters a claim or a read. Every field narrows;
+// left unset, none of them do. status and held apply to reads only and are
+// rejected on ClaimNextRequest and ReadyRequest, since neither notion
+// makes sense mid-claim.
+message NodeFilter {
+  // Only these projects, by slug, org/slug, or id. Empty means every
+  // project the caller may read: today, every project of the caller's
+  // organization.
+  repeated string projects = 1;
+  // Only nodes of these kinds. Empty means every kind.
+  repeated string kinds = 2;
   // Only nodes carrying every one of these labels.
-  repeated string labels = 5;
+  repeated string labels = 3;
+  // Only nodes carrying at least one of these labels. Empty means labels
+  // do not narrow.
+  repeated string any_labels = 4;
+  // Only nodes completable by this kind of principal. Unset means any.
+  AssigneeKind assignee_kind = 5;
+  // Only nodes at this priority or more urgent. Priority is comparable
+  // only within a project, so this narrows each project's own nodes by
+  // its own priority; it does not rank one project's nodes against
+  // another's. Unset means any.
+  Priority min_priority = 6;
   // Only children of this node, as a node reference. Empty means every
   // node.
-  string parent = 6;
-  // Only nodes that are effectively held: parked by a hold on the node,
-  // on something containing it, or on its project. This is how parked
-  // work is found again, since it is absent from the ready set.
-  bool held = 10;
+  string parent = 7;
+  // Reads only. Only nodes in this status. Unset means every status.
+  Status status = 8;
+  // Reads only. Only nodes that are effectively held: parked by a hold on
+  // the node, on something containing it, or on its project. This is how
+  // parked work is found again, since it is absent from the ready set.
+  bool held = 9;
+}
+
+// ListNodesRequest pages through nodes matching a filter.
+message ListNodesRequest {
+  reserved 1, 2, 3, 4, 5, 6, 10;
+  reserved "project", "status", "kind", "assignee_kind", "labels", "parent", "held";
+  // What to match. No field is required; unset fields never narrow.
+  NodeFilter filter = 11;
   // Maximum nodes to return. The server bounds it.
   int32 page_size = 7;
   // The next_page_token of the previous response. Empty for the first
@@ -862,20 +874,18 @@ message ClearFocusResponse {
   int32 released_count = 1;
 }
 
-// ReadyRequest asks for the ready set of one project. Ordering is by
-// priority then age, and priority is project-scoped, so a project is
-// required.
+// ReadyRequest asks for the ready set matching a filter. Ordering is by
+// priority then age within a project; across projects with matching ready
+// work it is a turn, round-robin per principal and filter, since priority
+// is not comparable across projects.
 message ReadyRequest {
-  // The project, by slug, org/slug, or id. Required.
-  string project = 1;
-  // Only nodes of this kind. Empty means every kind.
-  string kind = 2;
-  // Only nodes completable by this kind of principal. Unset means any.
-  AssigneeKind assignee_kind = 3;
-  // Only nodes carrying every one of these labels.
-  repeated string labels = 4;
-  // Only nodes at this priority or more urgent. Unset means any.
-  Priority min_priority = 5;
+  reserved 1, 2, 3, 4, 5;
+  reserved "project", "kind", "assignee_kind", "labels", "min_priority";
+  // What to match. No field is required; unset fields never narrow. Empty
+  // filter.projects means every project the caller may read. status and
+  // held are rejected: reads-only fields of NodeFilter that do not apply
+  // to the ready set.
+  NodeFilter filter = 9;
   // Maximum nodes to return. The server bounds it.
   int32 page_size = 6;
   // The next_page_token of the previous response. Empty for the first
@@ -897,22 +907,20 @@ message ReadyResponse {
   int32 held_count = 3;
 }
 
-// ClaimNextRequest asks for the next ready node matching the filters,
-// claimed. Selecting across projects is the orchestrator's: it may call
-// several and choose.
+// ClaimNextRequest asks for the next ready node matching a filter,
+// claimed. Selecting across projects is turn-based, not the orchestrator's:
+// an empty filter.projects draws round-robin from every project the caller
+// may read, one call at a time.
 message ClaimNextRequest {
+  reserved 2, 3, 4, 5, 6;
+  reserved "project", "kind", "assignee_kind", "labels", "min_priority";
   // Client-supplied idempotency key. Required.
   string request_id = 1;
-  // The project to claim from, by slug, org/slug, or id. Required.
-  string project = 2;
-  // Only nodes of this kind. Empty means every kind.
-  string kind = 3;
-  // Only nodes completable by this kind of principal. Unset means any.
-  AssigneeKind assignee_kind = 4;
-  // Only nodes carrying every one of these labels.
-  repeated string labels = 5;
-  // Only nodes at this priority or more urgent. Unset means any.
-  Priority min_priority = 6;
+  // What to match. No field is required; unset fields never narrow. Empty
+  // filter.projects means every project the caller may read. status and
+  // held are rejected: reads-only fields of NodeFilter that do not apply
+  // to a claim.
+  NodeFilter filter = 12;
   // How long to wait for matching work before returning empty. Zero
   // returns immediately. The server bounds it.
   google.protobuf.Duration wait = 7;

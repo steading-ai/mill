@@ -1,12 +1,3 @@
-// Vendored from github.com/ivy/dagger, the service mill is a client of. The
-// file below is dagger's own, unchanged but for its go_package option, so
-// that `make generate` produces the same Connect client dagger generates for
-// itself. Every "docs/" reference in it is dagger's, not mill's.
-//
-// Dagger is not importable as a Go module here, so the contract is carried
-// as proto and generated rather than depended on. It is copied, never
-// edited: a change to dagger's contract is re-copied from that repository.
-//
 // The dagger.v1 services: three faces over one contract. GraphService reads
 // and mutates the graph, WorkService hands out and manages leases, and
 // EventService serves the change stream. docs/domain-model.md is the
