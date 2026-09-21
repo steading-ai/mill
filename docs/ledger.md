@@ -367,6 +367,7 @@ Every artifact's metadata carries `run_id`. Every `ApplyPatch` mill sends uses `
 ## Queries the CLI needs
 
 - `status`: runs by state with `current_step`, elapsed, cost, and gate node for waiting ones — one query over `runs` joined to the latest `step_runs` and a usage rollup. The same query, unfiltered, is what the sweep reads, so a run `status` lists as live is one the sweep will ask dagger about.
+- `status --ended` (`ListRuns`): ended runs by status, project, `node_ref`, `worker_ref`, `workflow_id` and an `ended_at` window, in keyset pages ordered `(ended_at desc, id desc)` — `(updated_at desc, id desc)` if a requested status is not terminal, since a live run has no `ended_at`. `RunSummary` here, and in `status` and `inspect` since all three share it, also carries `last_step` and `last_step_status` (the step run with the latest `started_at`) and `rounds`, one plus the count of step runs with `feedback_from` set — steading's round derivation restated in the query, kept in this one place so the two do not drift.
 - `inspect <run>`: every step run in order with its evidence, exit, session, and usage.
 - `history <run>`: the `events` rows.
 - `cost --since`: usage rolled up by run, by workflow, by step name, by model, priced by the rate table.

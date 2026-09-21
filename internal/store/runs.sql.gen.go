@@ -7,6 +7,7 @@ package store
 
 import (
 	"context"
+	"time"
 )
 
 const clearRunGate = `-- name: ClearRunGate :one
@@ -276,6 +277,169 @@ type ListRunsParams struct {
 
 func (q *Queries) ListRuns(ctx context.Context, arg ListRunsParams) ([]Run, error) {
 	rows, err := q.db.Query(ctx, listRuns, arg.Statuses, arg.Project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Run{}
+	for rows.Next() {
+		var i Run
+		if err := rows.Scan(
+			&i.ID,
+			&i.NodeID,
+			&i.NodeRef,
+			&i.Generation,
+			&i.ContextID,
+			&i.WorkflowID,
+			&i.Status,
+			&i.LeaseID,
+			&i.WorkerRef,
+			&i.GateNodeID,
+			&i.ParkedReason,
+			&i.CancelRequested,
+			&i.Branch,
+			&i.Tier,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.EndedAt,
+			&i.CompleteRequestID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRunsByEnded = `-- name: ListRunsByEnded :many
+SELECT id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at, complete_request_id FROM runs
+WHERE (cardinality($1::text[]) = 0 OR status = ANY($1::text[]))
+  AND ($2::text IS NULL OR node_ref LIKE $2::text || '#%')
+  AND ($3::text IS NULL OR node_ref = $3::text)
+  AND ($4::text IS NULL OR worker_ref = $4::text)
+  AND ($5::text IS NULL OR workflow_id = $5::text)
+  AND ($6::timestamptz IS NULL OR ended_at >= $6::timestamptz)
+  AND ($7::timestamptz IS NULL OR ended_at < $7::timestamptz)
+  AND ($8::timestamptz IS NULL
+       OR (ended_at, id) < ($8::timestamptz, $9::text))
+ORDER BY ended_at DESC, id DESC
+LIMIT $10
+`
+
+type ListRunsByEndedParams struct {
+	Statuses      []string
+	Project       *string
+	NodeRef       *string
+	WorkerRef     *string
+	WorkflowID    *string
+	EndedAfter    *time.Time
+	EndedBefore   *time.Time
+	CursorEndedAt *time.Time
+	CursorID      *string
+	Lim           int32
+}
+
+// ListRuns (the RPC, distinct from the query above that backs Status): a
+// page of runs that ended, filtered and windowed, newest-ended first. The
+// cursor names the previous page's last row; both its fields are null for
+// the first page, and the OR before each makes that a no-op filter rather
+// than a comparison against null. ended_at is never null here because a
+// terminal status always carries one (runs_terminal_has_ended,
+// 00004_runs.sql), which is why this ordering is only used for an
+// all-terminal statuses filter — a non-terminal one uses ListRunsByUpdated
+// instead (docs/ledger.md §"Queries the CLI needs").
+func (q *Queries) ListRunsByEnded(ctx context.Context, arg ListRunsByEndedParams) ([]Run, error) {
+	rows, err := q.db.Query(ctx, listRunsByEnded,
+		arg.Statuses,
+		arg.Project,
+		arg.NodeRef,
+		arg.WorkerRef,
+		arg.WorkflowID,
+		arg.EndedAfter,
+		arg.EndedBefore,
+		arg.CursorEndedAt,
+		arg.CursorID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Run{}
+	for rows.Next() {
+		var i Run
+		if err := rows.Scan(
+			&i.ID,
+			&i.NodeID,
+			&i.NodeRef,
+			&i.Generation,
+			&i.ContextID,
+			&i.WorkflowID,
+			&i.Status,
+			&i.LeaseID,
+			&i.WorkerRef,
+			&i.GateNodeID,
+			&i.ParkedReason,
+			&i.CancelRequested,
+			&i.Branch,
+			&i.Tier,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.EndedAt,
+			&i.CompleteRequestID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRunsByUpdated = `-- name: ListRunsByUpdated :many
+SELECT id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at, complete_request_id FROM runs
+WHERE (cardinality($1::text[]) = 0 OR status = ANY($1::text[]))
+  AND ($2::text IS NULL OR node_ref LIKE $2::text || '#%')
+  AND ($3::text IS NULL OR node_ref = $3::text)
+  AND ($4::text IS NULL OR worker_ref = $4::text)
+  AND ($5::text IS NULL OR workflow_id = $5::text)
+  AND ($6::timestamptz IS NULL
+       OR (updated_at, id) < ($6::timestamptz, $7::text))
+ORDER BY updated_at DESC, id DESC
+LIMIT $8
+`
+
+type ListRunsByUpdatedParams struct {
+	Statuses        []string
+	Project         *string
+	NodeRef         *string
+	WorkerRef       *string
+	WorkflowID      *string
+	CursorUpdatedAt *time.Time
+	CursorID        *string
+	Lim             int32
+}
+
+// ListRuns's page for a statuses filter that names (or defaults to) a
+// non-terminal state: ended_at is null on a live run, so this orders and
+// pages by (updated_at, id) instead — the same columns and tie-break
+// Status's own listing uses.
+func (q *Queries) ListRunsByUpdated(ctx context.Context, arg ListRunsByUpdatedParams) ([]Run, error) {
+	rows, err := q.db.Query(ctx, listRunsByUpdated,
+		arg.Statuses,
+		arg.Project,
+		arg.NodeRef,
+		arg.WorkerRef,
+		arg.WorkflowID,
+		arg.CursorUpdatedAt,
+		arg.CursorID,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -88,6 +88,21 @@ func (q *Queries) CloseStepRun(ctx context.Context, id string) (StepRun, error) 
 	return i, err
 }
 
+const countRunFeedback = `-- name: CountRunFeedback :one
+SELECT count(*) FROM step_runs WHERE run_id = $1 AND feedback_from IS NOT NULL
+`
+
+// How many attempts in the run were opened as the revise for a failure,
+// counted from the rows rather than stored: RunSummary.rounds is one plus
+// this, restating steading's console round derivation for a row
+// (docs/ledger.md §"Queries the CLI needs").
+func (q *Queries) CountRunFeedback(ctx context.Context, runID string) (int64, error) {
+	row := q.db.QueryRow(ctx, countRunFeedback, runID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const failStepRun = `-- name: FailStepRun :one
 UPDATE step_runs SET status = 'failed', ended_at = now(), exit = $2
 WHERE id = $1 AND status = 'running'

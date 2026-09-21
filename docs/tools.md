@@ -116,6 +116,26 @@ list` says the same of a row it leaves out, and a worker starting on the
 line and starts. The remedy is the operator's; for the development database
 it is `make db-reset` ([runbook.md](runbook.md)).
 
+`--ended` lists runs that have ended instead of ones still live, newest-ended
+first, one page at a time; `--since` narrows it to a window (`24h`, `7d`).
+Every row gains `LAST STEP` — the step the run most recently attempted, and
+the status that attempt ended in, `-` for a run that never attempted one —
+and `ROUNDS`, one plus the number of revise rounds it took, matching what
+`inspect` reports for the same run. `--limit` sets the page size, up to 200
+(50 by default; a limit above 200 is silently clamped); when a page is not
+the last, a line below the table names the cursor that continues it:
+
+```
+$ mill status --ended --since 24h --limit 1
+worker claims from: every project
+NODE       STATUS  STEP       ATTEMPT  ELAPSED  TOKENS  GATE  MACHINE  LAST STEP           ROUNDS
+millcli#1  failed  implement  1        3m       -       -     -        implement (failed)  1
+next: --cursor MjAyNi0wOS0yMVQxNToxNToxMS4xMjc3NzRafDAxTTMyOEozNEExVzNaUUNHTjQ2TkpIUEo3
+```
+
+Passing that line's `--cursor` back in continues to the next page; a page
+with nothing left to page prints no `next:` line.
+
 ## inspect
 
 One run in full: the workflow version it follows and every attempt in order,

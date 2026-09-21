@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"math/rand/v2"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -148,6 +149,32 @@ func (l *ledger) currentStep(ctx context.Context, runID string, workflow *millv1
 	Expect(err).NotTo(HaveOccurred())
 	name, _ := store.CurrentStep(state, workflow)
 	return name
+}
+
+// endAt overwrites a run's ended_at directly, for a spec that needs to place
+// it at a chosen instant to test a window boundary or a tie-break — Done,
+// Failed and Abandon only ever set it to now().
+func (l *ledger) endAt(ctx context.Context, runID string, endedAt time.Time) {
+	GinkgoHelper()
+	_, err := l.db.Exec(ctx, `UPDATE runs SET ended_at = $2 WHERE id = $1`, runID, endedAt)
+	Expect(err).NotTo(HaveOccurred())
+}
+
+// revise supersedes a step's latest attempt and opens the next one as the
+// round that revises it, the way a human's revise request does.
+func (l *ledger) revise(ctx context.Context, runID, stepName, feedbackFrom string) *millv1.StepRun {
+	GinkgoHelper()
+	_, err := l.store.SupersedeSteps(ctx, l.lease, runID, stepName, stepName)
+	Expect(err).NotTo(HaveOccurred())
+	stepRun, err := l.store.StartStepRun(ctx, l.lease, store.StartStepRunParams{
+		RunID:        runID,
+		StepName:     stepName,
+		Kind:         millv1.StepKind_STEP_KIND_SKILL,
+		WorkerRef:    "worker-1",
+		FeedbackFrom: feedbackFrom,
+	})
+	Expect(err).NotTo(HaveOccurred())
+	return stepRun
 }
 
 // statusOf reads a step run's status straight from the table, for the specs

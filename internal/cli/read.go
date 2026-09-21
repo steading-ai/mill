@@ -73,6 +73,9 @@ type readOptions struct {
 	view         string
 	statuses     []string
 	since        string
+	ended        bool
+	cursor       string
+	limit        int32
 	step         string
 	follow       bool
 	workspaceDir string
@@ -152,7 +155,10 @@ func newStatusCommand() *cobra.Command {
 has cost, and the gate a waiting run is blocked on.
 
 With no --status filter this is the runs that have not ended: selecting,
-running, waiting and parked.`,
+running, waiting and parked.
+
+--ended lists runs that have ended instead, newest-ended first, one page at a
+time; the printed cursor pages to the next.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runStatus(cmd, opts)
@@ -162,6 +168,10 @@ running, waiting and parked.`,
 	cmd.Flags().StringSliceVar(&opts.statuses, "status", nil, "only runs in these states (default: every state that has not ended)")
 	cmd.Flags().StringVar(&opts.project, "project", "", "only runs on nodes in this dagger project")
 	cmd.Flags().StringVar(&opts.config, "config", defaultConfigPath(), "path of the configuration file the worker's claim filter is read from for the header line (default: $"+configEnv+", else $XDG_CONFIG_HOME/mill/config.yaml, else /etc/mill/config.yaml)")
+	cmd.Flags().BoolVar(&opts.ended, "ended", false, "list runs that have ended instead of ones still live")
+	cmd.Flags().StringVar(&opts.since, "since", "", "with --ended, only runs that ended within this window, such as 24h or 7d")
+	cmd.Flags().StringVar(&opts.cursor, "cursor", "", "with --ended, resume the page named by the previous call's printed cursor")
+	cmd.Flags().Int32Var(&opts.limit, "limit", 0, "with --ended, runs per page, up to 200 (default: 50)")
 	return cmd
 }
 
@@ -178,15 +188,47 @@ func runStatus(cmd *cobra.Command, opts readOptions) error {
 	if err != nil {
 		return err
 	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "worker claims from: %s\n", claimsFrom(config.Projects))
+
+	if opts.ended {
+		return runStatusEnded(cmd, opts, statuses, v)
+	}
+
 	res, err := storeClient(opts.socket).Status(cmd.Context(), connect.NewRequest(&millv1.StatusRequest{
 		Statuses: statuses, Project: opts.project,
 	}))
 	if err != nil {
 		return fmt.Errorf("status: %w", err)
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "worker claims from: %s\n", claimsFrom(config.Projects))
 	if err := renderStatus(cmd, res.Msg.GetRuns(), v); err != nil {
 		return err
+	}
+	reportUndecodable(cmd, res.Msg.GetFindings())
+	return nil
+}
+
+// runStatusEnded is `mill status --ended`: one page of ended runs, windowed
+// by --since, in the same view as the live listing.
+func runStatusEnded(cmd *cobra.Command, opts readOptions, statuses []millv1.RunStatus, v view) error {
+	request := &millv1.ListRunsRequest{
+		Statuses: statuses, Project: opts.project, View: string(v), Cursor: opts.cursor, Limit: opts.limit,
+	}
+	if opts.since != "" {
+		window, err := parseWindow(opts.since)
+		if err != nil {
+			return err
+		}
+		request.EndedAfter = timestamp(time.Now().Add(-window))
+	}
+	res, err := storeClient(opts.socket).ListRuns(cmd.Context(), connect.NewRequest(request))
+	if err != nil {
+		return fmt.Errorf("status: %w", err)
+	}
+	if err := renderStatus(cmd, res.Msg.GetRuns(), v); err != nil {
+		return err
+	}
+	if cursor := res.Msg.GetNextCursor(); cursor != "" {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "next: --cursor %s\n", cursor)
 	}
 	reportUndecodable(cmd, res.Msg.GetFindings())
 	return nil
@@ -223,28 +265,39 @@ func renderStatus(cmd *cobra.Command, runs []*millv1.RunSummary, v view) error {
 			_, _ = fmt.Fprintf(w, "%s\t%s\n", summary.GetRun().GetNodeRef(), summary.GetRun().GetId())
 		}
 	case viewFull:
-		_, _ = fmt.Fprintln(w, "NODE\tRUN\tSTATUS\tSTEP\tATTEMPT\tELAPSED\tLEASES\tGATE\tWORKER\tTOKENS\tMACHINE\tIMAGE\tVETH\tCACHES")
+		_, _ = fmt.Fprintln(w, "NODE\tRUN\tSTATUS\tSTEP\tATTEMPT\tELAPSED\tLEASES\tGATE\tWORKER\tTOKENS\tMACHINE\tIMAGE\tVETH\tCACHES\tLAST STEP\tROUNDS")
 		for _, summary := range runs {
 			run := summary.GetRun()
 			sandbox := summary.GetWorkspace().GetSandbox()
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\n",
 				run.GetNodeRef(), run.GetId(), runStatusName(run.GetStatus()),
 				summary.GetCurrentStep(), summary.GetCurrentAttempt(), elapsed(run),
 				summary.GetLeases(), dash(run.GetGateNodeId()), dash(run.GetWorkerRef()),
 				tokenText(summary.GetTotals()),
-				dash(sandbox.GetMachine()), dash(sandbox.GetImageDigest()), dash(sandbox.GetVeth()), dash(lineagesText(sandbox)))
+				dash(sandbox.GetMachine()), dash(sandbox.GetImageDigest()), dash(sandbox.GetVeth()), dash(lineagesText(sandbox)),
+				lastStepText(summary), summary.GetRounds())
 		}
 	default:
-		_, _ = fmt.Fprintln(w, "NODE\tSTATUS\tSTEP\tATTEMPT\tELAPSED\tTOKENS\tGATE\tMACHINE")
+		_, _ = fmt.Fprintln(w, "NODE\tSTATUS\tSTEP\tATTEMPT\tELAPSED\tTOKENS\tGATE\tMACHINE\tLAST STEP\tROUNDS")
 		for _, summary := range runs {
 			run := summary.GetRun()
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n",
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%d\n",
 				run.GetNodeRef(), runStatusName(run.GetStatus()), summary.GetCurrentStep(),
 				summary.GetCurrentAttempt(), elapsed(run), tokenText(summary.GetTotals()),
-				dash(run.GetGateNodeId()), dash(summary.GetWorkspace().GetSandbox().GetMachine()))
+				dash(run.GetGateNodeId()), dash(summary.GetWorkspace().GetSandbox().GetMachine()),
+				lastStepText(summary), summary.GetRounds())
 		}
 	}
 	return w.Flush()
+}
+
+// lastStepText is the step a run most recently attempted, with the status
+// that attempt ended in: dash for a run that has attempted nothing.
+func lastStepText(summary *millv1.RunSummary) string {
+	if summary.GetLastStep() == "" {
+		return "-"
+	}
+	return fmt.Sprintf("%s (%s)", summary.GetLastStep(), stepRunStatusName(summary.GetLastStepStatus()))
 }
 
 // lineagesText is a sandbox's cache lineages on one line: each as

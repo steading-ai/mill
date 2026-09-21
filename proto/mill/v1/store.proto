@@ -182,6 +182,17 @@ service StoreService {
   // Status lists runs by state with what the ledger derives: current step,
   // cost, and the gate a waiting run is blocked on.
   rpc Status(StatusRequest) returns (StatusResponse);
+  // ListRuns lists runs filtered and windowed, in keyset pages: the runs
+  // that ended, newest first, for a console's run history that wants
+  // enough on each row to say what a run came to without an Inspect per
+  // row. Empty statuses means every terminal state, ordered and paged by
+  // (ended_at, id); a non-terminal status among them orders and pages by
+  // (updated_at, id) instead, since ended_at is null on a live run — so a
+  // caller can list live runs through this one RPC too. Mixing a terminal
+  // and a non-terminal status in one call orders and pages the whole
+  // response by (updated_at, id), the same rule as an all-non-terminal
+  // filter.
+  rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
   // Inspect returns one run's every attempt in order with its evidence,
   // exit, session, and usage.
   rpc Inspect(InspectRequest) returns (InspectResponse);
@@ -945,6 +956,59 @@ message StatusResponse {
   // among them is still listed, with no current step, since the step is
   // derived from the definition.
   repeated UndecodableWorkflow findings = 2;
+}
+
+// ListRunsRequest asks for runs filtered and windowed, one page at a time.
+message ListRunsRequest {
+  // Only runs in these states. Empty means every terminal state: done,
+  // failed, abandoned.
+  repeated RunStatus statuses = 1;
+  // Only runs on nodes in this dagger project. Empty means every project.
+  string project = 2;
+  // Only the run(s) on this node's display key, every generation included.
+  // Empty means every node.
+  string node_ref = 3;
+  // Only runs whose current or last worker is this one. Empty means every
+  // worker.
+  string worker_ref = 4;
+  // Only runs on this workflow version. Empty means every version.
+  string workflow_id = 5;
+  // Only runs that ended at or after this instant. Unset means no lower
+  // bound. Ignored for a request whose statuses order by updated_at rather
+  // than ended_at.
+  google.protobuf.Timestamp ended_after = 6;
+  // Only runs that ended before this instant. Unset means no upper bound.
+  // Ignored for the same requests ended_after is.
+  google.protobuf.Timestamp ended_before = 7;
+  // How many rows to return. 0 means the default, 50. Clamped to 200;
+  // ListRunsResponse.limit_clamped says when a request asked for more.
+  int32 limit = 8;
+  // Opaque. Empty for the first page; otherwise the next_cursor a previous
+  // response of the same filter returned. A cursor is meaningless against a
+  // different filter or a different statuses ordering than the response it
+  // came from.
+  string cursor = 9;
+  // How much of each run to render: "refs" (identifiers alone), "summary"
+  // (the default), or "full". A run's summary carries nothing "full" adds
+  // beyond it — there is no deeper structure to expand the way Inspect's
+  // steps have — so the two answer alike; "refs" skips every derived field
+  // for a cheaper page when a caller wants only what to Inspect next.
+  string view = 10;
+}
+
+// ListRunsResponse carries one page of runs and what the ledger derives
+// about them.
+message ListRunsResponse {
+  // One entry per run, ordered as the request's statuses decide (see
+  // ListRuns).
+  repeated RunSummary runs = 1;
+  // Opaque. Pass back as the next call's cursor to continue. Empty when
+  // this page was the last.
+  string next_cursor = 2;
+  // The workflow rows the listing could not decode, as Status's does.
+  repeated UndecodableWorkflow findings = 3;
+  // Set when the request's limit exceeded 200 and was clamped to it.
+  bool limit_clamped = 4;
 }
 
 // InspectRequest asks for one run in full.

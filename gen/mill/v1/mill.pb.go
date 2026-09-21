@@ -3929,7 +3929,20 @@ type RunSummary struct {
 	// The run's workspace as the ledger recorded it: where it is, whether
 	// its files still exist, and the machine behind it when there is one.
 	// Unset for a run that has recorded none.
-	Workspace     *Workspace `protobuf:"bytes,6,opt,name=workspace,proto3" json:"workspace,omitempty"`
+	Workspace *Workspace `protobuf:"bytes,6,opt,name=workspace,proto3" json:"workspace,omitempty"`
+	// The step run with the latest started_at of any attempt in the run: what
+	// a failed or abandoned run stopped at. Derived, never stored, for the
+	// same reason current_step is not a column. Empty for a run that has
+	// started no step.
+	LastStep string `protobuf:"bytes,7,opt,name=last_step,json=lastStep,proto3" json:"last_step,omitempty"`
+	// last_step's status.
+	LastStepStatus StepRunStatus `protobuf:"varint,8,opt,name=last_step_status,json=lastStepStatus,proto3,enum=mill.v1.StepRunStatus" json:"last_step_status,omitempty"`
+	// One plus the count of step runs whose feedback_from is set: how many
+	// times work went back for revision, restating steading's console
+	// domain model's round derivation for a row so the two do not drift
+	// (docs/ledger.md §"Queries the CLI needs"). 1 for a run that has never
+	// been sent back.
+	Rounds        int64 `protobuf:"varint,9,opt,name=rounds,proto3" json:"rounds,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4004,6 +4017,27 @@ func (x *RunSummary) GetWorkspace() *Workspace {
 		return x.Workspace
 	}
 	return nil
+}
+
+func (x *RunSummary) GetLastStep() string {
+	if x != nil {
+		return x.LastStep
+	}
+	return ""
+}
+
+func (x *RunSummary) GetLastStepStatus() StepRunStatus {
+	if x != nil {
+		return x.LastStepStatus
+	}
+	return StepRunStatus_STEP_RUN_STATUS_UNSPECIFIED
+}
+
+func (x *RunSummary) GetRounds() int64 {
+	if x != nil {
+		return x.Rounds
+	}
+	return 0
 }
 
 // StepRunDetail is one attempt with everything hanging off it, which is what
@@ -6038,7 +6072,7 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"\routput_tokens\x18\x03 \x01(\x03R\foutputTokens\x12*\n" +
 	"\x11cache_read_tokens\x18\x04 \x01(\x03R\x0fcacheReadTokens\x12,\n" +
 	"\x12cache_write_tokens\x18\x05 \x01(\x03R\x10cacheWriteTokens\x12,\n" +
-	"\x06source\x18\x06 \x01(\x0e2\x14.mill.v1.UsageSourceR\x06source\"\xf0\x01\n" +
+	"\x06source\x18\x06 \x01(\x0e2\x14.mill.v1.UsageSourceR\x06source\"\xe7\x02\n" +
 	"\n" +
 	"RunSummary\x12\x1e\n" +
 	"\x03run\x18\x01 \x01(\v2\f.mill.v1.RunR\x03run\x12!\n" +
@@ -6046,7 +6080,10 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"\x0fcurrent_attempt\x18\x03 \x01(\x03R\x0ecurrentAttempt\x12,\n" +
 	"\x06totals\x18\x04 \x03(\v2\x14.mill.v1.ModelTotalsR\x06totals\x12\x16\n" +
 	"\x06leases\x18\x05 \x01(\x03R\x06leases\x120\n" +
-	"\tworkspace\x18\x06 \x01(\v2\x12.mill.v1.WorkspaceR\tworkspace\"\xa2\x02\n" +
+	"\tworkspace\x18\x06 \x01(\v2\x12.mill.v1.WorkspaceR\tworkspace\x12\x1b\n" +
+	"\tlast_step\x18\a \x01(\tR\blastStep\x12@\n" +
+	"\x10last_step_status\x18\b \x01(\x0e2\x16.mill.v1.StepRunStatusR\x0elastStepStatus\x12\x16\n" +
+	"\x06rounds\x18\t \x01(\x03R\x06rounds\"\xa2\x02\n" +
 	"\rStepRunDetail\x12+\n" +
 	"\bstep_run\x18\x01 \x01(\v2\x10.mill.v1.StepRunR\astepRun\x12-\n" +
 	"\bevidence\x18\x02 \x01(\v2\x11.mill.v1.EvidenceR\bevidence\x12*\n" +
@@ -6451,53 +6488,54 @@ var file_mill_v1_mill_proto_depIdxs = []int32{
 	18,  // 66: mill.v1.RunSummary.run:type_name -> mill.v1.Run
 	43,  // 67: mill.v1.RunSummary.totals:type_name -> mill.v1.ModelTotals
 	40,  // 68: mill.v1.RunSummary.workspace:type_name -> mill.v1.Workspace
-	19,  // 69: mill.v1.StepRunDetail.step_run:type_name -> mill.v1.StepRun
-	22,  // 70: mill.v1.StepRunDetail.evidence:type_name -> mill.v1.Evidence
-	23,  // 71: mill.v1.StepRunDetail.session:type_name -> mill.v1.Session
-	43,  // 72: mill.v1.StepRunDetail.totals:type_name -> mill.v1.ModelTotals
-	43,  // 73: mill.v1.StepRunDetail.gateway_totals:type_name -> mill.v1.ModelTotals
-	72,  // 74: mill.v1.Event.before:type_name -> google.protobuf.Struct
-	72,  // 75: mill.v1.Event.after:type_name -> google.protobuf.Struct
-	70,  // 76: mill.v1.Event.occurred_at:type_name -> google.protobuf.Timestamp
-	43,  // 77: mill.v1.CostBucket.totals:type_name -> mill.v1.ModelTotals
-	72,  // 78: mill.v1.ToolCall.arguments:type_name -> google.protobuf.Struct
-	69,  // 79: mill.v1.VerbStarted.arguments:type_name -> mill.v1.VerbStarted.ArgumentsEntry
-	27,  // 80: mill.v1.CheckStarted.contract:type_name -> mill.v1.Check
-	71,  // 81: mill.v1.CheckResult.exit:type_name -> harness.v1.ProcessExit
-	2,   // 82: mill.v1.AttemptStarted.kind:type_name -> mill.v1.StepKind
-	72,  // 83: mill.v1.AttemptStarted.options:type_name -> google.protobuf.Struct
-	3,   // 84: mill.v1.AttemptEnded.status:type_name -> mill.v1.StepRunStatus
-	4,   // 85: mill.v1.AttemptEnded.evidence_kind:type_name -> mill.v1.EvidenceKind
-	70,  // 86: mill.v1.Activity.at:type_name -> google.protobuf.Timestamp
-	70,  // 87: mill.v1.Activity.ended_at:type_name -> google.protobuf.Timestamp
-	17,  // 88: mill.v1.Activity.source:type_name -> mill.v1.ActivitySource
-	48,  // 89: mill.v1.Activity.prompt:type_name -> mill.v1.Prompt
-	49,  // 90: mill.v1.Activity.text:type_name -> mill.v1.Text
-	50,  // 91: mill.v1.Activity.thinking:type_name -> mill.v1.Thinking
-	51,  // 92: mill.v1.Activity.tool_call:type_name -> mill.v1.ToolCall
-	52,  // 93: mill.v1.Activity.tool_result:type_name -> mill.v1.ToolResult
-	74,  // 94: mill.v1.Activity.usage:type_name -> harness.v1.Usage
-	75,  // 95: mill.v1.Activity.heartbeat:type_name -> harness.v1.Heartbeat
-	53,  // 96: mill.v1.Activity.verb_started:type_name -> mill.v1.VerbStarted
-	54,  // 97: mill.v1.Activity.verb_output:type_name -> mill.v1.Output
-	55,  // 98: mill.v1.Activity.verb:type_name -> mill.v1.Verb
-	56,  // 99: mill.v1.Activity.check_started:type_name -> mill.v1.CheckStarted
-	54,  // 100: mill.v1.Activity.check_output:type_name -> mill.v1.Output
-	57,  // 101: mill.v1.Activity.check:type_name -> mill.v1.CheckResult
-	58,  // 102: mill.v1.Activity.harness_stderr:type_name -> mill.v1.HarnessStderr
-	59,  // 103: mill.v1.Activity.gate_filed:type_name -> mill.v1.GateFiled
-	60,  // 104: mill.v1.Activity.attempt_started:type_name -> mill.v1.AttemptStarted
-	61,  // 105: mill.v1.Activity.attempt_ended:type_name -> mill.v1.AttemptEnded
-	70,  // 106: mill.v1.ActivityIndexRow.at:type_name -> google.protobuf.Timestamp
-	70,  // 107: mill.v1.ActivityIndexRow.ended_at:type_name -> google.protobuf.Timestamp
-	17,  // 108: mill.v1.ActivityIndexRow.source:type_name -> mill.v1.ActivitySource
-	31,  // 109: mill.v1.Step.HarnessEntry.value:type_name -> mill.v1.HarnessSettings
-	34,  // 110: mill.v1.Workflow.McpServersEntry.value:type_name -> mill.v1.WorkflowMcpServer
-	111, // [111:111] is the sub-list for method output_type
-	111, // [111:111] is the sub-list for method input_type
-	111, // [111:111] is the sub-list for extension type_name
-	111, // [111:111] is the sub-list for extension extendee
-	0,   // [0:111] is the sub-list for field type_name
+	3,   // 69: mill.v1.RunSummary.last_step_status:type_name -> mill.v1.StepRunStatus
+	19,  // 70: mill.v1.StepRunDetail.step_run:type_name -> mill.v1.StepRun
+	22,  // 71: mill.v1.StepRunDetail.evidence:type_name -> mill.v1.Evidence
+	23,  // 72: mill.v1.StepRunDetail.session:type_name -> mill.v1.Session
+	43,  // 73: mill.v1.StepRunDetail.totals:type_name -> mill.v1.ModelTotals
+	43,  // 74: mill.v1.StepRunDetail.gateway_totals:type_name -> mill.v1.ModelTotals
+	72,  // 75: mill.v1.Event.before:type_name -> google.protobuf.Struct
+	72,  // 76: mill.v1.Event.after:type_name -> google.protobuf.Struct
+	70,  // 77: mill.v1.Event.occurred_at:type_name -> google.protobuf.Timestamp
+	43,  // 78: mill.v1.CostBucket.totals:type_name -> mill.v1.ModelTotals
+	72,  // 79: mill.v1.ToolCall.arguments:type_name -> google.protobuf.Struct
+	69,  // 80: mill.v1.VerbStarted.arguments:type_name -> mill.v1.VerbStarted.ArgumentsEntry
+	27,  // 81: mill.v1.CheckStarted.contract:type_name -> mill.v1.Check
+	71,  // 82: mill.v1.CheckResult.exit:type_name -> harness.v1.ProcessExit
+	2,   // 83: mill.v1.AttemptStarted.kind:type_name -> mill.v1.StepKind
+	72,  // 84: mill.v1.AttemptStarted.options:type_name -> google.protobuf.Struct
+	3,   // 85: mill.v1.AttemptEnded.status:type_name -> mill.v1.StepRunStatus
+	4,   // 86: mill.v1.AttemptEnded.evidence_kind:type_name -> mill.v1.EvidenceKind
+	70,  // 87: mill.v1.Activity.at:type_name -> google.protobuf.Timestamp
+	70,  // 88: mill.v1.Activity.ended_at:type_name -> google.protobuf.Timestamp
+	17,  // 89: mill.v1.Activity.source:type_name -> mill.v1.ActivitySource
+	48,  // 90: mill.v1.Activity.prompt:type_name -> mill.v1.Prompt
+	49,  // 91: mill.v1.Activity.text:type_name -> mill.v1.Text
+	50,  // 92: mill.v1.Activity.thinking:type_name -> mill.v1.Thinking
+	51,  // 93: mill.v1.Activity.tool_call:type_name -> mill.v1.ToolCall
+	52,  // 94: mill.v1.Activity.tool_result:type_name -> mill.v1.ToolResult
+	74,  // 95: mill.v1.Activity.usage:type_name -> harness.v1.Usage
+	75,  // 96: mill.v1.Activity.heartbeat:type_name -> harness.v1.Heartbeat
+	53,  // 97: mill.v1.Activity.verb_started:type_name -> mill.v1.VerbStarted
+	54,  // 98: mill.v1.Activity.verb_output:type_name -> mill.v1.Output
+	55,  // 99: mill.v1.Activity.verb:type_name -> mill.v1.Verb
+	56,  // 100: mill.v1.Activity.check_started:type_name -> mill.v1.CheckStarted
+	54,  // 101: mill.v1.Activity.check_output:type_name -> mill.v1.Output
+	57,  // 102: mill.v1.Activity.check:type_name -> mill.v1.CheckResult
+	58,  // 103: mill.v1.Activity.harness_stderr:type_name -> mill.v1.HarnessStderr
+	59,  // 104: mill.v1.Activity.gate_filed:type_name -> mill.v1.GateFiled
+	60,  // 105: mill.v1.Activity.attempt_started:type_name -> mill.v1.AttemptStarted
+	61,  // 106: mill.v1.Activity.attempt_ended:type_name -> mill.v1.AttemptEnded
+	70,  // 107: mill.v1.ActivityIndexRow.at:type_name -> google.protobuf.Timestamp
+	70,  // 108: mill.v1.ActivityIndexRow.ended_at:type_name -> google.protobuf.Timestamp
+	17,  // 109: mill.v1.ActivityIndexRow.source:type_name -> mill.v1.ActivitySource
+	31,  // 110: mill.v1.Step.HarnessEntry.value:type_name -> mill.v1.HarnessSettings
+	34,  // 111: mill.v1.Workflow.McpServersEntry.value:type_name -> mill.v1.WorkflowMcpServer
+	112, // [112:112] is the sub-list for method output_type
+	112, // [112:112] is the sub-list for method input_type
+	112, // [112:112] is the sub-list for extension type_name
+	112, // [112:112] is the sub-list for extension extendee
+	0,   // [0:112] is the sub-list for field type_name
 }
 
 func init() { file_mill_v1_mill_proto_init() }
