@@ -27,7 +27,7 @@ import (
 func (f *fixture) workerOver(runner *run.Runner, options ...func(*run.WorkerOptions)) *run.Worker {
 	GinkgoHelper()
 	opts := run.WorkerOptions{
-		Runners: []*run.Runner{runner},
+		Runner: runner,
 		// Short enough that a spec waiting on an idle worker is not waiting
 		// on a minute, long enough that the wait is a real one.
 		Wait: 3 * time.Second,
@@ -101,6 +101,15 @@ func (f *fixture) statusOf(ctx context.Context, ref string) daggerv1.Status {
 	node, err := f.client.Node(ctx, ref)
 	Expect(err).NotTo(HaveOccurred())
 	return node.GetStatus()
+}
+
+// holdReasonOf is the reason dagger holds a node under, or "" while it is
+// not held.
+func (f *fixture) holdReasonOf(ctx context.Context, ref string) string {
+	GinkgoHelper()
+	node, err := f.client.Node(ctx, ref)
+	Expect(err).NotTo(HaveOccurred())
+	return node.GetHold().GetReason()
 }
 
 // runOfRef is the ledger's record of a named node's run, or nil.

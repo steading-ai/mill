@@ -171,16 +171,17 @@ func durationOrNil(d time.Duration) *durationpb.Duration {
 	return durationpb.New(d)
 }
 
-// Ready is the ready set of the client's project, as dagger reports it to
-// this caller. It is a read: nothing is claimed and nothing is written.
+// Ready is the ready set of projects, as dagger reports it to this caller. An
+// empty projects means every project this caller may read. It is a read:
+// nothing is claimed and nothing is written.
 //
 // `mill doctor` uses it as its liveness probe, because dagger resolves a
 // principal from the transport and refuses a uid it does not know, so an
 // answer proves both that the service is there and that this account reaches
 // it as a principal.
-func (c *Client) Ready(ctx context.Context, kind daggerv1.AssigneeKind) ([]*daggerv1.Node, error) {
+func (c *Client) Ready(ctx context.Context, projects []string, kind daggerv1.AssigneeKind) ([]*daggerv1.Node, error) {
 	res, err := c.work.Ready(ctx, connect.NewRequest(&daggerv1.ReadyRequest{
-		Filter: &daggerv1.NodeFilter{Projects: []string{c.project}, AssigneeKind: kind},
+		Filter: &daggerv1.NodeFilter{Projects: projects, AssigneeKind: kind},
 		View:   daggerv1.View_VIEW_REFS,
 	}))
 	if err != nil {
@@ -195,10 +196,10 @@ func (c *Client) Ready(ctx context.Context, kind daggerv1.AssigneeKind) ([]*dagg
 // connection — the same shape `dg claim --wait` takes.
 const claimChunk = time.Minute
 
-// ClaimNext is the worker's claim: the next ready node of this client's
-// project matching labels, already leased. A nil node with a nil error is
-// the wait elapsing with nothing to claim, which is the ordinary answer on
-// an idle graph and not a failure.
+// ClaimNext is the worker's claim: the next ready node of projects matching
+// labels, already leased. An empty projects means every project this caller
+// may read. A nil node with a nil error is the wait elapsing with nothing to
+// claim, which is the ordinary answer on an idle graph and not a failure.
 //
 // The filters are the whole of the selection a worker makes
 // (docs/architecture.md §"Request path", step 1). `assignee_kind: agent` is
@@ -211,14 +212,14 @@ const claimChunk = time.Minute
 // writes nothing, so the key is unused until a claim lands, and a retry
 // after a dropped connection then returns the same node rather than a
 // second one.
-func (c *Client) ClaimNext(ctx context.Context, labels []string, wait time.Duration) (*Claimed, error) {
+func (c *Client) ClaimNext(ctx context.Context, projects, labels []string, wait time.Duration) (*Claimed, error) {
 	requestID := nonce("claim")
 	deadline := time.Now().Add(wait)
 	for {
 		res, err := c.work.ClaimNext(ctx, connect.NewRequest(&daggerv1.ClaimNextRequest{
 			RequestId: requestID,
 			Filter: &daggerv1.NodeFilter{
-				Projects:     []string{c.project},
+				Projects:     projects,
 				AssigneeKind: daggerv1.AssigneeKind_ASSIGNEE_KIND_AGENT,
 				Labels:       labels,
 			},

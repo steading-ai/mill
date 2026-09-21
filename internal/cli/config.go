@@ -217,6 +217,16 @@ func LoadConfig(path string) (Config, error) {
 	return config, nil
 }
 
+// claimsFrom is a worker's project filter in words, the way `doctor` and
+// `status` report it: an empty filter claims from every project the
+// worker's principal may read, and a configured one claims only from it.
+func claimsFrom(projects []string) string {
+	if len(projects) == 0 {
+		return "every project"
+	}
+	return strings.Join(projects, ", ")
+}
+
 // deploymentConfig is the deployment's own configuration file, for a caller
 // with no flag of its own to read a setting from. A file that does not parse
 // yields the zero config rather than an error: the caller is `mill mcp`'s

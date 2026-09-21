@@ -334,8 +334,14 @@ func (r *Runner) Dagger() *dagger.Client { return r.options.Dagger }
 
 // state is one run in flight: what the loop carries between its stages.
 type state struct {
-	node      *daggerv1.Node
-	lease     string
+	node  *daggerv1.Node
+	lease string
+	// dagger is the run's own dagger client, scoped to the project the claim
+	// landed in — the worker's own client when the claim carried none (a
+	// dagger older than the project field). Every write and gate read this
+	// run makes after its claim goes through it, never through the worker's
+	// possibly project-less one.
+	dagger    *dagger.Client
 	run       *millv1.Run
 	workflow  *millv1.Workflow
 	workspace Workspace
@@ -501,9 +507,13 @@ func (r *Runner) drive(ctx context.Context, claimed *dagger.Claimed, stopping <-
 	s := &state{
 		node:     claimed.Node,
 		lease:    claimed.Lease.GetId(),
+		dagger:   r.options.Dagger,
 		retried:  map[string]int64{},
 		stopping: stopping,
 		process:  ctx,
+	}
+	if claimed.Project != nil {
+		s.dagger = r.options.Dagger.Scoped(claimed.Project.GetSlug())
 	}
 	r.printf("claimed %s under lease %s\n", s.node.GetReference(), s.lease)
 
@@ -516,6 +526,10 @@ func (r *Runner) drive(ctx context.Context, claimed *dagger.Claimed, stopping <-
 	// lease goes back.
 	repo, err := r.repository(ctx, claimed.Project)
 	if err != nil {
+		var missing *forge.NoVCSURLError
+		if errors.As(err, &missing) {
+			return r.noRepository(ctx, s, missing)
+		}
 		return r.stop(ctx, s, fmt.Errorf("run %s: %w", s.run.GetId(), err))
 	}
 	s.repo = repo
@@ -803,6 +817,18 @@ func (r *Runner) lostSandbox(ctx context.Context, s *state, cause error) error {
 		fmt.Errorf("run %s: %w", s.run.GetId(), cause))
 }
 
+// noRepository ends a run whose project names no repository: the run fails
+// with the project's own fix on it, and the node is held under the same
+// reason so it leaves the ready set rather than being claimed, opened and
+// failed again on the very next `ClaimNext` (docs/sandbox.md
+// §Reconciliation's "not claimed again and again" is [Runner.lostSandbox]'s
+// pattern, reused here for the same reason).
+func (r *Runner) noRepository(ctx context.Context, s *state, missing *forge.NoVCSURLError) error {
+	reason := fmt.Sprintf("no repository: %s has no vcs_url", missing.Project)
+	return r.failRun(ctx, s, dagger.RequestID(s.run.GetId(), "no-repository", s.run.GetGeneration()), reason,
+		fmt.Errorf("run %s: %w", s.run.GetId(), missing))
+}
+
 // failRun ends a run that a person, not a retry, must answer for: the run
 // fails with reason as its evidence, and the node is held under the same
 // reason and lease so it leaves the ready set rather than being claimed
@@ -822,7 +848,7 @@ func (r *Runner) failRun(ctx context.Context, s *state, requestKey, reason strin
 	}); err != nil {
 		return err
 	}
-	if err := r.options.Dagger.Hold(ctx, requestKey, s.lease, s.node.GetReference(), reason); err != nil {
+	if err := s.dagger.Hold(ctx, requestKey, s.lease, s.node.GetReference(), reason); err != nil {
 		r.options.Log.Warn("holding the node of a failed run", "node", s.node.GetReference(), "error", err)
 	}
 	r.printf("%s: run %s failed: %s\n", s.node.GetReference(), s.run.GetId(), reason)

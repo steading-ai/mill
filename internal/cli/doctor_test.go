@@ -94,6 +94,30 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 		Expect(reason).To(ContainSubstring("no project to read the repository from"))
 	})
 
+	It("prints what the worker claims from, reading the same configuration a worker would", func() {
+		m := serving(ctx)
+
+		By("with no configuration file, the worker claims from every project")
+		out, _ := runCLI(ctx, m.socket, "doctor",
+			"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
+			"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
+			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
+			"--config", filepath.Join(GinkgoT().TempDir(), "no-config.yaml"),
+			"--project", "")
+		Expect(lines(out)[0]).To(Equal("claims from: every project"))
+
+		By("with project: [mill] configured, the worker claims only from mill")
+		config := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+		Expect(os.WriteFile(config, []byte("project: [mill]\n"), 0o600)).To(Succeed())
+		out, _ = runCLI(ctx, m.socket, "doctor",
+			"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
+			"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
+			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
+			"--config", config,
+			"--project", "")
+		Expect(lines(out)[0]).To(Equal("claims from: mill"))
+	})
+
 	It("the forge probe reads the repository from the project", func() {
 		m := serving(ctx)
 		g := daggerNode(ctx)

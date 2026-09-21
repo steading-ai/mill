@@ -106,16 +106,22 @@ var _ = Describe("A face's environment", Label("unit"), func() {
 		scrubEnvironment()
 		config := filepath.Join(GinkgoT().TempDir(), "empty.yaml")
 		Expect(os.WriteFile(config, []byte("{}\n"), 0o600)).To(Succeed())
-		exit := invoke("work", "--config", config,
-			"--socket", filepath.Join(GinkgoT().TempDir(), "no-mill.sock"),
-			"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "no-dagger.sock"))
+		// A worker with no project configured claims from every project
+		// rather than refusing to start, so this spec proves the point
+		// differently: the filter it logs is empty, not "mill" leaked back
+		// in from the scrubbed environment. Both sockets name paths nothing
+		// listens on — spelled out rather than left to DG_SOCKET/MILL_SOCKET's
+		// own defaults, which on a host running a real mill would otherwise
+		// reach it.
+		socket := filepath.Join(GinkgoT().TempDir(), "not-listening.sock")
+		daggerSocket := filepath.Join(GinkgoT().TempDir(), "not-listening-dagger.sock")
+		exit := invoke("work", "--config", config, "--socket", socket, "--dagger-socket", daggerSocket)
 
-		By("then no lease is taken in dagger and the suite finishes")
+		By("then the worker's filter is empty and the suite finishes")
 		Expect(exit).NotTo(BeZero())
-		Expect(stderr.String()).To(ContainSubstring("dagger project is required"),
-			"the worker found no project, so it never asked dagger for one")
-		Expect(stderr.String()).To(ContainSubstring("DG_PROJECT"))
-		Expect(stderr.String()).NotTo(ContainSubstring("mill work starting"))
+		Expect(stderr.String()).To(ContainSubstring("mill work starting"))
+		Expect(stderr.String()).To(ContainSubstring("projects=[]"),
+			"the worker claims from every project; DG_PROJECT was scrubbed before it started")
 	})
 
 	It("A config path that does not exist is refused", func() {

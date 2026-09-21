@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -16,6 +17,7 @@ import (
 	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/dagger"
+	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/harness"
 	"github.com/ivy/mill/internal/harness/fake"
 	"github.com/ivy/mill/internal/run"
@@ -96,7 +98,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			claimed := make(chan *dagger.Claimed, 1)
 			go func() {
 				defer GinkgoRecover()
-				got, err := f.client.ClaimNext(ctx, nil, 30*time.Second)
+				got, err := f.client.ClaimNext(ctx, nil, nil, 30*time.Second)
 				Expect(err).NotTo(HaveOccurred())
 				claimed <- got
 			}()
@@ -284,6 +286,36 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 		})
 	})
 
+	Describe("A project with no repository", func() {
+		It("holds each node it claims there, and warns once rather than once per node", func() {
+			first := f.createNode(ctx, &daggerv1.CreateNodeOp{Title: "first with no repository", Body: "body"})
+			second := f.createNode(ctx, &daggerv1.CreateNodeOp{Title: "second with no repository", Body: "body"})
+
+			warnings := &warnCounter{message: "a project has no repository; nodes there are held rather than claimed"}
+			worker := f.workerOver(f.runner(quick, func(o *run.Options) {
+				o.Repositories = func(context.Context, *daggerv1.Project) (run.Repository, error) {
+					return run.Repository{}, &forge.NoVCSURLError{Project: project}
+				}
+			}), func(o *run.WorkerOptions) {
+				o.Log = slog.New(warnings)
+			})
+			done := startWorker(ctx, worker)
+			DeferCleanup(func() {
+				worker.Stop()
+				Eventually(done, time.Minute).Should(Receive(BeNil()))
+			})
+
+			Eventually(func() []string {
+				return []string{f.holdReasonOf(ctx, first), f.holdReasonOf(ctx, second)}
+			}, time.Minute, 100*time.Millisecond).Should(And(
+				HaveEach(HavePrefix("no repository")),
+			), "both claimed and held rather than reclaimed into the same refusal")
+
+			Consistently(warnings.Count, time.Second, 100*time.Millisecond).Should(Equal(1),
+				"the second node's failure is the same project already warned about")
+		})
+	})
+
 	Describe("Recovery at start", func() {
 		// Scenario: A worker seals an orphaned attempt before its first claim
 		//   Given a closed attempt's live activity file still on disk
@@ -349,6 +381,36 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 		})
 	})
 })
+
+// warnCounter counts the log records whose message is the one named, so a
+// spec can assert a warning was collapsed to one line rather than parse log
+// text for it.
+type warnCounter struct {
+	message string
+
+	mu    sync.Mutex
+	count int
+}
+
+func (c *warnCounter) Enabled(context.Context, slog.Level) bool { return true }
+
+func (c *warnCounter) Handle(_ context.Context, record slog.Record) error {
+	if record.Message == c.message {
+		c.mu.Lock()
+		c.count++
+		c.mu.Unlock()
+	}
+	return nil
+}
+
+func (c *warnCounter) WithAttrs([]slog.Attr) slog.Handler { return c }
+func (c *warnCounter) WithGroup(string) slog.Handler      { return c }
+
+func (c *warnCounter) Count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.count
+}
 
 // stubbornHarness is a session that does not go when it is asked. Its turn
 // never ends on its own, and its Cancel — like the real adapter's, which

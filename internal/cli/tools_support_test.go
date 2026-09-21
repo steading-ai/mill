@@ -239,6 +239,25 @@ func daggerNodeWith(ctx context.Context, vcsURL string) *gateFixture {
 	return f
 }
 
+// secondProject creates a second dagger project beside the fixture's own,
+// with the given slug and vcs_url, and one ready node in it — for the specs
+// proving a worker's claim reaches across projects or stays confined to one.
+func (g *gateFixture) secondProject(ctx context.Context, slug, vcsURL string) (project, nodeRef string) {
+	GinkgoHelper()
+	_, err := g.graph.CreateProject(ctx, connect.NewRequest(&daggerv1.CreateProjectRequest{
+		RequestId: "cli-spec-second-project", Title: "mill cli specs (second)", Slug: slug, VcsUrl: vcsURL,
+	}))
+	Expect(err).NotTo(HaveOccurred())
+	created, err := g.graph.ApplyPatch(ctx, connect.NewRequest(&daggerv1.ApplyPatchRequest{
+		RequestId: "cli-spec-second-node", Project: slug,
+		Ops: []*daggerv1.PatchOp{{Op: &daggerv1.PatchOp_CreateNode{CreateNode: &daggerv1.CreateNodeOp{
+			Title: "the work in the second project", Body: "a node with no gate on it",
+		}}}},
+	}))
+	Expect(err).NotTo(HaveOccurred())
+	return slug, created.Msg.GetNodes()[0].GetReference()
+}
+
 // idOf is the node's ULID, which the ledger records and a patch response
 // does not carry.
 func (g *gateFixture) idOf(ctx context.Context, ref string) string {

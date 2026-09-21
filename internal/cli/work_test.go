@@ -8,9 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
 	"github.com/ivy/mill/internal/cli"
 	"github.com/ivy/mill/internal/testsupport"
 )
@@ -95,20 +97,22 @@ var _ = Describe("mill serve --work", Label(testsupport.DBLabel), func() {
 		}
 	})
 
-	// A project with no repository is refused at startup, once, rather
-	// than at every claim: a worker that claimed, failed and released in a
-	// loop would spend leases on work it can never deliver.
-	It("refuses to start on a project that names no repository", func(ctx SpecContext) {
+	// A project with no repository is not refused at startup: the worker
+	// starts, claims the node, fails its run and holds the node against the
+	// same refusal — Hold's own contract, not a log — so the node is not
+	// claimed back into a hot claim/fail loop.
+	It("claims a node that names no repository, fails its run, and holds the node rather than reclaiming it", func(ctx SpecContext) {
 		g := daggerNode(ctx)
 		databaseURL := pg.Database(ctx).Config().ConnString()
 		config := filepath.Join(GinkgoT().TempDir(), "empty.yaml")
 		Expect(os.WriteFile(config, []byte("{}\n"), 0o600)).To(Succeed())
+		socket := filepath.Join(GinkgoT().TempDir(), "mill.sock")
 
 		var stdout, stderr bytes.Buffer
 		root := cli.NewRootCommand(&stdout, &stderr)
 		root.SetArgs([]string{
 			"serve", "--work",
-			"--socket", filepath.Join(GinkgoT().TempDir(), "mill.sock"),
+			"--socket", socket,
 			"--database-url", databaseURL,
 			"--config", config,
 			"--project", daggerProject,
@@ -117,9 +121,147 @@ var _ = Describe("mill serve --work", Label(testsupport.DBLabel), func() {
 			"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
 		})
 
-		err := root.ExecuteContext(ctx)
+		serveCtx, stop := context.WithCancel(ctx)
+		served := make(chan error, 1)
+		go func() {
+			defer GinkgoRecover()
+			served <- root.ExecuteContext(serveCtx)
+		}()
+		DeferCleanup(func() {
+			stop()
+			Eventually(served, time.Minute).Should(Receive(BeNil()), stderr.String())
+		})
 
-		Expect(err).To(MatchError(ContainSubstring("dg project update " + daggerProject + " --vcs-url")))
+		By("the worker starts rather than being refused")
+		Eventually(func() error {
+			_, err := os.Stat(socket)
+			return err
+		}, time.Minute, 50*time.Millisecond).Should(Succeed(), stderr.String())
+
+		By("it claims the node, fails the run, and dagger holds the node with a reason naming the missing repository")
+		Eventually(func() string {
+			res, err := g.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{Project: daggerProject, Node: g.nodeRef}))
+			Expect(err).NotTo(HaveOccurred())
+			return res.Msg.GetNode().GetHold().GetReason()
+		}, time.Minute, 100*time.Millisecond).Should(HavePrefix("no repository"), stderr.String())
+
+		out, err := runCLI(ctx, socket, "status", "--status", "failed")
+		Expect(err).NotTo(HaveOccurred(), out)
+		Expect(rowFor(out, g.nodeRef)).NotTo(BeEmpty(), "the ledger run for the node is failed")
+
+		By("and it is not claimed back into the same refusal: a later cycle still finds exactly one failed run")
+		Consistently(func() int {
+			out, err := runCLI(ctx, socket, "status", "--status", "failed")
+			Expect(err).NotTo(HaveOccurred(), out)
+			return strings.Count(out, g.nodeRef)
+		}, 3*time.Second, 250*time.Millisecond).Should(Equal(1))
+	})
+
+	It("with no --project configured, claims a ready node from a project it was never told about", func(ctx SpecContext) {
+		// Neither project names a repository, so each claim fails fast and
+		// holds its node (the spec above) instead of looping on whichever
+		// project is claimed first — what is under test here is the filter,
+		// not how long a real clone takes.
+		//
+		// DG_PROJECT is scrubbed here rather than left to the suite's own
+		// isolation: this is the one spec whose whole point is a worker with
+		// no project configured, and this repo's own mise.toml sets
+		// DG_PROJECT for its developers' convenience running a real mill
+		// against a real dagger — exactly the ambient value a spec must not
+		// see.
+		GinkgoT().Setenv("DG_PROJECT", "")
+		g := daggerNode(ctx)
+		other, otherRef := g.secondProject(ctx, "millcli-second", "")
+		databaseURL := pg.Database(ctx).Config().ConnString()
+		config := filepath.Join(GinkgoT().TempDir(), "empty.yaml")
+		Expect(os.WriteFile(config, []byte("{}\n"), 0o600)).To(Succeed())
+		socket := filepath.Join(GinkgoT().TempDir(), "mill.sock")
+
+		var stdout, stderr bytes.Buffer
+		root := cli.NewRootCommand(&stdout, &stderr)
+		root.SetArgs([]string{
+			"serve", "--work",
+			"--socket", socket,
+			"--database-url", databaseURL,
+			"--config", config,
+			"--dagger-socket", g.service.Socket,
+			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
+			"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
+		})
+
+		serveCtx, stop := context.WithCancel(ctx)
+		served := make(chan error, 1)
+		go func() {
+			defer GinkgoRecover()
+			served <- root.ExecuteContext(serveCtx)
+		}()
+		DeferCleanup(func() {
+			stop()
+			Eventually(served, time.Minute).Should(Receive(BeNil()), stderr.String())
+		})
+
+		Eventually(func() error {
+			_, err := os.Stat(socket)
+			return err
+		}, time.Minute, 50*time.Millisecond).Should(Succeed(), stderr.String())
+		Eventually(stderr.String, time.Minute, 100*time.Millisecond).
+			Should(ContainSubstring("projects=[]"), "an unconfigured worker's filter is empty, not defaulted to one project")
+
+		Eventually(func() string {
+			res, err := g.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{Project: other, Node: otherRef}))
+			Expect(err).NotTo(HaveOccurred())
+			return res.Msg.GetNode().GetHold().GetReason()
+		}, time.Minute, 100*time.Millisecond).Should(HavePrefix("no repository"),
+			"claimed from the second project, which the command line never named")
+	})
+
+	It("with project: [mill] configured, claims only from mill even while a second project has ready work", func(ctx SpecContext) {
+		g := daggerNode(ctx)
+		other, otherRef := g.secondProject(ctx, "millcli-second", "")
+		databaseURL := pg.Database(ctx).Config().ConnString()
+		config := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+		Expect(os.WriteFile(config, []byte("project: ["+daggerProject+"]\n"), 0o600)).To(Succeed())
+		socket := filepath.Join(GinkgoT().TempDir(), "mill.sock")
+
+		var stdout, stderr bytes.Buffer
+		root := cli.NewRootCommand(&stdout, &stderr)
+		root.SetArgs([]string{
+			"serve", "--work",
+			"--socket", socket,
+			"--database-url", databaseURL,
+			"--config", config,
+			"--dagger-socket", g.service.Socket,
+			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
+			"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
+		})
+
+		serveCtx, stop := context.WithCancel(ctx)
+		served := make(chan error, 1)
+		go func() {
+			defer GinkgoRecover()
+			served <- root.ExecuteContext(serveCtx)
+		}()
+		DeferCleanup(func() {
+			stop()
+			Eventually(served, time.Minute).Should(Receive(BeNil()), stderr.String())
+		})
+
+		Eventually(func() error {
+			_, err := os.Stat(socket)
+			return err
+		}, time.Minute, 50*time.Millisecond).Should(Succeed(), stderr.String())
+
+		Eventually(func() string {
+			res, err := g.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{Project: daggerProject, Node: g.nodeRef}))
+			Expect(err).NotTo(HaveOccurred())
+			return res.Msg.GetNode().GetHold().GetReason()
+		}, time.Minute, 100*time.Millisecond).Should(HavePrefix("no repository"), "the configured project's own node is claimed")
+
+		Consistently(func() bool {
+			res, err := g.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{Project: other, Node: otherRef}))
+			Expect(err).NotTo(HaveOccurred())
+			return res.Msg.GetNode().GetClaimed()
+		}, 3*time.Second, 250*time.Millisecond).Should(BeFalse(), "the filter names only "+daggerProject+"; the second project's node is never claimed")
 	})
 })
 

@@ -381,7 +381,7 @@ var _ = Describe("mill run", func() {
 			Expect(stdout.String()).To(ContainSubstring("delivers to https://gitlab.example.test/group/thing.git"))
 		})
 
-		It("refuses a project that names no repository before anything is cloned, and releases the lease", func(ctx SpecContext) {
+		It("refuses a project that names no repository before anything is cloned, and holds the node", func(ctx SpecContext) {
 			m := serving(ctx)
 			m.run(ctx, "workflow", "push", quickFix)
 			g := daggerNode(ctx)
@@ -402,7 +402,8 @@ var _ = Describe("mill run", func() {
 			Expect(filepath.Glob(filepath.Join(workspaces, "*", "*"))).To(BeEmpty(), "nothing was cloned")
 			res, err := g.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{Project: daggerProject, Node: g.nodeRef}))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(res.Msg.GetNode().GetClaimed()).To(BeFalse(), "the lease went back")
+			Expect(res.Msg.GetNode().GetClaimed()).To(BeTrue(), "the failed run's lease is still held, so the node is not reclaimed into the same refusal")
+			Expect(res.Msg.GetNode().GetHold().GetReason()).To(HavePrefix("no repository"))
 		})
 	})
 

@@ -30,7 +30,7 @@ func (r *Runner) verify(ctx context.Context, s *state, step *millv1.Step, sr *mi
 		Elapsed:      elapsed(detail, step.GetName(), r.options.Now()),
 		Git:          s.workspace.GitRunner(),
 		Forge:        s.repo.Forge,
-		Artifacts:    artifacts{client: r.options.Dagger, ref: s.node.GetReference()},
+		Artifacts:    artifacts{client: s.dagger, ref: s.node.GetReference()},
 		Gates:        gates{runner: r, state: s},
 		Now:          r.options.Now,
 	}
@@ -92,7 +92,7 @@ func (r *Runner) attachArtifact(ctx context.Context, s *state, step *millv1.Step
 	// runs again and produces another: the pass that was superseded keeps
 	// its own, which is the record of what the run actually did.
 	name := fmt.Sprintf("%s-%s-%d", s.run.GetId(), step.GetName(), sr.GetAttempt())
-	if err := r.options.Dagger.AttachText(ctx,
+	if err := s.dagger.AttachText(ctx,
 		dagger.RequestID(s.run.GetId(), attachStep(step.GetName()), sr.GetAttempt()), s.lease,
 		s.node.GetReference(), name, step.GetName(), body, map[string]any{
 			"run_id": s.run.GetId(),
@@ -157,7 +157,7 @@ func (r *Runner) reviewed(ctx context.Context, s *state, step *millv1.Step, sr *
 func (r *Runner) attachVerdict(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, verdict *millv1.Verdict) error {
 	name := fmt.Sprintf("%s-%d.%d.md", step.GetName(), s.run.GetGeneration(), sr.GetAttempt())
 	body := verdictDocument(s, step, sr, verdict)
-	return r.options.Dagger.AttachText(ctx,
+	return s.dagger.AttachText(ctx,
 		dagger.RequestID(s.run.GetId(), name, sr.GetAttempt()), s.lease,
 		s.node.GetReference(), name, "the "+step.GetName()+" step's verdict", body,
 		map[string]any{

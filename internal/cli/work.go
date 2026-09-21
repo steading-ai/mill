@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/harness/claude"
 	"github.com/ivy/mill/internal/run"
 	"github.com/ivy/mill/internal/workspace"
@@ -42,9 +43,10 @@ func workCommand(opts *workOptions) *cobra.Command {
 		Use:   "work",
 		Short: "Claim ready dagger nodes and drive their runs",
 		Long: `Run a worker: ask dagger for the next ready node matching the configured
-projects and labels, drive its run to a result, and ask again. There is no
-scheduler and no event subscription — readiness is dagger's, and a worker
-asking for work is the scheduling.
+projects and labels, drive its run to a result, and ask again. With no
+--project it claims from every project the worker's principal may read.
+There is no scheduler and no event subscription — readiness is dagger's, and
+a worker asking for work is the scheduling.
 
 --concurrency caps how many runs are in flight; one is the value this
 release is built around. The filters are the whole of the selection a worker
@@ -70,7 +72,7 @@ func bindWorkFlags(cmd *cobra.Command, opts *workOptions) {
 	f := cmd.Flags()
 	f.StringVar(&opts.config, "config", defaultConfigPath(), "path of the configuration file (default: $"+configEnv+", else $XDG_CONFIG_HOME/mill/config.yaml, else /etc/mill/config.yaml)")
 	f.StringVar(&opts.run.socket, "socket", defaultSocketPath(), "path of the service's unix socket: what `serve` listens on, and what a worker reaches it at (default: $"+socketEnv+")")
-	f.StringSliceVar(&opts.projects, "project", nil, "dagger project to claim from; repeat for more (default: $"+daggerProjectEnv+")")
+	f.StringSliceVar(&opts.projects, "project", nil, "dagger project to claim from; repeat for more (default: $"+daggerProjectEnv+", else every project the worker may read)")
 	f.StringSliceVar(&opts.labels, "label", nil, "only claim nodes carrying every one of these labels; repeat for more")
 	f.IntVar(&opts.concurrency, "concurrency", run.DefaultConcurrency, "how many runs to drive at once")
 	f.DurationVar(&opts.wait, "wait", run.DefaultWait, "how long one claim blocks for work before asking again")
@@ -225,11 +227,21 @@ func newWorker(cmd *cobra.Command, opts *workOptions, onActivity func(string)) (
 			projects = []string{fallback}
 		}
 	}
-	if len(projects) == 0 {
-		return nil, fmt.Errorf("mill work: at least one dagger project is required; pass --project or set %s", daggerProjectEnv)
-	}
 	if opts.run.socket == "" {
 		opts.run.socket = defaultSocketPath()
+	}
+	// A misspelt `forge:` is refused here, once, rather than at every claim:
+	// the value is the worker's own, the same whichever project a claim
+	// lands in, so it needs no project to check against (unlike the
+	// repository itself, which the plan resolves fresh per claim).
+	if _, err := forge.ParseKind(opts.run.forge); err != nil {
+		return nil, fmt.Errorf("mill work: --forge: %w", err)
+	}
+	// The scratch namespace lives on one project's forge (workerStartup
+	// below), so it needs a single project to resolve; an empty or a
+	// many-project filter has no one project to ask.
+	if opts.run.sandbox.scratchNamespace != "" && len(projects) != 1 {
+		return nil, fmt.Errorf("mill work: --scratch-namespace requires exactly one --project")
 	}
 
 	// One gateway for the process, in front of every project's runs. It
@@ -238,30 +250,24 @@ func newWorker(cmd *cobra.Command, opts *workOptions, onActivity func(string)) (
 	if err != nil {
 		return nil, err
 	}
-	runners := make([]*run.Runner, 0, len(projects))
-	for _, project := range projects {
-		// No answerer: a worker has nobody at its terminal, so a gate is
-		// filed and the lease released, and whoever answers does it in
-		// dagger (docs/architecture.md §"Gate steps").
-		runner, err := newRunner(cmd, opts.run, project, "", nil, gw, onActivity)
-		if err != nil {
-			return nil, err
-		}
-		// A project with no repository is refused here, once, rather than
-		// at every claim: a worker that claimed, failed and released in a
-		// loop would spend leases on work it can never deliver. The run
-		// resolves the repository again from each claim, so a project
-		// given one later is honoured without a restart.
-		if _, err := projectRepository(cmd.Context(), runner.Dagger(), opts.run); err != nil {
-			return nil, fmt.Errorf("mill work: %w", err)
-		}
-		runners = append(runners, runner)
+	// One client for the worker, whatever the filter: an empty or
+	// many-project filter has no one project to pin the client to, and
+	// every claim scopes its own writes to the project it actually landed
+	// in (internal/run/run.go's state.dagger). No answerer: a worker has
+	// nobody at its terminal, so a gate is filed and the lease released,
+	// and whoever answers does it in dagger (docs/architecture.md §"Gate
+	// steps").
+	project := ""
+	if len(projects) == 1 {
+		project = projects[0]
+	}
+	runner, err := newRunner(cmd, opts.run, project, "", nil, gw, onActivity)
+	if err != nil {
+		return nil, err
 	}
 	// What precedes the first claim: the machine backend's reconciliation
 	// of the host against the ledger, then eviction (docs/sandbox.md
-	// §Reconciliation). The sweep it runs reaches the first project's
-	// dagger, which is the configured one; a dagger's projects are the
-	// principal's, not the project's, so one client sees them all.
+	// §Reconciliation).
 	kind, err := workspace.ParseKind(opts.run.workspace)
 	if err != nil {
 		return nil, fmt.Errorf("mill work: --workspace: %w", err)
@@ -271,12 +277,13 @@ func newWorker(cmd *cobra.Command, opts *workOptions, onActivity func(string)) (
 		return nil, err
 	}
 	log := slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: slog.LevelInfo}))
-	startup, err := workerStartup(cmd.Context(), kind, opts.run, projects[0], worker, cmd.OutOrStdout(), log)
+	startup, err := workerStartup(cmd.Context(), kind, opts.run, project, worker, cmd.OutOrStdout(), log)
 	if err != nil {
 		return nil, err
 	}
 	return run.NewWorker(run.WorkerOptions{
-		Runners:       runners,
+		Runner:        runner,
+		Projects:      projects,
 		Startup:       startup,
 		Labels:        opts.labels,
 		Concurrency:   opts.concurrency,

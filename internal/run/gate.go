@@ -174,7 +174,7 @@ func (r *Runner) file(ctx context.Context, s *state, step *millv1.Step, sr *mill
 		if err != nil {
 			return err
 		}
-		gate, err = r.options.Dagger.CreateGate(ctx,
+		gate, err = s.dagger.CreateGate(ctx,
 			dagger.RequestID(s.run.GetId(), step.GetName(), sr.GetAttempt()), s.lease,
 			dagger.Gate{
 				Title:  ask.title,
@@ -317,7 +317,7 @@ var errAnswered = errors.New("run: the gate was answered")
 // Nothing else in the loop reads dagger to decide what to write. This does,
 // and the reason is written into docs/ledger.md §Resume beside it.
 func (r *Runner) findFiledGate(ctx context.Context, s *state, step *millv1.Step) (*daggerv1.Node, error) {
-	gates, err := r.options.Dagger.Gates(ctx, s.node.GetReference(),
+	gates, err := s.dagger.Gates(ctx, s.node.GetReference(),
 		dagger.GateLabels(s.run.GetId(), step.GetName())...)
 	if err != nil {
 		return nil, err
@@ -341,7 +341,7 @@ func (r *Runner) findFiledGate(ctx context.Context, s *state, step *millv1.Step)
 // Mill's own labels narrow the node's children to this run's gates, and the
 // id picks the one out.
 func (r *Runner) gateByID(ctx context.Context, s *state, id string) (*daggerv1.Node, error) {
-	gates, err := r.options.Dagger.Gates(ctx, s.node.GetReference(),
+	gates, err := s.dagger.Gates(ctx, s.node.GetReference(),
 		dagger.GateLabel, dagger.RunLabel(s.run.GetId()))
 	if err != nil {
 		return nil, err
@@ -416,7 +416,7 @@ func (r *Runner) denyGate(ctx context.Context, s *state, step *millv1.Step, sr *
 	if body == "" {
 		body = fmt.Sprintf("The %s gate was not approved.", step.GetName())
 	}
-	if err := r.options.Dagger.Complete(ctx,
+	if err := s.dagger.Complete(ctx,
 		dagger.RequestID(s.run.GetId(), step.GetName(), denialAttempt), s.lease,
 		s.node.GetReference(), &daggerv1.Result{Body: body}); err != nil {
 		return err
@@ -497,7 +497,7 @@ func (r *Runner) artifactOf(ctx context.Context, s *state, detail *millv1.Inspec
 	if digest == "" {
 		return fmt.Sprintf("(step %s has attached no artifact to %s)", step, s.node.GetReference())
 	}
-	held, err := r.options.Dagger.Artifacts(ctx, s.node.GetReference())
+	held, err := s.dagger.Artifacts(ctx, s.node.GetReference())
 	if err != nil {
 		r.options.Log.Warn("gate ask", "artifact", step, "error", err)
 		return fmt.Sprintf("(the artifact of %s could not be read from %s: %v)", step, s.node.GetReference(), err)
@@ -565,7 +565,7 @@ func (g gates) Node(ctx context.Context, id string) (evidence.GateNode, error) {
 	// The gate's result is the evidence. A node message carries none, so
 	// the one node dagger is asked about twice is the one whose answer the
 	// ledger is about to record.
-	result, err := g.runner.options.Dagger.Result(ctx, node.GetReference())
+	result, err := g.state.dagger.Result(ctx, node.GetReference())
 	if err != nil {
 		return evidence.GateNode{}, err
 	}

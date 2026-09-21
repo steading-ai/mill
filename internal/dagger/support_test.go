@@ -52,9 +52,17 @@ func start(ctx context.Context) *fixture {
 // node creates a node in the project and returns its reference.
 func (f *fixture) node(ctx context.Context, title, body string, assignee daggerv1.AssigneeKind) string {
 	GinkgoHelper()
+	return f.nodeIn(ctx, f.project, title, body, assignee)
+}
+
+// nodeIn creates a node in project and returns its reference — node's own
+// logic, parameterized, for the specs proving a claim or a read reaches
+// across projects rather than being confined to the fixture's default one.
+func (f *fixture) nodeIn(ctx context.Context, project, title, body string, assignee daggerv1.AssigneeKind) string {
+	GinkgoHelper()
 	res, err := f.graph.ApplyPatch(ctx, connect.NewRequest(&daggerv1.ApplyPatchRequest{
-		RequestId: "spec-" + title,
-		Project:   f.project,
+		RequestId: "spec-" + project + "-" + title,
+		Project:   project,
 		Ops: []*daggerv1.PatchOp{{Op: &daggerv1.PatchOp_CreateNode{CreateNode: &daggerv1.CreateNodeOp{
 			Title:        title,
 			Body:         body,
@@ -64,6 +72,33 @@ func (f *fixture) node(ctx context.Context, title, body string, assignee daggerv
 	Expect(err).NotTo(HaveOccurred())
 	Expect(res.Msg.GetNodes()).To(HaveLen(1))
 	return res.Msg.GetNodes()[0].GetReference()
+}
+
+// secondProjectSlug names the project secondProject creates: a second
+// project beside the fixture's own, for specs proving a claim or a read
+// reaches across projects.
+const secondProjectSlug = "millspec-second"
+
+// secondProject creates a second project beside the fixture's own and
+// returns its slug.
+func (f *fixture) secondProject(ctx context.Context) string {
+	GinkgoHelper()
+	_, err := f.graph.CreateProject(ctx, connect.NewRequest(&daggerv1.CreateProjectRequest{
+		RequestId: "mill-spec-second-project",
+		Title:     "mill specs (second)",
+		Slug:      secondProjectSlug,
+	}))
+	Expect(err).NotTo(HaveOccurred())
+	return secondProjectSlug
+}
+
+// unscoped is a client pinned to no project at all — a worker's own client
+// when it is configured with no --project, claiming across every project
+// its principal may read.
+func (f *fixture) unscoped() *dagger.Client {
+	GinkgoHelper()
+	return dagger.New(f.service.HTTPClient(), f.service.BaseURL(), "",
+		dagger.WithAgentRef("spec@host"), dagger.WithSessionRef("spec"))
 }
 
 // link makes from block to.
