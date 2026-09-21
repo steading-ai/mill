@@ -17,6 +17,9 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 // Mask is what a registered value is replaced by.
@@ -74,6 +77,20 @@ func (r *Redactor) Values() []string {
 	return append([]string(nil), r.values...)
 }
 
+// longest is the length of the longest registered value: values[0], since
+// Add keeps the slice sorted longest first.
+func (r *Redactor) longest() int {
+	if r == nil {
+		return 0
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.values) == 0 {
+		return 0
+	}
+	return len(r.values[0])
+}
+
 // String scrubs every registered value out of s.
 func (r *Redactor) String(s string) string {
 	if r == nil || s == "" {
@@ -103,15 +120,14 @@ func (r *Redactor) Bytes(b []byte) []byte {
 // Writer wraps w so that every complete line written through it is scrubbed
 // first. The returned writer buffers a partial line; Close flushes it.
 func (r *Redactor) Writer(w io.Writer) io.WriteCloser {
-	return &writer{redactor: r, out: w}
+	return &writer{out: w, chunker: NewChunker(r)}
 }
 
 type writer struct {
-	redactor *Redactor
-	out      io.Writer
+	out io.Writer
 
 	mu      sync.Mutex
-	partial []byte
+	chunker *Chunker
 }
 
 // Write scrubs and forwards every complete line, holding back whatever
@@ -120,14 +136,11 @@ func (w *writer) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	w.partial = append(w.partial, p...)
-	end := bytes.LastIndexByte(w.partial, '\n')
-	if end < 0 {
+	line := w.chunker.Write(p)
+	if line == nil {
 		return len(p), nil
 	}
-	line := w.partial[:end+1]
-	w.partial = append([]byte(nil), w.partial[end+1:]...)
-	if _, err := w.out.Write(w.redactor.Bytes(line)); err != nil {
+	if _, err := w.out.Write(line); err != nil {
 		return 0, err
 	}
 	return len(p), nil
@@ -137,11 +150,163 @@ func (w *writer) Write(p []byte) (int, error) {
 func (w *writer) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if len(w.partial) == 0 {
+	line := w.chunker.Close()
+	if line == nil {
 		return nil
 	}
-	line := w.partial
-	w.partial = nil
-	_, err := w.out.Write(w.redactor.Bytes(line))
+	_, err := w.out.Write(line)
 	return err
+}
+
+// Message walks m's string fields — including a nested
+// google.protobuf.Struct or Value, which proto reflection sees as ordinary
+// message and map fields — and replaces each with the redactor's scrub of
+// it. It mutates m in place, so a body built once and about to be written
+// is redacted whole rather than a hand-kept list of which of its fields can
+// carry a secret.
+func (r *Redactor) Message(m proto.Message) {
+	if r == nil || m == nil {
+		return
+	}
+	redactMessage(r, m.ProtoReflect())
+}
+
+// redactMessage is [Redactor.Message]'s recursion. Every proto3 message,
+// including google.protobuf.Struct and Value, is walked the same way:
+// string fields are scrubbed, message fields (and the message elements of a
+// list or a map) are recursed into.
+func redactMessage(r *Redactor, m protoreflect.Message) {
+	m.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
+		switch {
+		case fd.IsMap():
+			redactMap(r, fd, v.Map())
+		case fd.IsList():
+			redactList(r, fd, v.List())
+		case fd.Kind() == protoreflect.StringKind:
+			m.Set(fd, protoreflect.ValueOfString(r.String(v.String())))
+		case fd.Kind() == protoreflect.MessageKind:
+			redactMessage(r, v.Message())
+		}
+		return true
+	})
+}
+
+func redactMap(r *Redactor, fd protoreflect.FieldDescriptor, m protoreflect.Map) {
+	switch fd.MapValue().Kind() {
+	case protoreflect.StringKind:
+		m.Range(func(k protoreflect.MapKey, v protoreflect.Value) bool {
+			m.Set(k, protoreflect.ValueOfString(r.String(v.String())))
+			return true
+		})
+	case protoreflect.MessageKind:
+		m.Range(func(_ protoreflect.MapKey, v protoreflect.Value) bool {
+			redactMessage(r, v.Message())
+			return true
+		})
+	}
+}
+
+func redactList(r *Redactor, fd protoreflect.FieldDescriptor, l protoreflect.List) {
+	switch fd.Kind() {
+	case protoreflect.StringKind:
+		for i := 0; i < l.Len(); i++ {
+			l.Set(i, protoreflect.ValueOfString(r.String(l.Get(i).String())))
+		}
+	case protoreflect.MessageKind:
+		for i := 0; i < l.Len(); i++ {
+			redactMessage(r, l.Get(i).Message())
+		}
+	}
+}
+
+// Chunker holds back one stream's incomplete trailing line, so a value
+// split across two reads is scrubbed whole rather than missed by both
+// halves — [Redactor.Writer]'s rule, restated for a caller that wants
+// discrete redacted chunks back instead of an io.Writer, such as a check or
+// a verb streaming its output to the activity record. One Chunker is kept
+// per stream (`stdout`, `stderr`, or a verb's own key).
+type Chunker struct {
+	redactor *Redactor
+	partial  []byte
+}
+
+// NewChunker returns a Chunker that scrubs against r.
+func NewChunker(r *Redactor) *Chunker {
+	return &Chunker{redactor: r}
+}
+
+// Write returns the complete, redacted lines newly available in data,
+// holding back whatever follows the last newline until it arrives. It
+// returns nil when data completed no line.
+func (c *Chunker) Write(data []byte) []byte {
+	c.partial = append(c.partial, data...)
+	end := bytes.LastIndexByte(c.partial, '\n')
+	if end < 0 {
+		return nil
+	}
+	line := c.partial[:end+1]
+	c.partial = append([]byte(nil), c.partial[end+1:]...)
+	return c.redactor.Bytes(line)
+}
+
+// Close flushes a trailing chunk that never got its newline. It returns nil
+// when nothing was held back.
+func (c *Chunker) Close() []byte {
+	if len(c.partial) == 0 {
+		return nil
+	}
+	line := c.partial
+	c.partial = nil
+	return c.redactor.Bytes(line)
+}
+
+// DeltaHoldback redacts a stream of text deltas — `text` and `thinking`
+// blocks, which have no newline to hold back on — by keeping the last L−1
+// bytes of each block's accumulated text unreleased, L the longest
+// currently-registered value ([Redactor.Values] already exposes lengths),
+// and releasing them once the next delta or `final` has enough bytes to
+// prove no registered value spans the boundary.
+type DeltaHoldback struct {
+	redactor *Redactor
+
+	mu   sync.Mutex
+	held map[string]string
+}
+
+// NewDeltaHoldback returns a DeltaHoldback that scrubs against r.
+func NewDeltaHoldback(r *Redactor) *DeltaHoldback {
+	return &DeltaHoldback{redactor: r, held: map[string]string{}}
+}
+
+// Add appends delta to blockID's accumulated text and returns the redacted
+// text ready to release. On final, everything held for blockID is released
+// and the block is forgotten; otherwise the last `holdLength` bytes stay
+// held back for the next call.
+func (h *DeltaHoldback) Add(blockID, delta string, final bool) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	text := h.redactor.String(h.held[blockID] + delta)
+	if final {
+		delete(h.held, blockID)
+		return text
+	}
+	hold := h.holdLength()
+	if hold <= 0 || len(text) <= hold {
+		h.held[blockID] = text
+		return ""
+	}
+	release := text[:len(text)-hold]
+	h.held[blockID] = text[len(text)-hold:]
+	return release
+}
+
+// holdLength is one byte short of the longest registered value: enough that
+// a value ending at the boundary between one release and the next is never
+// split across them undetected.
+func (h *DeltaHoldback) holdLength() int {
+	longest := h.redactor.longest()
+	if longest <= 1 {
+		return 0
+	}
+	return longest - 1
 }

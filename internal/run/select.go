@@ -175,6 +175,10 @@ func (r *Runner) assess(ctx context.Context, s *state, step *millv1.Step, candid
 		sr := started.GetStepRun()
 		r.printf("step %s attempt %d\n", step.GetName(), sr.GetAttempt())
 
+		if err := r.openActivity(s, step, sr); err != nil {
+			return nil, err
+		}
+
 		token, err := call(ctx, r.options.Store.IssueStepToken, &millv1.IssueStepTokenRequest{
 			LeaseId:      s.lease,
 			StepRunId:    sr.GetId(),
@@ -207,6 +211,7 @@ func (r *Runner) assess(ctx context.Context, s *state, step *millv1.Step, candid
 				execErr = errors.Join(execErr, over)
 			}
 			if ctx.Err() != nil || isFenced(execErr) {
+				abortActivity(s)
 				return false, r.stopped(ctx, s)
 			}
 
@@ -236,6 +241,9 @@ func (r *Runner) assess(ctx context.Context, s *state, step *millv1.Step, candid
 				}); err != nil {
 					return false, err
 				}
+				if err := endActivity(s, millv1.StepRunStatus_STEP_RUN_STATUS_FAILED, millv1.EvidenceKind_EVIDENCE_KIND_UNSPECIFIED, cause.Error()); err != nil {
+					return false, err
+				}
 				s.record(step.GetName(), cause.Error())
 				s.recordAttempt(step, sr, exit, lastWords(res, cause.Error()), true)
 				r.printf("  failed: %v\n", cause)
@@ -257,6 +265,9 @@ func (r *Runner) assess(ctx context.Context, s *state, step *millv1.Step, candid
 				StepRunId: sr.GetId(),
 				Evidence:  value,
 			}); err != nil {
+				return false, err
+			}
+			if err := endActivity(s, millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED, value.GetKind(), evidenceName(value.GetKind())); err != nil {
 				return false, err
 			}
 			s.recordAttempt(step, sr, res.exit, lastWords(res, ""), false)

@@ -66,6 +66,24 @@ type Request struct {
 	// WorkflowDir is the directory the workflow was loaded from. A relative
 	// command that the skill does not carry is resolved here.
 	WorkflowDir string
+	// Sink receives the check's own activity records — its resolved command
+	// and contract, then its output as it streams — as Run produces them.
+	// Nil keeps Run exactly as it was before Sink existed.
+	Sink Sink
+}
+
+// Sink is where a check's own activity records come from: its resolved
+// command and contract before it runs, and its output as the process
+// produces it (docs/activity.md's check_started and check_output). A check
+// has no session and no events, so nothing else reports its progress before
+// Run returns.
+type Sink interface {
+	// Started is called once, with the resolved command and the contract it
+	// will be judged against, before the process spawns.
+	Started(command []string, contract *millv1.Check)
+	// Output is called for every read from stream ("stdout" or "stderr") as
+	// Run drains it, not batched until Run returns.
+	Output(stream string, data []byte)
 }
 
 // Result is what running a check produced.
@@ -96,6 +114,9 @@ func Run(ctx context.Context, execer workspace.Execer, request Request) (Result,
 	if err != nil {
 		return Result{}, err
 	}
+	if request.Sink != nil {
+		request.Sink.Started(append([]string{command.Path}, command.Args...), request.Check)
+	}
 	process, err := execer.Exec(ctx, command)
 	if err != nil {
 		return Result{}, fmt.Errorf("check %s: %w", request.Name, err)
@@ -114,8 +135,8 @@ func Run(ctx context.Context, execer workspace.Execer, request Request) (Result,
 	var wait sync.WaitGroup
 	var stdout, stderr string
 	wait.Add(2)
-	go func() { defer wait.Done(); stdout = drain(process.Stdout) }()
-	go func() { defer wait.Done(); stderr = drain(process.Stderr) }()
+	go func() { defer wait.Done(); stdout = drain(tee(process.Stdout, "stdout", request.Sink)) }()
+	go func() { defer wait.Done(); stderr = drain(tee(process.Stderr, "stderr", request.Sink)) }()
 	if err := process.Stdin.Close(); err != nil {
 		return Result{}, fmt.Errorf("check %s: close stdin: %w", request.Name, err)
 	}
@@ -268,6 +289,29 @@ func resolve(request Request, name string) (string, error) {
 
 func within(root, path string) bool {
 	return path == root || strings.HasPrefix(path, root+string(filepath.Separator))
+}
+
+// tee wraps r so every read it produces also reaches sink's Output for
+// stream, as Run drains it rather than once it has finished. A nil sink
+// returns r unchanged.
+func tee(r io.Reader, stream string, sink Sink) io.Reader {
+	if sink == nil {
+		return r
+	}
+	return io.TeeReader(r, sinkWriter{stream: stream, sink: sink})
+}
+
+// sinkWriter adapts a check's Sink to an io.Writer, so [tee] can hand it to
+// io.TeeReader. It always succeeds: a dropped activity record is not a
+// failure of the check reading its own output.
+type sinkWriter struct {
+	stream string
+	sink   Sink
+}
+
+func (w sinkWriter) Write(p []byte) (int, error) {
+	w.sink.Output(w.stream, p)
+	return len(p), nil
 }
 
 // drain reads a stream to its end, keeping at most [OutputLimit] of it.

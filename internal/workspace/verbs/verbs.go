@@ -29,6 +29,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/workspace"
@@ -47,7 +48,60 @@ type Host struct {
 	// nothing is scrubbed, which is only right for a host with no
 	// credential in play.
 	Redactor *redact.Redactor
+	// Sink records the verb's own activity (docs/activity.md's
+	// verb_started/verb_output/verb). Nil records nothing. A backend wires
+	// one in per attempt through [workspace.ActivitySink], so this is
+	// ordinarily a [SinkVar]: a value stable across every copy of Host that
+	// gets handed out (gitVerbs, forgeVerbs, runner all hold one), whose
+	// target is what actually changes.
+	Sink workspace.Sink
 }
+
+// SinkVar is a [workspace.Sink] whose target may be set after construction
+// and read concurrently. Host is copied by value everywhere it is used
+// (gitVerbs{v: v}, forgeVerbs{v: v}, runner{v: v}), so a Sink field set once
+// at construction could never be changed for all of them at once, and a bare
+// mutable field would race the socket's own goroutines against whichever
+// step is opening or closing an attempt's writer (internal/run's
+// attachActivitySink, detachActivitySink) — the same reason Host.Redactor is
+// a pointer to a self-synchronized type rather than a value.
+type SinkVar struct {
+	mu     sync.RWMutex
+	target workspace.Sink
+}
+
+// Set installs sink, or clears it with nil.
+func (v *SinkVar) Set(sink workspace.Sink) {
+	v.mu.Lock()
+	v.target = sink
+	v.mu.Unlock()
+}
+
+func (v *SinkVar) get() workspace.Sink {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return v.target
+}
+
+func (v *SinkVar) Started(verb string, args map[string]string) {
+	if s := v.get(); s != nil {
+		s.Started(verb, args)
+	}
+}
+
+func (v *SinkVar) Output(verb, stream string, data []byte) {
+	if s := v.get(); s != nil {
+		s.Output(verb, stream, data)
+	}
+}
+
+func (v *SinkVar) Ended(verb string, err error) {
+	if s := v.get(); s != nil {
+		s.Ended(verb, err)
+	}
+}
+
+var _ workspace.Sink = (*SinkVar)(nil)
 
 // Run runs one git command against dir and returns its standard output.
 //
@@ -63,12 +117,20 @@ type Host struct {
 // appears in neither the remote URL nor argv (docs/architecture.md
 // §"Identity and credentials"); every value in extra is registered with the
 // redactor first, so a failure that quotes git's stderr cannot quote it.
-func (h Host) Run(ctx context.Context, dir string, extra map[string]string, args ...string) (string, error) {
+func (h Host) Run(ctx context.Context, dir string, extra map[string]string, args ...string) (out string, err error) {
 	binary := h.Git
 	if binary == "" {
 		binary = "git"
 	}
-	verb := gitVerb(args)
+	subcommand := gitVerb(args)
+	verb := "git." + subcommand
+	if h.Sink != nil {
+		// No arguments: there is no verb-agnostic way to turn raw argv into
+		// VerbStarted's "never a session's free text" (a commit's own
+		// `--message` is exactly that), so this chokepoint reports none.
+		h.Sink.Started(verb, nil)
+		defer func() { h.Sink.Ended(verb, err) }()
+	}
 	env := map[string]string{
 		"PATH":                os.Getenv("PATH"),
 		"HOME":                filepath.Dir(dir),
@@ -91,7 +153,8 @@ func (h Host) Run(ctx context.Context, dir string, extra map[string]string, args
 		Env:  env,
 	})
 	if err != nil {
-		return "", fmt.Errorf("workspace: git %s: %w", verb, err)
+		err = fmt.Errorf("workspace: git %s: %w", subcommand, err)
+		return "", err
 	}
 	_ = process.Stdin.Close()
 	var stderr []byte
@@ -104,15 +167,26 @@ func (h Host) Run(ctx context.Context, dir string, extra map[string]string, args
 	stdout, stdoutErr := io.ReadAll(process.Stdout)
 	<-done
 	result := process.Wait()
+	if h.Sink != nil {
+		if len(stdout) > 0 {
+			h.Sink.Output(verb, "stdout", stdout)
+		}
+		if len(stderr) > 0 {
+			h.Sink.Output(verb, "stderr", stderr)
+		}
+	}
 	if stdoutErr != nil {
-		return "", fmt.Errorf("workspace: git %s: %w", verb, stdoutErr)
+		err = fmt.Errorf("workspace: git %s: %w", subcommand, stdoutErr)
+		return "", err
 	}
 	if stderrErr != nil {
-		return "", fmt.Errorf("workspace: git %s: %w", verb, stderrErr)
+		err = fmt.Errorf("workspace: git %s: %w", subcommand, stderrErr)
+		return "", err
 	}
 	if result.Status != 0 {
-		return string(stdout), fmt.Errorf("workspace: git %s exited %d: %s",
-			verb, result.Status, h.redacted(strings.TrimSpace(string(stderr))))
+		err = fmt.Errorf("workspace: git %s exited %d: %s",
+			subcommand, result.Status, h.redacted(strings.TrimSpace(string(stderr))))
+		return string(stdout), err
 	}
 	return string(stdout), nil
 }

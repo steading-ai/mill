@@ -30,6 +30,39 @@ func (r *recorder) Exec(ctx context.Context, command workspace.Command) (*worksp
 	return workspace.Spawner{Floor: []string{}}.Exec(ctx, command)
 }
 
+// fakeSink is a [workspace.Sink] that keeps every call it was handed, in
+// order, for a spec to read back.
+type fakeSink struct {
+	mu      sync.Mutex
+	started []string
+	output  []sunk
+	ended   []sunk
+}
+
+type sunk struct {
+	verb, stream string
+	data         []byte
+	err          error
+}
+
+func (f *fakeSink) Started(verb string, _ map[string]string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.started = append(f.started, verb)
+}
+
+func (f *fakeSink) Output(verb, stream string, data []byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.output = append(f.output, sunk{verb: verb, stream: stream, data: data})
+}
+
+func (f *fakeSink) Ended(verb string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ended = append(f.ended, sunk{verb: verb, err: err})
+}
+
 // repository is a checkout with one commit on main.
 func repository() string {
 	GinkgoHelper()
@@ -108,6 +141,31 @@ var _ = Describe("Git on the host", Label("unit"), func() {
 		status, err := v.Git().Status(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(workspace.Status{Branch: "main", Clean: true}))
+	})
+
+	It("sinks a verb's start and its stdout, and ends it with no error, on success", func(ctx context.Context) {
+		sink := &fakeSink{}
+		host.Sink = sink
+		out, err := host.Run(ctx, dir, nil, "rev-parse", "--abbrev-ref", "HEAD")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(sink.started).To(Equal([]string{"git.rev-parse"}))
+		Expect(sink.output).To(Equal([]sunk{{verb: "git.rev-parse", stream: "stdout", data: []byte(out)}}),
+			"no call for the empty stderr stream")
+		Expect(sink.ended).To(HaveLen(1))
+		Expect(sink.ended[0].verb).To(Equal("git.rev-parse"))
+		Expect(sink.ended[0].err).NotTo(HaveOccurred())
+	})
+
+	It("sinks a verb's stderr and ends it with the command's own error, on failure", func(ctx context.Context) {
+		sink := &fakeSink{}
+		host.Sink = sink
+		_, err := host.Run(ctx, dir, nil, "show", "does-not-exist")
+		Expect(err).To(HaveOccurred())
+		Expect(sink.started).To(Equal([]string{"git.show"}))
+		Expect(sink.output).To(HaveLen(1), "no call for the empty stdout stream")
+		Expect(sink.output[0].verb).To(Equal("git.show"))
+		Expect(sink.output[0].stream).To(Equal("stderr"))
+		Expect(sink.ended).To(Equal([]sunk{{verb: "git.show", err: err}}))
 	})
 
 	It("tells the same repository under the suffixes git ignores", func() {

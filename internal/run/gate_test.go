@@ -168,6 +168,85 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 		})
 	})
 
+	Describe("The gate's activity record", func() {
+		var logDir string
+
+		BeforeEach(func() {
+			logDir = GinkgoT().TempDir()
+		})
+
+		It("files a gate with no attempt_ended, naming the filed node's reference", func() {
+			workflow := asks("verdict.decision == approve")
+			Expect(f.runner(func(o *run.Options) {
+				o.Workflow = workflow
+				o.LogDir = logDir
+			}).Execute(ctx, f.nodeRef)).To(Succeed())
+
+			gate := f.theGate(ctx)
+			sr := stepRuns(f.inspect(ctx), "merge")[0]
+			activities, err := run.ReadActivities(logDir, f.runOf(ctx).GetId(), "merge", sr.GetAttempt())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(activities).NotTo(BeEmpty())
+			Expect(activities[0].GetAttemptStarted()).NotTo(BeNil(), "seq 1 opens the attempt")
+
+			last := activities[len(activities)-1]
+			filed := last.GetGateFiled()
+			Expect(filed).NotTo(BeNil(), "the last record is the filing, not an end")
+			Expect(filed.GetNodeRef()).To(Equal(gate.GetReference()))
+			for _, a := range activities {
+				Expect(a.GetAttemptEnded()).To(BeNil(), "filing leaves the attempt open")
+			}
+		})
+
+		It("keeps one contiguous seq across a gate filed by one worker and resumed by another", func() {
+			workflow := asks("verdict.decision == approve")
+			Expect(f.runner(func(o *run.Options) {
+				o.Workflow = workflow
+				o.LogDir = logDir
+			}).Execute(ctx, f.nodeRef)).To(Succeed())
+
+			gate := f.theGate(ctx)
+			f.approveGate(ctx, gate.GetReference())
+
+			// A second Runner instance stands in for a different worker
+			// resuming the gate: reopenActivityWriter, not the writer the
+			// first Runner held, is what recovers seq here.
+			Expect(f.runner(func(o *run.Options) {
+				o.Workflow = workflow
+				o.LogDir = logDir
+			}).Execute(ctx, f.nodeRef)).To(Succeed())
+
+			sr := stepRuns(f.inspect(ctx), "merge")[0]
+			activities, err := run.ReadActivities(logDir, f.runOf(ctx).GetId(), "merge", sr.GetAttempt())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(activities).NotTo(BeEmpty())
+			Expect(activities[0].GetAttemptStarted()).NotTo(BeNil())
+			Expect(activities[len(activities)-1].GetAttemptEnded()).NotTo(BeNil())
+
+			for i, a := range activities {
+				Expect(a.GetSeq()).To(Equal(int64(i+1)), "seq is contiguous across the filing and the resume")
+			}
+		})
+
+		It(`ends a denied gate's attempt with reason "gate denied"`, func() {
+			workflow := asks("verdict.decision == approve")
+			person := &answerer{approve: false}
+			Expect(f.runner(withAnswers(person), func(o *run.Options) {
+				o.Workflow = workflow
+				o.LogDir = logDir
+			}).Execute(ctx, f.nodeRef)).To(Succeed())
+
+			sr := stepRuns(f.inspect(ctx), "merge")[0]
+			activities, err := run.ReadActivities(logDir, f.runOf(ctx).GetId(), "merge", sr.GetAttempt())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(activities).NotTo(BeEmpty())
+			ended := activities[len(activities)-1].GetAttemptEnded()
+			Expect(ended).NotTo(BeNil())
+			Expect(ended.GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_FAILED))
+			Expect(ended.GetReason()).To(Equal("gate denied"))
+		})
+	})
+
 	Describe("A predicate over the run's tier", func() {
 		It("reads the tier the project default gave the run", func() {
 			// The project default is what names the tier until an

@@ -404,6 +404,7 @@ type Workspace struct {
 	redactor *redact.Redactor
 	execer   workspace.Execer
 	verbs    verbs.Verbs
+	verbSink *verbs.SinkVar
 	server   *socket.Server
 	images   *image.Store
 	caches   *cache.Store
@@ -449,8 +450,9 @@ func New(host driver.Driver, c Config) *Workspace {
 	// through the same execer the clone goes through and never through
 	// the helper: the machine is where the session works, the host is
 	// where the mill signs (docs/sandbox.md §Verbs).
+	w.verbSink = &verbs.SinkVar{}
 	w.verbs = verbs.Verbs{
-		Host:     verbs.Host{Git: c.Git, Execer: w.execer, Redactor: w.redactor},
+		Host:     verbs.Host{Git: c.Git, Execer: w.execer, Redactor: w.redactor, Sink: w.verbSink},
 		Forge:    c.Forge,
 		Checkout: w.checkout,
 	}
@@ -703,6 +705,10 @@ func (w *Workspace) Environment() map[string]string {
 // Redact registers values the workspace scrubs from every log line.
 func (w *Workspace) Redact(values ...string) { w.redactor.Add(values...) }
 
+// SetActivitySink directs the verbs run through this workspace to sink,
+// implementing workspace.ActivitySink.
+func (w *Workspace) SetActivitySink(sink workspace.Sink) { w.verbSink.Set(sink) }
+
 // GitRunner runs git in the checkout on the host, through the chokepoint:
 // what the `commit` verifier asks about the repository.
 func (w *Workspace) GitRunner() forge.Git { return w.verbs.Runner() }
@@ -852,4 +858,5 @@ var (
 	_ workspace.StepResumer    = (*Workspace)(nil)
 	_ workspace.Provisioned    = (*Workspace)(nil)
 	_ workspace.Reporter       = (*Workspace)(nil)
+	_ workspace.ActivitySink   = (*Workspace)(nil)
 )

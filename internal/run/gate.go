@@ -137,6 +137,22 @@ func (r *Runner) file(ctx context.Context, s *state, step *millv1.Step, sr *mill
 		if err != nil {
 			return err
 		}
+		if err := s.activity.Record(&millv1.Activity{
+			Source: millv1.ActivitySource_ACTIVITY_SOURCE_MILL,
+			Body: &millv1.Activity_GateFiled{GateFiled: &millv1.GateFiled{
+				Kind:    string(noticeKind(step)),
+				NodeId:  gate.GetId(),
+				NodeRef: gate.GetReference(),
+				Title:   ask.title,
+			}},
+		}); err != nil {
+			return err
+		}
+		if err := s.activity.Close(); err != nil {
+			return err
+		}
+		detachActivitySink(s)
+		s.activity = nil
 		// Only for a gate this attempt filed. A gate found already filed is
 		// one somebody has already been told about, and telling them again
 		// is the second message a crash recovery must not send.
@@ -305,6 +321,9 @@ func (r *Runner) resumeGate(ctx context.Context, s *state, step *millv1.Step, de
 	}
 	switch gate.GetStatus() {
 	case daggerv1.Status_STATUS_DONE:
+		if err := r.reopenActivity(s, step, sr); err != nil {
+			return err
+		}
 		verified, err := evidence.Verify(ctx, millv1.EvidenceKind_EVIDENCE_KIND_GATE, evidence.Step{
 			Name:       step.GetName(),
 			Definition: step,
@@ -333,6 +352,9 @@ func (r *Runner) resumeGate(ctx context.Context, s *state, step *millv1.Step, de
 		return errReleased
 
 	default:
+		if err := r.reopenActivity(s, step, sr); err != nil {
+			return err
+		}
 		return r.denyGate(ctx, s, step, gate)
 	}
 }
@@ -349,6 +371,9 @@ func (r *Runner) denyGate(ctx context.Context, s *state, step *millv1.Step, gate
 	if err := r.options.Dagger.Complete(ctx,
 		dagger.RequestID(s.run.GetId(), step.GetName(), denialAttempt), s.lease,
 		s.node.GetReference(), &daggerv1.Result{Body: body}); err != nil {
+		return err
+	}
+	if err := endActivity(s, millv1.StepRunStatus_STEP_RUN_STATUS_FAILED, millv1.EvidenceKind_EVIDENCE_KIND_GATE, "gate denied"); err != nil {
 		return err
 	}
 	if _, err := call(ctx, r.options.Store.Fail, &millv1.FailRequest{

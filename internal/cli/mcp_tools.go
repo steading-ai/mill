@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -552,12 +551,18 @@ func (s *mcpServer) logs(ctx context.Context, reference, step string, tail int) 
 	if attempt == nil {
 		return nil, fmt.Errorf("no attempt at step %q has been made", step)
 	}
-	path := run.StepLogPath(s.opts.logDir, detail.Msg.GetSummary().GetRun().GetId(), step, attempt.GetStepRun().GetAttempt())
-	raw, err := os.ReadFile(path) //nolint:gosec // the path is built from the ledger's own ids
+	activities, err := run.ReadActivities(s.opts.logDir, detail.Msg.GetSummary().GetRun().GetId(), step, attempt.GetStepRun().GetAttempt())
 	if err != nil {
 		return nil, fmt.Errorf("no log for %s attempt %d: %w", step, attempt.GetStepRun().GetAttempt(), err)
 	}
-	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	var lines []string
+	for _, a := range activities {
+		rendered := run.RenderActivity(a)
+		if rendered == "" {
+			continue
+		}
+		lines = append(lines, strings.Split(strings.TrimRight(rendered, "\n"), "\n")...)
+	}
 	if tail > 0 && len(lines) > tail {
 		lines = lines[len(lines)-tail:]
 	}

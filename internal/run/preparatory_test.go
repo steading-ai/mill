@@ -169,14 +169,12 @@ var _ = Describe("Preparatory steps", Label(testsupport.DBLabel), func() {
 		By("and the session's transcript contains none of mise's output")
 		Expect(firstPrompt()).NotTo(ContainSubstring("all tools are installed"))
 		Expect(firstPrompt()).NotTo(ContainSubstring("Preparatory step"), "a step that exited 0 owes no finding")
-		raw, err := os.ReadFile(run.StepLogPath(logDir, f.runOf(ctx).GetId(), "gather-context", 1))
-		Expect(err).NotTo(HaveOccurred())
-		Expect(string(raw)).NotTo(ContainSubstring("all tools are installed"))
+		Expect(renderedLog(logDir, f.runOf(ctx).GetId(), "gather-context", 1)).
+			NotTo(ContainSubstring("all tools are installed"))
 
 		By("and the step's own log holds it, for mill logs")
-		own, err := os.ReadFile(run.StepLogPath(logDir, f.runOf(ctx).GetId(), "toolchain", 1))
-		Expect(err).NotTo(HaveOccurred())
-		Expect(string(own)).To(ContainSubstring("all tools are installed"))
+		Expect(renderedLog(logDir, f.runOf(ctx).GetId(), "toolchain", 1)).
+			To(ContainSubstring("all tools are installed"))
 	})
 
 	// Scenario: A failed toolchain step becomes a finding and the run continues

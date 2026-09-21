@@ -2,7 +2,6 @@ package acceptance_test
 
 import (
 	"context"
-	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -267,12 +266,11 @@ func answering(detail *millv1.InspectResponse, step, failed string) *millv1.Step
 	return nil
 }
 
-// stepLog is one attempt's log, which is where the mill records the prompt
-// it gave a session.
+// stepLog is one attempt's activity record, rendered back into the lines an
+// operator reads — where the mill records the prompt it gave a session.
 func stepLog(dir, runID, step string, attempt int64) string {
 	GinkgoHelper()
-	path := run.StepLogPath(dir, runID, step, attempt)
-	content, err := os.ReadFile(path) //nolint:gosec // a path the suite computed
-	Expect(err).NotTo(HaveOccurred(), "the ledger's log for %s attempt %d", step, attempt)
-	return string(content)
+	out, err := run.RenderedLog(dir, runID, step, attempt)
+	Expect(err).NotTo(HaveOccurred(), "the ledger's activity record for %s attempt %d", step, attempt)
+	return out
 }

@@ -202,6 +202,10 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 	sr := started.GetStepRun()
 	r.printf("step %s attempt %d\n", step.GetName(), sr.GetAttempt())
 
+	if err := r.openActivity(s, step, sr); err != nil {
+		return outcome{}, err
+	}
+
 	token, err := call(ctx, r.options.Store.IssueStepToken, &millv1.IssueStepTokenRequest{
 		LeaseId:      s.lease,
 		StepRunId:    sr.GetId(),
@@ -235,6 +239,7 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 	// (docs/domain-model.md §Gate). Nothing below it may run — every one of
 	// those writes is fenced by a lease this run no longer holds.
 	if errors.Is(execErr, errReleased) || errors.Is(execErr, errAborted) {
+		abortActivity(s)
 		return outcome{}, execErr
 	}
 	// The gate was answered on the spot. The attempt stays open and the
@@ -251,6 +256,7 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 	// back. Either way nothing below runs, because everything below is a
 	// write under a lease this worker may no longer hold.
 	if ctx.Err() != nil || isFenced(execErr) {
+		abortActivity(s)
 		return outcome{}, r.stopped(ctx, s)
 	}
 
@@ -314,6 +320,9 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 		}); err != nil {
 			return outcome{}, err
 		}
+		if err := endActivity(s, millv1.StepRunStatus_STEP_RUN_STATUS_ABORTED, millv1.EvidenceKind_EVIDENCE_KIND_UNSPECIFIED, pending.Error()); err != nil {
+			return outcome{}, err
+		}
 		return outcome{}, nil
 
 	default:
@@ -369,6 +378,9 @@ func (r *Runner) closeStep(ctx context.Context, s *state, sr *millv1.StepRun, st
 		Evidence:     value,
 		AutoApproved: res.autoApproved,
 	}); err != nil {
+		return err
+	}
+	if err := endActivity(s, millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED, value.GetKind(), evidenceName(value.GetKind())); err != nil {
 		return err
 	}
 	// What the run carries forward to its result: the pull request a `url`

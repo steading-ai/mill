@@ -396,6 +396,16 @@ func closedSteps(detail *millv1.InspectResponse) map[string]millv1.EvidenceKind 
 	return closed
 }
 
+// renderedLog is one attempt's activity record, decoded and rendered back
+// into the lines `mill logs` would print — what a spec asserting on log
+// content reads, rather than the frames themselves.
+func renderedLog(dir, runID, step string, attempt int64) string {
+	GinkgoHelper()
+	out, err := run.RenderedLog(dir, runID, step, attempt)
+	Expect(err).NotTo(HaveOccurred())
+	return out
+}
+
 // script fixes what the harness replays, one entry per turn. The last is
 // reused, so a spec that cares about one turn names one.
 func (f *fixture) script(scripts ...fake.Script) {

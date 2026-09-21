@@ -190,6 +190,10 @@ type Options struct {
 	// a session registers with the `redact` verb during a step never reaches
 	// the log an operator tails (docs/architecture.md §Observability).
 	Redactor *redact.Redactor
+	// ActivityCeiling is the most raw bytes one attempt's activity record
+	// keeps before later bodies are truncated (docs/activity.md §Caps).
+	// Zero takes [defaultActivityCeiling].
+	ActivityCeiling int64
 	// Log is where diagnostics go. Nil discards them.
 	Log *slog.Logger
 	// Now is the clock. Nil means [time.Now].
@@ -290,6 +294,9 @@ func New(options Options) *Runner {
 	if options.Redactor == nil {
 		options.Redactor = redact.New()
 	}
+	if options.ActivityCeiling <= 0 {
+		options.ActivityCeiling = defaultActivityCeiling
+	}
 	return &Runner{options: options}
 }
 
@@ -341,6 +348,12 @@ type state struct {
 	// token is the step token issued for the attempt in flight, so a gate
 	// step can revoke it before the run stops waiting on a human.
 	token string
+	// activity is the attempt in flight's open activity record. It is
+	// opened right after StartStepRun and closed where the attempt is
+	// decided — closeStep, failStep, or a deliberate abort — never by
+	// execute itself, since the attempt's ending is only known once
+	// execute returns and verify has run. Nil once the attempt is closed.
+	activity *activityWriter
 	// parked says this claim took over a run the circuit breaker parked, so
 	// the park gate is read before any step runs.
 	parked bool
