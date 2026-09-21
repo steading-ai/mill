@@ -1,0 +1,135 @@
+# The `implement` session's turns, one per skill step scripted-feature's
+# implementer visits, in the order a real run visits them (mill#21's plan,
+# step 5's turn-order table). No turn here emits a `usage` event: the point
+# of this workflow is that a run of it costs no tokens.
+
+# 1. gather-context: a scripted transcript, no dispatch.
+- events:
+    - kind: text
+      request_id: gather-context-1
+      text: gathering context for the scripted acceptance fixture
+  terminal:
+    final_message: |
+      Problem: prove the scripted harness end to end.
+      Where: this fixture is the whole of the change.
+      Assumptions: none; this run reads no code and writes only what its
+      script dispatches.
+
+# 2. think: a scripted transcript, no dispatch.
+- events:
+    - kind: text
+      request_id: think-1
+      text: thinking through the fixture's shape
+  terminal:
+    final_message: |
+      The change is a single fixture file, written and committed in two
+      rounds so the ledger shows a revise and a clean-tree retry.
+
+# 3. plan: dispatches fs.write to the path the mill names in the prompt.
+- events:
+    - kind: tool_call
+      call_id: plan-write-1
+      name: fs.write
+      dispatch: fs.write
+      arguments:
+        path: "${artifact_path}"
+        content: |
+          ---
+          node: mill#21
+          ---
+
+          # The scripted acceptance fixture's plan
+
+          Write one fixture file, commit it in two attempts (the first
+          leaving the plan untracked so clean-tree fails once), get a
+          revise from review, write a second fixture file, and commit
+          again.
+  terminal:
+    final_message: the plan is written; see the file this step closes on
+
+# 4. implement: dispatches fs.write of the real change, so commit has
+#    something real to commit.
+- events:
+    - kind: tool_call
+      call_id: implement-write-1
+      name: fs.write
+      dispatch: fs.write
+      arguments:
+        path: notes/scripted-fixture.md
+        content: |
+          # Scripted acceptance fixture
+
+          Written by the scripted harness's implement turn, round 1.
+  terminal:
+    final_message: wrote notes/scripted-fixture.md
+
+# 5. simplify: a scripted transcript, no dispatch.
+- events:
+    - kind: text
+      request_id: simplify-1
+      text: nothing to simplify in one fixture file
+  terminal:
+    final_message: no simplification needed
+
+# 6. commit, attempt 1: names only the fixture file, deliberately leaving
+#    the plan file untracked so clean-tree fails once.
+- events:
+    - kind: tool_call
+      call_id: commit-1
+      name: git.commit
+      dispatch: git.commit
+      arguments:
+        message: "mill#21: scripted fixture, round 1"
+        paths:
+          - notes/scripted-fixture.md
+  terminal:
+    final_message: committed the fixture file
+
+# 7. commit, attempt 2: clean-tree's first failure sent this step back for
+#    another attempt. This one sweeps up everything left in the tree,
+#    including the plan file attempt 1 left untracked.
+- events:
+    - kind: tool_call
+      call_id: commit-2
+      name: git.commit
+      dispatch: git.commit
+      arguments:
+        message: "mill#21: scripted fixture, round 1 (sweep the plan file)"
+  terminal:
+    final_message: committed the rest of the tree
+
+# 8. implement, round 2: review's revise sent the run back to implement.
+#    A second fixture file, a further change.
+- events:
+    - kind: tool_call
+      call_id: implement-write-2
+      name: fs.write
+      dispatch: fs.write
+      arguments:
+        path: notes/scripted-fixture-round-2.md
+        content: |
+          # Scripted acceptance fixture, round 2
+
+          Written by the scripted harness's implement turn, round 2, after
+          review's revise.
+  terminal:
+    final_message: wrote notes/scripted-fixture-round-2.md
+
+# 9. simplify, round 2: a scripted transcript, no dispatch.
+- events:
+    - kind: text
+      request_id: simplify-2
+      text: still nothing to simplify
+  terminal:
+    final_message: no simplification needed
+
+# 10. commit, round 2: sweeps up the round-2 fixture file.
+- events:
+    - kind: tool_call
+      call_id: commit-3
+      name: git.commit
+      dispatch: git.commit
+      arguments:
+        message: "mill#21: scripted fixture, round 2"
+  terminal:
+    final_message: committed round 2

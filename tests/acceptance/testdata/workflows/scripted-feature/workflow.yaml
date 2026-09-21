@@ -1,0 +1,184 @@
+# scripted-feature: workflows/feature with `pr` and `merge` dropped (no bare
+# forge to open a pull request against, mirroring how the acceptance suite's
+# own feature-no-forge derivation drops the same two steps) and every
+# remaining skill step's harness replaced by `harness.scripted`, which
+# replays a script file instead of calling a model. Reachable only when
+# $MILL_ACCEPTANCE is set (internal/workflow/definition.go).
+#
+# Its two sessions read scripts/implement.yaml and scripts/review.yaml, one
+# turn per skill step visited, in the order a real run of this workflow
+# visits them. mill#21.
+name: scripted-feature
+scope: org
+steps:
+  - name: toolchain
+    kind: preparatory
+    check:
+      command:
+        - sh
+        - -c
+        - mise trust /work && mise install
+    evidence: exit
+    capabilities:
+      - exec
+    timeout: 20m
+
+  - name: gather-context
+    kind: skill
+    session: implement
+    skill: gather-context
+    evidence: artifact
+    capabilities:
+      - read
+    harness:
+      scripted:
+        script: scripts/implement.yaml
+    retries: 2
+    timeout: 20m
+
+  - name: think
+    kind: skill
+    session: implement
+    skill: think
+    evidence: artifact
+    capabilities:
+      - read
+    harness:
+      scripted:
+        script: scripts/implement.yaml
+    retries: 2
+    timeout: 20m
+
+  - name: plan
+    kind: skill
+    session: implement
+    skill: plan
+    evidence: artifact
+    artifact:
+      path: docs/plans/{{.Date}}-{{.NodeSlug}}.md
+    capabilities:
+      - read
+      - write
+    harness:
+      scripted:
+        script: scripts/implement.yaml
+    retries: 2
+    timeout: 30m
+
+  - name: review-plan
+    kind: skill
+    session: review
+    skill: review-plan
+    evidence: verdict
+    capabilities:
+      - read
+    harness:
+      scripted:
+        script: scripts/review.yaml
+    on_failure: revise plan
+    retries: 2
+    timeout: 30m
+
+  - name: plan-approval
+    kind: gate
+    gate:
+      ask:
+        title: 'Approve the plan for {{.NodeRef}}?'
+        body: |
+          {{.NodeRef}} — {{.NodeTitle}} — has a plan, and it needs a
+          decision before anything is implemented.
+
+          The plan is attached to this node as an artifact of run
+          {{.RunID}}, and it is in the run's checkout at docs/plans/,
+          where it will be committed with the change. Its first forty
+          lines:
+
+          ```
+          {{head 40 (artifact "plan")}}
+          ```
+
+          Complete this node to implement it. Drop it to stop; the run
+          records the denial on {{.NodeRef}} and leaves the plan behind.
+      auto: verdict('review-plan').decision == approve && tier <= feature
+      deny_result: |
+        The plan for this node was rejected at the plan-approval gate, so
+        nothing was implemented and the run stopped there. The plan it was
+        asked about is an artifact on this node; file the work again with
+        what the plan got wrong, or drop it.
+    evidence: gate
+    retries: 1
+    timeout: 168h
+
+  - name: implement
+    kind: skill
+    session: implement
+    skill: implement
+    evidence: artifact
+    capabilities:
+      - read
+      - write
+      - exec
+    harness:
+      scripted:
+        script: scripts/implement.yaml
+    retries: 2
+    timeout: 3h
+
+  - name: simplify
+    kind: skill
+    session: implement
+    skill: simplify
+    evidence: artifact
+    capabilities:
+      - read
+      - write
+      - exec
+    harness:
+      scripted:
+        script: scripts/implement.yaml
+    retries: 2
+    timeout: 1h
+
+  - name: commit
+    kind: skill
+    session: implement
+    skill: commit
+    evidence: commit
+    capabilities:
+      - write
+    harness:
+      scripted:
+        script: scripts/implement.yaml
+    retries: 2
+    timeout: 15m
+
+  - name: clean-tree
+    kind: check
+    check:
+      command:
+        - scripts/clean-tree
+      exit:
+        - 0
+      stdout: none
+      feedback: revise
+    evidence: exit
+    capabilities:
+      - exec
+    on_failure: revise commit
+    retries: 0
+    timeout: 2m
+
+  - name: review
+    kind: skill
+    session: review
+    skill: review
+    evidence: verdict
+    output_schema: skills/review/verdict.schema.json
+    capabilities:
+      - read
+    harness:
+      scripted:
+        script: scripts/review.yaml
+    on_failure: revise implement
+    retries: 2
+    timeout: 45m

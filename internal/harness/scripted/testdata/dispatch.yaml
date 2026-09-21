@@ -1,0 +1,21 @@
+- events:
+    - kind: tool_call
+      call_id: call-1
+      name: fs.write
+      dispatch: fs.write
+      arguments:
+        path: "${artifact_path}"
+        content: "written by the scripted harness\n"
+  terminal:
+    final_message: wrote it
+- events:
+    - kind: tool_call
+      call_id: call-2
+      name: git.commit
+      dispatch: git.commit
+      arguments:
+        message: "mill#21: scripted dispatch"
+        paths:
+          - "notes/plan.md"
+  terminal:
+    final_message: committed it
