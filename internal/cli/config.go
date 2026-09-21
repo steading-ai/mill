@@ -87,6 +87,13 @@ type Config struct {
 	CacheExpiry        string            `yaml:"cache-expiry"`
 	CacheHighWatermark string            `yaml:"cache-high-watermark"`
 	CacheLowWatermark  string            `yaml:"cache-low-watermark"`
+	// Retention and RetentionProjects are the deployment default and the
+	// per-project override for how long a sealed attempt's twin and frame
+	// are kept (docs/activity.md §Lifecycle "Retention"): `keep` (or empty,
+	// its equivalent) or a comma-separated `twin_days=N`/`compact_days=N`
+	// pair, parsed by run.ParsePolicy.
+	Retention         string            `yaml:"retention"`
+	RetentionProjects map[string]string `yaml:"retention-projects"`
 	// The machine backend's host facts (docs/sandbox.md §Provision,
 	// §Network, §"Skill mount"): the worker's skill directory bound
 	// read-only into every machine, the run-state directory the socket
@@ -331,6 +338,8 @@ var configKeys = []configKey{
 	{"cache-expiry", ""},
 	{"cache-high-watermark", ""},
 	{"cache-low-watermark", ""},
+	{"retention", ""},
+	{"retention-projects", ""},
 	{"skill-dir", ""},
 	{"sidecar-dir", ""},
 	{"workflow-copy-dir", ""},

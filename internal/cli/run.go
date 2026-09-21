@@ -233,10 +233,16 @@ type runOptions struct {
 	// because a map has none, and so unset for `mill run`, which reads no
 	// file (docs/tools.md §Configuration).
 	mcpServers map[string]McpServerConfig
-	ttl        time.Duration
-	interval   time.Duration
-	dryRun     bool
-	noAsk      bool
+	// retention and retentionProjects are the host's own `retention`/
+	// `retention-projects`, read from the configuration file the same way
+	// mcpServers is: no flag of their own, and so unset for `mill run`,
+	// which reads no file (docs/tools.md §Configuration).
+	retention         string
+	retentionProjects map[string]string
+	ttl               time.Duration
+	interval          time.Duration
+	dryRun            bool
+	noAsk             bool
 }
 
 // newRunCommand is "work" with the claim replaced by an argument: one node,
@@ -469,6 +475,15 @@ func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, 
 		return nil, err
 	}
 
+	retention, err := run.ParsePolicy(opts.retention)
+	if err != nil {
+		return nil, err
+	}
+	retentionProjects, err := parseRetentionProjects(opts.retentionProjects)
+	if err != nil {
+		return nil, err
+	}
+
 	overrides, err := skillOverrides(opts.skillOverride, cmd.ErrOrStderr())
 	if err != nil {
 		return nil, err
@@ -486,29 +501,31 @@ func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, 
 	redactor := redact.New()
 
 	options := run.Options{
-		Store:          storeClient(opts.socket),
-		Notifier:       notifier(opts.notifyCommand),
-		Dagger:         client,
-		Workspaces:     workspacesFor(kind, opts, redactor),
-		Attach:         attachOnlyWorkspaces(kind, opts, redactor),
-		Repositories:   repositories(opts),
-		Harnesses:      harnessesFor(kind, opts, envMode),
-		WorkerRef:      worker,
-		Workflow:       opts.workflow,
-		Tier:           tier,
-		WorkflowDir:    opts.workflowDir,
-		Ref:            opts.ref,
-		TTL:            opts.ttl,
-		Interval:       opts.interval,
-		Answers:        answers,
-		Out:            cmd.OutOrStdout(),
-		LogDir:         opts.logDir,
-		Redactor:       redactor,
-		SkillOverrides: overrides,
-		Log:            slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: slog.LevelInfo})),
-		OnActivity:     onActivity,
-		Twin:           twinFor(kind, opts),
-		McpServers:     hostMcpServers(opts.mcpServers),
+		Store:             storeClient(opts.socket),
+		Notifier:          notifier(opts.notifyCommand),
+		Dagger:            client,
+		Workspaces:        workspacesFor(kind, opts, redactor),
+		Attach:            attachOnlyWorkspaces(kind, opts, redactor),
+		Repositories:      repositories(opts),
+		Harnesses:         harnessesFor(kind, opts, envMode),
+		WorkerRef:         worker,
+		Workflow:          opts.workflow,
+		Tier:              tier,
+		WorkflowDir:       opts.workflowDir,
+		Ref:               opts.ref,
+		TTL:               opts.ttl,
+		Interval:          opts.interval,
+		Answers:           answers,
+		Out:               cmd.OutOrStdout(),
+		LogDir:            opts.logDir,
+		Redactor:          redactor,
+		SkillOverrides:    overrides,
+		Log:               slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: slog.LevelInfo})),
+		OnActivity:        onActivity,
+		Twin:              twinFor(kind, opts),
+		McpServers:        hostMcpServers(opts.mcpServers),
+		Retention:         retention,
+		RetentionProjects: retentionProjects,
 	}
 	gatewayRunOptions(gw, &options)
 	return run.New(options), nil
@@ -663,6 +680,22 @@ func parseGlobalCaps(raw map[string]string) (map[string]uint64, error) {
 		caps[name] = size
 	}
 	return caps, nil
+}
+
+// parseRetentionProjects reads the per-project retention overrides.
+func parseRetentionProjects(raw map[string]string) (map[string]run.Policy, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	projects := make(map[string]run.Policy, len(raw))
+	for name, text := range raw {
+		policy, err := run.ParsePolicy(text)
+		if err != nil {
+			return nil, fmt.Errorf("retention-projects: %s: %w", name, err)
+		}
+		projects[name] = policy
+	}
+	return projects, nil
 }
 
 // applyEvictionConfig reads the eviction policy's keys from the file into

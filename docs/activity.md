@@ -172,12 +172,11 @@ The live file has no index rows. Live reads go to the file and are ordered by `s
 3. **End.** `CloseStepRun`, `FailStepRun` or an abort writes `attempt_ended` as the last record and closes the file.
 4. **Seal.** Immediately after, in this order: read the live file; coalesce deltas; write the frame beside it; index it; capture the twin from the session's `HOME` (the session's id is deterministic and in the ledger, `sessions.adapter_ref` says where the transcript is); verify the frame decompresses to what was read; remove the live file. A seal that fails partway leaves the live file, which is the signal to try again.
 5. **Recovery.** On worker start, before the first claim, every live file whose attempt the ledger says is over is sealed. Same shape as the ledger's own resume: the file system holds what the process did not finish, the ledger says what it should have.
-6. **Retention** is a policy over frames, per project or for the deployment:
-   - `keep`: everything. The default, and at the volumes below the one most deployments will never change.
-   - after D days: drop the twin, keep the frame.
-   - after D₂ days: **compact** the frame, which is rendering today's summary lines from it and storing those as the frame's only content, with every row's `truncated` set. The compacted form is exactly the log that exists today, so the code that renders it already exists.
+6. **Retention** is a policy over frames and twins, set by `retention` in `config.yaml` for the deployment and overridden per project by name in `retention-projects`. Both take the same grammar: `keep` (or empty, its equivalent), the default and at the volumes below the one most deployments will never change, or a comma-separated `twin_days=N`/`compact_days=N` pair.
+   - Past `twin_days`, an attempt's twin is removed; its frame is untouched.
+   - Past `compact_days`, an attempt's frame is **compacted**: rendered to the summary lines `mill logs` prints and stored as the frame's only content, with every row's `truncated` set. The compacted form is exactly the log that exists today, so the code that renders it already exists.
 
-   Retention never touches the index: history stays queryable after bodies are gone, and a read that reaches a compacted body gets the summary and is told so.
+   Both ages are read off the attempt's `ended_at`. The sweep runs on worker start and on the sweep interval, the same two trigger points the ledger sweep runs at, and never touches the index: history stays queryable after bodies are gone, and a read that reaches a compacted body gets the summary and is told so. `mill doctor`'s `activity` line reports the log directory, the frames and twins held under it, their bytes, the oldest one's age, and the policy in force.
 
 ### Caps
 
@@ -315,11 +314,10 @@ The `machine` backend (`docs/sandbox.md`) writes the same live file from the hos
 
 ## Open questions
 
-1. Retention default: `keep`, on the sizing above. Confirm.
-2. Seal-time coalescing of deltas: on by default, with the deltas kept as an option, or the reverse?
-3. `thinking` in the twin only, or also in the frame? The spec says the frame; it is a quarter of the bytes and the one thing no other source has.
-4. Whether `Logs` over every run should also carry ledger transitions that have no attempt (claimed, released, `waiting`), so a stream of everything is a stream of everything. Today they are `RunEnd` frames only.
-5. The delta hold-back is L − 1 bytes where L is the longest registered value; a session that registers a very long value makes the live stream lag by that much. Bound L, or accept it?
+1. Seal-time coalescing of deltas: on by default, with the deltas kept as an option, or the reverse?
+2. `thinking` in the twin only, or also in the frame? The spec says the frame; it is a quarter of the bytes and the one thing no other source has.
+3. Whether `Logs` over every run should also carry ledger transitions that have no attempt (claimed, released, `waiting`), so a stream of everything is a stream of everything. Today they are `RunEnd` frames only.
+4. The delta hold-back is L − 1 bytes where L is the longest registered value; a session that registers a very long value makes the live stream lag by that much. Bound L, or accept it?
 
 ## Rollout
 

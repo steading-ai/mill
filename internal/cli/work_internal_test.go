@@ -200,6 +200,36 @@ model_credential_minted: 2026-09-01
 		Expect(opts.labels).To(Equal([]string{"agent"}), "the rest still comes from the file")
 	})
 
+	It("wires the file's retention and retention-projects into the run options", func() {
+		Expect(os.WriteFile(path, []byte("retention: twin_days=7\nretention-projects:\n  demo: keep\n"), 0o600)).To(Succeed())
+		opts := parse()
+		Expect(opts.run.retention).To(Equal("twin_days=7"))
+		Expect(opts.run.retentionProjects).To(Equal(map[string]string{"demo": "keep"}))
+	})
+
+	It("fails mill work startup on a malformed retention value, naming the key", func() {
+		Expect(os.WriteFile(path, []byte("retention: soon\n"), 0o600)).To(Succeed())
+		opts := parse()
+		cmd := &cobra.Command{Use: "work"}
+		cmd.SetOut(GinkgoWriter)
+		cmd.SetErr(GinkgoWriter)
+		_, err := newRunner(cmd, opts.run, "spec-project", "", nil, nil, nil)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("retention"))
+	})
+
+	It("fails mill work startup on a malformed retention-projects value, naming the project", func() {
+		Expect(os.WriteFile(path, []byte("retention-projects:\n  demo: soon\n"), 0o600)).To(Succeed())
+		opts := parse()
+		cmd := &cobra.Command{Use: "work"}
+		cmd.SetOut(GinkgoWriter)
+		cmd.SetErr(GinkgoWriter)
+		_, err := newRunner(cmd, opts.run, "spec-project", "", nil, nil, nil)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("retention-projects"))
+		Expect(err.Error()).To(ContainSubstring("demo"))
+	})
+
 	It("The worker honours the configured socket", func() {
 		// Given a config file naming a socket path and no --socket flag
 		Expect(os.WriteFile(path, []byte("socket: /tmp/x.sock\n"), 0o600)).To(Succeed())
