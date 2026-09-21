@@ -69,7 +69,7 @@ steps:
             - Read
             - Write
     retries: 3
-    timeout: 1h
+    timeout: 2h
 
   - name: commit
     kind: skill
@@ -128,7 +128,7 @@ steps:
       - exec
     on_failure: revise implement
     retries: 1
-    timeout: 45m
+    timeout: 1h30m
 
   - name: pr
     kind: skill
