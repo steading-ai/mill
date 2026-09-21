@@ -178,6 +178,51 @@ func exitOf(exit *harnessv1.ProcessExit) string {
 	})
 }
 
+// restoreRetried recovers, from the ledger, the attempt each step's retries
+// are measured from. A human who answered a park gate paid for a fresh set
+// of attempts at the parked step, and the worker that resumed the run
+// recorded that in its own head; a worker that takes the run over later —
+// after a restart, a crash, a lease that expired — must not charge those
+// attempts again (Invariant 10: nothing is carried in the worker's head).
+//
+// The audit trail says it: the `resume` event that answered a `park`, and
+// the attempt that failed into that park, which is the last one the human
+// paid for. Only the parked step's counter moves, as resumePark moves it.
+func (r *Runner) restoreRetried(ctx context.Context, s *state) error {
+	history, err := call(ctx, r.options.Store.History, &millv1.HistoryRequest{Id: s.run.GetId()})
+	if err != nil {
+		return err
+	}
+	var failed, parkedOn string
+	paid := map[string]bool{}
+	for _, event := range history.GetEvents() {
+		switch event.GetOp() {
+		case "fail_step_run", "abort_step_run":
+			failed = event.GetStepRunId()
+		case "park":
+			parkedOn = failed
+		case "resume":
+			if parkedOn != "" {
+				paid[parkedOn] = true
+			}
+		}
+	}
+	if len(paid) == 0 {
+		return nil
+	}
+	detail, err := call(ctx, r.options.Store.Inspect, &millv1.InspectRequest{Id: s.run.GetId()})
+	if err != nil {
+		return err
+	}
+	for _, d := range detail.GetSteps() {
+		sr := d.GetStepRun()
+		if paid[sr.GetId()] && sr.GetAttempt() > s.retried[sr.GetStepName()] {
+			s.retried[sr.GetStepName()] = sr.GetAttempt()
+		}
+	}
+	return nil
+}
+
 // resumePark is the other half of the breaker: a claim that took over a
 // parked run reads the gate the breaker filed before it runs anything.
 //
