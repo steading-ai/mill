@@ -175,106 +175,115 @@ func (r *Runner) assess(ctx context.Context, s *state, step *millv1.Step, candid
 		sr := started.GetStepRun()
 		r.printf("step %s attempt %d\n", step.GetName(), sr.GetAttempt())
 
-		if err := r.openActivity(s, step, sr); err != nil {
-			return nil, err
-		}
-
-		token, err := call(ctx, r.options.Store.IssueStepToken, &millv1.IssueStepTokenRequest{
-			LeaseId:      s.lease,
-			StepRunId:    sr.GetId(),
-			Capabilities: step.GetCapabilities(),
-		})
-		if err != nil {
-			return nil, err
-		}
-		if err := s.workspace.Rotate(ctx, workspace.TokenFromProto(token.GetStepToken())); err != nil {
-			return nil, fmt.Errorf("run %s: rotate the workspace token: %w", s.run.GetId(), err)
-		}
-		r.rotateGateway(s, step, sr, token.GetStepToken())
-		s.token = token.GetStepToken().GetId()
-
-		// The attempt runs under the workspace's step boundary like every
-		// step of the walk, and its token is the gateway's bearer for as
-		// long as it runs: a machine refuses an exec under no slice, the
-		// assessing session is spawned through the workspace, and the
-		// model it reaches is behind the gateway (docs/sandbox.md §Exec,
-		// §Credentials).
+		// The attempt's writer and the token that opens it live only for
+		// this one loop pass, so both are scoped to this closure: its defer
+		// closes and detaches them whatever this pass returns, including a
+		// retry, instead of leaking one writer per iteration the way a
+		// defer at assess's own top would (mill#30 — a top-level defer
+		// would only ever protect the last iteration's writer).
 		var (
 			assessment map[string]any
 			retry      bool
 		)
-		err = r.underBoundary(ctx, s, step, func() (bool, error) {
-			stepCtx, cancel := stepContext(ctx, step)
-			res, execErr := r.runSkill(stepCtx, s, step, sr, detail, token.GetStepToken(), feedback, brief)
-			cancel()
-			if over := r.gatewayRefusal(s, sr); over != nil {
-				execErr = errors.Join(execErr, over)
+		err = func() error {
+			if err := r.openActivity(s, step, sr); err != nil {
+				return err
 			}
-			if ctx.Err() != nil || isFenced(execErr) {
-				abortActivity(s)
-				return false, r.stopped(ctx, s)
-			}
+			defer abortActivity(s)
 
-			if err := r.recordUsage(ctx, s, sr, res.usage); err != nil {
-				return false, err
+			token, err := call(ctx, r.options.Store.IssueStepToken, &millv1.IssueStepTokenRequest{
+				LeaseId:      s.lease,
+				StepRunId:    sr.GetId(),
+				Capabilities: step.GetCapabilities(),
+			})
+			if err != nil {
+				return err
 			}
-			if _, err := call(ctx, r.options.Store.RevokeStepToken, &millv1.RevokeStepTokenRequest{
-				LeaseId:     s.lease,
-				StepTokenId: token.GetStepToken().GetId(),
-			}); err != nil {
-				return false, err
+			if err := s.workspace.Rotate(ctx, workspace.TokenFromProto(token.GetStepToken())); err != nil {
+				return fmt.Errorf("run %s: rotate the workspace token: %w", s.run.GetId(), err)
 			}
-			if err := r.postUsage(ctx, s, sr); err != nil {
-				return false, err
-			}
+			r.rotateGateway(s, step, sr, token.GetStepToken())
+			s.token = token.GetStepToken().GetId()
 
-			verified, verifyErr := r.verify(ctx, s, step, sr, detail, res)
-			if cause := errors.Join(execErr, verifyErr); cause != nil {
-				exit := res.exit
-				if exit == nil {
-					exit = &harnessProcessExit
+			// The attempt runs under the workspace's step boundary like
+			// every step of the walk, and its token is the gateway's
+			// bearer for as long as it runs: a machine refuses an exec
+			// under no slice, the assessing session is spawned through the
+			// workspace, and the model it reaches is behind the gateway
+			// (docs/sandbox.md §Exec, §Credentials).
+			return r.underBoundary(ctx, s, step, func() (bool, error) {
+				stepCtx, cancel := stepContext(ctx, step)
+				res, execErr := r.runSkill(stepCtx, s, step, sr, detail, token.GetStepToken(), feedback, brief)
+				cancel()
+				if over := r.gatewayRefusal(s, sr); over != nil {
+					execErr = errors.Join(execErr, over)
 				}
-				if _, err := call(ctx, r.options.Store.FailStepRun, &millv1.FailStepRunRequest{
-					LeaseId:   s.lease,
-					StepRunId: sr.GetId(),
-					Exit:      exit,
+				if ctx.Err() != nil || isFenced(execErr) {
+					abortActivity(s)
+					return false, r.stopped(ctx, s)
+				}
+
+				if err := r.recordUsage(ctx, s, sr, res.usage); err != nil {
+					return false, err
+				}
+				if _, err := call(ctx, r.options.Store.RevokeStepToken, &millv1.RevokeStepTokenRequest{
+					LeaseId:     s.lease,
+					StepTokenId: token.GetStepToken().GetId(),
 				}); err != nil {
 					return false, err
 				}
-				if err := r.endActivity(ctx, s, step, sr, millv1.StepRunStatus_STEP_RUN_STATUS_FAILED, millv1.EvidenceKind_EVIDENCE_KIND_UNSPECIFIED, cause.Error()); err != nil {
+				if err := r.postUsage(ctx, s, sr); err != nil {
 					return false, err
 				}
-				s.record(step.GetName(), cause.Error())
-				s.recordAttempt(step, sr, exit, lastWords(res, cause.Error()), true)
-				r.printf("  failed: %v\n", cause)
-				if sr.GetAttempt() > int64(step.GetRetries()) {
-					exhausted := fmt.Errorf("run %s: the assessment did not close after %d attempts: %w",
-						s.run.GetId(), sr.GetAttempt(), cause)
-					return false, r.failRun(ctx, s, dagger.RequestID(s.run.GetId(), "assess-exhausted", sr.GetAttempt()),
-						exhausted.Error(), exhausted)
-				}
-				feedback, feedbackFrom = cause.Error(), sr.GetId()
-				retry = true
-				return false, nil
-			}
 
-			value := verified.Value
-			value.StepRunId = sr.GetId()
-			if _, err := call(ctx, r.options.Store.CloseStepRun, &millv1.CloseStepRunRequest{
-				LeaseId:   s.lease,
-				StepRunId: sr.GetId(),
-				Evidence:  value,
-			}); err != nil {
-				return false, err
-			}
-			if err := r.endActivity(ctx, s, step, sr, millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED, value.GetKind(), evidenceName(value.GetKind())); err != nil {
-				return false, err
-			}
-			s.recordAttempt(step, sr, res.exit, lastWords(res, ""), false)
-			r.printf("  closed on %s evidence\n", evidenceName(value.GetKind()))
-			assessment = value.GetStructured().AsMap()
-			return true, nil
-		})
+				verified, verifyErr := r.verify(ctx, s, step, sr, detail, res)
+				if cause := errors.Join(execErr, verifyErr); cause != nil {
+					exit := res.exit
+					if exit == nil {
+						exit = &harnessProcessExit
+					}
+					if _, err := call(ctx, r.options.Store.FailStepRun, &millv1.FailStepRunRequest{
+						LeaseId:   s.lease,
+						StepRunId: sr.GetId(),
+						Exit:      exit,
+					}); err != nil {
+						return false, err
+					}
+					if err := r.endActivity(ctx, s, step, sr, millv1.StepRunStatus_STEP_RUN_STATUS_FAILED, millv1.EvidenceKind_EVIDENCE_KIND_UNSPECIFIED, cause.Error()); err != nil {
+						return false, err
+					}
+					s.record(step.GetName(), cause.Error())
+					s.recordAttempt(step, sr, exit, lastWords(res, cause.Error()), true)
+					r.printf("  failed: %v\n", cause)
+					if sr.GetAttempt() > int64(step.GetRetries()) {
+						exhausted := fmt.Errorf("run %s: the assessment did not close after %d attempts: %w",
+							s.run.GetId(), sr.GetAttempt(), cause)
+						return false, r.failRun(ctx, s, dagger.RequestID(s.run.GetId(), "assess-exhausted", sr.GetAttempt()),
+							exhausted.Error(), exhausted)
+					}
+					feedback, feedbackFrom = cause.Error(), sr.GetId()
+					retry = true
+					return false, nil
+				}
+
+				value := verified.Value
+				value.StepRunId = sr.GetId()
+				if _, err := call(ctx, r.options.Store.CloseStepRun, &millv1.CloseStepRunRequest{
+					LeaseId:   s.lease,
+					StepRunId: sr.GetId(),
+					Evidence:  value,
+				}); err != nil {
+					return false, err
+				}
+				if err := r.endActivity(ctx, s, step, sr, millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED, value.GetKind(), evidenceName(value.GetKind())); err != nil {
+					return false, err
+				}
+				s.recordAttempt(step, sr, res.exit, lastWords(res, ""), false)
+				r.printf("  closed on %s evidence\n", evidenceName(value.GetKind()))
+				assessment = value.GetStructured().AsMap()
+				return true, nil
+			})
+		}()
 		if err != nil {
 			return nil, err
 		}

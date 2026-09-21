@@ -922,6 +922,67 @@ func (f *fixture) approveGate(ctx context.Context, ref string) {
 	Expect(err).NotTo(HaveOccurred())
 }
 
+// approveGateEmpty completes a gate with a blank result, the way a person
+// leaves blank at the terminal. dagger itself refuses a truly empty body
+// (internal/domain.ErrResultRequired), so this sends whitespace, which
+// clears that check but still leaves `gate` evidence with nothing to read
+// (internal/evidence.verifyGate trims before comparing) — how a spec fails
+// resumeGate's evidence.Verify call without reaching inside dagger (mill#30).
+func (f *fixture) approveGateEmpty(ctx context.Context, ref string) {
+	GinkgoHelper()
+	_, err := f.graph.ApplyPatch(ctx, connect.NewRequest(&daggerv1.ApplyPatchRequest{
+		RequestId: "spec-answer-empty-" + ref, Project: project,
+		Ops: []*daggerv1.PatchOp{{Op: &daggerv1.PatchOp_CompleteNode{CompleteNode: &daggerv1.CompleteNodeOp{
+			Node: ref, Result: &daggerv1.Result{Body: "   "},
+		}}}},
+	}))
+	Expect(err).NotTo(HaveOccurred())
+}
+
+// openPath is whether this process still holds path open under any fd —
+// true of an activity file whose writer was never closed.
+func openPath(path string) bool {
+	entries, err := os.ReadDir("/proc/self/fd")
+	Expect(err).NotTo(HaveOccurred())
+	for _, entry := range entries {
+		link, err := os.Readlink(filepath.Join("/proc/self/fd", entry.Name()))
+		if err == nil && link == path {
+			return true
+		}
+	}
+	return false
+}
+
+// writerLeaked answers mill#30's two questions about an attempt once its
+// Execute call has returned: is its activity file still open, the writer
+// never closed; and does a verb the spec runs afterward, through the
+// workspace the run left behind, still land in that attempt's record — the
+// sink still attached. Both are false when the attempt cleaned up after
+// itself, whatever it failed on.
+func (f *fixture) writerLeaked(ctx context.Context, logDir, step string, attempt int64) (open, grew bool) {
+	GinkgoHelper()
+	runID := f.runOf(ctx).GetId()
+	path := run.ActivityPath(logDir, runID, step, attempt)
+	open = openPath(path)
+	before, err := run.ReadActivities(logDir, runID, step, attempt)
+	Expect(err).NotTo(HaveOccurred())
+	f.commits(harness.Session{})
+	after, err := run.ReadActivities(logDir, runID, step, attempt)
+	Expect(err).NotTo(HaveOccurred())
+	return open, len(after) > len(before)
+}
+
+// assertWriterClosed checks both halves of a leaked writer through
+// [fixture.writerLeaked] for step's latest attempt: the activity file is no
+// longer open, and a verb run afterward is not appended to its record.
+func (f *fixture) assertWriterClosed(ctx context.Context, logDir, step string) {
+	GinkgoHelper()
+	sr := stepRuns(f.inspect(ctx), step)[0]
+	open, grew := f.writerLeaked(ctx, logDir, step, sr.GetAttempt())
+	Expect(open).To(BeFalse(), "the writer stayed open")
+	Expect(grew).To(BeFalse(), "a verb run after the attempt died was appended to its record")
+}
+
 // stepRuns is every attempt at a named step, oldest first.
 func stepRuns(detail *millv1.InspectResponse, name string) []*millv1.StepRun {
 	var runs []*millv1.StepRun
@@ -947,16 +1008,107 @@ func sessionsOf(detail *millv1.InspectResponse, name string) []string {
 }
 
 // failingStore refuses one named write, which is how a spec stages a
-// process that died between two writes of an ordered sequence.
+// process that died between two writes of an ordered sequence. MarkWaiting
+// is always refused, for the gate-filing specs this was written for; refuse
+// additionally names one other RPC among the leak points mill#30's specs
+// need to fail, or is empty to refuse nothing else.
 type failingStore struct {
 	millv1connect.StoreServiceClient
-	calls atomic.Int64
+	refuse string
+	calls  atomic.Int64
 }
 
 func (f *failingStore) MarkWaiting(context.Context, *connect.Request[millv1.MarkWaitingRequest]) (*connect.Response[millv1.MarkWaitingResponse], error) {
 	f.calls.Add(1)
 	return nil, errors.New("the process died before the store write")
 }
+
+func (f *failingStore) IssueStepToken(ctx context.Context, req *connect.Request[millv1.IssueStepTokenRequest]) (*connect.Response[millv1.IssueStepTokenResponse], error) {
+	if f.refuse == "IssueStepToken" {
+		f.calls.Add(1)
+		return nil, errors.New("the process died before the store write")
+	}
+	return f.StoreServiceClient.IssueStepToken(ctx, req)
+}
+
+func (f *failingStore) RecordInstall(ctx context.Context, req *connect.Request[millv1.RecordInstallRequest]) (*connect.Response[millv1.RecordInstallResponse], error) {
+	if f.refuse == "RecordInstall" {
+		f.calls.Add(1)
+		return nil, errors.New("the process died before the store write")
+	}
+	return f.StoreServiceClient.RecordInstall(ctx, req)
+}
+
+func (f *failingStore) RecordUsage(ctx context.Context, req *connect.Request[millv1.RecordUsageRequest]) (*connect.Response[millv1.RecordUsageResponse], error) {
+	if f.refuse == "RecordUsage" {
+		f.calls.Add(1)
+		return nil, errors.New("the process died before the store write")
+	}
+	return f.StoreServiceClient.RecordUsage(ctx, req)
+}
+
+func (f *failingStore) RevokeStepToken(ctx context.Context, req *connect.Request[millv1.RevokeStepTokenRequest]) (*connect.Response[millv1.RevokeStepTokenResponse], error) {
+	if f.refuse == "RevokeStepToken" {
+		f.calls.Add(1)
+		return nil, errors.New("the process died before the store write")
+	}
+	return f.StoreServiceClient.RevokeStepToken(ctx, req)
+}
+
+func (f *failingStore) MarkUsagePosted(ctx context.Context, req *connect.Request[millv1.MarkUsagePostedRequest]) (*connect.Response[millv1.MarkUsagePostedResponse], error) {
+	if f.refuse == "MarkUsagePosted" {
+		f.calls.Add(1)
+		return nil, errors.New("the process died before the store write")
+	}
+	return f.StoreServiceClient.MarkUsagePosted(ctx, req)
+}
+
+func (f *failingStore) CloseStepRun(ctx context.Context, req *connect.Request[millv1.CloseStepRunRequest]) (*connect.Response[millv1.CloseStepRunResponse], error) {
+	if f.refuse == "CloseStepRun" {
+		f.calls.Add(1)
+		return nil, errors.New("the process died before the store write")
+	}
+	return f.StoreServiceClient.CloseStepRun(ctx, req)
+}
+
+func (f *failingStore) FailStepRun(ctx context.Context, req *connect.Request[millv1.FailStepRunRequest]) (*connect.Response[millv1.FailStepRunResponse], error) {
+	if f.refuse == "FailStepRun" {
+		f.calls.Add(1)
+		return nil, errors.New("the process died before the store write")
+	}
+	return f.StoreServiceClient.FailStepRun(ctx, req)
+}
+
+// rotateFailing is a workspace whose token rotation always fails, the way a
+// step's credential could fail to install into the socket without ever
+// touching the step it was meant to authorize (mill#30).
+type rotateFailing struct {
+	run.Workspace
+}
+
+func (rotateFailing) Rotate(context.Context, workspace.Token) error {
+	return errors.New("the token never reached the workspace")
+}
+
+// installing is a workspace that reports one install, the way
+// workspace/machine's sandboxed backend does over the socket's dnf shim and
+// workspace/local — what these specs actually run against — does not
+// (workspace.Reporter). Without it, recordInstalls has nothing to give the
+// store and its own leak point (mill#30) is untestable.
+type installing struct {
+	run.Workspace
+}
+
+func (installing) ReportInstall(context.Context, []string) error { return nil }
+
+func (installing) Installs() []workspace.Install {
+	return []workspace.Install{{Packages: []string{"left-pad"}}}
+}
+
+var (
+	_ workspace.Reporter = installing{}
+	_ run.Workspace      = rotateFailing{}
+)
 
 // releases records every lease release the run made, with its reason, by
 // reading the requests on their way to dagger. The reason is part of the
@@ -1005,6 +1157,49 @@ func (f *fixture) watching() (*dagger.Client, *releases) {
 	watcher := &releases{socket: f.dagger.Socket}
 	return dagger.New(&http.Client{Transport: watcher}, f.dagger.BaseURL(), project,
 		dagger.WithAgentRef(f.worker), dagger.WithSessionRef("spec")), watcher
+}
+
+// patchFailure refuses an ApplyPatch that carries an op this spec is
+// watching for, and forwards every other patch untouched. It is how a spec
+// fails one write inside a call the run loop makes several of — denyGate's
+// Complete, or a step's own artifact attach — without reaching inside the
+// client (mill#30).
+type patchFailure struct {
+	socket string
+	match  func(*daggerv1.PatchOp) bool
+}
+
+func (p *patchFailure) RoundTrip(req *http.Request) (*http.Response, error) {
+	if strings.HasSuffix(req.URL.Path, "/ApplyPatch") && req.Body != nil {
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			return nil, err
+		}
+		_ = req.Body.Close()
+		var patch daggerv1.ApplyPatchRequest
+		if err := proto.Unmarshal(body, &patch); err == nil {
+			for _, op := range patch.GetOps() {
+				if p.match(op) {
+					return nil, errors.New("the patch never reached dagger")
+				}
+			}
+		}
+		req.Body = io.NopCloser(bytes.NewReader(body))
+		req.ContentLength = int64(len(body))
+	}
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", p.socket)
+		},
+	}
+	return transport.RoundTrip(req)
+}
+
+// failingPatches builds a dagger client whose ApplyPatch this spec can fail
+// selectively, by op, rather than for every patch the way [fixture.breaking]
+// does.
+func (f *fixture) failingPatches(match func(*daggerv1.PatchOp) bool) *dagger.Client {
+	return dagger.New(&http.Client{Transport: &patchFailure{socket: f.dagger.Socket, match: match}}, f.dagger.BaseURL(), project)
 }
 
 // reviewer is a harness whose review sessions always find something and

@@ -458,11 +458,29 @@ func (r *Runner) resumeGate(ctx context.Context, s *state, step *millv1.Step, de
 	if sr == nil {
 		return fmt.Errorf("run %s: gate %s is filed but has no attempt", s.run.GetId(), step.GetName())
 	}
-	switch gate.GetStatus() {
-	case daggerv1.Status_STATUS_DONE:
-		if err := r.reopenActivity(s, step, sr); err != nil {
+	if gate.GetStatus() == daggerv1.Status_STATUS_OPEN {
+		// Nobody has answered yet. A node blocked by an open gate is not in
+		// the ready set, so this is a `mill run` aimed at it by hand; give
+		// the lease back and leave the run exactly as it was.
+		if err := r.options.Dagger.Release(ctx, s.lease,
+			daggerv1.ReleaseReason_RELEASE_REASON_GATE, "gate "+gate.GetReference()); err != nil {
 			return err
 		}
+		r.printf("  gate %s is still open; %s waits\n", gate.GetReference(), s.node.GetReference())
+		return errReleased
+	}
+
+	if err := r.reopenActivity(s, step, sr); err != nil {
+		return err
+	}
+	// closeStep and denyGate below already end the writer on success; this
+	// only catches a failure between here and there, which would otherwise
+	// leave the reopened writer open (mill#30). abortActivity is idempotent,
+	// so it is a no-op once either has already closed the attempt.
+	defer abortActivity(s)
+
+	switch gate.GetStatus() {
+	case daggerv1.Status_STATUS_DONE:
 		verified, err := evidence.Verify(ctx, millv1.EvidenceKind_EVIDENCE_KIND_GATE, evidence.Step{
 			Name:       step.GetName(),
 			Definition: step,
@@ -479,21 +497,7 @@ func (r *Runner) resumeGate(ctx context.Context, s *state, step *millv1.Step, de
 		// is not a second try at anything.
 		return r.closeStep(ctx, s, sr, step, verified, result{claim: gate.GetId()})
 
-	case daggerv1.Status_STATUS_OPEN:
-		// Nobody has answered yet. A node blocked by an open gate is not in
-		// the ready set, so this is a `mill run` aimed at it by hand; give
-		// the lease back and leave the run exactly as it was.
-		if err := r.options.Dagger.Release(ctx, s.lease,
-			daggerv1.ReleaseReason_RELEASE_REASON_GATE, "gate "+gate.GetReference()); err != nil {
-			return err
-		}
-		r.printf("  gate %s is still open; %s waits\n", gate.GetReference(), s.node.GetReference())
-		return errReleased
-
 	default:
-		if err := r.reopenActivity(s, step, sr); err != nil {
-			return err
-		}
 		return r.denyGate(ctx, s, step, sr, gate)
 	}
 }
