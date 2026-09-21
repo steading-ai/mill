@@ -12,6 +12,7 @@ import (
 	"github.com/ivy/mill/internal/dagger"
 	"github.com/ivy/mill/internal/evidence"
 	"github.com/ivy/mill/internal/notify"
+	"github.com/ivy/mill/internal/workspace"
 )
 
 // The gate branch of the loop: docs/architecture.md §"Gate steps" and
@@ -53,6 +54,11 @@ func (r *Runner) runGate(ctx context.Context, s *state, step *millv1.Step, sr *m
 	out := result{autoApproved: true}
 	claim, err := r.approve(ctx, s, step)
 	if err != nil {
+		var overlap *catchUpOverlapError
+		if errors.As(err, &overlap) {
+			out.judgment = true
+			out.feedback = overlap.finding()
+		}
 		return out, err
 	}
 	out.claim = claim
@@ -74,6 +80,23 @@ func (r *Runner) approve(ctx context.Context, s *state, step *millv1.Step) (stri
 		return "", err
 	}
 	if !pr.Merged() {
+		catchUp, err := s.workspace.CatchUp(ctx, workspace.CatchUpRequest{Target: pr.Target})
+		if err != nil {
+			return "", err
+		}
+		if len(catchUp.Overlap) > 0 {
+			return "", &catchUpOverlapError{target: pr.Target, files: catchUp.Overlap}
+		}
+		if catchUp.Merged {
+			r.printf("  caught up with %s at %s\n", pr.Target, short(catchUp.SHA))
+			// The self-merge just moved the branch's head on the forge, so
+			// the pr this loop read before catching up now names a stale
+			// head: merging it as-is would ask [forge.Forge.Merge] to merge
+			// a head that has since moved, which it refuses.
+			if pr, err = f.PR(ctx, s.run.GetBranch()); err != nil {
+				return "", err
+			}
+		}
 		if pr, err = f.Merge(ctx, pr); err != nil {
 			return "", err
 		}
@@ -85,6 +108,31 @@ func (r *Runner) approve(ctx context.Context, s *state, step *millv1.Step) (stri
 	s.mergeCommit = sha
 	r.printf("  merged as %s\n", short(sha))
 	return pr.HeadSHA, nil
+}
+
+// catchUpOverlapError is a merge gate's catch-up that found the target had
+// moved on since the branch diverged, and that the two sides touched a file
+// in common: not something to finish without a review.
+type catchUpOverlapError struct {
+	target string
+	files  []string
+}
+
+func (e *catchUpOverlapError) Error() string {
+	return fmt.Sprintf("catching up with %s touched %s, which this branch also changed; a review is needed before merging",
+		e.target, strings.Join(e.files, ", "))
+}
+
+// finding is the judgment feedback that sends the run back through
+// `implement` and `commit` to resolve what catch-up left staged.
+func (e *catchUpOverlapError) finding() string {
+	var b strings.Builder
+	b.WriteString("Catching up with the target branch touched files this branch's own commits also touched, so the merge could not finish without a review:\n\n")
+	for _, f := range e.files {
+		fmt.Fprintf(&b, "- %s\n", f)
+	}
+	b.WriteString("\nIf `git status` shows conflict markers in the working tree, resolve them by editing the files, the same way you would any other change. If it does not, the two sides merged cleanly and there is nothing to resolve. Either way, do not run `git merge` or commit yourself: the merge is already staged, and `commit` finishes it.\n")
+	return b.String()
 }
 
 // fileGate is the three writes, in the one order that survives a crash at

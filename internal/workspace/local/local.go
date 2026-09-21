@@ -589,6 +589,12 @@ func (w *Workspace) Forge() workspace.ForgeVerbs { return w.verbs.ForgeVerbs() }
 // together (internal/evidence.Git).
 func (w *Workspace) GitRunner() forge.Git { return w.verbs.Runner() }
 
+// CatchUp brings the run's branch up to date with request.Target, the merge
+// gate's own act (internal/run/gate.go).
+func (w *Workspace) CatchUp(ctx context.Context, request workspace.CatchUpRequest) (workspace.CatchUpResult, error) {
+	return w.verbs.CatchUp(ctx, request)
+}
+
 // Committer is the identity every commit this workspace makes carries. It is
 // read from the signing key when one is arranged, because that key's name and
 // address are the ones git is handed, and from the options until then.

@@ -151,5 +151,6 @@ steps:
       auto: true
       deny_result: Merge denied by a human; the branch and its pull request are left open.
     evidence: status
+    on_failure: revise implement
     retries: 1
     timeout: 168h

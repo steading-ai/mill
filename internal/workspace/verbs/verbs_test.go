@@ -12,6 +12,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/redact"
 	"github.com/ivy/mill/internal/workspace/verbs"
@@ -68,19 +69,10 @@ func repository() string {
 	GinkgoHelper()
 	dir := filepath.Join(GinkgoT().TempDir(), "repo")
 	Expect(os.MkdirAll(dir, 0o700)).To(Succeed())
-	run := func(args ...string) {
-		GinkgoHelper()
-		command := exec.Command("git", args...)
-		command.Dir = dir
-		command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_SYSTEM=" + os.DevNull,
-			"GIT_AUTHOR_NAME=spec", "GIT_AUTHOR_EMAIL=spec@example.test", "GIT_COMMITTER_NAME=spec", "GIT_COMMITTER_EMAIL=spec@example.test"}
-		out, err := command.CombinedOutput()
-		Expect(err).NotTo(HaveOccurred(), "git %s: %s", strings.Join(args, " "), out)
-	}
-	run("init", "--quiet", "--initial-branch=main")
+	runGit(dir, "init", "--quiet", "--initial-branch=main")
 	Expect(os.WriteFile(filepath.Join(dir, "README.md"), []byte("hello\n"), 0o600)).To(Succeed())
-	run("add", "README.md")
-	run("commit", "--quiet", "--no-gpg-sign", "--message", "seed")
+	runGit(dir, "add", "README.md")
+	runGit(dir, "commit", "--quiet", "--no-gpg-sign", "--message", "seed")
 	return dir
 }
 
@@ -143,6 +135,13 @@ var _ = Describe("Git on the host", Label("unit"), func() {
 		Expect(status).To(Equal(workspace.Status{Branch: "main", Clean: true}))
 	})
 
+	It("answers CatchUp with ErrNoForge on a workspace with no forge, and fetches nothing", func(ctx context.Context) {
+		v := verbs.Verbs{Host: host, Checkout: func() (verbs.Checkout, error) { return verbs.Checkout{Dir: dir, Branch: "main"}, nil }}
+		_, err := v.CatchUp(ctx, workspace.CatchUpRequest{})
+		Expect(err).To(MatchError(workspace.ErrNoForge))
+		Expect(execs.commands).To(BeEmpty())
+	})
+
 	It("sinks a verb's start and its stdout, and ends it with no error, on success", func(ctx context.Context) {
 		sink := &fakeSink{}
 		host.Sink = sink
@@ -172,5 +171,165 @@ var _ = Describe("Git on the host", Label("unit"), func() {
 		Expect(verbs.SameRepo("https://forge.test/g/r.git", "https://forge.test/g/r/")).To(BeTrue())
 		Expect(verbs.SameRepo("https://forge.test/g/r", "https://forge.test/g/other")).To(BeFalse())
 		Expect(verbs.SameRepo("", "https://forge.test/g/r")).To(BeFalse())
+	})
+})
+
+// runGit runs one git command for a catch-up spec, with a fixed identity and
+// no configuration outside the repository, mirroring [repository]'s own.
+func runGit(dir string, args ...string) string {
+	GinkgoHelper()
+	command := exec.Command("git", args...)
+	command.Dir = dir
+	command.Env = []string{
+		"PATH=" + os.Getenv("PATH"), "HOME=" + dir,
+		"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_SYSTEM=" + os.DevNull,
+		"GIT_AUTHOR_NAME=spec", "GIT_AUTHOR_EMAIL=spec@example.test",
+		"GIT_COMMITTER_NAME=spec", "GIT_COMMITTER_EMAIL=spec@example.test",
+	}
+	out, err := command.CombinedOutput()
+	Expect(err).NotTo(HaveOccurred(), "git %s: %s", strings.Join(args, " "), out)
+	return string(out)
+}
+
+// cloneOf makes a clone of origin, with the identity the clone's own commits
+// need and nothing else configured, and switches it to branch — the run's
+// own branch, distinct from origin's checked-out one so a push back never
+// touches a branch origin has checked out.
+func cloneOf(origin, branch string) string {
+	GinkgoHelper()
+	parent := GinkgoT().TempDir()
+	dir := filepath.Join(parent, "clone")
+	runGit(parent, "clone", "--quiet", origin, dir)
+	runGit(dir, "config", "user.name", "spec")
+	runGit(dir, "config", "user.email", "spec@example.test")
+	runGit(dir, "checkout", "--quiet", "-b", branch)
+	return dir
+}
+
+// catchUpForge is a [forge.Forge] whose only live verb is Push, the one
+// CatchUp's self-merge uses to land back on origin; every other verb is
+// merge's own and unreached from here.
+type catchUpForge struct {
+	mu     sync.Mutex
+	pushed []string
+}
+
+func (f *catchUpForge) Authenticate(context.Context) (forge.GitAuth, error) {
+	return forge.GitAuth{}, nil
+}
+
+func (f *catchUpForge) Push(ctx context.Context, request forge.PushRequest) (string, error) {
+	if _, err := request.Git.Run(ctx, nil, "push", "origin", request.Branch); err != nil {
+		return "", err
+	}
+	out, err := request.Git.Run(ctx, nil, "rev-parse", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	f.mu.Lock()
+	f.pushed = append(f.pushed, request.Branch)
+	f.mu.Unlock()
+	return strings.TrimSpace(out), nil
+}
+
+func (f *catchUpForge) OpenPR(context.Context, forge.OpenPRRequest) (forge.PullRequest, error) {
+	return forge.PullRequest{}, errors.New("catchUpForge: OpenPR is not catch-up's to call")
+}
+
+func (f *catchUpForge) PR(context.Context, string) (forge.PullRequest, error) {
+	return forge.PullRequest{}, errors.New("catchUpForge: PR is not catch-up's to call")
+}
+
+func (f *catchUpForge) Checks(context.Context, string) (forge.Status, error) {
+	return "", errors.New("catchUpForge: Checks is not catch-up's to call")
+}
+
+func (f *catchUpForge) Merge(context.Context, forge.PullRequest) (forge.PullRequest, error) {
+	return forge.PullRequest{}, errors.New("catchUpForge: Merge is not catch-up's to call")
+}
+
+func (f *catchUpForge) MergeCommit(context.Context, forge.PullRequest) (string, error) {
+	return "", errors.New("catchUpForge: MergeCommit is not catch-up's to call")
+}
+
+func (f *catchUpForge) ClosePR(context.Context, forge.PullRequest, string) error {
+	return errors.New("catchUpForge: ClosePR is not catch-up's to call")
+}
+
+func (f *catchUpForge) DeleteBranch(context.Context, string) error {
+	return errors.New("catchUpForge: DeleteBranch is not catch-up's to call")
+}
+
+var _ forge.Forge = (*catchUpForge)(nil)
+
+var _ = Describe("Catching up with a target branch", Label("unit"), func() {
+	var (
+		origin string
+		clone  string
+		host   verbs.Host
+		f      *catchUpForge
+	)
+
+	BeforeEach(func() {
+		origin = repository()
+		clone = cloneOf(origin, "feature-x")
+		host = verbs.Host{Execer: &recorder{}, Redactor: redact.New()}
+		f = &catchUpForge{}
+	})
+
+	verbsOf := func() verbs.Verbs {
+		return verbs.Verbs{Host: host, Forge: f, Checkout: func() (verbs.Checkout, error) {
+			return verbs.Checkout{Dir: clone, Branch: "feature-x"}, nil
+		}}
+	}
+
+	It("reports UpToDate and pushes nothing when the branch already has the target's head", func(ctx context.Context) {
+		result, err := verbsOf().CatchUp(ctx, workspace.CatchUpRequest{Target: "main"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.UpToDate).To(BeTrue())
+		Expect(result.Merged).To(BeFalse())
+		Expect(f.pushed).To(BeEmpty())
+	})
+
+	It("merges and pushes itself when the two sides touched no file in common", func(ctx context.Context) {
+		Expect(os.WriteFile(filepath.Join(clone, "mine.txt"), []byte("mine\n"), 0o600)).To(Succeed())
+		runGit(clone, "add", "mine.txt")
+		runGit(clone, "commit", "--quiet", "--no-gpg-sign", "--message", "mine")
+
+		Expect(os.WriteFile(filepath.Join(origin, "theirs.txt"), []byte("theirs\n"), 0o600)).To(Succeed())
+		runGit(origin, "add", "theirs.txt")
+		runGit(origin, "commit", "--quiet", "--no-gpg-sign", "--message", "theirs")
+
+		result, err := verbsOf().CatchUp(ctx, workspace.CatchUpRequest{Target: "main"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.UpToDate).To(BeFalse())
+		Expect(result.Merged).To(BeTrue())
+		Expect(result.Overlap).To(BeEmpty())
+		Expect(result.SHA).NotTo(BeEmpty())
+
+		Expect(f.pushed).To(Equal([]string{"feature-x"}))
+		Expect(strings.TrimSpace(runGit(origin, "rev-parse", "feature-x"))).To(Equal(result.SHA),
+			"the merge landed on origin under the run's own branch")
+		Expect(filepath.Join(clone, "mine.txt")).To(BeAnExistingFile())
+		Expect(filepath.Join(clone, "theirs.txt")).To(BeAnExistingFile())
+	})
+
+	It("leaves the merge staged with conflict markers, and pushes nothing, when both sides touched the same file", func(ctx context.Context) {
+		Expect(os.WriteFile(filepath.Join(clone, "README.md"), []byte("mine\n"), 0o600)).To(Succeed())
+		runGit(clone, "commit", "--quiet", "--no-gpg-sign", "--all", "--message", "mine")
+
+		Expect(os.WriteFile(filepath.Join(origin, "README.md"), []byte("theirs\n"), 0o600)).To(Succeed())
+		runGit(origin, "commit", "--quiet", "--no-gpg-sign", "--all", "--message", "theirs")
+
+		result, err := verbsOf().CatchUp(ctx, workspace.CatchUpRequest{Target: "main"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.UpToDate).To(BeFalse())
+		Expect(result.Merged).To(BeFalse())
+		Expect(result.Overlap).To(Equal([]string{"README.md"}))
+		Expect(f.pushed).To(BeEmpty())
+
+		content, err := os.ReadFile(filepath.Join(clone, "README.md"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(content)).To(ContainSubstring("<<<<<<<"), "git left conflict markers for implement and commit to resolve")
 	})
 })

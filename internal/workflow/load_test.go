@@ -749,12 +749,14 @@ var _ = Describe("The quick-fix workflow", Label("unit"), func() {
 		Expect(s.GetRetries()).To(BeZero(), "explicit, and it is also the check default")
 	})
 
-	It("merge is a gate that auto-approves and closes on a status", func() {
+	It("merge is a gate that auto-approves, closes on a status, and sends a revise back to implement", func() {
 		s := step(loaded, "merge")
 		Expect(s.GetKind()).To(Equal(millv1.StepKind_STEP_KIND_GATE))
 		Expect(s.GetGate().GetAuto()).To(Equal("true"), "repo protections are the repo's job")
 		Expect(s.GetGate().GetAsk().GetTitle()).NotTo(BeEmpty())
 		Expect(s.GetEvidence()).To(Equal(millv1.EvidenceKind_EVIDENCE_KIND_STATUS))
+		Expect(s.GetOnFailure().GetKind()).To(Equal(millv1.OnFailureKind_ON_FAILURE_KIND_REVISE))
+		Expect(s.GetOnFailure().GetReviseTarget()).To(Equal("implement"))
 	})
 
 	It("its check script is in the directory the step names", func() {

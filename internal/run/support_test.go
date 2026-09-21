@@ -445,10 +445,20 @@ type fixtureForge struct {
 	mu       sync.Mutex
 	pr       forge.PullRequest
 	merged   bool
+	merges   int
 	refuse   error
 	checksAt forge.Status
 	comments []string
 	deleted  []string
+}
+
+// mergeCalls is how many times the forge was asked to merge the pull
+// request, so a spec can tell a merge that never reached the forge (a
+// catch-up conflict) from one that did.
+func (f *fixtureForge) mergeCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.merges
 }
 
 // Authenticate is the credential the workspace hands a clone or a push. The
@@ -488,6 +498,7 @@ func (f *fixtureForge) Checks(context.Context, string) (forge.Status, error) {
 func (f *fixtureForge) Merge(_ context.Context, pr forge.PullRequest) (forge.PullRequest, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.merges++
 	if f.refuse != nil {
 		return pr, f.refuse
 	}
@@ -522,6 +533,18 @@ func (f *fixtureForge) MergeCommit(_ context.Context, pr forge.PullRequest) (str
 }
 
 var _ forge.Forge = (*fixtureForge)(nil)
+
+// seedTarget commits one file directly onto the origin's default branch,
+// standing in for another run's PR merging into main while this one is still
+// in flight: the fact `merge`'s catch-up has to notice and act on.
+func (f *fixture) seedTarget(name, content string) {
+	GinkgoHelper()
+	work := filepath.Join(f.root, "origin-work")
+	Expect(os.WriteFile(filepath.Join(work, name), []byte(content), 0o644)).To(Succeed())
+	git(work, "add", name)
+	git(work, "commit", "-m", "advance main")
+	git(work, "push", f.origin, "main")
+}
 
 // newOrigin makes a repository for the run's workspace to clone: one commit
 // on the default branch, and nothing else.

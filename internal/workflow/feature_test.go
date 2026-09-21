@@ -107,10 +107,12 @@ var _ = Describe("The feature workflow", Label("unit"), func() {
 		Expect(s.GetGate().GetDenyResult()).To(ContainSubstring("the run stopped"))
 	})
 
-	It("merge auto-approves on an approving verdict at this tier or below", func() {
+	It("merge auto-approves on an approving verdict at this tier or below, and sends a revise back to implement", func() {
 		s := step(loaded, "merge")
 		Expect(s.GetGate().GetAuto()).To(Equal("review.decision == approve && tier <= feature"))
 		Expect(s.GetEvidence()).To(Equal(millv1.EvidenceKind_EVIDENCE_KIND_STATUS))
+		Expect(s.GetOnFailure().GetKind()).To(Equal(millv1.OnFailureKind_ON_FAILURE_KIND_REVISE))
+		Expect(s.GetOnFailure().GetReviseTarget()).To(Equal("implement"))
 	})
 
 	It("its check script is in the directory the step names", func() {

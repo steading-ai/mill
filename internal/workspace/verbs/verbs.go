@@ -27,6 +27,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -293,6 +294,129 @@ func (v Verbs) OriginAuth(ctx context.Context, origin string) (forge.GitAuth, er
 		}
 	}
 	return auth, nil
+}
+
+// CatchUp brings the run's branch up to date with request.Target, the mill's
+// own act at the merge gate rather than a session's verb. Fetching, deciding,
+// and (when it can) finishing the merge itself all happen here rather than
+// stepwise over the socket, because the credential a fetch or a push needs is
+// exactly the one docs/sandbox.md keeps out of the machine a session runs in.
+//
+// The two sides are compared by the files each changed since they diverged,
+// not by asking git to merge and seeing what happens: a clean git merge can
+// still silently combine two changes to the same function into nonsense, so
+// any file both sides touched routes back to a human by way of `implement`
+// and `commit`, merged or left with conflict markers as git finds it.
+func (v Verbs) CatchUp(ctx context.Context, request workspace.CatchUpRequest) (workspace.CatchUpResult, error) {
+	if v.Forge == nil {
+		return workspace.CatchUpResult{}, workspace.ErrNoForge
+	}
+	checkout, err := v.Checkout()
+	if err != nil {
+		return workspace.CatchUpResult{}, err
+	}
+	if checkout.Branch == "" {
+		return workspace.CatchUpResult{}, errors.New("workspace: the checkout is on no branch to catch up")
+	}
+
+	auth, err := v.OriginAuth(ctx, v.Remote())
+	if err != nil {
+		return workspace.CatchUpResult{}, err
+	}
+	fetchRef := request.Target
+	if fetchRef == "" {
+		fetchRef = "HEAD"
+	}
+	fetch := append(append([]string{}, auth.Args...), "fetch", "origin", fetchRef)
+	if _, err := v.Host.Run(ctx, checkout.Dir, auth.Env, fetch...); err != nil {
+		return workspace.CatchUpResult{}, err
+	}
+	target, err := runTrim(ctx, v.Host, checkout.Dir, "rev-parse", "FETCH_HEAD")
+	if err != nil {
+		return workspace.CatchUpResult{}, err
+	}
+
+	base, err := runTrim(ctx, v.Host, checkout.Dir, "merge-base", "HEAD", target)
+	if err != nil {
+		return workspace.CatchUpResult{}, err
+	}
+	if base == target {
+		return workspace.CatchUpResult{UpToDate: true}, nil
+	}
+
+	ours, err := changedFiles(ctx, v.Host, checkout.Dir, base, "HEAD")
+	if err != nil {
+		return workspace.CatchUpResult{}, err
+	}
+	theirs, err := changedFiles(ctx, v.Host, checkout.Dir, base, target)
+	if err != nil {
+		return workspace.CatchUpResult{}, err
+	}
+	overlap := overlapping(ours, theirs)
+
+	if len(overlap) > 0 {
+		if _, err := v.Host.Run(ctx, checkout.Dir, nil, "merge", "--no-commit", "--no-ff", target); err != nil {
+			if _, verifyErr := v.Host.Run(ctx, checkout.Dir, nil, "rev-parse", "--verify", "-q", "MERGE_HEAD"); verifyErr != nil {
+				return workspace.CatchUpResult{}, err
+			}
+		}
+		return workspace.CatchUpResult{Overlap: overlap}, nil
+	}
+
+	merge := append(checkout.Signer.GitConfig(), "merge", "--no-ff", "--no-edit", target)
+	if _, err := v.Host.Run(ctx, checkout.Dir, nil, merge...); err != nil {
+		return workspace.CatchUpResult{}, err
+	}
+	if err := (forgeVerbs{v: v}).signed(ctx, checkout); err != nil {
+		return workspace.CatchUpResult{}, err
+	}
+	sha, err := forge.Bind(v.Forge, forge.Step{}).Push(ctx, forge.PushRequest{
+		Git:    v.Runner(),
+		Branch: checkout.Branch,
+	})
+	if err != nil {
+		return workspace.CatchUpResult{}, err
+	}
+	return workspace.CatchUpResult{Merged: true, SHA: sha}, nil
+}
+
+// runTrim runs a git command and trims the trailing newline git leaves on
+// output meant to be read back as a single token, like a SHA.
+func runTrim(ctx context.Context, host Host, dir string, args ...string) (string, error) {
+	out, err := host.Run(ctx, dir, nil, args...)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// changedFiles is the files ref changed since base.
+func changedFiles(ctx context.Context, host Host, dir, base, ref string) ([]string, error) {
+	out, err := host.Run(ctx, dir, nil, "diff", "--name-only", base, ref)
+	if err != nil {
+		return nil, err
+	}
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return nil, nil
+	}
+	return strings.Split(out, "\n"), nil
+}
+
+// overlapping is the files present in both lists, sorted for a stable finding.
+func overlapping(ours, theirs []string) []string {
+	theirSet := make(map[string]bool, len(theirs))
+	for _, f := range theirs {
+		theirSet[f] = true
+	}
+	var overlap []string
+	for _, f := range ours {
+		if theirSet[f] {
+			overlap = append(overlap, f)
+		}
+	}
+	sort.Strings(overlap)
+	return overlap
 }
 
 // Remote is the repository the run pushes to, for the record: the forge's

@@ -8,6 +8,7 @@ import (
 
 	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
+	"github.com/ivy/mill/internal/harness"
 	"github.com/ivy/mill/internal/run"
 	"github.com/ivy/mill/internal/testsupport"
 )
@@ -272,6 +273,64 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 
 			Expect(f.gatesOnNode(ctx, other)).To(BeEmpty())
 			Expect(f.runOf(ctx).GetTier()).To(Equal(millv1.Tier_TIER_QUICK_FIX))
+		})
+	})
+
+	// mill#33: a branch whose base moved while the run was in flight is
+	// caught up with the target before merging, rather than asking the
+	// forge to merge a branch it will only refuse.
+	Describe("Catching up with a moved target before merging", func() {
+		// duringImplement wraps the implement turn's commit with a second
+		// commit landed directly on the target, so the branch and the
+		// target have each moved by the time `merge` runs its catch-up.
+		duringImplement := func(name, content string) {
+			scripts := f.quickFixScripts()
+			scripts[1].Do = func(session harness.Session) {
+				f.commits(session)
+				f.seedTarget(name, content)
+			}
+			f.script(scripts...)
+		}
+
+		It("merges after catching up on a target that moved with no overlap", func() {
+			duringImplement("from-elsewhere.txt", "another run's change\n")
+
+			Expect(f.runner().Execute(ctx, f.nodeRef)).To(Succeed())
+
+			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_DONE))
+			Expect(f.forge.mergeCalls()).To(Equal(1), "the forge is asked to merge once, after catching up locally")
+			Expect(stepRuns(f.inspect(ctx), "merge")).To(HaveLen(1), "nothing here was a finding")
+		})
+
+		It("a catch-up conflict is a finding for implement, not a merge attempt, and the run recovers", func() {
+			const overlapFile = "session-2.txt"
+			// The run's own implement turn writes this same path with this
+			// same content (fixture.commits), so the overlap is on the
+			// filename alone: git could auto-merge it, and mill#33's
+			// acceptance criteria asks for that to still be a finding.
+			duringImplement(overlapFile, "what the session changed\n")
+
+			Expect(f.runner().Execute(ctx, f.nodeRef)).To(Succeed())
+
+			By("the merge gate's first attempt found the overlap and revised back to implement")
+			detail := f.inspect(ctx)
+			Expect(after(detail, "merge")).To(Equal("implement"))
+			Expect(stepRuns(detail, "implement")).To(HaveLen(2), "the conflict cost implement an attempt")
+			Expect(stepRuns(detail, "merge")).To(HaveLen(2), "merge ran again once caught up")
+			Expect(stepRuns(detail, "merge")[0].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_FAILED))
+
+			By("the finding names the file and never reached the forge")
+			calls := f.harness.Calls()
+			Expect(calls).To(HaveLen(7), "gather-context, implement x2, commit x2, pr x2")
+			revised := calls[4].Prompt.Text
+			Expect(revised).To(ContainSubstring("## What the last attempt failed on"))
+			Expect(revised).To(ContainSubstring(overlapFile))
+			Expect(revised).To(ContainSubstring("Catching up with the target branch"))
+			Expect(revised).To(ContainSubstring("Do not run `git merge` or commit yourself"))
+
+			By("and the run went on to merge without a human, spending exactly one forge merge")
+			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_DONE))
+			Expect(f.forge.mergeCalls()).To(Equal(1), "never asked while the conflict stood, asked once it was resolved")
 		})
 	})
 })
