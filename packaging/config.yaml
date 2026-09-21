@@ -1,0 +1,28 @@
+# What the worker in mill.service claims and how it runs. The keys are
+# mill's long flag names (docs/tools.md §Configuration); a flag on the
+# unit's ExecStart line wins over this file. The package leaves an edited
+# file alone on upgrade.
+
+# What to claim: every ready node of the projects listed that carries every
+# label listed. A project's repository is its own `vcs_url` in dagger, read
+# from each claim, and is not a setting here.
+project: []
+label: []
+
+# The harness sidecar and the workflows the package installed. A check step
+# names its script relative to the workflow it was loaded with; quick-fix
+# and feature carry the same scripts, so either serves. Push the workflows
+# a project runs with `mill workflow push /usr/share/mill/workflows/<name>`.
+sidecar: /usr/lib/mill/sidecar/dist/main.js
+workflow-dir: /usr/share/mill/workflows/quick-fix
+
+# Where runs work: clones under the service's account, in its state
+# directory. The machine backend needs the sandbox's host half, which this
+# package does not carry (docs/sandbox.md).
+workspace: local
+workspace-dir: /var/lib/mill/workspaces
+log-dir: /var/lib/mill/logs
+
+# A session's sidecar gets a named floor plus what its step asked for, and
+# never this unit's own environment.
+env_mode: strict

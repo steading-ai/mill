@@ -134,7 +134,7 @@ var _ = Describe("The package", Label("unit", "slow"), Ordered, func() {
 		// noreplace, which nfpm records from the content's type. Whether a
 		// real dnf upgrade honours the mark is the Fedora guest's to say;
 		// what is asserted here is that the mark is asked for.
-		body, err := os.ReadFile("nfpm.yaml")
+		body, err := os.ReadFile("packaging/nfpm.yaml")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(body)).To(MatchRegexp(`dst: /etc/mill/config.yaml\n\s+type: config\|noreplace`))
 		Expect(string(body)).To(MatchRegexp(`dst: /etc/mill/env\n\s+type: config\|noreplace`))
@@ -167,7 +167,7 @@ var _ = Describe("The packaged unit", Label("unit"), func() {
 	})
 
 	It("is not started, and nothing is chowned, by a scriptlet", func() {
-		for _, script := range []string{"contrib/rpm/postinstall.sh", "contrib/rpm/preremove.sh", "contrib/rpm/postremove.sh"} {
+		for _, script := range []string{"packaging/scripts/postinstall.sh", "packaging/scripts/preremove.sh", "packaging/scripts/postremove.sh"} {
 			body, err := os.ReadFile(script)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(body)).NotTo(MatchRegexp(`systemctl[^\n]*\bstart\b`), "%s starts nothing", script)

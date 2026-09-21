@@ -151,7 +151,7 @@ type McpServerConfig struct {
 	Global  bool              `yaml:"global"`
 }
 
-// systemConfigPath is where the package installs the file (nfpm.yaml), for
+// systemConfigPath is where the package installs the file (packaging/nfpm.yaml), for
 // a host that runs mill from a system unit rather than an account.
 const systemConfigPath = "/etc/mill/config.yaml"
 
