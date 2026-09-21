@@ -348,7 +348,7 @@ func runCLI(ctx context.Context, socket string, args ...string) (string, error) 
 func runCLIArgs(socket string, args []string) []string {
 	GinkgoHelper()
 	if socket == "" {
-		panic("empty socket passed to runCLIArgs; start a service first")
+		panic("empty socket passed to runCLIArgs; start a service first, e.g. serving(ctx)")
 	}
 	if !slices.Contains(args, "--dagger-socket") && commandTakesDaggerSocket(args) {
 		args = append(args, "--dagger-socket", filepath.Join(GinkgoT().TempDir(), "no-dagger.sock"))
@@ -370,8 +370,8 @@ func commandTakesDaggerSocket(args []string) bool {
 }
 
 var _ = Describe("runCLI's socket guard", Label("unit"), func() {
-	It("panics rather than dial the production socket when called with none", func() {
-		Expect(func() { _, _ = runCLI(context.Background(), "", "status") }).To(Panic())
+	It("panics naming serving(ctx) rather than dial the production socket when called with none", func() {
+		Expect(func() { _, _ = runCLI(context.Background(), "", "status") }).To(PanicWith(ContainSubstring("serving(ctx)")))
 	})
 
 	It("appends a dead --dagger-socket when the target command takes one", func() {

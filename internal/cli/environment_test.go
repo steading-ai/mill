@@ -11,6 +11,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/ivy/mill/internal/cli"
+	"github.com/ivy/mill/internal/workspace"
 )
 
 // A face run in-process reads the mill's own environment: the dagger project
@@ -155,5 +156,25 @@ var _ = Describe("A face's environment", Label("unit"), func() {
 		Expect(invoke("work")).NotTo(BeZero())
 		Expect(stderr.String()).To(ContainSubstring(path))
 		Expect(stderr.String()).To(ContainSubstring("MILL_CONFIG"))
+	})
+
+	// A session with neither flag given falls back to internal/cli's own
+	// compiled-in socket default, so a workspace's dead DG_SOCKET/MILL_SOCKET
+	// must win over that default, not merely be present alongside it. Only a
+	// real, flagless `status` invocation tells those two apart.
+	It("dials the dead socket a session's own environment names when no flag says otherwise, never the production default", func() {
+		By("given an environment carrying only the dead sockets a workspace would hand a session")
+		dead := workspace.DeadSockets(GinkgoT().TempDir())
+		for name, path := range dead {
+			GinkgoT().Setenv(name, path)
+		}
+
+		By("when mill status runs with no --socket flag")
+		exit := invoke("status")
+
+		By("then it dials the dead path MILL_SOCKET names and fails naming it")
+		Expect(exit).NotTo(BeZero())
+		Expect(stderr.String()).To(ContainSubstring("dial unix " + dead["MILL_SOCKET"]))
+		Expect(stderr.String()).NotTo(ContainSubstring("/run/mill/mill.sock"))
 	})
 })

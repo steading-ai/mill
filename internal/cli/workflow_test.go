@@ -108,8 +108,8 @@ func servingWith(ctx context.Context, extra ...string) mill {
 }
 
 var _ = Describe("mill.run/mill.try's socket guard", Label("unit"), func() {
-	It("panics rather than dial the production socket when the fixture holds none", func() {
-		Expect(func() { mill{}.run(context.Background(), "status") }).To(Panic())
+	It("panics naming serving(ctx) rather than dial the production socket when the fixture holds none", func() {
+		Expect(func() { mill{}.run(context.Background(), "status") }).To(PanicWith(ContainSubstring("serving(ctx)")))
 	})
 
 	It("appends a dead --dagger-socket when the target command takes one", func() {
