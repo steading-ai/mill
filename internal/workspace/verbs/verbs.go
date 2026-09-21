@@ -355,7 +355,11 @@ func (v Verbs) CatchUp(ctx context.Context, request workspace.CatchUpRequest) (w
 	overlap := overlapping(ours, theirs)
 
 	if len(overlap) > 0 {
-		if _, err := v.Host.Run(ctx, checkout.Dir, nil, "merge", "--no-commit", "--no-ff", target); err != nil {
+		// The identity travels with the staged merge too: git refuses to
+		// begin a merge it could not commit, and the checkout carries no
+		// identity of its own (the mill's is the signer's, per invocation).
+		stage := append(checkout.Signer.GitConfig(), "merge", "--no-commit", "--no-ff", target)
+		if _, err := v.Host.Run(ctx, checkout.Dir, nil, stage...); err != nil {
 			if !mergeInProgress(ctx, v.Host, checkout.Dir) {
 				return workspace.CatchUpResult{}, err
 			}
