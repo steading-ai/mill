@@ -167,6 +167,86 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 		})
 	})
 
+	Describe("Claiming across projects", func() {
+		It("an unscoped client claims a ready node from either project", func() {
+			second := f.secondProject(ctx)
+			refA := f.node(ctx, "in the first project", "body", daggerv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
+			refB := f.nodeIn(ctx, second, "in the second project", "body", daggerv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
+
+			unscoped := f.unscoped()
+			first, err := unscoped.ClaimNext(ctx, nil, nil, time.Second)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(first).NotTo(BeNil())
+
+			another, err := unscoped.ClaimNext(ctx, nil, nil, time.Second)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(another).NotTo(BeNil())
+
+			Expect([]string{first.Node.GetReference(), another.Node.GetReference()}).To(ConsistOf(refA, refB),
+				"a worker with no project configured claims from every project")
+		})
+
+		It("a client scoped to one project does not see the other's ready node", func() {
+			second := f.secondProject(ctx)
+			f.nodeIn(ctx, second, "only in the second project", "body", daggerv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
+
+			claimed, err := f.mill.ClaimNext(ctx, []string{f.project}, nil, time.Second)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(claimed).To(BeNil(), "the filter names only the fixture's own project, which has no ready node")
+		})
+	})
+
+	Describe("Scoped", func() {
+		It("carries every post-claim write and gate read for the project the claim landed in", func() {
+			second := f.secondProject(ctx)
+			ref := f.nodeIn(ctx, second, "elsewhere", "body", daggerv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
+			lost := f.nodeIn(ctx, second, "elsewhere too", "body", daggerv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
+
+			unscoped := f.unscoped()
+			claimed, err := unscoped.ClaimNext(ctx, []string{second}, nil, time.Second)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(claimed.Node.GetReference()).To(Equal(ref))
+			Expect(claimed.Project.GetSlug()).To(Equal(second))
+
+			// Scoped is what internal/run/run.go's drive pins the run's own
+			// dagger client to right after a claim, so every write and gate
+			// read that follows lands in the project the claim actually
+			// came from — not the worker's own (here empty) one.
+			scoped := unscoped.Scoped(claimed.Project.GetSlug())
+
+			Expect(scoped.Comment(ctx, "mill-spec-scoped-comment", claimed.Lease.GetId(), ref, "hello")).To(Succeed())
+
+			filed, err := scoped.CreateGate(ctx, "mill-spec-scoped-gate", claimed.Lease.GetId(), dagger.Gate{
+				Title: "Merge?", Body: "Complete this node to merge.", Blocks: ref, Labels: []string{dagger.GateLabel},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			gates, err := scoped.Gates(ctx, ref, dagger.GateLabel)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(gates).To(HaveLen(1))
+			Expect(gates[0].GetReference()).To(Equal(filed.GetReference()))
+
+			Expect(scoped.AttachText(ctx, "mill-spec-scoped-artifact", claimed.Lease.GetId(), ref,
+				"plan", "the plan", "do the thing", nil)).To(Succeed())
+			artifacts, err := scoped.Artifacts(ctx, ref)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(artifacts).To(HaveLen(1))
+
+			Expect(scoped.Complete(ctx, "mill-spec-scoped-complete", claimed.Lease.GetId(), ref,
+				&daggerv1.Result{Body: "done"})).To(Succeed())
+
+			// Hold's own lease: it fences lost, not ref, and a lease is only
+			// live for the node it was taken on.
+			lostClaim, err := scoped.Claim(ctx, lost)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(scoped.Hold(ctx, "mill-spec-scoped-hold", lostClaim.Lease.GetId(), lost,
+				"no repository: has no vcs_url")).To(Succeed())
+			node, err := scoped.Node(ctx, lost)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(node.GetHold().GetReason()).To(Equal("no repository: has no vcs_url"))
+		})
+	})
+
 	Describe("Fencing", func() {
 		It("reports a heartbeat on an expired lease as fenced", func() {
 			ref := f.node(ctx, "short lease", "body", daggerv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)

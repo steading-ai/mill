@@ -198,6 +198,7 @@ func runDoctor(cmd *cobra.Command, opts doctorOptions) error {
 	if err := applyEvictionConfig(config, &expiry, &opts.highWatermark, &opts.lowWatermark); err != nil {
 		return err
 	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "claims from: %s\n", claimsFrom(config.Projects))
 	probes := runProbes(cmd.Context(), opts)
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	healthy := true
@@ -383,7 +384,7 @@ func probeDagger(ctx context.Context, opts doctorOptions) probe {
 	}
 	ctx, cancel := context.WithTimeout(ctx, doctor.ProbeTimeout)
 	defer cancel()
-	nodes, err := dagger.Dial(opts.daggerSocket, opts.project).Ready(ctx, daggerv1.AssigneeKind_ASSIGNEE_KIND_AGENT)
+	nodes, err := dagger.Dial(opts.daggerSocket, opts.project).Ready(ctx, []string{opts.project}, daggerv1.AssigneeKind_ASSIGNEE_KIND_AGENT)
 	if err != nil {
 		return fail("dagger", "%s did not answer as this account: %v", opts.daggerSocket, err)
 	}

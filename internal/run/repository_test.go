@@ -8,6 +8,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
+	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/run"
 	"github.com/ivy/mill/internal/testsupport"
@@ -54,7 +55,7 @@ var _ = Describe("The run's repository", Label(testsupport.DBLabel), func() {
 		Expect(seen.Forge).To(Equal(f.forge))
 	})
 
-	It("fails the run before a clone when the project has no repository, and releases the lease", func() {
+	It("fails the run before a clone when the project has no repository, and holds the node rather than releasing it", func() {
 		var opened atomic.Int64
 		runner := f.runner(func(o *run.Options) {
 			o.Repositories = func(context.Context, *daggerv1.Project) (run.Repository, error) {
@@ -70,9 +71,11 @@ var _ = Describe("The run's repository", Label(testsupport.DBLabel), func() {
 
 		Expect(err).To(MatchError(ContainSubstring("dg project update " + project + " --vcs-url")))
 		Expect(opened.Load()).To(BeZero(), "nothing was cloned")
+		Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_FAILED))
 		node, err := f.client.Node(ctx, f.nodeRef)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(node.GetClaimed()).To(BeFalse(), "the lease went back")
+		Expect(node.GetHold().GetReason()).To(HavePrefix("no repository"),
+			"held under the same reason rather than reclaimed into the same refusal")
 		Expect(node.GetStatus()).To(Equal(daggerv1.Status_STATUS_OPEN))
 	})
 

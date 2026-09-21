@@ -30,12 +30,12 @@ func (r *Runner) park(ctx context.Context, s *state, step *millv1.Step, sr *mill
 		rounds = []string{cause.Error()}
 	}
 	findings := roundsOf(step.GetName(), rounds)
-	if err := r.options.Dagger.Comment(ctx,
+	if err := s.dagger.Comment(ctx,
 		dagger.RequestID(s.run.GetId(), step.GetName()+"-findings", sr.GetAttempt()), s.lease,
 		s.node.GetReference(), findings); err != nil {
 		return err
 	}
-	gate, err := r.options.Dagger.CreateGate(ctx,
+	gate, err := s.dagger.CreateGate(ctx,
 		dagger.RequestID(s.run.GetId(), step.GetName()+"-park", sr.GetAttempt()), s.lease,
 		dagger.Gate{
 			Title:  fmt.Sprintf("%s: %s stopped after %d attempts", s.node.GetReference(), step.GetName(), sr.GetAttempt()),

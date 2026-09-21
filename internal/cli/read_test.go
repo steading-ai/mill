@@ -2,6 +2,8 @@ package cli_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -76,13 +78,30 @@ var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 			r := openRun(ctx, "millcli#2", nodeID(2))
 
 			refs := r.cli(ctx, "status", "--view", "refs")
-			Expect(strings.Fields(lines(refs)[0])).To(Equal([]string{"NODE", "RUN"}))
+			Expect(lines(refs)[0]).To(ContainSubstring("worker claims from:"))
+			Expect(strings.Fields(lines(refs)[1])).To(Equal([]string{"NODE", "RUN"}))
 			Expect(rowFor(refs, "millcli#2")).To(ContainSubstring(r.run.GetId()))
 			Expect(refs).NotTo(ContainSubstring("ELAPSED"))
 
 			full := r.cli(ctx, "status", "--view", "full")
 			Expect(full).To(ContainSubstring("WORKER"))
 			Expect(full).To(ContainSubstring("LEASES"))
+		})
+
+		It("prints what the worker claims from, reading the same configuration a worker would", func() {
+			m := serving(ctx)
+
+			By("with no configuration file, the worker claims from every project")
+			out, err := runCLI(ctx, m.socket, "status", "--config", filepath.Join(GinkgoT().TempDir(), "no-config.yaml"))
+			Expect(err).NotTo(HaveOccurred(), out)
+			Expect(lines(out)[0]).To(Equal("worker claims from: every project"))
+
+			By("with project: [mill] configured, the worker claims only from mill")
+			config := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+			Expect(os.WriteFile(config, []byte("project: [mill]\n"), 0o600)).To(Succeed())
+			out, err = runCLI(ctx, m.socket, "status", "--config", config)
+			Expect(err).NotTo(HaveOccurred(), out)
+			Expect(lines(out)[0]).To(Equal("worker claims from: mill"))
 		})
 	})
 

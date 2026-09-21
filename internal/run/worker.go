@@ -12,6 +12,7 @@ import (
 
 	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
 	"github.com/ivy/mill/internal/dagger"
+	"github.com/ivy/mill/internal/forge"
 )
 
 // The daemon is the loop, not a scheduler.
@@ -66,11 +67,15 @@ type Startup interface {
 
 // WorkerOptions is everything a worker is built from.
 type WorkerOptions struct {
-	// Runners is one runner per project the worker claims from, polled in
-	// turn. A runner carries its own dagger client, and a dagger client is
-	// scoped to one project, so "which projects" and "which runners" are
-	// the same list.
-	Runners []*Runner
+	// Runner drives every claim. Its dagger client's own project, if any, is
+	// only the fallback [Runner.repository] and a bare reference resolve
+	// against; the claim itself carries Projects, and every write the claim
+	// leads to goes through the client [Runner.drive] scopes to the project
+	// the claim actually landed in.
+	Runner *Runner
+	// Projects is the filter every claim carries. Empty claims from every
+	// project the worker's principal may read.
+	Projects []string
 	// Startup is run once, before the first claim. Nil does nothing at
 	// start, which is the local backend.
 	Startup Startup
@@ -99,9 +104,8 @@ type Worker struct {
 	slots    chan struct{}
 	stopping chan struct{}
 	once     sync.Once
-	next     int
 	// lastSweep is when the ledger was last swept against dagger. Touched
-	// on the claim loop alone, like next.
+	// on the claim loop alone.
 	lastSweep time.Time
 	// inFlight is every node this process is driving, by id. The sweep
 	// leaves those alone whatever dagger says of them: the run's own
@@ -112,13 +116,18 @@ type Worker struct {
 	// The grace window elapsing after the last run has already stopped is
 	// an ordinary shutdown.
 	killed atomic.Bool
+	// loggedNoRepo is every project already warned about having no
+	// repository. A worker claiming across many projects holds each node
+	// that fails on this the same as any other, but the same broken project
+	// saying so on every claim is noise a person has already been told once.
+	loggedNoRepo sync.Map
 }
 
 // NewWorker builds a worker, applying the defaults. Every run it drives
 // watches its stop channel, so one stop reaches every run in flight.
 func NewWorker(options WorkerOptions) (*Worker, error) {
-	if len(options.Runners) == 0 {
-		return nil, errors.New("work: no project to claim from")
+	if options.Runner == nil {
+		return nil, errors.New("work: no runner to claim with")
 	}
 	if options.Concurrency <= 0 {
 		options.Concurrency = DefaultConcurrency
@@ -181,13 +190,9 @@ func (w *Worker) start(ctx context.Context) error {
 	if err := w.sweep(ctx); err != nil {
 		return fmt.Errorf("work: sweep before claiming: %w", err)
 	}
-	// Run on the first runner alone, the same as the sweep above: every
-	// runner in one worker process is built from the one worker's own
-	// --log-dir and store socket (internal/cli/work.go's newWorker), so
-	// LogDir and Store do not vary by project here. A seal that fails is a
-	// warning, not a reason to stop: the live file it left behind is safe
-	// to retry at the next start.
-	if err := w.options.Runners[0].SealOrphans(ctx); err != nil {
+	// A seal that fails is a warning, not a reason to stop: the live file
+	// it left behind is safe to retry at the next start.
+	if err := w.options.Runner.SealOrphans(ctx); err != nil {
 		w.options.Log.Warn("sealing orphaned activity files at start", "error", err)
 	}
 	if w.options.Startup == nil {
@@ -202,14 +207,12 @@ func (w *Worker) start(ctx context.Context) error {
 	return nil
 }
 
-// sweep runs one pass of the sweep on the first runner — a dagger's nodes
-// are readable by qualified reference through any project's client — and
-// prints its findings, one line each. The pass is timed from its start
-// whatever it returned, so a ledger that will not answer is asked again at
-// the interval and not at every claim.
+// sweep runs one pass of the sweep and prints its findings, one line each.
+// The pass is timed from its start whatever it returned, so a ledger that
+// will not answer is asked again at the interval and not at every claim.
 func (w *Worker) sweep(ctx context.Context) error {
 	w.lastSweep = time.Now()
-	report, err := w.options.Runners[0].Sweep(ctx, w.driving)
+	report, err := w.options.Runner.Sweep(ctx, w.driving)
 	for _, finding := range report.Findings {
 		w.printf("sweep: %s\n", finding)
 	}
@@ -271,8 +274,8 @@ func (w *Worker) claim(ctx context.Context, wg *sync.WaitGroup) error {
 			return nil
 		}
 
-		runner := w.turn()
-		claimed, err := runner.options.Dagger.ClaimNext(claiming, w.options.Labels, w.options.Wait)
+		runner := w.options.Runner
+		claimed, err := runner.options.Dagger.ClaimNext(claiming, w.options.Projects, w.options.Labels, w.options.Wait)
 		if err != nil || claimed == nil {
 			<-w.slots
 			if err == nil || w.stopped() || ctx.Err() != nil {
@@ -304,7 +307,7 @@ func (w *Worker) claim(ctx context.Context, wg *sync.WaitGroup) error {
 			defer wg.Done()
 			defer func() { <-w.slots }()
 			defer w.inFlight.Delete(nodeID)
-			w.drive(ctx, runner, claimed)
+			w.drive(ctx, claimed)
 		}()
 	}
 }
@@ -315,28 +318,26 @@ func (w *Worker) claim(ctx context.Context, wg *sync.WaitGroup) error {
 // released its lease and recorded why; a fenced one belongs to whoever
 // fenced it out and is not this worker's to report. Either way the answer is
 // the same: ask for more work.
-func (w *Worker) drive(ctx context.Context, runner *Runner, claimed *dagger.Claimed) {
+func (w *Worker) drive(ctx context.Context, claimed *dagger.Claimed) {
 	ref := claimed.Node.GetReference()
-	err := runner.ExecuteClaimed(ctx, claimed, w.stopping)
+	err := w.options.Runner.ExecuteClaimed(ctx, claimed, w.stopping)
 	if ctx.Err() != nil {
 		w.killed.Store(true)
 	}
+	var missing *forge.NoVCSURLError
 	switch {
 	case err == nil:
 	case errors.Is(err, ErrFenced):
 		w.options.Log.Info("fenced out; the node belongs to another worker", "node", ref)
+	case errors.As(err, &missing):
+		if _, seen := w.loggedNoRepo.LoadOrStore(missing.Project, struct{}{}); !seen {
+			w.options.Log.Warn("a project has no repository; nodes there are held rather than claimed",
+				"project", missing.Project, "error", err)
+		}
 	default:
 		w.options.Log.Error("the run ended badly", "node", ref, "error", err)
 		w.printf("%s: %v\n", ref, err)
 	}
-}
-
-// turn is the next runner to claim from, round-robin over the projects. It
-// is called from the claim loop alone, which is single-threaded.
-func (w *Worker) turn() *Runner {
-	runner := w.options.Runners[w.next%len(w.options.Runners)]
-	w.next++
-	return runner
 }
 
 // stopped reports whether a graceful stop has been asked for.

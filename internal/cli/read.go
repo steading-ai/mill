@@ -77,6 +77,9 @@ type readOptions struct {
 	follow       bool
 	workspaceDir string
 	reason       string
+	// config is the configuration file `status` reads the worker's claim
+	// filter from, for its header line. No other read tool uses it.
+	config string
 }
 
 // target names the run a tool was asked about. A reference carrying a `#` is
@@ -158,6 +161,7 @@ running, waiting and parked.`,
 	addReadFlags(cmd, &opts)
 	cmd.Flags().StringSliceVar(&opts.statuses, "status", nil, "only runs in these states (default: every state that has not ended)")
 	cmd.Flags().StringVar(&opts.project, "project", "", "only runs on nodes in this dagger project")
+	cmd.Flags().StringVar(&opts.config, "config", defaultConfigPath(), "path of the configuration file the worker's claim filter is read from for the header line (default: $"+configEnv+", else $XDG_CONFIG_HOME/mill/config.yaml, else /etc/mill/config.yaml)")
 	return cmd
 }
 
@@ -170,12 +174,17 @@ func runStatus(cmd *cobra.Command, opts readOptions) error {
 	if err != nil {
 		return err
 	}
+	config, err := LoadConfig(opts.config)
+	if err != nil {
+		return err
+	}
 	res, err := storeClient(opts.socket).Status(cmd.Context(), connect.NewRequest(&millv1.StatusRequest{
 		Statuses: statuses, Project: opts.project,
 	}))
 	if err != nil {
 		return fmt.Errorf("status: %w", err)
 	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "worker claims from: %s\n", claimsFrom(config.Projects))
 	if err := renderStatus(cmd, res.Msg.GetRuns(), v); err != nil {
 		return err
 	}

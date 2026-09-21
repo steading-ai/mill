@@ -100,6 +100,16 @@ func New(httpClient connect.HTTPClient, baseURL, project string, opts ...Option)
 // Project is what a bare node reference resolves in.
 func (c *Client) Project() string { return c.project }
 
+// Scoped is a copy of c pinned to project, sharing the same connections. A
+// worker claiming across every project builds one whenever a claim needs to
+// write or read gates within the project the claim actually landed in,
+// rather than the worker's own (possibly empty) one.
+func (c *Client) Scoped(project string) *Client {
+	scoped := *c
+	scoped.project = project
+	return &scoped
+}
+
 // Node reads one node in full: the body is the prompt a step is built from,
 // so VIEW_FULL is the only view worth asking for here.
 func (c *Client) Node(ctx context.Context, ref string) (*daggerv1.Node, error) {

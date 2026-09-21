@@ -1062,17 +1062,6 @@ func repositories(opts runOptions) run.Repositories {
 	}
 }
 
-// projectRepository is repositoryFor for a caller with no claim in hand —
-// the worker's startup check, the reconciliation sweep, `doctor`'s probe:
-// one GetProject on the client's project, then the same rule.
-func projectRepository(ctx context.Context, client *dagger.Client, opts runOptions) (run.Repository, error) {
-	project, err := client.GetProject(ctx)
-	if err != nil {
-		return run.Repository{}, err
-	}
-	return repositoryFor(project, opts)
-}
-
 // workerRef names this worker on the run and on every lease: the account and
 // the host it runs on.
 func workerRef() (string, error) {

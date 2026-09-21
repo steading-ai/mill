@@ -88,7 +88,7 @@ func (r *Runner) postUsage(ctx context.Context, s *state, sr *millv1.StepRun) er
 			continue
 		}
 		for _, totals := range d.GetTotals() {
-			if err := r.options.Dagger.ReportUsage(ctx, s.lease, s.node.GetReference(), totals.GetModel(), dagger.TokenCounts{
+			if err := s.dagger.ReportUsage(ctx, s.lease, s.node.GetReference(), totals.GetModel(), dagger.TokenCounts{
 				InputTokens:      totals.GetInputTokens(),
 				OutputTokens:     totals.GetOutputTokens(),
 				CacheReadTokens:  totals.GetCacheReadTokens(),
@@ -131,7 +131,7 @@ func (r *Runner) finish(ctx context.Context, s *state, detail *millv1.InspectRes
 	}
 	requestID := keyed.GetRun().GetCompleteRequestId()
 
-	if err := r.options.Dagger.Complete(ctx, requestID, s.lease, s.node.GetReference(), r.result(s, detail)); err != nil {
+	if err := s.dagger.Complete(ctx, requestID, s.lease, s.node.GetReference(), r.result(s, detail)); err != nil {
 		return err
 	}
 	if _, err := call(ctx, r.options.Store.Done, &millv1.DoneRequest{
