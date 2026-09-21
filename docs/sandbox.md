@@ -501,6 +501,8 @@ On worker start, before the first claim and in this order:
 4. Record the pass in the ledger.
 5. Run eviction.
 
+No release path returns to `ClaimNext` for free. A refusal before any step runs either Holds the node under the reason that caused it — a lost sandbox (above), a project with no repository (`noRepository`), a done-or-failed run found on an open node, a workflow naming a harness this worker has no adapter for — so it is deterministic and every worker would refuse it the same way until a person or the workflow changes; or, for a refusal that is not deterministic enough to Hold (a forge outage, a dropped connection, anything else `openWorkspace`/`selectWorkflow`/`restoreRetried`/`resumePark` can return), the worker waits before reclaiming that node again, doubling the wait on each consecutive refusal up to a cap (`internal/run/worker.go`'s `BackoffBase`/`BackoffCap`), and logs once per refusal rather than once per cycle. The backoff is worker-local and in memory, cleared the moment a real takeover succeeds; Hold is dagger's and stands until someone acts on it. Together they are the general rule this document's specific cases above already followed one at a time: a claim on a node that cannot be opened right now must never come straight back to the same claim (mill#39).
+
 A pass that cannot tell orphans from live runs — the ledger or machined not answering — stops the worker before it claims anything. Anything narrower is a `failure` finding and the rest of the pass stands.
 
 Polling `machinectl` is sufficient at run cadence. If it is not, host-side D-Bus signals are the upgrade, for lifecycle only; exec stays on the CLI.

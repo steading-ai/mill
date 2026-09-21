@@ -22,6 +22,7 @@ import (
 	"github.com/ivy/mill/internal/harness/fake"
 	"github.com/ivy/mill/internal/run"
 	"github.com/ivy/mill/internal/testsupport"
+	"github.com/ivy/mill/internal/workspace"
 )
 
 var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
@@ -286,14 +287,64 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 		})
 	})
 
+	Describe("A claim it cannot open, for a reason it did not choose", func() {
+		It("waits before reclaiming, with a bound that grows, and logs once per attempt rather than per cycle", func() {
+			f.createNode(ctx, &daggerv1.CreateNodeOp{Title: "a workspace that never opens", Body: "body"})
+
+			boom := errors.New("workspace: the sandbox host is unreachable")
+
+			warnings := &warnCounter{message: "could not open a claimed node; backing off before reclaiming it"}
+			client, counter := f.counted()
+			worker := f.workerOver(f.runner(quick, func(o *run.Options) {
+				o.Dagger = client
+				o.Workspaces = func(context.Context, workspace.Spec, run.Repository) (run.Workspace, error) {
+					return nil, boom
+				}
+			}), func(o *run.WorkerOptions) { o.Log = slog.New(warnings) })
+			done := startWorker(ctx, worker)
+			DeferCleanup(func() {
+				worker.Stop()
+				Eventually(done, time.Minute).Should(Receive(BeNil()))
+			})
+
+			By("the node is opened once, and not reclaimed again inside its own backoff window")
+			Eventually(warnings.Count, 2*time.Second, 20*time.Millisecond).Should(BeNumerically(">=", 1))
+			Consistently(warnings.Count, 700*time.Millisecond, 50*time.Millisecond).Should(Equal(1),
+				"BackoffBase is a second; a reclaim well inside it would be the old hot loop")
+
+			By("then the window elapses and it is tried again, waiting longer each time")
+			Eventually(warnings.Count, 4*time.Second, 50*time.Millisecond).Should(BeNumerically(">=", 2))
+			Eventually(warnings.Count, 8*time.Second, 100*time.Millisecond).Should(BeNumerically(">=", 3))
+
+			attempts := warnings.Times()
+			gap1 := attempts[1].Sub(attempts[0])
+			gap2 := attempts[2].Sub(attempts[1])
+			total := len(attempts)
+			Expect(gap2).To(BeNumerically(">", gap1), "each refusal waits longer than the one before it")
+
+			By("dagger's ClaimNext is asked more often than the node is actually opened")
+			Expect(counter.claims.Load()).To(BeNumerically(">", int64(total)),
+				"at least one claim never reached a workspace: it backed off and was released at once")
+		})
+	})
+
 	Describe("A project with no repository", func() {
 		It("holds each node it claims there, and warns once rather than once per node", func() {
 			first := f.createNode(ctx, &daggerv1.CreateNodeOp{Title: "first with no repository", Body: "body"})
 			second := f.createNode(ctx, &daggerv1.CreateNodeOp{Title: "second with no repository", Body: "body"})
 
+			// Repositories is resolved once per claim, from the project the
+			// claim carried, before either node is known apart: the project
+			// has only these two ready nodes and nothing else for dagger to
+			// hand back, so a call count that stops at two once both are held
+			// is the same proof a per-node counter would be (mill#39's
+			// Scenario: "the worker claims each once... and does not claim it
+			// again within the TTL").
+			var calls atomic.Int64
 			warnings := &warnCounter{message: "a project has no repository; nodes there are held rather than claimed"}
 			worker := f.workerOver(f.runner(quick, func(o *run.Options) {
 				o.Repositories = func(context.Context, *daggerv1.Project) (run.Repository, error) {
+					calls.Add(1)
 					return run.Repository{}, &forge.NoVCSURLError{Project: project}
 				}
 			}), func(o *run.WorkerOptions) {
@@ -313,6 +364,11 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 
 			Consistently(warnings.Count, time.Second, 100*time.Millisecond).Should(Equal(1),
 				"the second node's failure is the same project already warned about")
+
+			By("and neither node is reclaimed again within the lease TTL, the Scenario's own Then clause")
+			Expect(calls.Load()).To(Equal(int64(2)), "one claim per node, no more, once both are held")
+			Consistently(calls.Load, ttl+time.Second, 100*time.Millisecond).
+				Should(Equal(int64(2)), "dagger's lease table gains one row per node, not thousands")
 		})
 	})
 
@@ -384,12 +440,14 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 
 // warnCounter counts the log records whose message is the one named, so a
 // spec can assert a warning was collapsed to one line rather than parse log
-// text for it.
+// text for it. It also keeps each record's time, so a spec that needs to
+// know when a warning fired does not need instrumentation of its own.
 type warnCounter struct {
 	message string
 
 	mu    sync.Mutex
 	count int
+	times []time.Time
 }
 
 func (c *warnCounter) Enabled(context.Context, slog.Level) bool { return true }
@@ -398,6 +456,7 @@ func (c *warnCounter) Handle(_ context.Context, record slog.Record) error {
 	if record.Message == c.message {
 		c.mu.Lock()
 		c.count++
+		c.times = append(c.times, record.Time)
 		c.mu.Unlock()
 	}
 	return nil
@@ -410,6 +469,12 @@ func (c *warnCounter) Count() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.count
+}
+
+func (c *warnCounter) Times() []time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]time.Time(nil), c.times...)
 }
 
 // stubbornHarness is a session that does not go when it is asked. Its turn

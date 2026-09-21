@@ -231,6 +231,8 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 			}).Execute(ctx, f.nodeRef)
 			Expect(err).To(HaveOccurred())
 			Expect(breaker.broke.Load()).To(BeTrue(), "the completing patch was the one that failed")
+			Expect(errors.Is(err, run.ErrCouldNotOpen)).To(BeFalse(),
+				"every step ran; a failure this late is not a claim that never opened")
 
 			node, err := f.client.Node(ctx, f.nodeRef)
 			Expect(err).NotTo(HaveOccurred())
@@ -250,6 +252,24 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 			Expect(f.runner().Execute(ctx, f.nodeRef)).To(Succeed())
 			Expect(f.runOf(ctx).GetCompleteRequestId()).To(Equal(recorded))
 			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_DONE))
+		})
+	})
+
+	Describe("A claim that never reached a step", func() {
+		It("wraps the failure in ErrCouldNotOpen", func() {
+			f.node(ctx, "one line change", "Change the README's first line.")
+			f.script(f.quickFixScripts()...)
+
+			err := f.runner(func(o *run.Options) {
+				o.Repositories = func(context.Context, *daggerv1.Project) (run.Repository, error) {
+					return run.Repository{}, errors.New("the forge is unreachable")
+				}
+			}).Execute(ctx, f.nodeRef)
+
+			Expect(err).To(HaveOccurred())
+			Expect(errors.Is(err, run.ErrCouldNotOpen)).To(BeTrue(),
+				"the claim never reached a workspace, let alone a step")
+			Expect(closedSteps(f.inspect(ctx))).To(BeEmpty(), "nothing ran")
 		})
 	})
 
