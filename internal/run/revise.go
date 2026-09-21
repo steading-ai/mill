@@ -48,7 +48,7 @@ func (r *Runner) failStep(ctx context.Context, s *state, step *millv1.Step, sr *
 	if findings == "" {
 		findings = cause.Error()
 	}
-	if err := endActivity(s, millv1.StepRunStatus_STEP_RUN_STATUS_FAILED, millv1.EvidenceKind_EVIDENCE_KIND_UNSPECIFIED, findings); err != nil {
+	if err := r.endActivity(ctx, s, step, sr, millv1.StepRunStatus_STEP_RUN_STATUS_FAILED, millv1.EvidenceKind_EVIDENCE_KIND_UNSPECIFIED, findings); err != nil {
 		return outcome{}, err
 	}
 	// Every round is kept, not only the last: what a human needs when the

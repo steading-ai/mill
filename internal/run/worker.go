@@ -181,6 +181,15 @@ func (w *Worker) start(ctx context.Context) error {
 	if err := w.sweep(ctx); err != nil {
 		return fmt.Errorf("work: sweep before claiming: %w", err)
 	}
+	// Run on the first runner alone, the same as the sweep above: every
+	// runner in one worker process is built from the one worker's own
+	// --log-dir and store socket (internal/cli/work.go's newWorker), so
+	// LogDir and Store do not vary by project here. A seal that fails is a
+	// warning, not a reason to stop: the live file it left behind is safe
+	// to retry at the next start.
+	if err := w.options.Runners[0].SealOrphans(ctx); err != nil {
+		w.options.Log.Warn("sealing orphaned activity files at start", "error", err)
+	}
 	if w.options.Startup == nil {
 		return nil
 	}

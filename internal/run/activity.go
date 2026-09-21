@@ -464,23 +464,27 @@ func (w *activityWriter) chunker(chunkers map[string]*redact.Chunker, stream str
 }
 
 // activityBodyOneof is Activity's "body" oneof descriptor, resolved once:
-// every Activity shares the same descriptor, so bodySize need not look it up
-// by name on every record.
+// every Activity shares the same descriptor, so activityBodyField need not
+// look it up by name on every record.
 var activityBodyOneof = (&millv1.Activity{}).ProtoReflect().Descriptor().Oneofs().ByName("body")
 
-// bodySize is a's body, marshaled alone: what [Activity.bytes] reports,
-// found by proto reflection over the oneof so a future body needs no
-// matching addition here.
-func bodySize(a *millv1.Activity) int64 {
+// activityBodyField is the field descriptor for a's set body, found by proto
+// reflection over the oneof so a future body needs no matching addition
+// here. Reports nil if a holds no body.
+func activityBodyField(a *millv1.Activity) protoreflect.FieldDescriptor {
 	if activityBodyOneof == nil {
-		return 0
+		return nil
 	}
-	m := a.ProtoReflect()
-	field := m.WhichOneof(activityBodyOneof)
+	return a.ProtoReflect().WhichOneof(activityBodyOneof)
+}
+
+// bodySize is a's body, marshaled alone: what [Activity.bytes] reports.
+func bodySize(a *millv1.Activity) int64 {
+	field := activityBodyField(a)
 	if field == nil || field.Kind() != protoreflect.MessageKind {
 		return 0
 	}
-	return int64(proto.Size(m.Get(field).Message().Interface()))
+	return int64(proto.Size(a.ProtoReflect().Get(field).Message().Interface()))
 }
 
 // attemptStartedActivity builds the record every attempt opens with: seq 1,
@@ -526,11 +530,11 @@ func ReadActivities(dir, runID, step string, attempt int64) ([]*millv1.Activity,
 	return decodeActivities(file)
 }
 
-// RenderedLog decodes attempt's activity record and renders it into the
-// lines `mill logs` prints — what a caller checking log content, rather than
-// individual records, reads.
+// RenderedLog decodes attempt's activity record — live or, once [SealAttempt]
+// has run, sealed — and renders it into the lines `mill logs` prints: what a
+// caller checking log content, rather than individual records, reads.
 func RenderedLog(dir, runID, step string, attempt int64) (string, error) {
-	activities, err := ReadActivities(dir, runID, step, attempt)
+	activities, err := ReadSealedActivities(dir, runID, step, attempt)
 	if err != nil {
 		return "", err
 	}

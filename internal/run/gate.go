@@ -355,7 +355,7 @@ func (r *Runner) resumeGate(ctx context.Context, s *state, step *millv1.Step, de
 		if err := r.reopenActivity(s, step, sr); err != nil {
 			return err
 		}
-		return r.denyGate(ctx, s, step, gate)
+		return r.denyGate(ctx, s, step, sr, gate)
 	}
 }
 
@@ -363,7 +363,7 @@ func (r *Runner) resumeGate(ctx context.Context, s *state, step *millv1.Step, de
 // The node is completed with the step's deny_result, so whoever asked for
 // the work is told why it stopped, and only then is the run failed: dagger
 // first, store second, as everywhere else.
-func (r *Runner) denyGate(ctx context.Context, s *state, step *millv1.Step, gate *daggerv1.Node) error {
+func (r *Runner) denyGate(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, gate *daggerv1.Node) error {
 	body := step.GetGate().GetDenyResult()
 	if body == "" {
 		body = fmt.Sprintf("The %s gate was not approved.", step.GetName())
@@ -373,7 +373,7 @@ func (r *Runner) denyGate(ctx context.Context, s *state, step *millv1.Step, gate
 		s.node.GetReference(), &daggerv1.Result{Body: body}); err != nil {
 		return err
 	}
-	if err := endActivity(s, millv1.StepRunStatus_STEP_RUN_STATUS_FAILED, millv1.EvidenceKind_EVIDENCE_KIND_GATE, "gate denied"); err != nil {
+	if err := r.endActivity(ctx, s, step, sr, millv1.StepRunStatus_STEP_RUN_STATUS_FAILED, millv1.EvidenceKind_EVIDENCE_KIND_GATE, "gate denied"); err != nil {
 		return err
 	}
 	if _, err := call(ctx, r.options.Store.Fail, &millv1.FailRequest{

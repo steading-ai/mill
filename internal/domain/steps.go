@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	harnessv1 "github.com/ivy/mill/gen/harness/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
@@ -153,6 +154,31 @@ func (s *Service) RecordUsage(ctx context.Context, leaseID, stepRunID string, us
 // MarkUsagePosted marks a step run's usage rows as posted to dagger.
 func (s *Service) MarkUsagePosted(ctx context.Context, leaseID, stepRunID string) (int64, error) {
 	return s.store.MarkUsagePosted(ctx, leaseID, stepRunID)
+}
+
+// SealAttempt records a closed attempt's index rows, once its frame and
+// twin are written.
+func (s *Service) SealAttempt(ctx context.Context, stepRunID string, rows []*millv1.ActivityIndexRow) ([]*millv1.ActivityIndexRow, error) {
+	return s.store.SealAttempt(ctx, stepRunID, rows)
+}
+
+// ActivityForStepRun lists a closed attempt's sealed index rows in seq
+// order.
+func (s *Service) ActivityForStepRun(ctx context.Context, stepRunID string) ([]*millv1.ActivityIndexRow, error) {
+	return s.store.ActivityForStepRun(ctx, stepRunID)
+}
+
+// ActivitySince lists every sealed index row since a point in time, across
+// every run, in log order.
+func (s *Service) ActivitySince(ctx context.Context, since *time.Time) ([]*millv1.ActivityIndexRow, error) {
+	return s.store.ActivitySince(ctx, since)
+}
+
+// GetStepRun looks up one attempt by id — the run, step and attempt number
+// an index row's step_run_id alone does not carry, and Logs (internal/server/
+// logs.go) needs to find that attempt's sealed frame on disk.
+func (s *Service) GetStepRun(ctx context.Context, stepRunID string) (*millv1.StepRun, error) {
+	return s.store.GetStepRun(ctx, stepRunID)
 }
 
 // checkStepTransition judges an attempt's move against the step run

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"strings"
 
@@ -631,6 +632,21 @@ type Sink interface {
 type ActivitySink interface {
 	// SetActivitySink installs sink, or clears it with nil.
 	SetActivitySink(sink Sink)
+}
+
+// TwinSource is a workspace that can pull a session's harness transcript out
+// for the twin (docs/activity.md's ".twin.tar.zst", the seal's second file
+// beside the frame). It is not part of [Workspace]: a check step's
+// workspace, or recovery with no live workspace open, has nothing to offer
+// and is simply not asked, matching [ActivitySink]'s optional-interface
+// pattern.
+type TwinSource interface {
+	// CaptureTwin tars every file of sessionID's transcript — including any
+	// subagent's, whose own session id is not known in advance — and
+	// returns it uncompressed; the caller applies its own outer compression.
+	// A session with no transcript on disk returns no error and a reader
+	// with no files: a missing twin is logged and does not fail a seal.
+	CaptureTwin(ctx context.Context, sessionID string) (io.Reader, error)
 }
 
 // CacheCandidate is what a workspace that carries cache lineages implements

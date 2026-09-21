@@ -54,7 +54,12 @@ var _ = Describe("The activity record", Label(testsupport.DBLabel), func() {
 		}()
 		Eventually(done, 90*time.Second).Should(Receive(BeNil()))
 
-		activities, err := run.ReadActivities(logDir, f.runOf(ctx).GetId(), "gather-context", 1)
+		By("and the closed attempt is sealed: its frame replaces its live file")
+		_, err := os.Stat(run.ActivityPath(logDir, f.runOf(ctx).GetId(), "gather-context", 1))
+		Expect(err).To(MatchError(os.ErrNotExist))
+		Expect(run.FramePath(logDir, f.runOf(ctx).GetId(), "gather-context", 1)).To(BeAnExistingFile())
+
+		activities, err := run.ReadSealedActivities(logDir, f.runOf(ctx).GetId(), "gather-context", 1)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(activities).NotTo(BeEmpty())
 		Expect(activities[0].GetAttemptStarted()).NotTo(BeNil(), "the first record is attempt_started")
@@ -110,7 +115,7 @@ var _ = Describe("The activity record", Label(testsupport.DBLabel), func() {
 		}
 
 		By("and its activity file's harness_stderr carries the thrown error's stack")
-		activities, err := run.ReadActivities(logDir, f.runOf(ctx).GetId(), "gather-context", 1)
+		activities, err := run.ReadSealedActivities(logDir, f.runOf(ctx).GetId(), "gather-context", 1)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(activities[0].GetAttemptStarted()).NotTo(BeNil(), "the first record is attempt_started")
 		ended := activities[len(activities)-1].GetAttemptEnded()
@@ -162,7 +167,7 @@ var _ = Describe("The activity record", Label(testsupport.DBLabel), func() {
 			func(o *run.Options) { o.Workflow = workflow; o.LogDir = logDir }).
 			Execute(ctx, f.nodeRef)).To(Succeed())
 
-		activities, err := run.ReadActivities(logDir, f.runOf(ctx).GetId(), "clean-tree", 1)
+		activities, err := run.ReadSealedActivities(logDir, f.runOf(ctx).GetId(), "clean-tree", 1)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(activities[0].GetAttemptStarted()).NotTo(BeNil(), "the first record is attempt_started")
 		Expect(activities[len(activities)-1].GetAttemptEnded()).NotTo(BeNil(), "the last record is attempt_ended")
@@ -229,7 +234,7 @@ var _ = Describe("The activity record", Label(testsupport.DBLabel), func() {
 		Expect(detail.GetSteps()).NotTo(BeEmpty())
 		Expect(detail.GetSteps()[0].GetStepRun().GetStepName()).To(Equal("assess"))
 
-		activities, err := run.ReadActivities(logDir, f.runOf(ctx).GetId(), "assess", 1)
+		activities, err := run.ReadSealedActivities(logDir, f.runOf(ctx).GetId(), "assess", 1)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(activities).NotTo(BeEmpty())
 		Expect(activities[0].GetAttemptStarted()).NotTo(BeNil(), "the first record is attempt_started")
@@ -265,13 +270,13 @@ var _ = Describe("The activity record", Label(testsupport.DBLabel), func() {
 		Expect(commits[0].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_SUPERSEDED))
 		Expect(commits[1].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED))
 
-		superseded, err := run.ReadActivities(logDir, f.runOf(ctx).GetId(), "commit", commits[0].GetAttempt())
+		superseded, err := run.ReadSealedActivities(logDir, f.runOf(ctx).GetId(), "commit", commits[0].GetAttempt())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(superseded).NotTo(BeEmpty())
 		endedAt := superseded[len(superseded)-1].GetAttemptEnded()
 		Expect(endedAt).NotTo(BeNil(), "the superseded attempt's file still ends in attempt_ended")
 
-		next, err := run.ReadActivities(logDir, f.runOf(ctx).GetId(), "commit", commits[1].GetAttempt())
+		next, err := run.ReadSealedActivities(logDir, f.runOf(ctx).GetId(), "commit", commits[1].GetAttempt())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(next).NotTo(BeEmpty())
 		Expect(next[0].GetAttemptStarted()).NotTo(BeNil(), "the next attempt's file starts with attempt_started")
@@ -304,7 +309,7 @@ var _ = Describe("The activity record", Label(testsupport.DBLabel), func() {
 		attempt := commit[len(commit)-1]
 		Expect(attempt.GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED))
 
-		activities, err := run.ReadActivities(logDir, f.runOf(ctx).GetId(), "commit", attempt.GetAttempt())
+		activities, err := run.ReadSealedActivities(logDir, f.runOf(ctx).GetId(), "commit", attempt.GetAttempt())
 		Expect(err).NotTo(HaveOccurred())
 
 		var kinds []string
@@ -396,7 +401,7 @@ var _ = Describe("The activity record", Label(testsupport.DBLabel), func() {
 		Expect(evidenceOf(f.inspect(ctx), "commit").GetCommit()).To(Equal(sha))
 		Expect(f.harness.Calls()).To(HaveLen(1), "no second session ran for commit")
 
-		activities, err := run.ReadActivities(logDir, f.runOf(ctx).GetId(), "commit", last.GetAttempt())
+		activities, err := run.ReadSealedActivities(logDir, f.runOf(ctx).GetId(), "commit", last.GetAttempt())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(activities).NotTo(BeEmpty())
 		Expect(activities[0].GetAttemptStarted()).NotTo(BeNil(),

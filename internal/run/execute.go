@@ -467,17 +467,33 @@ func abortActivity(s *state) {
 	s.activity = nil
 }
 
-// endActivity records the attempt's outcome and closes its activity record.
-// On error the attempt's sink stays attached and s.activity stays set,
-// matching every end call site's existing behavior of returning before
-// detaching.
-func endActivity(s *state, status millv1.StepRunStatus, kind millv1.EvidenceKind, reason string) error {
+// endActivity records the attempt's outcome, closes its activity record, and
+// seals the closed attempt. On error the attempt's sink stays attached and
+// s.activity stays set, matching every end call site's existing behavior of
+// returning before detaching.
+func (r *Runner) endActivity(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, status millv1.StepRunStatus, kind millv1.EvidenceKind, reason string) error {
 	if err := s.activity.End(status, kind, reason); err != nil {
 		return err
 	}
 	detachActivitySink(s)
 	s.activity = nil
+	r.seal(ctx, s, step, sr)
 	return nil
+}
+
+// seal seals the attempt endActivity just closed, best-effort: a seal
+// failure is not the step's own — its outcome is already recorded — and an
+// unsealed live file left behind is exactly what SealOrphans recovers on the
+// worker's next start (docs/activity.md).
+func (r *Runner) seal(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun) {
+	var twin workspace.TwinSource
+	if t, ok := s.workspace.(workspace.TwinSource); ok {
+		twin = t
+	}
+	if err := SealAttempt(ctx, r.options.LogDir, s.run.GetId(), step.GetName(), sr.GetAttempt(),
+		sr.GetId(), sr.GetSessionId(), r.options.Store, twin); err != nil {
+		r.options.Log.Warn("sealing attempt", "run", s.run.GetId(), "step_run", sr.GetId(), "error", err)
+	}
 }
 
 // recordHeartbeat writes one heartbeat to the run's history: the harness

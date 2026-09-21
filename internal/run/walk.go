@@ -320,7 +320,7 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 		}); err != nil {
 			return outcome{}, err
 		}
-		if err := endActivity(s, millv1.StepRunStatus_STEP_RUN_STATUS_ABORTED, millv1.EvidenceKind_EVIDENCE_KIND_UNSPECIFIED, pending.Error()); err != nil {
+		if err := r.endActivity(ctx, s, step, sr, millv1.StepRunStatus_STEP_RUN_STATUS_ABORTED, millv1.EvidenceKind_EVIDENCE_KIND_UNSPECIFIED, pending.Error()); err != nil {
 			return outcome{}, err
 		}
 		return outcome{}, nil
@@ -380,7 +380,7 @@ func (r *Runner) closeStep(ctx context.Context, s *state, sr *millv1.StepRun, st
 	}); err != nil {
 		return err
 	}
-	if err := endActivity(s, millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED, value.GetKind(), evidenceName(value.GetKind())); err != nil {
+	if err := r.endActivity(ctx, s, step, sr, millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED, value.GetKind(), evidenceName(value.GetKind())); err != nil {
 		return err
 	}
 	// What the run carries forward to its result: the pull request a `url`

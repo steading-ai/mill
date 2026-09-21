@@ -184,7 +184,7 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 
 			gate := f.theGate(ctx)
 			sr := stepRuns(f.inspect(ctx), "merge")[0]
-			activities, err := run.ReadActivities(logDir, f.runOf(ctx).GetId(), "merge", sr.GetAttempt())
+			activities, err := run.ReadSealedActivities(logDir, f.runOf(ctx).GetId(), "merge", sr.GetAttempt())
 			Expect(err).NotTo(HaveOccurred())
 			Expect(activities).NotTo(BeEmpty())
 			Expect(activities[0].GetAttemptStarted()).NotTo(BeNil(), "seq 1 opens the attempt")
@@ -217,7 +217,7 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 			}).Execute(ctx, f.nodeRef)).To(Succeed())
 
 			sr := stepRuns(f.inspect(ctx), "merge")[0]
-			activities, err := run.ReadActivities(logDir, f.runOf(ctx).GetId(), "merge", sr.GetAttempt())
+			activities, err := run.ReadSealedActivities(logDir, f.runOf(ctx).GetId(), "merge", sr.GetAttempt())
 			Expect(err).NotTo(HaveOccurred())
 			Expect(activities).NotTo(BeEmpty())
 			Expect(activities[0].GetAttemptStarted()).NotTo(BeNil())
@@ -237,7 +237,7 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 			}).Execute(ctx, f.nodeRef)).To(Succeed())
 
 			sr := stepRuns(f.inspect(ctx), "merge")[0]
-			activities, err := run.ReadActivities(logDir, f.runOf(ctx).GetId(), "merge", sr.GetAttempt())
+			activities, err := run.ReadSealedActivities(logDir, f.runOf(ctx).GetId(), "merge", sr.GetAttempt())
 			Expect(err).NotTo(HaveOccurred())
 			Expect(activities).NotTo(BeEmpty())
 			ended := activities[len(activities)-1].GetAttemptEnded()

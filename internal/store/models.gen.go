@@ -8,6 +8,22 @@ import (
 	"time"
 )
 
+type Activity struct {
+	StepRunID    string
+	Seq          int64
+	At           time.Time
+	EndedAt      *time.Time
+	Kind         string
+	Source       string
+	Turn         int64
+	CallID       *string
+	ParentCallID *string
+	Tool         *string
+	Bytes        int64
+	Truncated    bool
+	Offset       int64
+}
+
 type Event struct {
 	ID         string
 	RunID      string

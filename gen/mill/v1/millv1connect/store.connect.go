@@ -149,6 +149,9 @@ const (
 	StoreServiceWhoAmIProcedure = "/mill.v1.StoreService/WhoAmI"
 	// StoreServiceLogsProcedure is the fully-qualified name of the StoreService's Logs RPC.
 	StoreServiceLogsProcedure = "/mill.v1.StoreService/Logs"
+	// StoreServiceSealAttemptProcedure is the fully-qualified name of the StoreService's SealAttempt
+	// RPC.
+	StoreServiceSealAttemptProcedure = "/mill.v1.StoreService/SealAttempt"
 )
 
 // StoreServiceClient is a client for the mill.v1.StoreService service.
@@ -318,6 +321,11 @@ type StoreServiceClient interface {
 	// activity instead, ordered for resume by a cursor. docs/activity.md
 	// §The RPC is the specification this call implements.
 	Logs(context.Context, *connect.Request[v1.LogsRequest]) (*connect.ServerStreamForClient[v1.LogsResponse], error)
+	// SealAttempt records a closed attempt's index rows, once its frame and
+	// twin are written. Idempotent: inserting a row seal already recorded
+	// (same step_run_id, seq) is a no-op, so a seal retried after a lost
+	// response never double-counts. docs/activity.md §Lifecycle's Seal step.
+	SealAttempt(context.Context, *connect.Request[v1.SealAttemptRequest]) (*connect.Response[v1.SealAttemptResponse], error)
 }
 
 // NewStoreServiceClient constructs a client for the mill.v1.StoreService service. By default, it
@@ -577,6 +585,12 @@ func NewStoreServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(storeServiceMethods.ByName("Logs")),
 			connect.WithClientOptions(opts...),
 		),
+		sealAttempt: connect.NewClient[v1.SealAttemptRequest, v1.SealAttemptResponse](
+			httpClient,
+			baseURL+StoreServiceSealAttemptProcedure,
+			connect.WithSchema(storeServiceMethods.ByName("SealAttempt")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -623,6 +637,7 @@ type storeServiceClient struct {
 	health                *connect.Client[v1.HealthRequest, v1.HealthResponse]
 	whoAmI                *connect.Client[v1.WhoAmIRequest, v1.WhoAmIResponse]
 	logs                  *connect.Client[v1.LogsRequest, v1.LogsResponse]
+	sealAttempt           *connect.Client[v1.SealAttemptRequest, v1.SealAttemptResponse]
 }
 
 // GetRunByNode calls mill.v1.StoreService.GetRunByNode.
@@ -830,6 +845,11 @@ func (c *storeServiceClient) Logs(ctx context.Context, req *connect.Request[v1.L
 	return c.logs.CallServerStream(ctx, req)
 }
 
+// SealAttempt calls mill.v1.StoreService.SealAttempt.
+func (c *storeServiceClient) SealAttempt(ctx context.Context, req *connect.Request[v1.SealAttemptRequest]) (*connect.Response[v1.SealAttemptResponse], error) {
+	return c.sealAttempt.CallUnary(ctx, req)
+}
+
 // StoreServiceHandler is an implementation of the mill.v1.StoreService service.
 type StoreServiceHandler interface {
 	// GetRunByNode returns the live run for a dagger node, or nothing. The
@@ -997,6 +1017,11 @@ type StoreServiceHandler interface {
 	// activity instead, ordered for resume by a cursor. docs/activity.md
 	// §The RPC is the specification this call implements.
 	Logs(context.Context, *connect.Request[v1.LogsRequest], *connect.ServerStream[v1.LogsResponse]) error
+	// SealAttempt records a closed attempt's index rows, once its frame and
+	// twin are written. Idempotent: inserting a row seal already recorded
+	// (same step_run_id, seq) is a no-op, so a seal retried after a lost
+	// response never double-counts. docs/activity.md §Lifecycle's Seal step.
+	SealAttempt(context.Context, *connect.Request[v1.SealAttemptRequest]) (*connect.Response[v1.SealAttemptResponse], error)
 }
 
 // NewStoreServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -1252,6 +1277,12 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(storeServiceMethods.ByName("Logs")),
 		connect.WithHandlerOptions(opts...),
 	)
+	storeServiceSealAttemptHandler := connect.NewUnaryHandler(
+		StoreServiceSealAttemptProcedure,
+		svc.SealAttempt,
+		connect.WithSchema(storeServiceMethods.ByName("SealAttempt")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/mill.v1.StoreService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case StoreServiceGetRunByNodeProcedure:
@@ -1336,6 +1367,8 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 			storeServiceWhoAmIHandler.ServeHTTP(w, r)
 		case StoreServiceLogsProcedure:
 			storeServiceLogsHandler.ServeHTTP(w, r)
+		case StoreServiceSealAttemptProcedure:
+			storeServiceSealAttemptHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1507,4 +1540,8 @@ func (UnimplementedStoreServiceHandler) WhoAmI(context.Context, *connect.Request
 
 func (UnimplementedStoreServiceHandler) Logs(context.Context, *connect.Request[v1.LogsRequest], *connect.ServerStream[v1.LogsResponse]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.Logs is not implemented"))
+}
+
+func (UnimplementedStoreServiceHandler) SealAttempt(context.Context, *connect.Request[v1.SealAttemptRequest]) (*connect.Response[v1.SealAttemptResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.SealAttempt is not implemented"))
 }

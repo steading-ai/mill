@@ -2,10 +2,14 @@ package run_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -277,6 +281,71 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			Expect(err).NotTo(HaveOccurred(), "being fenced out is not the worker's failure")
 			Expect(f.runOfRef(ctx, taken).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING),
 				"the run is left as it stands, for whoever holds the node now")
+		})
+	})
+
+	Describe("Recovery at start", func() {
+		// Scenario: A worker seals an orphaned attempt before its first claim
+		//   Given a closed attempt's live activity file still on disk
+		//   When the worker starts
+		//   Then the file is a frame by the time reconciliation runs, before any claim
+		It("seals an orphaned live file before reconciliation, and before the first claim", func() {
+			By("given a closed attempt's live activity file still on disk")
+			dir := GinkgoT().TempDir()
+			created, err := f.store.CreateRun(ctx, connect.NewRequest(&millv1.CreateRunRequest{
+				LeaseId:   "orphan-lease",
+				NodeId:    "orphan-node",
+				NodeRef:   "orphan#1",
+				ContextId: "orphan-ctx",
+				WorkerRef: f.worker,
+				Branch:    "mill/orphan",
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			runID := created.Msg.GetRun().GetId()
+			started, err := f.store.StartStepRun(ctx, connect.NewRequest(&millv1.StartStepRunRequest{
+				LeaseId:   "orphan-lease",
+				RunId:     runID,
+				StepName:  "implement",
+				Kind:      millv1.StepKind_STEP_KIND_SKILL,
+				WorkerRef: f.worker,
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			live := run.ActivityPath(dir, runID, "implement", started.Msg.GetStepRun().GetAttempt())
+			testsupport.AppendActivity(live, testsupport.TextActivity("hello"))
+			_, err = f.store.CloseStepRun(ctx, connect.NewRequest(&millv1.CloseStepRunRequest{
+				LeaseId:   "orphan-lease",
+				StepRunId: started.Msg.GetStepRun().GetId(),
+				Evidence: &millv1.Evidence{
+					Kind:  millv1.EvidenceKind_EVIDENCE_KIND_COMMIT,
+					Value: &millv1.Evidence_Commit{Commit: "0123456789abcdef0123456789abcdef01234567"},
+				},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+
+			By("when the worker starts")
+			client, counter := f.counted()
+			sealed := func() bool {
+				_, err := os.Stat(live)
+				return errors.Is(err, os.ErrNotExist)
+			}
+			startup := &recordingStartup{claim: counter.claims.Load, also: func() string {
+				return fmt.Sprintf("sealed: %v", sealed())
+			}}
+			worker := f.workerOver(f.runner(quick, func(o *run.Options) { o.Dagger = client; o.LogDir = dir }),
+				func(o *run.WorkerOptions) { o.Startup = startup })
+			done := startWorker(ctx, worker)
+			DeferCleanup(func() {
+				worker.Stop()
+				Eventually(done, time.Minute).Should(Receive())
+			})
+
+			By("then the file is already a frame when reconciliation and eviction run, with no claim yet")
+			Eventually(startup.seen, 30*time.Second, 200*time.Millisecond).Should(HaveLen(2))
+			Expect(startup.seen()).To(Equal([]string{
+				"reconcile (claims so far: 0) sealed: true",
+				"evict (claims so far: 0) sealed: true",
+			}))
+			Expect(run.FramePath(dir, runID, "implement", started.Msg.GetStepRun().GetAttempt())).To(BeAnExistingFile())
 		})
 	})
 })

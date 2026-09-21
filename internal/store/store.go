@@ -1541,6 +1541,77 @@ func (s *Store) MarkUsagePosted(ctx context.Context, leaseID, stepRunID string) 
 	return marked, nil
 }
 
+// SealAttempt records a closed attempt's index rows, once its frame and
+// twin are written on disk. Idempotent: a row whose (step_run_id, seq) is
+// already recorded is skipped, not replaced, so a seal retried after a
+// lost response never double-counts. Not lease-fenced: activity is not one
+// of Invariant 9's fenced tables, and a sealed attempt's own lease is
+// already gone by the time a seal runs.
+func (s *Store) SealAttempt(ctx context.Context, stepRunID string, rows []*millv1.ActivityIndexRow) ([]*millv1.ActivityIndexRow, error) {
+	var sealed []*millv1.ActivityIndexRow
+	err := s.withTx(ctx, func(ctx context.Context, tx pgx.Tx, q *Queries) error {
+		sealed = make([]*millv1.ActivityIndexRow, 0, len(rows))
+		for _, r := range rows {
+			row, err := q.InsertActivityIndex(ctx, InsertActivityIndexParams{
+				StepRunID:    stepRunID,
+				Seq:          r.GetSeq(),
+				At:           r.GetAt().AsTime(),
+				EndedAt:      unstamp(r.GetEndedAt()),
+				Kind:         r.GetKind(),
+				Source:       enumText(r.GetSource()),
+				Turn:         r.GetTurn(),
+				CallID:       nullable(r.GetCallId()),
+				ParentCallID: nullable(r.GetParentCallId()),
+				Tool:         nullable(r.GetTool()),
+				Bytes:        r.GetBytes(),
+				Truncated:    r.GetTruncated(),
+				Offset:       r.GetOffset(),
+			})
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("seal attempt %s: %w", stepRunID, err)
+			}
+			sealed = append(sealed, activityIndexRowProto(row))
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return sealed, nil
+}
+
+// ActivityForStepRun lists a closed attempt's sealed index rows in seq
+// order, for a Logs read of its frame.
+func (s *Store) ActivityForStepRun(ctx context.Context, stepRunID string) ([]*millv1.ActivityIndexRow, error) {
+	rows, err := New(s.pool).ListActivityForStepRun(ctx, stepRunID)
+	if err != nil {
+		return nil, fmt.Errorf("list activity for step run %s: %w", stepRunID, err)
+	}
+	out := make([]*millv1.ActivityIndexRow, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, activityIndexRowProto(row))
+	}
+	return out, nil
+}
+
+// ActivitySince lists every sealed index row since a point in time, across
+// every run, in log order — the index-backed half of an every-run Logs
+// read. The window is open-ended when since is nil.
+func (s *Store) ActivitySince(ctx context.Context, since *time.Time) ([]*millv1.ActivityIndexRow, error) {
+	rows, err := New(s.pool).ListActivitySince(ctx, since)
+	if err != nil {
+		return nil, fmt.Errorf("list activity since: %w", err)
+	}
+	out := make([]*millv1.ActivityIndexRow, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, activityIndexRowProto(row))
+	}
+	return out, nil
+}
+
 // PutSession records the deterministic id and adapter reference of a
 // session, so `mill inspect` can say which session produced which verdict.
 // It is not a StoreService RPC: the proto names none, and the worker node

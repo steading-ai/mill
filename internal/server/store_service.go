@@ -376,6 +376,17 @@ func (s *StoreService) MarkUsagePosted(ctx context.Context, req *connect.Request
 	return connect.NewResponse(&millv1.MarkUsagePostedResponse{Marked: marked}), nil
 }
 
+// SealAttempt records a closed attempt's index rows, once its frame and
+// twin are written. Idempotent: retrying after a lost response never
+// double-counts.
+func (s *StoreService) SealAttempt(ctx context.Context, req *connect.Request[millv1.SealAttemptRequest]) (*connect.Response[millv1.SealAttemptResponse], error) {
+	sealed, err := s.svc.SealAttempt(ctx, req.Msg.GetStepRunId(), req.Msg.GetRecords())
+	if err != nil {
+		return nil, connectError(err)
+	}
+	return connect.NewResponse(&millv1.SealAttemptResponse{Records: sealed}), nil
+}
+
 // GetWorkflow returns one workflow version, by id or by name in a scope.
 func (s *StoreService) GetWorkflow(ctx context.Context, req *connect.Request[millv1.GetWorkflowRequest]) (*connect.Response[millv1.GetWorkflowResponse], error) {
 	workflow, err := s.svc.GetWorkflow(ctx, domain.GetWorkflowParams{

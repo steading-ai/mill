@@ -1,7 +1,9 @@
 package testsupport
 
 import (
+	"archive/tar"
 	"encoding/binary"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -41,4 +43,22 @@ func TextActivity(text string) *millv1.Activity {
 		Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
 		Body:   &millv1.Activity_Text{Text: &millv1.Text{Text: text, Final: true}},
 	}
+}
+
+// Untar reads every entry of r's tar stream into a name-to-content map.
+func Untar(r io.Reader) map[string][]byte {
+	ginkgo.GinkgoHelper()
+	files := map[string][]byte{}
+	tr := tar.NewReader(r)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		data, err := io.ReadAll(tr)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		files[header.Name] = data
+	}
+	return files
 }

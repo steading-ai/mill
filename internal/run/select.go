@@ -241,7 +241,7 @@ func (r *Runner) assess(ctx context.Context, s *state, step *millv1.Step, candid
 				}); err != nil {
 					return false, err
 				}
-				if err := endActivity(s, millv1.StepRunStatus_STEP_RUN_STATUS_FAILED, millv1.EvidenceKind_EVIDENCE_KIND_UNSPECIFIED, cause.Error()); err != nil {
+				if err := r.endActivity(ctx, s, step, sr, millv1.StepRunStatus_STEP_RUN_STATUS_FAILED, millv1.EvidenceKind_EVIDENCE_KIND_UNSPECIFIED, cause.Error()); err != nil {
 					return false, err
 				}
 				s.record(step.GetName(), cause.Error())
@@ -267,7 +267,7 @@ func (r *Runner) assess(ctx context.Context, s *state, step *millv1.Step, candid
 			}); err != nil {
 				return false, err
 			}
-			if err := endActivity(s, millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED, value.GetKind(), evidenceName(value.GetKind())); err != nil {
+			if err := r.endActivity(ctx, s, step, sr, millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED, value.GetKind(), evidenceName(value.GetKind())); err != nil {
 				return false, err
 			}
 			s.recordAttempt(step, sr, res.exit, lastWords(res, ""), false)

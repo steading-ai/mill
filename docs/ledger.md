@@ -125,6 +125,8 @@ Insert-only. There is no update path. A step whose evidence was wrong is a new a
 | `worker_ref` | The host the transcript is on. A different worker cannot transcript-resume; it graph-resumes with a fresh session of the same id |
 | `started_at`, `last_turn_at` | |
 
+`adapter_ref` is where a live session's transcript is read from; once its attempt is sealed, the same transcript lives on as the frame's twin (`docs/activity.md` §"The twin", §Seal), independent of this row.
+
 ### `step_tokens`
 
 | Column | Notes |
@@ -176,6 +178,8 @@ The sandbox's columns, which `docs/sandbox.md` §Reconciliation names:
 The row is written twice by the worker: `RecordWorkspace` once the workspace is open — at creation, and again on a resume that reattaches it, which brings the same row up to date rather than adding one — and `FinishWorkspace` after the run is done and the workspace destroyed, which marks it `destroyed` and writes each lineage's promoted generation. The second write is the one the resume algorithm makes after `store.Done`, when the run holds no lease; the store admits it for a run that has ended (`FinishWorkspaceRequest` says so).
 
 **Which record is authoritative.** The machine backend keeps a copy of the same facts on the host, `runs/<id>/run.json` (`docs/sandbox.md` §Provision), because `Attach` has to find the machine before the ledger is asked anything and a worker that lost its ledger still has to be able to tell an orphan from a machine it made. The ledger is the record: `mill inspect`, `mill status`, reconciliation and the end-to-end proof read from it, and when a reconciliation pass finds the two naming different machines for one run it records a `disagreement` finding naming both and acts on the ledger's. `run.json` is for the host — what it reads before the ledger answers, and what it has when the ledger is gone — and it carries what the ledger does not need: the base the image derived from, whether it fell back, the provisioning findings, when the machine reported ready, and the step slice in flight.
+
+A `machine` workspace's twin capture (`docs/activity.md` §Seal) reaches into the machine's `HOME` before `Destroy` tears it down — the one step of sealing that is backend-specific, and the reason a seal on this backend must run ahead of the workspace closing rather than after.
 
 ### `reconciliations`
 
