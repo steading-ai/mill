@@ -534,11 +534,62 @@ func RenderedLog(dir, runID, step string, attempt int64) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	r := NewActivityRenderer()
 	var b strings.Builder
 	for _, a := range activities {
-		b.WriteString(RenderActivity(a))
+		b.WriteString(r.Render(a))
 	}
 	return b.String(), nil
+}
+
+// ActivityRenderer is RenderActivity for a whole attempt's worth of records
+// read in order: a Text or Thinking block that streamed as a delta per
+// content_block_delta (docs/activity.md §"Streaming text") holds its pieces
+// here, keyed by block id — a text and a thinking block never share an id,
+// so one map serves both — and renders through RenderActivity, as a single
+// whole record, only once the block's final record arrives. Every other
+// kind carries no delta and renders through RenderActivity unchanged.
+type ActivityRenderer struct {
+	blocks map[string]*strings.Builder
+}
+
+// NewActivityRenderer returns a renderer ready to accumulate one attempt's
+// records, read in order.
+func NewActivityRenderer() *ActivityRenderer {
+	return &ActivityRenderer{blocks: map[string]*strings.Builder{}}
+}
+
+// Render is RenderActivity, plus delta accumulation for Text and Thinking.
+func (r *ActivityRenderer) Render(a *millv1.Activity) string {
+	switch body := a.GetBody().(type) {
+	case *millv1.Activity_Text:
+		return r.renderDelta(body.Text.GetBlockId(), body.Text.GetText(), body.Text.GetFinal(), func(whole string) string {
+			return RenderActivity(&millv1.Activity{At: a.GetAt(), Body: &millv1.Activity_Text{Text: &millv1.Text{Text: whole, Final: true}}})
+		})
+	case *millv1.Activity_Thinking:
+		return r.renderDelta(body.Thinking.GetBlockId(), body.Thinking.GetText(), body.Thinking.GetFinal(), func(whole string) string {
+			return RenderActivity(&millv1.Activity{At: a.GetAt(), Body: &millv1.Activity_Thinking{Thinking: &millv1.Thinking{Text: whole, Final: true}}})
+		})
+	default:
+		return RenderActivity(a)
+	}
+}
+
+// renderDelta accumulates blockID's pieces and, once final arrives, deletes
+// its builder and hands the block's whole text to render.
+func (r *ActivityRenderer) renderDelta(blockID, text string, final bool, render func(whole string) string) string {
+	b, ok := r.blocks[blockID]
+	if !ok {
+		b = &strings.Builder{}
+		r.blocks[blockID] = b
+	}
+	b.WriteString(text)
+	if !final {
+		return ""
+	}
+	whole := b.String()
+	delete(r.blocks, blockID)
+	return render(whole)
 }
 
 // RenderActivity is one Activity as `mill logs` prints it: the lines the
@@ -574,6 +625,11 @@ func RenderActivity(a *millv1.Activity) string {
 			return ""
 		}
 		return fmt.Sprintf("%s text %s\n", stamp, summarize(body.Text.GetText()))
+	case *millv1.Activity_Thinking:
+		if !body.Thinking.GetFinal() {
+			return ""
+		}
+		return fmt.Sprintf("%s thinking %d words\n", stamp, len(strings.Fields(body.Thinking.GetText())))
 	case *millv1.Activity_ToolCall:
 		return fmt.Sprintf("%s tool %s call=%s\n", stamp, body.ToolCall.GetName(), body.ToolCall.GetCallId())
 	case *millv1.Activity_ToolResult:

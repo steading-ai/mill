@@ -27,7 +27,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file harness/v1/harness.proto.
  */
 export const file_harness_v1_harness: GenFile = /*@__PURE__*/
-  fileDesc("ChhoYXJuZXNzL3YxL2hhcm5lc3MucHJvdG8SCmhhcm5lc3MudjEiVQoLUHJvY2Vzc0V4aXQSDgoGc3RhdHVzGAEgASgFEg4KBnNpZ25hbBgCIAEoBRImCgZyZWFzb24YAyABKA4yFi5oYXJuZXNzLnYxLkV4aXRSZWFzb24iVQoLVG9rZW5Db3VudHMSDQoFaW5wdXQYASABKAMSDgoGb3V0cHV0GAIgASgDEhIKCmNhY2hlX3JlYWQYAyABKAMSEwoLY2FjaGVfd3JpdGUYBCABKAMiggEKBVVzYWdlEjAKCGJ5X21vZGVsGAEgAygLMh4uaGFybmVzcy52MS5Vc2FnZS5CeU1vZGVsRW50cnkaRwoMQnlNb2RlbEVudHJ5EgsKA2tleRgBIAEoCRImCgV2YWx1ZRgCIAEoCzIXLmhhcm5lc3MudjEuVG9rZW5Db3VudHM6AjgBIjQKCFNldHRpbmdzEigKB29wdGlvbnMYASABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0IioKCVdvcmtzcGFjZRIOCgZzb2NrZXQYASABKAkSDQoFdG9rZW4YAiABKAkiTwoKQXR0YWNobWVudBIMCgRuYW1lGAEgASgJEg4KBnNvdXJjZRgCIAEoCRISCgptZWRpYV90eXBlGAMgASgJEg8KB2NvbnRlbnQYBCABKAki+QEKBVN0YXJ0EhIKCnNlc3Npb25faWQYASABKAkSDgoGcHJvbXB0GAIgASgJEisKC2F0dGFjaG1lbnRzGAMgAygLMhYuaGFybmVzcy52MS5BdHRhY2htZW50EiYKCHNldHRpbmdzGAQgASgLMhQuaGFybmVzcy52MS5TZXR0aW5ncxIoCgl3b3Jrc3BhY2UYBSABKAsyFS5oYXJuZXNzLnYxLldvcmtzcGFjZRIVCg1vdXRwdXRfc2NoZW1hGAYgASgJEgsKA2N3ZBgHIAEoCRISCgp0aW1lb3V0X21zGAggASgFEhUKDXN5c3RlbV9wcm9tcHQYCSABKAki+gEKBlJlc3VtZRISCgpzZXNzaW9uX2lkGAEgASgJEg4KBnByb21wdBgCIAEoCRIrCgthdHRhY2htZW50cxgDIAMoCzIWLmhhcm5lc3MudjEuQXR0YWNobWVudBImCghzZXR0aW5ncxgEIAEoCzIULmhhcm5lc3MudjEuU2V0dGluZ3MSKAoJd29ya3NwYWNlGAUgASgLMhUuaGFybmVzcy52MS5Xb3Jrc3BhY2USFQoNb3V0cHV0X3NjaGVtYRgGIAEoCRILCgNjd2QYByABKAkSEgoKdGltZW91dF9tcxgIIAEoBRIVCg1zeXN0ZW1fcHJvbXB0GAkgASgJIi4KBkNhbmNlbBISCgpzZXNzaW9uX2lkGAEgASgJEhAKCGdyYWNlX21zGAIgASgFIo0BCgdSZXF1ZXN0EgoKAmlkGAEgASgJEiIKBXN0YXJ0GAIgASgLMhEuaGFybmVzcy52MS5TdGFydEgAEiQKBnJlc3VtZRgDIAEoCzISLmhhcm5lc3MudjEuUmVzdW1lSAASJAoGY2FuY2VsGAQgASgLMhIuaGFybmVzcy52MS5DYW5jZWxIAEIGCgRib2R5IhQKBFRleHQSDAoEdGV4dBgBIAEoCSJVCghUb29sQ2FsbBIPCgdjYWxsX2lkGAEgASgJEgwKBG5hbWUYAiABKAkSKgoJYXJndW1lbnRzGAMgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdCJACgpUb29sUmVzdWx0Eg8KB2NhbGxfaWQYASABKAkSDwoHY29udGVudBgCIAEoCRIQCghpc19lcnJvchgDIAEoCCJUCglIZWFydGJlYXQSDgoGc3RyaWtlGAEgASgFEg8KB3N0cmlrZXMYAiABKAUSFwoPd2FpdGluZ19zZWNvbmRzGAMgASgDEg0KBXRhc2tzGAQgAygJIu8BCgVFdmVudBISCgpyZXF1ZXN0X2lkGAEgASgJEiAKBHRleHQYAiABKAsyEC5oYXJuZXNzLnYxLlRleHRIABIpCgl0b29sX2NhbGwYAyABKAsyFC5oYXJuZXNzLnYxLlRvb2xDYWxsSAASLQoLdG9vbF9yZXN1bHQYBCABKAsyFi5oYXJuZXNzLnYxLlRvb2xSZXN1bHRIABIiCgV1c2FnZRgFIAEoCzIRLmhhcm5lc3MudjEuVXNhZ2VIABIqCgloZWFydGJlYXQYBiABKAsyFS5oYXJuZXNzLnYxLkhlYXJ0YmVhdEgAQgYKBGJvZHkisgEKCFRlcm1pbmFsEhIKCnJlcXVlc3RfaWQYASABKAkSFQoNZmluYWxfbWVzc2FnZRgCIAEoCRIyChFzdHJ1Y3R1cmVkX291dHB1dBgDIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSIAoFdXNhZ2UYBCABKAsyES5oYXJuZXNzLnYxLlVzYWdlEiUKBGV4aXQYBSABKAsyFy5oYXJuZXNzLnYxLlByb2Nlc3NFeGl0Ii4KB0ZhaWx1cmUSEgoKcmVxdWVzdF9pZBgBIAEoCRIPCgdtZXNzYWdlGAIgASgJIogBCghSZXNwb25zZRIiCgVldmVudBgBIAEoCzIRLmhhcm5lc3MudjEuRXZlbnRIABIoCgh0ZXJtaW5hbBgCIAEoCzIULmhhcm5lc3MudjEuVGVybWluYWxIABImCgdmYWlsdXJlGAMgASgLMhMuaGFybmVzcy52MS5GYWlsdXJlSABCBgoEYm9keSqnAQoKRXhpdFJlYXNvbhIbChdFWElUX1JFQVNPTl9VTlNQRUNJRklFRBAAEhcKE0VYSVRfUkVBU09OX1JFRlVTRUQQARIWChJFWElUX1JFQVNPTl9QT0xJQ1kQAhIXChNFWElUX1JFQVNPTl9USU1FT1VUEAMSGQoVRVhJVF9SRUFTT05fQ0FOQ0VMTEVEEAQSFwoTRVhJVF9SRUFTT05fU1RBTExFRBAFQi5aLGdpdGh1Yi5jb20vaXZ5L21pbGwvZ2VuL2hhcm5lc3MvdjE7aGFybmVzc3YxYgZwcm90bzM", [file_google_protobuf_struct]);
+  fileDesc("ChhoYXJuZXNzL3YxL2hhcm5lc3MucHJvdG8SCmhhcm5lc3MudjEiVQoLUHJvY2Vzc0V4aXQSDgoGc3RhdHVzGAEgASgFEg4KBnNpZ25hbBgCIAEoBRImCgZyZWFzb24YAyABKA4yFi5oYXJuZXNzLnYxLkV4aXRSZWFzb24iVQoLVG9rZW5Db3VudHMSDQoFaW5wdXQYASABKAMSDgoGb3V0cHV0GAIgASgDEhIKCmNhY2hlX3JlYWQYAyABKAMSEwoLY2FjaGVfd3JpdGUYBCABKAMiggEKBVVzYWdlEjAKCGJ5X21vZGVsGAEgAygLMh4uaGFybmVzcy52MS5Vc2FnZS5CeU1vZGVsRW50cnkaRwoMQnlNb2RlbEVudHJ5EgsKA2tleRgBIAEoCRImCgV2YWx1ZRgCIAEoCzIXLmhhcm5lc3MudjEuVG9rZW5Db3VudHM6AjgBIjQKCFNldHRpbmdzEigKB29wdGlvbnMYASABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0IioKCVdvcmtzcGFjZRIOCgZzb2NrZXQYASABKAkSDQoFdG9rZW4YAiABKAkiTwoKQXR0YWNobWVudBIMCgRuYW1lGAEgASgJEg4KBnNvdXJjZRgCIAEoCRISCgptZWRpYV90eXBlGAMgASgJEg8KB2NvbnRlbnQYBCABKAki+QEKBVN0YXJ0EhIKCnNlc3Npb25faWQYASABKAkSDgoGcHJvbXB0GAIgASgJEisKC2F0dGFjaG1lbnRzGAMgAygLMhYuaGFybmVzcy52MS5BdHRhY2htZW50EiYKCHNldHRpbmdzGAQgASgLMhQuaGFybmVzcy52MS5TZXR0aW5ncxIoCgl3b3Jrc3BhY2UYBSABKAsyFS5oYXJuZXNzLnYxLldvcmtzcGFjZRIVCg1vdXRwdXRfc2NoZW1hGAYgASgJEgsKA2N3ZBgHIAEoCRISCgp0aW1lb3V0X21zGAggASgFEhUKDXN5c3RlbV9wcm9tcHQYCSABKAki+gEKBlJlc3VtZRISCgpzZXNzaW9uX2lkGAEgASgJEg4KBnByb21wdBgCIAEoCRIrCgthdHRhY2htZW50cxgDIAMoCzIWLmhhcm5lc3MudjEuQXR0YWNobWVudBImCghzZXR0aW5ncxgEIAEoCzIULmhhcm5lc3MudjEuU2V0dGluZ3MSKAoJd29ya3NwYWNlGAUgASgLMhUuaGFybmVzcy52MS5Xb3Jrc3BhY2USFQoNb3V0cHV0X3NjaGVtYRgGIAEoCRILCgNjd2QYByABKAkSEgoKdGltZW91dF9tcxgIIAEoBRIVCg1zeXN0ZW1fcHJvbXB0GAkgASgJIi4KBkNhbmNlbBISCgpzZXNzaW9uX2lkGAEgASgJEhAKCGdyYWNlX21zGAIgASgFIo0BCgdSZXF1ZXN0EgoKAmlkGAEgASgJEiIKBXN0YXJ0GAIgASgLMhEuaGFybmVzcy52MS5TdGFydEgAEiQKBnJlc3VtZRgDIAEoCzISLmhhcm5lc3MudjEuUmVzdW1lSAASJAoGY2FuY2VsGAQgASgLMhIuaGFybmVzcy52MS5DYW5jZWxIAEIGCgRib2R5IkQKBFRleHQSDAoEdGV4dBgBIAEoCRIQCghibG9ja19pZBgCIAEoCRINCgVkZWx0YRgDIAEoCBINCgVmaW5hbBgEIAEoCCJICghUaGlua2luZxIMCgR0ZXh0GAEgASgJEhAKCGJsb2NrX2lkGAIgASgJEg0KBWRlbHRhGAMgASgIEg0KBWZpbmFsGAQgASgIIlUKCFRvb2xDYWxsEg8KB2NhbGxfaWQYASABKAkSDAoEbmFtZRgCIAEoCRIqCglhcmd1bWVudHMYAyABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0IkAKClRvb2xSZXN1bHQSDwoHY2FsbF9pZBgBIAEoCRIPCgdjb250ZW50GAIgASgJEhAKCGlzX2Vycm9yGAMgASgIIlQKCUhlYXJ0YmVhdBIOCgZzdHJpa2UYASABKAUSDwoHc3RyaWtlcxgCIAEoBRIXCg93YWl0aW5nX3NlY29uZHMYAyABKAMSDQoFdGFza3MYBCADKAkisQIKBUV2ZW50EhIKCnJlcXVlc3RfaWQYASABKAkSIAoEdGV4dBgCIAEoCzIQLmhhcm5lc3MudjEuVGV4dEgAEikKCXRvb2xfY2FsbBgDIAEoCzIULmhhcm5lc3MudjEuVG9vbENhbGxIABItCgt0b29sX3Jlc3VsdBgEIAEoCzIWLmhhcm5lc3MudjEuVG9vbFJlc3VsdEgAEiIKBXVzYWdlGAUgASgLMhEuaGFybmVzcy52MS5Vc2FnZUgAEioKCWhlYXJ0YmVhdBgGIAEoCzIVLmhhcm5lc3MudjEuSGVhcnRiZWF0SAASKAoIdGhpbmtpbmcYByABKAsyFC5oYXJuZXNzLnYxLlRoaW5raW5nSAASFgoOcGFyZW50X2NhbGxfaWQYCCABKAlCBgoEYm9keSKyAQoIVGVybWluYWwSEgoKcmVxdWVzdF9pZBgBIAEoCRIVCg1maW5hbF9tZXNzYWdlGAIgASgJEjIKEXN0cnVjdHVyZWRfb3V0cHV0GAMgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdBIgCgV1c2FnZRgEIAEoCzIRLmhhcm5lc3MudjEuVXNhZ2USJQoEZXhpdBgFIAEoCzIXLmhhcm5lc3MudjEuUHJvY2Vzc0V4aXQiLgoHRmFpbHVyZRISCgpyZXF1ZXN0X2lkGAEgASgJEg8KB21lc3NhZ2UYAiABKAkiiAEKCFJlc3BvbnNlEiIKBWV2ZW50GAEgASgLMhEuaGFybmVzcy52MS5FdmVudEgAEigKCHRlcm1pbmFsGAIgASgLMhQuaGFybmVzcy52MS5UZXJtaW5hbEgAEiYKB2ZhaWx1cmUYAyABKAsyEy5oYXJuZXNzLnYxLkZhaWx1cmVIAEIGCgRib2R5KqcBCgpFeGl0UmVhc29uEhsKF0VYSVRfUkVBU09OX1VOU1BFQ0lGSUVEEAASFwoTRVhJVF9SRUFTT05fUkVGVVNFRBABEhYKEkVYSVRfUkVBU09OX1BPTElDWRACEhcKE0VYSVRfUkVBU09OX1RJTUVPVVQQAxIZChVFWElUX1JFQVNPTl9DQU5DRUxMRUQQBBIXChNFWElUX1JFQVNPTl9TVEFMTEVEEAVCLlosZ2l0aHViLmNvbS9pdnkvbWlsbC9nZW4vaGFybmVzcy92MTtoYXJuZXNzdjFiBnByb3RvMw", [file_google_protobuf_struct]);
 
 /**
  * ProcessExit is how a spawned thing ended. Borrowed wholesale from
@@ -538,11 +538,39 @@ export const RequestSchema: GenMessage<Request> = /*@__PURE__*/
  */
 export type Text = Message<"harness.v1.Text"> & {
   /**
-   * The text fragment. Fragments concatenate in arrival order.
+   * The text fragment. A delta record's text is that increment only, never
+   * the block's accumulated text so far; fragments concatenate in arrival
+   * order to the block's whole text.
    *
    * @generated from field: string text = 1;
    */
   text: string;
+
+  /**
+   * Identifies the content block this fragment belongs to, scoped to the
+   * session attempt. Every fragment of one block carries the same id, which
+   * is what lets a reader fold them back into one block.
+   *
+   * @generated from field: string block_id = 2;
+   */
+  blockId: string;
+
+  /**
+   * True while the block is still being produced. The block's last delta
+   * carries final true instead, closing it.
+   *
+   * @generated from field: bool delta = 3;
+   */
+  delta: boolean;
+
+  /**
+   * True on the block's closing record. The Anthropic streaming API's own
+   * block-close event carries no text of its own, so this record's text is
+   * typically empty; it exists to mark the block done.
+   *
+   * @generated from field: bool final = 4;
+   */
+  final: boolean;
 };
 
 /**
@@ -551,6 +579,57 @@ export type Text = Message<"harness.v1.Text"> & {
  */
 export const TextSchema: GenMessage<Text> = /*@__PURE__*/
   messageDesc(file_harness_v1_harness, 10);
+
+/**
+ * Thinking is the assistant's reasoning, streamed the same way Text is. Kept
+ * as its own message rather than a kind flag on Text so a reader switches on
+ * Event's oneof the same way it already does for every other case.
+ *
+ * @generated from message harness.v1.Thinking
+ */
+export type Thinking = Message<"harness.v1.Thinking"> & {
+  /**
+   * The text fragment. A delta record's text is that increment only, never
+   * the block's accumulated text so far; fragments concatenate in arrival
+   * order to the block's whole text.
+   *
+   * @generated from field: string text = 1;
+   */
+  text: string;
+
+  /**
+   * Identifies the content block this fragment belongs to, scoped to the
+   * session attempt. Every fragment of one block carries the same id, which
+   * is what lets a reader fold them back into one block.
+   *
+   * @generated from field: string block_id = 2;
+   */
+  blockId: string;
+
+  /**
+   * True while the block is still being produced. The block's last delta
+   * carries final true instead, closing it.
+   *
+   * @generated from field: bool delta = 3;
+   */
+  delta: boolean;
+
+  /**
+   * True on the block's closing record. The Anthropic streaming API's own
+   * block-close event carries no text of its own, so this record's text is
+   * typically empty; it exists to mark the block done.
+   *
+   * @generated from field: bool final = 4;
+   */
+  final: boolean;
+};
+
+/**
+ * Describes the message harness.v1.Thinking.
+ * Use `create(ThinkingSchema)` to create a new message.
+ */
+export const ThinkingSchema: GenMessage<Thinking> = /*@__PURE__*/
+  messageDesc(file_harness_v1_harness, 11);
 
 /**
  * ToolCall is the session asking to use a tool.
@@ -585,11 +664,12 @@ export type ToolCall = Message<"harness.v1.ToolCall"> & {
  * Use `create(ToolCallSchema)` to create a new message.
  */
 export const ToolCallSchema: GenMessage<ToolCall> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 11);
+  messageDesc(file_harness_v1_harness, 12);
 
 /**
- * ToolResult is what a tool returned. Full tool output is never logged; a
- * summary line per result is.
+ * ToolResult is what a tool returned, forwarded whole: the sidecar imposes
+ * no limit of its own, and what a rendered log line shows is the ledger's
+ * concern, not the wire's.
  *
  * @generated from message harness.v1.ToolResult
  */
@@ -602,7 +682,7 @@ export type ToolResult = Message<"harness.v1.ToolResult"> & {
   callId: string;
 
   /**
-   * The result rendered as text, truncated by the sidecar.
+   * The result rendered as text, whole.
    *
    * @generated from field: string content = 2;
    */
@@ -621,7 +701,7 @@ export type ToolResult = Message<"harness.v1.ToolResult"> & {
  * Use `create(ToolResultSchema)` to create a new message.
  */
 export const ToolResultSchema: GenMessage<ToolResult> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 12);
+  messageDesc(file_harness_v1_harness, 13);
 
 /**
  * Heartbeat is the sidecar asking a session that ended its turn with a
@@ -667,7 +747,7 @@ export type Heartbeat = Message<"harness.v1.Heartbeat"> & {
  * Use `create(HeartbeatSchema)` to create a new message.
  */
 export const HeartbeatSchema: GenMessage<Heartbeat> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 13);
+  messageDesc(file_harness_v1_harness, 14);
 
 /**
  * Event is one thing that happened during a turn, streamed to the worker as
@@ -729,7 +809,25 @@ export type Event = Message<"harness.v1.Event"> & {
      */
     value: Heartbeat;
     case: "heartbeat";
+  } | {
+    /**
+     * The assistant reasoned.
+     *
+     * @generated from field: harness.v1.Thinking thinking = 7;
+     */
+    value: Thinking;
+    case: "thinking";
   } | { case: undefined; value?: undefined };
+
+  /**
+   * The tool_use id of the Agent call this event belongs to, when the SDK
+   * reports it as a subagent's — empty for the top-level session's own
+   * events. Carried on every case above, since a subagent forwards text,
+   * thinking, tool calls, tool results and usage alike.
+   *
+   * @generated from field: string parent_call_id = 8;
+   */
+  parentCallId: string;
 };
 
 /**
@@ -737,7 +835,7 @@ export type Event = Message<"harness.v1.Event"> & {
  * Use `create(EventSchema)` to create a new message.
  */
 export const EventSchema: GenMessage<Event> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 14);
+  messageDesc(file_harness_v1_harness, 15);
 
 /**
  * Terminal is the last line of a request: how the session ended and what it
@@ -794,7 +892,7 @@ export type Terminal = Message<"harness.v1.Terminal"> & {
  * Use `create(TerminalSchema)` to create a new message.
  */
 export const TerminalSchema: GenMessage<Terminal> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 15);
+  messageDesc(file_harness_v1_harness, 16);
 
 /**
  * Failure is the sidecar reporting that it could not handle a request at
@@ -825,7 +923,7 @@ export type Failure = Message<"harness.v1.Failure"> & {
  * Use `create(FailureSchema)` to create a new message.
  */
 export const FailureSchema: GenMessage<Failure> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 16);
+  messageDesc(file_harness_v1_harness, 17);
 
 /**
  * Response is one line from the sidecar to the worker.
@@ -870,7 +968,7 @@ export type Response = Message<"harness.v1.Response"> & {
  * Use `create(ResponseSchema)` to create a new message.
  */
 export const ResponseSchema: GenMessage<Response> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 17);
+  messageDesc(file_harness_v1_harness, 18);
 
 /**
  * ExitReason says why a session ended when the exit status alone does not.

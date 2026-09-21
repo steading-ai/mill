@@ -345,3 +345,145 @@ Why not the spike's recommendation:
 What the mode is *not* is enforcement. `tools.deny` and the workspace's socket
 remain the boundary, exactly as Q3 found; the classifier is what answers a
 prompt that would otherwise wait for a human who is not there.
+
+## Addendum, 2026-09-21 — what `includePartialMessages`/`forwardSubagentText` forward
+
+R-24's full-fidelity node (mill#15) needed the exact shape of a streamed
+delta and a folded subagent event before wiring the sidecar to them. Like
+Q1-Q6, this addendum is a script run against a live session — the sidecar
+built against these flags, pointed at the real, pinned SDK
+(`@anthropic-ai/claude-agent-sdk` **0.3.263**) through this step's own
+gateway token, spending exactly what one session costs. What follows starts
+from the pinned SDK's own shipped type declarations (`sdk.d.ts`) and the
+`@anthropic-ai/sdk` **0.122.0** beta message types it re-exports, and is then
+confirmed against a real turn — one that streamed thinking, streamed text,
+and ran a subagent through the `Task` tool — in "Confirmed against a live
+session" below. The sidecar's own behavior against these shapes is also
+exercised by a fake harness standing in for the SDK
+(`sidecar/spec/fake_sdk.ts`'s `streamEvent`/`messageStart`/`blockStart`/
+`textDelta`/`thinkingDelta`/`blockStop` helpers, built from this same
+reading) and proved end-to-end by
+`sidecar/streaming_test.go`, which is the coverage that runs on every build;
+the live run is what grounds that fake in the SDK's real behavior rather
+than in its own types read twice.
+
+**`includePartialMessages`**, `sdk.d.ts`:
+
+> Include partial/streaming message events in the output. When true,
+> `SDKPartialAssistantMessage` events will be emitted during streaming.
+
+`SDKPartialAssistantMessage`:
+
+```ts
+export declare type SDKPartialAssistantMessage = {
+    type: 'stream_event';
+    event: BetaRawMessageStreamEvent;
+    parent_tool_use_id: string | null;
+    uuid: UUID;
+    session_id: string;
+    …
+};
+```
+
+`BetaRawMessageStreamEvent` (from `@anthropic-ai/sdk`) is a union of the
+Messages API's own streaming events — `message_start`,
+`content_block_start`, `content_block_delta`, `content_block_stop`,
+`message_delta`, `message_stop`. The two that matter for text and thinking:
+
+```ts
+export interface BetaRawContentBlockDeltaEvent {
+    delta: BetaRawContentBlockDelta;  // BetaTextDelta | BetaThinkingDelta | …
+    index: number;
+    type: 'content_block_delta';
+}
+export interface BetaTextDelta { text: string; type: 'text_delta'; }
+export interface BetaThinkingDelta { thinking: string; type: 'thinking_delta'; … }
+
+export interface BetaRawContentBlockStopEvent {
+    index: number;
+    type: 'content_block_stop';
+}
+```
+
+`content_block_stop` carries no text of its own — confirming what
+`docs/activity.md` calls the closing `final` record: it has an index to
+close a block by, and nothing else to append. `docs/activity.md`'s design
+of "deltas plus an empty `final`" is a direct fit, not a guess dressed up as
+one.
+
+And confirming why the completed message still arrives after the deltas
+(`SDKAssistantMessage`'s own doc comment):
+
+> While a response streams the CLI emits one assistant message per
+> completed content block, so several consecutive assistant messages can
+> share `message.id` and each carries just that block in `message.content`;
+> on those, `message.stop_reason` is null and `message.usage` is not final —
+> the turn's stop reason and total usage arrive on the result message.
+
+**`forwardSubagentText`**, `sdk.d.ts`:
+
+> Forward subagent text and thinking blocks as assistant/user messages with
+> `parent_tool_use_id` set. By default, only tool_use/tool_result blocks
+> from subagents are emitted (enough for a heartbeat counter). When true,
+> the full subagent conversation is forwarded so consumers can render a
+> nested transcript.
+
+So `parent_tool_use_id` is not new plumbing this flag adds: `SDKAssistantMessage`,
+`SDKUserMessage` and `SDKPartialAssistantMessage` all carry it unconditionally,
+non-null "when the message was produced inside a subagent started by that
+tool_use" (`SDKAssistantMessage`'s doc comment) — it is the `Agent` tool
+call's own `tool_use_id`. `forwardSubagentText` only controls whether a
+subagent's *text/thinking* blocks are among the messages forwarded at all;
+its tool calls and results were already forwarded, tagged the same way,
+without the flag.
+
+**Consequence for the design.** Nothing here contradicts `docs/activity.md`;
+it grounds the two fields it specifies as sidecar output (`Text`/`Thinking`'s
+`block_id`/`delta`/`final`, and `Event`'s `parent_call_id`) in the SDK's own
+documented shape rather than in an inference from `session.ts`'s existing
+`"assistant"`/`"user"` handling alone.
+
+**Confirmed against a live session.** Run once, against the built sidecar
+with both flags on (an ad hoc spec, deleted after its output was read): one
+turn with a prompt asking for reasoning before an answer, then a `Task` call
+to a subagent. The sidecar's own translated `harness.v1.Event` stream — the
+code this node ships, not the SDK's raw JSON — showed:
+
+- **`block_id` is `<message id>:<index>`**, exactly `StreamBlocks.blockId`'s
+  own scheme: a thinking block opened as `msg_011CfG…ghH:0`, the text block
+  that followed it in the same message as `msg_011CfG…ghH:1`.
+- **A thinking block streamed two deltas (`delta: true`, `final: false`)
+  then one empty `final: true` record on the same block id** — the model's
+  reasoning for this prompt was brief enough that both deltas carried little
+  text, but the shape (deltas, then an empty final closing the same id) is
+  exactly `docs/activity.md`'s design and exactly what the type declarations
+  above promise.
+- **The completed message's own `usage` arrived mid-turn, before the tool
+  call it was for had a result** — confirming the node's own note: several
+  `usage` events appeared between the subagent's tool calls and its final
+  result, not just once at the end.
+- **A subagent's tool calls, results and usage all carried `parent_call_id`
+  set to the `Agent` call's own `call_id`**, while the `Agent` call itself
+  and the `tool_result` that answered it carried none — the fold
+  `docs/activity.md` §Turns and `streaming_test.go`'s fake-harness spec
+  describe, reproduced against the real SDK: `TOOLCALL parent="" name=Agent
+  call=toolu_01Dwd…`, then `TOOLCALL parent="toolu_01Dwd…" name=Glob …`,
+  `TOOLRESULT parent="toolu_01Dwd…" …`, `USAGE parent="toolu_01Dwd…"` for
+  everything the subagent itself did, and finally `TOOLRESULT parent=""
+  call=toolu_01Dwd…` answering the top-level `Agent` call.
+- **The subagent in this run reported its finding through the `Agent` call's
+  own `tool_result` rather than a `text` block of its own** — this prompt's
+  subagent answered in one shot with no intermediate narration, so no
+  subagent-tagged `Event_Text` appeared to confirm `forwardSubagentText`'s
+  text-delta path specifically. What was confirmed instead is that
+  `parent_tool_use_id` tags every message kind the same way regardless of
+  content (tool calls, results, and usage all got it); since a `text`/
+  `thinking` block under a subagent travels through the identical
+  `content_block_delta`/`parent_tool_use_id` machinery already confirmed
+  above for the top-level turn's own deltas, a subagent that narrates in
+  words would fold the same way, but this run did not produce one to show
+  it firsthand.
+
+No surprise turned up: the fake harness's `streamEvent` helpers, and the
+`sidecar/streaming_test.go` specs built against them, already matched what
+the real SDK sent.

@@ -15,6 +15,7 @@ import {
   HeartbeatSchema,
   TerminalSchema,
   TextSchema,
+  ThinkingSchema,
   ToolCallSchema,
   ToolResultSchema,
   type Attachment,
@@ -38,10 +39,6 @@ import {
   killChildren,
 } from "./tasks.js";
 import { fromModelUsage, fromTurn, type UsageAccumulator } from "./usage.js";
-
-// TOOL_RESULT_LIMIT is how much of a tool's output an event carries. Full
-// tool output is never logged; a summary is.
-export const TOOL_RESULT_LIMIT = 4096;
 
 // ENVIRONMENT_PASSTHROUGH is what a session's tools inherit from the host
 // besides what the workspace decided: enough for a process to start, and
@@ -368,6 +365,11 @@ export function buildOptions(
     env: sessionEnv(turn.workspace, hostEnv, turn.timeoutMs, declared.env),
     permissionMode: declared.permissionMode ?? DEFAULT_PERMISSION_MODE,
     settingSources: [],
+    // Streamed content blocks, and a subagent's own text and thinking, not
+    // just its tool calls and results — the ledger's own copy of a turn
+    // (docs/activity.md §"Streaming text", §Subagents).
+    includePartialMessages: true,
+    forwardSubagentText: true,
   };
   if (turn.cwd !== "") {
     options.cwd = turn.cwd;
@@ -399,10 +401,6 @@ export function buildOptions(
     options.sessionId = turn.sessionId;
   }
   return options;
-}
-
-function truncate(text: string): string {
-  return text.length <= TOOL_RESULT_LIMIT ? text : `${text.slice(0, TOOL_RESULT_LIMIT)}… (truncated)`;
 }
 
 function textOf(content: unknown): string {
@@ -555,13 +553,14 @@ export async function runSession(deps: SessionDeps): Promise<Terminal> {
   const terminal = create(TerminalSchema, { requestId: turn.requestId });
   let sawMessage = false;
 
-  const emitEvent = (body: Event["body"]): void => {
-    emit(create(EventSchema, { requestId: turn.requestId, body }));
+  const emitEvent = (body: Event["body"], parentCallId?: string): void => {
+    emit(create(EventSchema, { requestId: turn.requestId, body, parentCallId: parentCallId ?? "" }));
   };
 
   const prompts = new Prompts();
   prompts.push(renderPrompt(turn.prompt, turn.attachments));
   const tasks = new Tasks(uid, options.cwd ?? turn.cwd);
+  const blocks = new StreamBlocks();
   const interval = heartbeatMs(env);
 
   // waitingSince is when the session first ended a turn with tasks still
@@ -650,7 +649,7 @@ export async function runSession(deps: SessionDeps): Promise<Terminal> {
         // that ends during the wait arrives here, and the wait goes on.
         continue;
       }
-      const result = handleMessage(next.value, accumulated, emitEvent);
+      const result = handleMessage(next.value, accumulated, emitEvent, blocks);
       if (result === undefined) {
         // The harness is talking, so a turn is in flight.
         inTurn = true;
@@ -729,53 +728,163 @@ interface ResultOfTurn {
   exit: ReturnType<typeof fromResult>;
 }
 
+// StreamBlocks tracks the content block a session's stream_event messages
+// are mid-way through, keyed by which agent produced it — the top-level
+// session under "", a subagent under its own tool_use id — so a subagent's
+// blocks never collide with its parent's, and two subagents never collide
+// with each other.
+//
+// The Anthropic streaming API keys a block by an index scoped to the one
+// assistant message it belongs to, and never repeats that message's id on a
+// content_block event; only message_start carries it. block_id is
+// synthesized here from the message id captured at message_start and the
+// block's index, which is why the id has to be remembered rather than read
+// straight off each event.
+class StreamBlocks {
+  private readonly scopes = new Map<string, { messageId: string; open: Map<number, "text" | "thinking"> }>();
+
+  private scope(parentToolUseId: string | null): { messageId: string; open: Map<number, "text" | "thinking"> } {
+    const key = parentToolUseId ?? "";
+    let entry = this.scopes.get(key);
+    if (entry === undefined) {
+      entry = { messageId: "", open: new Map() };
+      this.scopes.set(key, entry);
+    }
+    return entry;
+  }
+
+  // start records a fresh assistant message beginning for this scope: a new
+  // message id, and no blocks open yet under it.
+  start(parentToolUseId: string | null, messageId: string): void {
+    this.scopes.set(parentToolUseId ?? "", { messageId, open: new Map() });
+  }
+
+  // blockStart records that index is a text or thinking block, so blockStop
+  // knows which kind of closing record to emit for it. A block of any other
+  // kind — tool_use among them — is left untracked: those are still sourced
+  // from the completed assistant/user message, unchanged.
+  blockStart(parentToolUseId: string | null, index: number, kind: "text" | "thinking"): void {
+    this.scope(parentToolUseId).open.set(index, kind);
+  }
+
+  blockId(parentToolUseId: string | null, index: number): string {
+    return `${this.scope(parentToolUseId).messageId}:${index}`;
+  }
+
+  // blockStop reports the kind of the block that just closed, and forgets
+  // it — a text/thinking event's index is otherwise reused by the next
+  // block-typed content block in the same message.
+  blockStop(parentToolUseId: string | null, index: number): "text" | "thinking" | undefined {
+    const entry = this.scope(parentToolUseId);
+    const kind = entry.open.get(index);
+    entry.open.delete(index);
+    return kind;
+  }
+}
+
 // handleMessage turns one SDK message into events, and returns the turn's
 // outcome when the message is the result.
 function handleMessage(
   message: SDKMessage,
   accumulated: UsageAccumulator,
-  emitEvent: (body: Event["body"]) => void,
+  emitEvent: (body: Event["body"], parentCallId?: string) => void,
+  blocks: StreamBlocks,
 ): ResultOfTurn | undefined {
   switch (message.type) {
     case "assistant": {
+      // Text is not emitted here: with includePartialMessages on, every
+      // text block already reached emitEvent as stream_event deltas, and
+      // the complete message that follows them would just repeat it
+      // (docs/activity.md §"Streaming text"). tool_use and usage are not
+      // streamed, so they still come from here.
+      const parentCallId = message.parent_tool_use_id ?? undefined;
       for (const block of message.message.content) {
-        if (block.type === "text") {
-          emitEvent({ case: "text", value: create(TextSchema, { text: block.text }) });
-        } else if (block.type === "tool_use") {
-          emitEvent({
-            case: "toolCall",
-            value: create(ToolCallSchema, {
-              callId: block.id,
-              name: block.name,
-              arguments: jsonObjectOf(block.input),
-            }),
-          });
+        if (block.type === "tool_use") {
+          emitEvent(
+            {
+              case: "toolCall",
+              value: create(ToolCallSchema, {
+                callId: block.id,
+                name: block.name,
+                arguments: jsonObjectOf(block.input),
+              }),
+            },
+            parentCallId,
+          );
         }
       }
       const usage = fromTurn(message.message.model, message.message.usage);
       if (Object.keys(usage.byModel).length > 0) {
         accumulated.add(usage);
-        emitEvent({ case: "usage", value: usage });
+        emitEvent({ case: "usage", value: usage }, parentCallId);
       }
       return undefined;
     }
     case "user": {
+      const parentCallId = message.parent_tool_use_id ?? undefined;
       const content = message.message.content;
       if (Array.isArray(content)) {
         for (const block of content) {
           if (typeof block === "object" && block !== null && block.type === "tool_result") {
-            emitEvent({
-              case: "toolResult",
-              value: create(ToolResultSchema, {
-                callId: block.tool_use_id,
-                content: truncate(textOf(block.content)),
-                isError: block.is_error === true,
-              }),
-            });
+            emitEvent(
+              {
+                case: "toolResult",
+                value: create(ToolResultSchema, {
+                  callId: block.tool_use_id,
+                  content: textOf(block.content),
+                  isError: block.is_error === true,
+                }),
+              },
+              parentCallId,
+            );
           }
         }
       }
       return undefined;
+    }
+    case "stream_event": {
+      const parentCallId = message.parent_tool_use_id ?? undefined;
+      const event = message.event;
+      switch (event.type) {
+        case "message_start":
+          blocks.start(message.parent_tool_use_id, event.message.id);
+          return undefined;
+        case "content_block_start":
+          if (event.content_block.type === "text" || event.content_block.type === "thinking") {
+            blocks.blockStart(message.parent_tool_use_id, event.index, event.content_block.type);
+          }
+          return undefined;
+        case "content_block_delta": {
+          const blockId = blocks.blockId(message.parent_tool_use_id, event.index);
+          if (event.delta.type === "text_delta") {
+            emitEvent(
+              { case: "text", value: create(TextSchema, { blockId, text: event.delta.text, delta: true }) },
+              parentCallId,
+            );
+          } else if (event.delta.type === "thinking_delta") {
+            emitEvent(
+              {
+                case: "thinking",
+                value: create(ThinkingSchema, { blockId, text: event.delta.thinking, delta: true }),
+              },
+              parentCallId,
+            );
+          }
+          return undefined;
+        }
+        case "content_block_stop": {
+          const kind = blocks.blockStop(message.parent_tool_use_id, event.index);
+          const blockId = blocks.blockId(message.parent_tool_use_id, event.index);
+          if (kind === "text") {
+            emitEvent({ case: "text", value: create(TextSchema, { blockId, final: true }) }, parentCallId);
+          } else if (kind === "thinking") {
+            emitEvent({ case: "thinking", value: create(ThinkingSchema, { blockId, final: true }) }, parentCallId);
+          }
+          return undefined;
+        }
+        default:
+          return undefined;
+      }
     }
     case "result": {
       const finalMessage =

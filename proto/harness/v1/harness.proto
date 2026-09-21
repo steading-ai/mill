@@ -253,8 +253,42 @@ message Request {
 
 // Text is something the assistant said, streamed as it is produced.
 message Text {
-  // The text fragment. Fragments concatenate in arrival order.
+  // The text fragment. A delta record's text is that increment only, never
+  // the block's accumulated text so far; fragments concatenate in arrival
+  // order to the block's whole text.
   string text = 1;
+  // Identifies the content block this fragment belongs to, scoped to the
+  // session attempt. Every fragment of one block carries the same id, which
+  // is what lets a reader fold them back into one block.
+  string block_id = 2;
+  // True while the block is still being produced. The block's last delta
+  // carries final true instead, closing it.
+  bool delta = 3;
+  // True on the block's closing record. The Anthropic streaming API's own
+  // block-close event carries no text of its own, so this record's text is
+  // typically empty; it exists to mark the block done.
+  bool final = 4;
+}
+
+// Thinking is the assistant's reasoning, streamed the same way Text is. Kept
+// as its own message rather than a kind flag on Text so a reader switches on
+// Event's oneof the same way it already does for every other case.
+message Thinking {
+  // The text fragment. A delta record's text is that increment only, never
+  // the block's accumulated text so far; fragments concatenate in arrival
+  // order to the block's whole text.
+  string text = 1;
+  // Identifies the content block this fragment belongs to, scoped to the
+  // session attempt. Every fragment of one block carries the same id, which
+  // is what lets a reader fold them back into one block.
+  string block_id = 2;
+  // True while the block is still being produced. The block's last delta
+  // carries final true instead, closing it.
+  bool delta = 3;
+  // True on the block's closing record. The Anthropic streaming API's own
+  // block-close event carries no text of its own, so this record's text is
+  // typically empty; it exists to mark the block done.
+  bool final = 4;
 }
 
 // ToolCall is the session asking to use a tool.
@@ -267,12 +301,13 @@ message ToolCall {
   google.protobuf.Struct arguments = 3;
 }
 
-// ToolResult is what a tool returned. Full tool output is never logged; a
-// summary line per result is.
+// ToolResult is what a tool returned, forwarded whole: the sidecar imposes
+// no limit of its own, and what a rendered log line shows is the ledger's
+// concern, not the wire's.
 message ToolResult {
   // The ToolCall this answers.
   string call_id = 1;
-  // The result rendered as text, truncated by the sidecar.
+  // The result rendered as text, whole.
   string content = 2;
   // Whether the tool failed.
   bool is_error = 3;
@@ -312,7 +347,14 @@ message Event {
     Usage usage = 5;
     // The sidecar asked a silent session whether its task is still needed.
     Heartbeat heartbeat = 6;
+    // The assistant reasoned.
+    Thinking thinking = 7;
   }
+  // The tool_use id of the Agent call this event belongs to, when the SDK
+  // reports it as a subagent's — empty for the top-level session's own
+  // events. Carried on every case above, since a subagent forwards text,
+  // thinking, tool calls, tool results and usage alike.
+  string parent_call_id = 8;
 }
 
 // Terminal is the last line of a request: how the session ended and what it

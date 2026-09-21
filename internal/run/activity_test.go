@@ -1,12 +1,13 @@
 package run
 
-// The activity writer, specified directly against hand-built records rather
-// than a real harness event: harness.v1.Event carries no parent_call_id yet
-// (deferred to a later node), so the turn rule's subagent branch can only be
-// proven by calling Record with one set by hand. This file is in package
-// run, not run_test, because activityWriter and decodeActivities are
-// deliberately not exported: nothing outside this package writes or reads
-// the file directly, only through ActivityPath and the CLI's renderer.
+// The activity writer, specified mostly against hand-built records for
+// brevity, plus cases that translate real harness.v1.Event values through
+// activityFromEvent where the translation itself — parent_call_id, block
+// id/delta/final, redaction against a live stream — is what is under test.
+// This file is in package run, not run_test, because activityWriter and
+// decodeActivities are deliberately not exported: nothing outside this
+// package writes or reads the file directly, only through ActivityPath and
+// the CLI's renderer.
 
 import (
 	"bytes"
@@ -18,6 +19,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	harnessv1 "github.com/ivy/mill/gen/harness/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
@@ -310,8 +312,122 @@ var _ = Describe("The activity writer", Label("unit"), func() {
 			"the ceiling bounds the file's growth once it is crossed, rather than letting every later record land whole")
 	})
 
+	It("keeps a several-hundred-KB tool result whole under the default ceiling", func() {
+		w := open()
+		large := strings.Repeat("x", 300*1024)
+		Expect(w.Record(&millv1.Activity{
+			Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+			Body:   &millv1.Activity_ToolResult{ToolResult: &millv1.ToolResult{CallId: "call-1", Content: large}},
+		})).To(Succeed())
+		Expect(w.Close()).To(Succeed())
+
+		activities := read()
+		Expect(activities).To(HaveLen(1))
+		Expect(activities[0].GetTruncated()).To(BeFalse())
+		Expect(activities[0].GetToolResult().GetContent()).To(Equal(large))
+	})
+
+	It("folds a subagent's turn under its Agent call, translated from real harness events", func() {
+		w := open()
+		record := func(event *harnessv1.Event) {
+			Expect(w.Record(activityFromEvent(event))).To(Succeed())
+		}
+
+		record(&harnessv1.Event{Body: &harnessv1.Event_ToolCall{ToolCall: &harnessv1.ToolCall{CallId: "call-1", Name: "Agent"}}})
+		// The subagent's own text carries call-1 as parent_call_id, exactly
+		// as the sidecar sets it (docs/activity.md §Subagents), not built by
+		// hand as [millv1.Activity].
+		record(&harnessv1.Event{ParentCallId: "call-1", Body: &harnessv1.Event_Text{Text: &harnessv1.Text{BlockId: "b1", Text: "nested", Final: true}}})
+		record(&harnessv1.Event{Body: &harnessv1.Event_ToolResult{ToolResult: &harnessv1.ToolResult{CallId: "call-1"}}})
+		record(&harnessv1.Event{Body: &harnessv1.Event_Usage{Usage: &harnessv1.Usage{}}})
+		Expect(w.Close()).To(Succeed())
+
+		activities := read()
+		Expect(activities).To(HaveLen(4))
+		Expect(activities[0].GetParentCallId()).To(BeEmpty())
+		Expect(activities[1].GetParentCallId()).To(Equal("call-1"))
+		Expect(activities[1].GetTurn()).To(Equal(activities[0].GetTurn()), "the subagent record shares the turn of the call it nests under")
+		Expect(activities[1].GetText().GetBlockId()).To(Equal("b1"))
+	})
+
+	It("keeps a value registered with redact absent from every delta written after it, translated from real harness events", func() {
+		r := redact.New()
+		w, err := newActivityWriter(dir, "run-1", "gather-context", 1, r, now, defaultActivityCeiling, nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		record := func(event *harnessv1.Event) {
+			Expect(w.Record(activityFromEvent(event))).To(Succeed())
+		}
+
+		record(&harnessv1.Event{Body: &harnessv1.Event_Text{Text: &harnessv1.Text{BlockId: "b1", Text: "the token is ", Delta: true}}})
+		// Registered mid-block: only deltas written from here on owe it
+		// protection (docs/activity.md §Redaction).
+		r.Add("topsecret123")
+		record(&harnessv1.Event{Body: &harnessv1.Event_Text{Text: &harnessv1.Text{BlockId: "b1", Text: "topsecret123", Delta: true}}})
+		record(&harnessv1.Event{Body: &harnessv1.Event_Text{Text: &harnessv1.Text{BlockId: "b1", Text: " done", Final: true}}})
+		Expect(w.Close()).To(Succeed())
+
+		var whole strings.Builder
+		for _, a := range read() {
+			whole.WriteString(a.GetText().GetText())
+		}
+		Expect(whole.String()).NotTo(ContainSubstring("topsecret123"), "no delta written after the value was registered ever carries it")
+		Expect(whole.String()).To(ContainSubstring(redact.Mask))
+		Expect(whole.String()).To(HavePrefix("the token is "), "text already released before the value was registered is untouched")
+	})
+
 	It("names the file under the run, the step and the attempt", func() {
 		Expect(ActivityPath(dir, "run-1", "gather-context", 2)).
 			To(Equal(filepath.Join(dir, "run-1", "gather-context.2.activity")))
+	})
+})
+
+var _ = Describe("ActivityRenderer", Label("unit"), func() {
+	at := timestamppb.New(time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC))
+	stamp := at.AsTime().UTC().Format(time.RFC3339)
+
+	textDelta := func(blockID, text string, final bool) *millv1.Activity {
+		return &millv1.Activity{At: at, Body: &millv1.Activity_Text{Text: &millv1.Text{
+			BlockId: blockID, Text: text, Delta: !final, Final: final,
+		}}}
+	}
+	thinkingDelta := func(blockID, text string, final bool) *millv1.Activity {
+		return &millv1.Activity{At: at, Body: &millv1.Activity_Thinking{Thinking: &millv1.Thinking{
+			BlockId: blockID, Text: text, Delta: !final, Final: final,
+		}}}
+	}
+
+	It("holds a text block's deltas and renders one line, whole, on its final record", func() {
+		r := NewActivityRenderer()
+		Expect(r.Render(textDelta("b1", "Hello", false))).To(Equal(""))
+		Expect(r.Render(textDelta("b1", ", world", false))).To(Equal(""))
+		Expect(r.Render(textDelta("b1", "!", true))).To(Equal(fmt.Sprintf("%s text Hello, world!\n", stamp)))
+	})
+
+	It("holds a thinking block's deltas and renders its word count on its final record", func() {
+		r := NewActivityRenderer()
+		Expect(r.Render(thinkingDelta("b1", "weighing ", false))).To(Equal(""))
+		Expect(r.Render(thinkingDelta("b1", "the options", false))).To(Equal(""))
+		Expect(r.Render(thinkingDelta("b1", "", true))).To(Equal(fmt.Sprintf("%s thinking 3 words\n", stamp)))
+	})
+
+	It("accumulates two interleaved blocks independently", func() {
+		r := NewActivityRenderer()
+		Expect(r.Render(textDelta("b1", "one", false))).To(Equal(""))
+		Expect(r.Render(textDelta("b2", "two", false))).To(Equal(""))
+		Expect(r.Render(textDelta("b1", "-more", true))).To(Equal(fmt.Sprintf("%s text one-more\n", stamp)))
+		Expect(r.Render(textDelta("b2", "-more", true))).To(Equal(fmt.Sprintf("%s text two-more\n", stamp)))
+	})
+
+	It("renders a whole, non-streamed final record the same as if no deltas ever existed", func() {
+		r := NewActivityRenderer()
+		Expect(r.Render(textDelta("", "no deltas preceded this", true))).
+			To(Equal(fmt.Sprintf("%s text no deltas preceded this\n", stamp)))
+	})
+
+	It("delegates every other kind to RenderActivity unchanged", func() {
+		r := NewActivityRenderer()
+		a := &millv1.Activity{At: at, Body: &millv1.Activity_ToolCall{ToolCall: &millv1.ToolCall{CallId: "call-1", Name: "Read"}}}
+		Expect(r.Render(a)).To(Equal(RenderActivity(a)))
 	})
 })

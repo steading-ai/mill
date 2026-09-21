@@ -271,14 +271,27 @@ func (r *Runner) sessionEvents(ctx context.Context, s *state, sr *millv1.StepRun
 }
 
 // activityFromEvent translates one harness event into the activity body it
-// carries. harness.v1.Event carries no block_id, delta or parent_call_id yet
-// (deferred to activity-fidelity), so a Text event always arrives as one
-// complete fragment: Final true, flushing at once rather than holding back.
+// carries: block_id, delta and final pass through on Text and Thinking
+// exactly as the sidecar set them, and parent_call_id is carried onto every
+// case, so a subagent's events fold under the Agent call that started it
+// (docs/activity.md §"Streaming text", §Subagents).
 func activityFromEvent(event *harnessv1.Event) *millv1.Activity {
-	a := &millv1.Activity{Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS}
+	a := &millv1.Activity{Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS, ParentCallId: event.GetParentCallId()}
 	switch body := event.GetBody().(type) {
 	case *harnessv1.Event_Text:
-		a.Body = &millv1.Activity_Text{Text: &millv1.Text{Text: body.Text.GetText(), Final: true}}
+		a.Body = &millv1.Activity_Text{Text: &millv1.Text{
+			Text:    body.Text.GetText(),
+			BlockId: body.Text.GetBlockId(),
+			Delta:   body.Text.GetDelta(),
+			Final:   body.Text.GetFinal(),
+		}}
+	case *harnessv1.Event_Thinking:
+		a.Body = &millv1.Activity_Thinking{Thinking: &millv1.Thinking{
+			Text:    body.Thinking.GetText(),
+			BlockId: body.Thinking.GetBlockId(),
+			Delta:   body.Thinking.GetDelta(),
+			Final:   body.Thinking.GetFinal(),
+		}}
 	case *harnessv1.Event_ToolCall:
 		a.Body = &millv1.Activity_ToolCall{ToolCall: &millv1.ToolCall{
 			CallId:    body.ToolCall.GetCallId(),

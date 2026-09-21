@@ -959,8 +959,21 @@ func (*Request_Cancel) isRequest_Body() {}
 // Text is something the assistant said, streamed as it is produced.
 type Text struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The text fragment. Fragments concatenate in arrival order.
-	Text          string `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
+	// The text fragment. A delta record's text is that increment only, never
+	// the block's accumulated text so far; fragments concatenate in arrival
+	// order to the block's whole text.
+	Text string `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
+	// Identifies the content block this fragment belongs to, scoped to the
+	// session attempt. Every fragment of one block carries the same id, which
+	// is what lets a reader fold them back into one block.
+	BlockId string `protobuf:"bytes,2,opt,name=block_id,json=blockId,proto3" json:"block_id,omitempty"`
+	// True while the block is still being produced. The block's last delta
+	// carries final true instead, closing it.
+	Delta bool `protobuf:"varint,3,opt,name=delta,proto3" json:"delta,omitempty"`
+	// True on the block's closing record. The Anthropic streaming API's own
+	// block-close event carries no text of its own, so this record's text is
+	// typically empty; it exists to mark the block done.
+	Final         bool `protobuf:"varint,4,opt,name=final,proto3" json:"final,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1002,6 +1015,109 @@ func (x *Text) GetText() string {
 	return ""
 }
 
+func (x *Text) GetBlockId() string {
+	if x != nil {
+		return x.BlockId
+	}
+	return ""
+}
+
+func (x *Text) GetDelta() bool {
+	if x != nil {
+		return x.Delta
+	}
+	return false
+}
+
+func (x *Text) GetFinal() bool {
+	if x != nil {
+		return x.Final
+	}
+	return false
+}
+
+// Thinking is the assistant's reasoning, streamed the same way Text is. Kept
+// as its own message rather than a kind flag on Text so a reader switches on
+// Event's oneof the same way it already does for every other case.
+type Thinking struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The text fragment. A delta record's text is that increment only, never
+	// the block's accumulated text so far; fragments concatenate in arrival
+	// order to the block's whole text.
+	Text string `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
+	// Identifies the content block this fragment belongs to, scoped to the
+	// session attempt. Every fragment of one block carries the same id, which
+	// is what lets a reader fold them back into one block.
+	BlockId string `protobuf:"bytes,2,opt,name=block_id,json=blockId,proto3" json:"block_id,omitempty"`
+	// True while the block is still being produced. The block's last delta
+	// carries final true instead, closing it.
+	Delta bool `protobuf:"varint,3,opt,name=delta,proto3" json:"delta,omitempty"`
+	// True on the block's closing record. The Anthropic streaming API's own
+	// block-close event carries no text of its own, so this record's text is
+	// typically empty; it exists to mark the block done.
+	Final         bool `protobuf:"varint,4,opt,name=final,proto3" json:"final,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Thinking) Reset() {
+	*x = Thinking{}
+	mi := &file_harness_v1_harness_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Thinking) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Thinking) ProtoMessage() {}
+
+func (x *Thinking) ProtoReflect() protoreflect.Message {
+	mi := &file_harness_v1_harness_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Thinking.ProtoReflect.Descriptor instead.
+func (*Thinking) Descriptor() ([]byte, []int) {
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *Thinking) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *Thinking) GetBlockId() string {
+	if x != nil {
+		return x.BlockId
+	}
+	return ""
+}
+
+func (x *Thinking) GetDelta() bool {
+	if x != nil {
+		return x.Delta
+	}
+	return false
+}
+
+func (x *Thinking) GetFinal() bool {
+	if x != nil {
+		return x.Final
+	}
+	return false
+}
+
 // ToolCall is the session asking to use a tool.
 type ToolCall struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -1017,7 +1133,7 @@ type ToolCall struct {
 
 func (x *ToolCall) Reset() {
 	*x = ToolCall{}
-	mi := &file_harness_v1_harness_proto_msgTypes[11]
+	mi := &file_harness_v1_harness_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1029,7 +1145,7 @@ func (x *ToolCall) String() string {
 func (*ToolCall) ProtoMessage() {}
 
 func (x *ToolCall) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[11]
+	mi := &file_harness_v1_harness_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1042,7 +1158,7 @@ func (x *ToolCall) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolCall.ProtoReflect.Descriptor instead.
 func (*ToolCall) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{11}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ToolCall) GetCallId() string {
@@ -1066,13 +1182,14 @@ func (x *ToolCall) GetArguments() *structpb.Struct {
 	return nil
 }
 
-// ToolResult is what a tool returned. Full tool output is never logged; a
-// summary line per result is.
+// ToolResult is what a tool returned, forwarded whole: the sidecar imposes
+// no limit of its own, and what a rendered log line shows is the ledger's
+// concern, not the wire's.
 type ToolResult struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// The ToolCall this answers.
 	CallId string `protobuf:"bytes,1,opt,name=call_id,json=callId,proto3" json:"call_id,omitempty"`
-	// The result rendered as text, truncated by the sidecar.
+	// The result rendered as text, whole.
 	Content string `protobuf:"bytes,2,opt,name=content,proto3" json:"content,omitempty"`
 	// Whether the tool failed.
 	IsError       bool `protobuf:"varint,3,opt,name=is_error,json=isError,proto3" json:"is_error,omitempty"`
@@ -1082,7 +1199,7 @@ type ToolResult struct {
 
 func (x *ToolResult) Reset() {
 	*x = ToolResult{}
-	mi := &file_harness_v1_harness_proto_msgTypes[12]
+	mi := &file_harness_v1_harness_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1094,7 +1211,7 @@ func (x *ToolResult) String() string {
 func (*ToolResult) ProtoMessage() {}
 
 func (x *ToolResult) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[12]
+	mi := &file_harness_v1_harness_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1107,7 +1224,7 @@ func (x *ToolResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolResult.ProtoReflect.Descriptor instead.
 func (*ToolResult) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{12}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ToolResult) GetCallId() string {
@@ -1152,7 +1269,7 @@ type Heartbeat struct {
 
 func (x *Heartbeat) Reset() {
 	*x = Heartbeat{}
-	mi := &file_harness_v1_harness_proto_msgTypes[13]
+	mi := &file_harness_v1_harness_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1164,7 +1281,7 @@ func (x *Heartbeat) String() string {
 func (*Heartbeat) ProtoMessage() {}
 
 func (x *Heartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[13]
+	mi := &file_harness_v1_harness_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1177,7 +1294,7 @@ func (x *Heartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
 func (*Heartbeat) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{13}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *Heartbeat) GetStrike() int32 {
@@ -1224,14 +1341,20 @@ type Event struct {
 	//	*Event_ToolResult
 	//	*Event_Usage
 	//	*Event_Heartbeat
-	Body          isEvent_Body `protobuf_oneof:"body"`
+	//	*Event_Thinking
+	Body isEvent_Body `protobuf_oneof:"body"`
+	// The tool_use id of the Agent call this event belongs to, when the SDK
+	// reports it as a subagent's — empty for the top-level session's own
+	// events. Carried on every case above, since a subagent forwards text,
+	// thinking, tool calls, tool results and usage alike.
+	ParentCallId  string `protobuf:"bytes,8,opt,name=parent_call_id,json=parentCallId,proto3" json:"parent_call_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Event) Reset() {
 	*x = Event{}
-	mi := &file_harness_v1_harness_proto_msgTypes[14]
+	mi := &file_harness_v1_harness_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1243,7 +1366,7 @@ func (x *Event) String() string {
 func (*Event) ProtoMessage() {}
 
 func (x *Event) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[14]
+	mi := &file_harness_v1_harness_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1256,7 +1379,7 @@ func (x *Event) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Event.ProtoReflect.Descriptor instead.
 func (*Event) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{14}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *Event) GetRequestId() string {
@@ -1318,6 +1441,22 @@ func (x *Event) GetHeartbeat() *Heartbeat {
 	return nil
 }
 
+func (x *Event) GetThinking() *Thinking {
+	if x != nil {
+		if x, ok := x.Body.(*Event_Thinking); ok {
+			return x.Thinking
+		}
+	}
+	return nil
+}
+
+func (x *Event) GetParentCallId() string {
+	if x != nil {
+		return x.ParentCallId
+	}
+	return ""
+}
+
 type isEvent_Body interface {
 	isEvent_Body()
 }
@@ -1347,6 +1486,11 @@ type Event_Heartbeat struct {
 	Heartbeat *Heartbeat `protobuf:"bytes,6,opt,name=heartbeat,proto3,oneof"`
 }
 
+type Event_Thinking struct {
+	// The assistant reasoned.
+	Thinking *Thinking `protobuf:"bytes,7,opt,name=thinking,proto3,oneof"`
+}
+
 func (*Event_Text) isEvent_Body() {}
 
 func (*Event_ToolCall) isEvent_Body() {}
@@ -1356,6 +1500,8 @@ func (*Event_ToolResult) isEvent_Body() {}
 func (*Event_Usage) isEvent_Body() {}
 
 func (*Event_Heartbeat) isEvent_Body() {}
+
+func (*Event_Thinking) isEvent_Body() {}
 
 // Terminal is the last line of a request: how the session ended and what it
 // produced. Exactly one Terminal follows each Start or Resume, and it is the
@@ -1384,7 +1530,7 @@ type Terminal struct {
 
 func (x *Terminal) Reset() {
 	*x = Terminal{}
-	mi := &file_harness_v1_harness_proto_msgTypes[15]
+	mi := &file_harness_v1_harness_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1396,7 +1542,7 @@ func (x *Terminal) String() string {
 func (*Terminal) ProtoMessage() {}
 
 func (x *Terminal) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[15]
+	mi := &file_harness_v1_harness_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1409,7 +1555,7 @@ func (x *Terminal) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Terminal.ProtoReflect.Descriptor instead.
 func (*Terminal) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{15}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *Terminal) GetRequestId() string {
@@ -1463,7 +1609,7 @@ type Failure struct {
 
 func (x *Failure) Reset() {
 	*x = Failure{}
-	mi := &file_harness_v1_harness_proto_msgTypes[16]
+	mi := &file_harness_v1_harness_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1475,7 +1621,7 @@ func (x *Failure) String() string {
 func (*Failure) ProtoMessage() {}
 
 func (x *Failure) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[16]
+	mi := &file_harness_v1_harness_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1488,7 +1634,7 @@ func (x *Failure) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Failure.ProtoReflect.Descriptor instead.
 func (*Failure) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{16}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *Failure) GetRequestId() string {
@@ -1522,7 +1668,7 @@ type Response struct {
 
 func (x *Response) Reset() {
 	*x = Response{}
-	mi := &file_harness_v1_harness_proto_msgTypes[17]
+	mi := &file_harness_v1_harness_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1534,7 +1680,7 @@ func (x *Response) String() string {
 func (*Response) ProtoMessage() {}
 
 func (x *Response) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[17]
+	mi := &file_harness_v1_harness_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1547,7 +1693,7 @@ func (x *Response) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Response.ProtoReflect.Descriptor instead.
 func (*Response) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{17}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *Response) GetBody() isResponse_Body {
@@ -1676,9 +1822,17 @@ const file_harness_v1_harness_proto_rawDesc = "" +
 	"\x05start\x18\x02 \x01(\v2\x11.harness.v1.StartH\x00R\x05start\x12,\n" +
 	"\x06resume\x18\x03 \x01(\v2\x12.harness.v1.ResumeH\x00R\x06resume\x12,\n" +
 	"\x06cancel\x18\x04 \x01(\v2\x12.harness.v1.CancelH\x00R\x06cancelB\x06\n" +
-	"\x04body\"\x1a\n" +
+	"\x04body\"a\n" +
 	"\x04Text\x12\x12\n" +
-	"\x04text\x18\x01 \x01(\tR\x04text\"n\n" +
+	"\x04text\x18\x01 \x01(\tR\x04text\x12\x19\n" +
+	"\bblock_id\x18\x02 \x01(\tR\ablockId\x12\x14\n" +
+	"\x05delta\x18\x03 \x01(\bR\x05delta\x12\x14\n" +
+	"\x05final\x18\x04 \x01(\bR\x05final\"e\n" +
+	"\bThinking\x12\x12\n" +
+	"\x04text\x18\x01 \x01(\tR\x04text\x12\x19\n" +
+	"\bblock_id\x18\x02 \x01(\tR\ablockId\x12\x14\n" +
+	"\x05delta\x18\x03 \x01(\bR\x05delta\x12\x14\n" +
+	"\x05final\x18\x04 \x01(\bR\x05final\"n\n" +
 	"\bToolCall\x12\x17\n" +
 	"\acall_id\x18\x01 \x01(\tR\x06callId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x125\n" +
@@ -1692,7 +1846,7 @@ const file_harness_v1_harness_proto_rawDesc = "" +
 	"\x06strike\x18\x01 \x01(\x05R\x06strike\x12\x18\n" +
 	"\astrikes\x18\x02 \x01(\x05R\astrikes\x12'\n" +
 	"\x0fwaiting_seconds\x18\x03 \x01(\x03R\x0ewaitingSeconds\x12\x14\n" +
-	"\x05tasks\x18\x04 \x03(\tR\x05tasks\"\xa8\x02\n" +
+	"\x05tasks\x18\x04 \x03(\tR\x05tasks\"\x82\x03\n" +
 	"\x05Event\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12&\n" +
@@ -1701,7 +1855,9 @@ const file_harness_v1_harness_proto_rawDesc = "" +
 	"\vtool_result\x18\x04 \x01(\v2\x16.harness.v1.ToolResultH\x00R\n" +
 	"toolResult\x12)\n" +
 	"\x05usage\x18\x05 \x01(\v2\x11.harness.v1.UsageH\x00R\x05usage\x125\n" +
-	"\theartbeat\x18\x06 \x01(\v2\x15.harness.v1.HeartbeatH\x00R\theartbeatB\x06\n" +
+	"\theartbeat\x18\x06 \x01(\v2\x15.harness.v1.HeartbeatH\x00R\theartbeat\x122\n" +
+	"\bthinking\x18\a \x01(\v2\x14.harness.v1.ThinkingH\x00R\bthinking\x12$\n" +
+	"\x0eparent_call_id\x18\b \x01(\tR\fparentCallIdB\x06\n" +
 	"\x04body\"\xea\x01\n" +
 	"\bTerminal\x12\x1d\n" +
 	"\n" +
@@ -1741,7 +1897,7 @@ func file_harness_v1_harness_proto_rawDescGZIP() []byte {
 }
 
 var file_harness_v1_harness_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_harness_v1_harness_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
+var file_harness_v1_harness_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_harness_v1_harness_proto_goTypes = []any{
 	(ExitReason)(0),         // 0: harness.v1.ExitReason
 	(*ProcessExit)(nil),     // 1: harness.v1.ProcessExit
@@ -1755,20 +1911,21 @@ var file_harness_v1_harness_proto_goTypes = []any{
 	(*Cancel)(nil),          // 9: harness.v1.Cancel
 	(*Request)(nil),         // 10: harness.v1.Request
 	(*Text)(nil),            // 11: harness.v1.Text
-	(*ToolCall)(nil),        // 12: harness.v1.ToolCall
-	(*ToolResult)(nil),      // 13: harness.v1.ToolResult
-	(*Heartbeat)(nil),       // 14: harness.v1.Heartbeat
-	(*Event)(nil),           // 15: harness.v1.Event
-	(*Terminal)(nil),        // 16: harness.v1.Terminal
-	(*Failure)(nil),         // 17: harness.v1.Failure
-	(*Response)(nil),        // 18: harness.v1.Response
-	nil,                     // 19: harness.v1.Usage.ByModelEntry
-	(*structpb.Struct)(nil), // 20: google.protobuf.Struct
+	(*Thinking)(nil),        // 12: harness.v1.Thinking
+	(*ToolCall)(nil),        // 13: harness.v1.ToolCall
+	(*ToolResult)(nil),      // 14: harness.v1.ToolResult
+	(*Heartbeat)(nil),       // 15: harness.v1.Heartbeat
+	(*Event)(nil),           // 16: harness.v1.Event
+	(*Terminal)(nil),        // 17: harness.v1.Terminal
+	(*Failure)(nil),         // 18: harness.v1.Failure
+	(*Response)(nil),        // 19: harness.v1.Response
+	nil,                     // 20: harness.v1.Usage.ByModelEntry
+	(*structpb.Struct)(nil), // 21: google.protobuf.Struct
 }
 var file_harness_v1_harness_proto_depIdxs = []int32{
 	0,  // 0: harness.v1.ProcessExit.reason:type_name -> harness.v1.ExitReason
-	19, // 1: harness.v1.Usage.by_model:type_name -> harness.v1.Usage.ByModelEntry
-	20, // 2: harness.v1.Settings.options:type_name -> google.protobuf.Struct
+	20, // 1: harness.v1.Usage.by_model:type_name -> harness.v1.Usage.ByModelEntry
+	21, // 2: harness.v1.Settings.options:type_name -> google.protobuf.Struct
 	6,  // 3: harness.v1.Start.attachments:type_name -> harness.v1.Attachment
 	4,  // 4: harness.v1.Start.settings:type_name -> harness.v1.Settings
 	5,  // 5: harness.v1.Start.workspace:type_name -> harness.v1.Workspace
@@ -1778,24 +1935,25 @@ var file_harness_v1_harness_proto_depIdxs = []int32{
 	7,  // 9: harness.v1.Request.start:type_name -> harness.v1.Start
 	8,  // 10: harness.v1.Request.resume:type_name -> harness.v1.Resume
 	9,  // 11: harness.v1.Request.cancel:type_name -> harness.v1.Cancel
-	20, // 12: harness.v1.ToolCall.arguments:type_name -> google.protobuf.Struct
+	21, // 12: harness.v1.ToolCall.arguments:type_name -> google.protobuf.Struct
 	11, // 13: harness.v1.Event.text:type_name -> harness.v1.Text
-	12, // 14: harness.v1.Event.tool_call:type_name -> harness.v1.ToolCall
-	13, // 15: harness.v1.Event.tool_result:type_name -> harness.v1.ToolResult
+	13, // 14: harness.v1.Event.tool_call:type_name -> harness.v1.ToolCall
+	14, // 15: harness.v1.Event.tool_result:type_name -> harness.v1.ToolResult
 	3,  // 16: harness.v1.Event.usage:type_name -> harness.v1.Usage
-	14, // 17: harness.v1.Event.heartbeat:type_name -> harness.v1.Heartbeat
-	20, // 18: harness.v1.Terminal.structured_output:type_name -> google.protobuf.Struct
-	3,  // 19: harness.v1.Terminal.usage:type_name -> harness.v1.Usage
-	1,  // 20: harness.v1.Terminal.exit:type_name -> harness.v1.ProcessExit
-	15, // 21: harness.v1.Response.event:type_name -> harness.v1.Event
-	16, // 22: harness.v1.Response.terminal:type_name -> harness.v1.Terminal
-	17, // 23: harness.v1.Response.failure:type_name -> harness.v1.Failure
-	2,  // 24: harness.v1.Usage.ByModelEntry.value:type_name -> harness.v1.TokenCounts
-	25, // [25:25] is the sub-list for method output_type
-	25, // [25:25] is the sub-list for method input_type
-	25, // [25:25] is the sub-list for extension type_name
-	25, // [25:25] is the sub-list for extension extendee
-	0,  // [0:25] is the sub-list for field type_name
+	15, // 17: harness.v1.Event.heartbeat:type_name -> harness.v1.Heartbeat
+	12, // 18: harness.v1.Event.thinking:type_name -> harness.v1.Thinking
+	21, // 19: harness.v1.Terminal.structured_output:type_name -> google.protobuf.Struct
+	3,  // 20: harness.v1.Terminal.usage:type_name -> harness.v1.Usage
+	1,  // 21: harness.v1.Terminal.exit:type_name -> harness.v1.ProcessExit
+	16, // 22: harness.v1.Response.event:type_name -> harness.v1.Event
+	17, // 23: harness.v1.Response.terminal:type_name -> harness.v1.Terminal
+	18, // 24: harness.v1.Response.failure:type_name -> harness.v1.Failure
+	2,  // 25: harness.v1.Usage.ByModelEntry.value:type_name -> harness.v1.TokenCounts
+	26, // [26:26] is the sub-list for method output_type
+	26, // [26:26] is the sub-list for method input_type
+	26, // [26:26] is the sub-list for extension type_name
+	26, // [26:26] is the sub-list for extension extendee
+	0,  // [0:26] is the sub-list for field type_name
 }
 
 func init() { file_harness_v1_harness_proto_init() }
@@ -1808,14 +1966,15 @@ func file_harness_v1_harness_proto_init() {
 		(*Request_Resume)(nil),
 		(*Request_Cancel)(nil),
 	}
-	file_harness_v1_harness_proto_msgTypes[14].OneofWrappers = []any{
+	file_harness_v1_harness_proto_msgTypes[15].OneofWrappers = []any{
 		(*Event_Text)(nil),
 		(*Event_ToolCall)(nil),
 		(*Event_ToolResult)(nil),
 		(*Event_Usage)(nil),
 		(*Event_Heartbeat)(nil),
+		(*Event_Thinking)(nil),
 	}
-	file_harness_v1_harness_proto_msgTypes[17].OneofWrappers = []any{
+	file_harness_v1_harness_proto_msgTypes[18].OneofWrappers = []any{
 		(*Response_Event)(nil),
 		(*Response_Terminal)(nil),
 		(*Response_Failure)(nil),
@@ -1826,7 +1985,7 @@ func file_harness_v1_harness_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_harness_v1_harness_proto_rawDesc), len(file_harness_v1_harness_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   19,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

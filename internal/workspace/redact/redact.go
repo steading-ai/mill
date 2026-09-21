@@ -291,7 +291,7 @@ func (h *DeltaHoldback) Add(blockID, delta string, final bool) string {
 		return text
 	}
 	hold := h.holdLength()
-	if hold <= 0 || len(text) <= hold {
+	if hold > 0 && len(text) <= hold {
 		h.held[blockID] = text
 		return ""
 	}

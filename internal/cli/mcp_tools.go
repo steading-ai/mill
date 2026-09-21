@@ -566,12 +566,13 @@ func (s *mcpServer) logs(ctx context.Context, reference, step string, tail int) 
 		return nil, noLog(err)
 	}
 	var lines []string
+	r := run.NewActivityRenderer()
 	for stream.Receive() {
 		a := stream.Msg().GetActivity()
 		if a == nil {
 			continue
 		}
-		rendered := run.RenderActivity(a)
+		rendered := r.Render(a)
 		if rendered == "" {
 			continue
 		}

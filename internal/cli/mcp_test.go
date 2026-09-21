@@ -224,6 +224,28 @@ var _ = Describe("mill mcp", Label(testsupport.DBLabel), func() {
 		Expect(result["isError"]).To(BeTrue())
 	})
 
+	It("renders a streamed text block's deltas as one accumulated line", func() {
+		logDir := GinkgoT().TempDir()
+		m := servingWithLogDir(ctx, logDir)
+		r := openRunOn(ctx, m, "millcli#36", nodeID(36))
+		sr := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+
+		appendActivity(run.ActivityPath(logDir, r.run.GetId(), "implement", sr.GetAttempt()),
+			&millv1.Activity{Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+				Body: &millv1.Activity_Text{Text: &millv1.Text{BlockId: "b1", Text: "Hello", Delta: true}}},
+			&millv1.Activity{Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+				Body: &millv1.Activity_Text{Text: &millv1.Text{BlockId: "b1", Text: ", world!", Final: true}}},
+		)
+
+		s := mcp(ctx, "--socket", m.socket)
+		s.call("initialize", nil)
+
+		result := s.tool("logs", map[string]any{"run": "millcli#36", "step": "implement"})
+		lines, ok := result["lines"].([]any)
+		Expect(ok).To(BeTrue(), "%v", result)
+		Expect(lines).To(ConsistOf(ContainSubstring("text Hello, world!")))
+	})
+
 	It("A thicket agent can say why a run is stuck", func() {
 		By("given a run parked after three review rounds")
 		g := daggerNode(ctx)
