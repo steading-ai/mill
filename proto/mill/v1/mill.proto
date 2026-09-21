@@ -981,10 +981,44 @@ message Event {
 // model, with the totals summed across them. What `mill cost` renders.
 message CostBucket {
   // What the bucket groups by: a node reference, a workflow name and
-  // version, a step name, or a model.
+  // version, a step name, a model, or a calendar day.
   string key = 1;
   // The bucket's usage, one entry per model.
   repeated ModelTotals totals = 2;
+  // The step funnel, set only on a by_step bucket.
+  StepCounts counts = 3;
+}
+
+// StepCounts is one step's funnel across the runs in a cost window: how many
+// reached it, how many passed, how many died there, how many needed more
+// than one attempt, how many revise rounds it answered, and how many
+// attempts it saw. Derived from step_runs rather than usage, so a check or
+// gate step with no billed tokens still has a funnel.
+message StepCounts {
+  // Runs with at least one attempt of the step.
+  int64 reached = 1;
+  // Runs with a closed attempt of the step.
+  int64 passed = 2;
+  // Runs whose last-started step run, by started_at, is this step, and
+  // whose run status is failed or abandoned.
+  int64 died = 3;
+  // Runs with more than one attempt of the step.
+  int64 retried = 4;
+  // Step runs elsewhere in the window whose feedback_from names an attempt
+  // of this step: the revise rounds this step's verdicts opened.
+  int64 revises = 5;
+  // Every attempt of the step, across every run.
+  int64 attempts = 6;
+}
+
+// TimeBucket says how `mill cost` groups a window's usage over time, beside
+// the run, workflow, step and model groupings it always computes.
+enum TimeBucket {
+  // TIME_BUCKET_UNSPECIFIED is the zero value: no time grouping, CostResponse
+  // carries no by_day.
+  TIME_BUCKET_UNSPECIFIED = 0;
+  // TIME_BUCKET_DAY groups by UTC calendar day.
+  TIME_BUCKET_DAY = 1;
 }
 
 // The activity record: what happened inside an attempt, kept whole.

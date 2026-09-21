@@ -985,6 +985,10 @@ message CostRequest {
   google.protobuf.Timestamp since = 1;
   // Only runs on nodes in this dagger project. Empty means every project.
   string project = 2;
+  // Only usage recorded before this instant. Unset means no upper bound.
+  google.protobuf.Timestamp until = 3;
+  // Whether, and how, to also group the window over time.
+  TimeBucket bucket = 4;
 }
 
 // CostResponse carries the same usage rolled up four ways, because the
@@ -995,10 +999,15 @@ message CostResponse {
   repeated CostBucket by_run = 1;
   // By workflow, keyed by name and version.
   repeated CostBucket by_workflow = 2;
-  // By step name.
+  // By step, keyed by the workflow's name and version and the step name, so
+  // two versions of one workflow are distinct buckets. Carries StepCounts.
   repeated CostBucket by_step = 3;
   // By model.
   repeated CostBucket by_model = 4;
+  // By UTC calendar day, one bucket per day in the window, keyed by date
+  // such as `2026-09-21`. Present only when the request set bucket to
+  // TIME_BUCKET_DAY.
+  repeated CostBucket by_day = 5;
 }
 
 // HealthRequest asks the service about itself. It takes nothing: identity is

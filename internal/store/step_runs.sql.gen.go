@@ -7,6 +7,7 @@ package store
 
 import (
 	"context"
+	"time"
 )
 
 const abortOpenStepRuns = `-- name: AbortOpenStepRuns :many
@@ -410,6 +411,87 @@ func (q *Queries) RecordStepRunEnvironment(ctx context.Context, arg RecordStepRu
 		&i.SessionStarted,
 	)
 	return i, err
+}
+
+const stepRunsSince = `-- name: StepRunsSince :many
+SELECT sr.id,
+       sr.run_id,
+       r.status          AS run_status,
+       w.name            AS workflow_name,
+       w.version         AS workflow_version,
+       sr.step_name,
+       sr.attempt,
+       sr.status,
+       sr.feedback_from,
+       target.step_name  AS feedback_from_step,
+       sr.started_at
+FROM step_runs sr
+JOIN runs r ON r.id = sr.run_id
+LEFT JOIN workflows w ON w.id = r.workflow_id
+LEFT JOIN step_runs target ON target.id = sr.feedback_from
+WHERE ($1::timestamptz IS NULL OR sr.started_at >= $1::timestamptz)
+  AND ($2::timestamptz IS NULL OR sr.started_at < $2::timestamptz)
+  AND ($3::text IS NULL OR split_part(r.node_ref, '#', 1) = $3::text)
+ORDER BY sr.run_id, sr.started_at
+`
+
+type StepRunsSinceParams struct {
+	Since   *time.Time
+	Until   *time.Time
+	Project *string
+}
+
+type StepRunsSinceRow struct {
+	ID               string
+	RunID            string
+	RunStatus        string
+	WorkflowName     *string
+	WorkflowVersion  *string
+	StepName         string
+	Attempt          int64
+	Status           string
+	FeedbackFrom     *string
+	FeedbackFromStep *string
+	StartedAt        time.Time
+}
+
+// Every step run in a window, with its run's status, its workflow's name
+// and version, and the step name its feedback_from attempt belongs to, so
+// `mill cost` can fold the per-step funnel (reached, passed, died, retried,
+// revises, attempts) in one pass alongside UsageSince. Windowed on
+// started_at rather than recorded_at: a check or gate step never has a
+// usage row, so the funnel cannot be derived from usage alone. The window
+// is open-ended below when since is null and above when until is null.
+func (q *Queries) StepRunsSince(ctx context.Context, arg StepRunsSinceParams) ([]StepRunsSinceRow, error) {
+	rows, err := q.db.Query(ctx, stepRunsSince, arg.Since, arg.Until, arg.Project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []StepRunsSinceRow{}
+	for rows.Next() {
+		var i StepRunsSinceRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunID,
+			&i.RunStatus,
+			&i.WorkflowName,
+			&i.WorkflowVersion,
+			&i.StepName,
+			&i.Attempt,
+			&i.Status,
+			&i.FeedbackFrom,
+			&i.FeedbackFromStep,
+			&i.StartedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const supersedeStepRuns = `-- name: SupersedeStepRuns :many

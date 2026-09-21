@@ -239,18 +239,21 @@ SELECT r.node_ref,
        u.input_tokens,
        u.output_tokens,
        u.cache_read_tokens,
-       u.cache_write_tokens
+       u.cache_write_tokens,
+       u.recorded_at
 FROM usage u
 JOIN step_runs sr ON sr.id = u.step_run_id
 JOIN runs r ON r.id = sr.run_id
 LEFT JOIN workflows w ON w.id = r.workflow_id
 WHERE ($1::timestamptz IS NULL OR u.recorded_at >= $1::timestamptz)
-  AND ($2::text IS NULL OR split_part(r.node_ref, '#', 1) = $2::text)
+  AND ($2::timestamptz IS NULL OR u.recorded_at < $2::timestamptz)
+  AND ($3::text IS NULL OR split_part(r.node_ref, '#', 1) = $3::text)
 ORDER BY r.node_ref, sr.step_name, u.model, u.source
 `
 
 type UsageSinceParams struct {
 	Since   *time.Time
+	Until   *time.Time
 	Project *string
 }
 
@@ -265,14 +268,16 @@ type UsageSinceRow struct {
 	OutputTokens     int64
 	CacheReadTokens  int64
 	CacheWriteTokens int64
+	RecordedAt       time.Time
 }
 
 // Every usage row in a window, with the run, workflow and step it belongs
-// to, so `mill cost` can roll one pass over them up four ways. The window is
-// open-ended when since is null, and the project filter matches the prefix
-// of a node reference such as `mill#18`.
+// to, so `mill cost` can roll one pass over them up four ways (five, with
+// recorded_at, for the day bucket). The window is open-ended below when
+// since is null and above when until is null; the project filter matches
+// the prefix of a node reference such as `mill#18`.
 func (q *Queries) UsageSince(ctx context.Context, arg UsageSinceParams) ([]UsageSinceRow, error) {
-	rows, err := q.db.Query(ctx, usageSince, arg.Since, arg.Project)
+	rows, err := q.db.Query(ctx, usageSince, arg.Since, arg.Until, arg.Project)
 	if err != nil {
 		return nil, err
 	}
@@ -291,6 +296,7 @@ func (q *Queries) UsageSince(ctx context.Context, arg UsageSinceParams) ([]Usage
 			&i.OutputTokens,
 			&i.CacheReadTokens,
 			&i.CacheWriteTokens,
+			&i.RecordedAt,
 		); err != nil {
 			return nil, err
 		}

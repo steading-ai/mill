@@ -70,3 +70,31 @@ UPDATE step_runs SET auto_approved = true WHERE id = $1 RETURNING *;
 -- worker that dies mid-turn must still resume rather than start again.
 -- name: MarkStepRunSessionStarted :one
 UPDATE step_runs SET session_started = true WHERE id = $1 RETURNING *;
+
+-- Every step run in a window, with its run's status, its workflow's name
+-- and version, and the step name its feedback_from attempt belongs to, so
+-- `mill cost` can fold the per-step funnel (reached, passed, died, retried,
+-- revises, attempts) in one pass alongside UsageSince. Windowed on
+-- started_at rather than recorded_at: a check or gate step never has a
+-- usage row, so the funnel cannot be derived from usage alone. The window
+-- is open-ended below when since is null and above when until is null.
+-- name: StepRunsSince :many
+SELECT sr.id,
+       sr.run_id,
+       r.status          AS run_status,
+       w.name            AS workflow_name,
+       w.version         AS workflow_version,
+       sr.step_name,
+       sr.attempt,
+       sr.status,
+       sr.feedback_from,
+       target.step_name  AS feedback_from_step,
+       sr.started_at
+FROM step_runs sr
+JOIN runs r ON r.id = sr.run_id
+LEFT JOIN workflows w ON w.id = r.workflow_id
+LEFT JOIN step_runs target ON target.id = sr.feedback_from
+WHERE (sqlc.narg('since')::timestamptz IS NULL OR sr.started_at >= sqlc.narg('since')::timestamptz)
+  AND (sqlc.narg('until')::timestamptz IS NULL OR sr.started_at < sqlc.narg('until')::timestamptz)
+  AND (sqlc.narg('project')::text IS NULL OR split_part(r.node_ref, '#', 1) = sqlc.narg('project')::text)
+ORDER BY sr.run_id, sr.started_at;
