@@ -145,6 +145,12 @@ Codex, Pi, and a native Go Claude adapter are further implementations of the sam
 
 `Workspace.Exec(command, args, capabilities)` and read the exit code and stdout. No session, no model. The check's `feedback` setting decides whether stderr becomes the next prompt to a named session or parks the run.
 
+### Catch-up, before a merge gate approves
+
+A merge gate's `approve` (`internal/run/gate.go`) does not ask the forge to merge a stale head. Before it does, it catches the branch up with the target it forked from (`Workspace.CatchUp`, `internal/workspace`): a target that has not moved is `UpToDate` and nothing runs; a file both sides touched is `Overlap`, left staged on the branch as a finding that revises back through `implement` and `commit`, the same as any other; no file in common is `Merged` — catch-up merged, signed and pushed the target's commits onto the branch itself, unreviewed.
+
+A clean merge is still two changes combining into something neither one was alone. Nothing else ran on the tree catch-up produced — no step, no review — so before the forge is asked to merge it, the gate runs the workflow's own check-kind steps between `commit` and `merge` (`checksBetween`, `checkCaughtUp`) against exactly that tree, the same command and contract a step would have run had one run there. A check that fails is a finding, not a park: `catchUpCheckError` names the step and what it found and revises back through `implement`, exactly as an overlap does. The forge is never asked to merge a tree nothing has tested (mill#52 — two migrations with no filename in common still combined into one goose refused to run).
+
 ### Gate steps
 
 If the run's `gate_node_id` is already set for this step — this is a resume — read the gate node instead of filing one: `done` closes the existing step run with `gate` evidence and the gate's result; a denial fails the run. A gate is filed once.
