@@ -62,9 +62,9 @@ var _ = Describe("The feature workflow", Label("unit"), func() {
 		}
 	})
 
-	It("implement is 45 minutes and two retries, and no step is longer", func() {
+	It("implement is three hours and two retries, and no step is longer", func() {
 		implement := step(loaded, "implement")
-		Expect(implement.GetTimeout().AsDuration().Minutes()).To(BeNumerically("==", 45))
+		Expect(implement.GetTimeout().AsDuration().Hours()).To(BeNumerically("==", 3))
 		Expect(implement.GetRetries()).To(BeNumerically("==", 2))
 		for _, s := range loaded.GetSteps() {
 			if s.GetKind() != millv1.StepKind_STEP_KIND_SKILL {
