@@ -151,6 +151,12 @@ func applyConfig(cmd *cobra.Command, opts *workOptions) error {
 	if len(config.McpServers) > 0 {
 		opts.run.mcpServers = config.McpServers
 	}
+	if config.Retention != "" {
+		opts.run.retention = config.Retention
+	}
+	if len(config.RetentionProjects) > 0 {
+		opts.run.retentionProjects = config.RetentionProjects
+	}
 	if err := resolveSandboxRoot(cmd, &opts.run.sandboxRoot, config.SandboxRoot); err != nil {
 		return err
 	}

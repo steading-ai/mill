@@ -269,6 +269,12 @@ type Options struct {
 	// run's workflow into the per-run catalog a session's harness resolves
 	// (docs/tools.md §Configuration). Nil mounts none of the host's own.
 	McpServers map[string]harness.McpServer
+	// Retention is the deployment's default retention policy over sealed
+	// frames and twins under LogDir (docs/activity.md §Lifecycle
+	// "Retention"). The zero value is `keep`.
+	Retention Policy
+	// RetentionProjects overrides Retention for a project, by name.
+	RetentionProjects map[string]Policy
 }
 
 // Gateway is the run loop's view of the credential gateway

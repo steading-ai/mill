@@ -510,9 +510,9 @@ their bytes.
 
 ## doctor
 
-Thirteen probes, one line of reason each — `mcp` and `workflows` report one
+Fourteen probes, one line of reason each — `mcp` and `workflows` report one
 line per configured server or checked workflow, so a host with several of
-either has more than twelve lines. Every
+either has more than thirteen lines. Every
 probe is reported; the command exits non-zero when any of them failed. A
 probe that passed with something still worth looking at is marked `warn`
 and does not fail the command.
@@ -535,6 +535,7 @@ pass  notify     contrib/notify/thicket-send.sh accepts a probe notice
 pass  workspace  local: a clone under the mill's account
 pass  isolation  DG_SOCKET and MILL_SOCKET are dead paths, neither /run/dagger/dg.sock nor /run/user/1000/mill/mill.sock
 pass  space      local: no sandbox volume to watch
+pass  activity   /var/lib/mill/logs: 214 frame(s), 37 twin(s), 106M, oldest 42 day(s) old; policy twin_days=7
 warn  gateway    https://api.anthropic.com answers a token count through the gateway with credential:774fdbe2; the credential was minted 2025-09-30, more than 11 months ago; a setup-token lasts a year — mint a new one
 pass  mcp        playwright: 23 tools
 pass  workflows  feature: store matches disk at 6415ee6fe810
@@ -552,6 +553,7 @@ pass  workflows  feature: store matches disk at 6415ee6fe810
 | `workspace` | Which workspace backend a run works in, and for `machine` whether the sandbox root is btrfs |
 | `isolation` | A session's own tools never see the production dagger or mill socket: a throwaway workspace is attached and its environment checked for `DG_SOCKET`/`MILL_SOCKET` naming a dead path, not the socket this host actually serves (docs/sandbox.md §Credentials) |
 | `space` | For `machine`, free space on the sandbox volume against the eviction watermarks (`cache-high-watermark`, `cache-low-watermark`): pass above the low one, warn between, fail below the high one — eviction runs at every promotion and the host is short of space |
+| `activity` | The frames and twins held under `--log-dir`: the count of each, their bytes, the oldest one's age, and the retention policy in force for `--project` (`retention`, `retention-projects`; docs/activity.md §Lifecycle "Retention"). A host with no `--log-dir` configured reports one line saying so |
 | `gateway` | The credential gateway's upstream answers one token count through it with the configured credential, and the credential's age against `model_credential_minted` |
 | `mcp` | Each `mcp-servers` entry (§Configuration) is started, sent `initialize` and `tools/list`, and stopped: one line per server, naming its tool count or what kept it from answering — a missing binary, a non-zero exit, or no response before the probe's own timeout. A host with none configured reports one line saying so |
 | `workflows` | Each workflow directory under `--workflows-root` (§Configuration) against the newest version the store holds for its name: one line per workflow, naming the two versions when they disagree. A host with no `workflows-root` configured reports one line saying so |
@@ -1054,6 +1056,8 @@ flag added or removed without this table changing is a failing spec.
 | `cache-expiry` | | yes | yes |
 | `cache-high-watermark` | | yes | yes |
 | `cache-low-watermark` | | yes | yes |
+| `retention` | | yes | yes |
+| `retention-projects` | | yes | yes |
 | `skill-dir` | | yes | yes |
 | `sidecar-dir` | | yes | yes |
 | `workflow-copy-dir` | | yes | yes |

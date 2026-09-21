@@ -239,14 +239,20 @@ func (w *Worker) start(ctx context.Context) error {
 	return nil
 }
 
-// sweep runs one pass of the sweep and prints its findings, one line each.
-// The pass is timed from its start whatever it returned, so a ledger that
-// will not answer is asked again at the interval and not at every claim.
+// sweep runs one pass of the ledger sweep and prints its findings, one line
+// each, then one pass of the retention sweep beside it — both worker
+// start and this same interval-gated call are their shared trigger points
+// (docs/activity.md §Lifecycle "Retention"). The pass is timed from its
+// start whatever it returned, so a ledger that will not answer is asked
+// again at the interval and not at every claim.
 func (w *Worker) sweep(ctx context.Context) error {
 	w.lastSweep = time.Now()
 	report, err := w.options.Runner.Sweep(ctx, w.driving)
 	for _, finding := range report.Findings {
 		w.printf("sweep: %s\n", finding)
+	}
+	if _, retErr := w.options.Runner.SweepRetention(ctx); retErr != nil {
+		w.options.Log.Warn("sweeping retention", "error", retErr)
 	}
 	return err
 }

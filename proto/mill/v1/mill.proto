@@ -1211,6 +1211,15 @@ message AttemptEnded {
   string reason = 3;
 }
 
+// Compacted is the rendered summary lines a compacted frame keeps in place
+// of the bodies retention dropped — exactly what `RenderedLog` produced for
+// this attempt before compaction, docs/activity.md §Lifecycle "Retention".
+message Compacted {
+  // text is the frame's rendered summary, the same lines mill logs prints,
+  // stored as the compacted frame's only content.
+  string text = 1;
+}
+
 // Activity is one event inside an attempt. The worker assigns seq, turn and
 // at as the event arrives; the body is the harness's, the workspace's, the
 // check's or the mill's own, redacted before it is written.
@@ -1276,6 +1285,8 @@ message Activity {
     AttemptStarted attempt_started = 25;
     // The attempt ended.
     AttemptEnded attempt_ended = 26;
+    // Retention compacted this frame to its rendered summary.
+    Compacted compacted = 27;
   }
 }
 

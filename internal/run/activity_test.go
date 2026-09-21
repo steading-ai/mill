@@ -430,4 +430,10 @@ var _ = Describe("ActivityRenderer", Label("unit"), func() {
 		a := &millv1.Activity{At: at, Body: &millv1.Activity_ToolCall{ToolCall: &millv1.ToolCall{CallId: "call-1", Name: "Read"}}}
 		Expect(r.Render(a)).To(Equal(RenderActivity(a)))
 	})
+
+	It("renders a compacted record's stored text verbatim, with no added stamp, since each line already carries its own", func() {
+		text := fmt.Sprintf("-- build attempt 1 started --\n%s text Hello, world!\n-- build attempt 1 ended: exit status 0 --\n", stamp)
+		a := &millv1.Activity{At: at, Body: &millv1.Activity_Compacted{Compacted: &millv1.Compacted{Text: text}}}
+		Expect(RenderActivity(a)).To(Equal(text))
+	})
 })
