@@ -9,6 +9,20 @@ import (
 	"github.com/ivy/mill/internal/store"
 )
 
+// EveryRunStatus is every status a run can hold, passed to Status in place
+// of no filter: Status treats an empty/nil statuses slice as "the runs that
+// still need attention" (selecting, running, waiting, parked), not "every
+// run" — a caller that means the latter asks by name.
+var EveryRunStatus = []millv1.RunStatus{
+	millv1.RunStatus_RUN_STATUS_SELECTING,
+	millv1.RunStatus_RUN_STATUS_RUNNING,
+	millv1.RunStatus_RUN_STATUS_WAITING,
+	millv1.RunStatus_RUN_STATUS_PARKED,
+	millv1.RunStatus_RUN_STATUS_DONE,
+	millv1.RunStatus_RUN_STATUS_FAILED,
+	millv1.RunStatus_RUN_STATUS_ABANDONED,
+}
+
 // CreateRunParams opens a run on a claimed node.
 type CreateRunParams struct {
 	NodeID     string

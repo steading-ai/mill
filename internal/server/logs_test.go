@@ -2,12 +2,15 @@ package server_test
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	harnessv1 "github.com/ivy/mill/gen/harness/v1"
@@ -243,6 +246,90 @@ var _ = Describe("Logs", Label(testsupport.DBLabel), func() {
 		Expect(activities[0].GetText().GetText()).To(Equal("f-one"))
 		Expect(activities[1].GetText().GetText()).To(Equal("g-two"))
 		Expect(activities[2].GetText().GetText()).To(Equal("f-three"))
+	})
+
+	It("returns byte-identical records for a closed attempt whether read live or from its sealed frame", func(ctx SpecContext) {
+		f := newFixture(ctx, "mill#118")
+		sr := f.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+		testsupport.AppendActivity(run.ActivityPath(f.logDir, f.run.GetId(), "implement", sr.GetAttempt()),
+			seq(testsupport.TextActivity("one"), 1),
+			seq(&millv1.Activity{Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS, Turn: 1,
+				Body: &millv1.Activity_ToolCall{ToolCall: &millv1.ToolCall{CallId: "call-1", Name: "read"}}}, 2),
+			seq(testsupport.TextActivity("two"), 3),
+		)
+
+		live, err := f.client().Logs(ctx, connect.NewRequest(&millv1.LogsRequest{Id: f.run.GetId(), Step: "implement"}))
+		Expect(err).NotTo(HaveOccurred())
+		beforeSeal := drain(live)
+		Expect(beforeSeal).To(HaveLen(3))
+
+		Expect(run.SealAttempt(ctx, f.logDir, f.run.GetId(), "implement", sr.GetAttempt(), sr.GetId(), "", f.client(), nil)).To(Succeed())
+
+		sealed, err := f.client().Logs(ctx, connect.NewRequest(&millv1.LogsRequest{Id: f.run.GetId(), Step: "implement"}))
+		Expect(err).NotTo(HaveOccurred())
+		afterSeal := drain(sealed)
+
+		Expect(afterSeal).To(HaveLen(3))
+		for i := range beforeSeal {
+			Expect(proto.Equal(afterSeal[i], beforeSeal[i])).To(BeTrue(), "record %d: sealed read must match the live read it replaces", i)
+		}
+	})
+
+	It("every run interleaves a sealed run's records with a still-live run's, by at", func(ctx SpecContext) {
+		f := newFixture(ctx, "mill#119")
+		g := f.anotherRun(ctx, "mill#120")
+
+		srF := f.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+		srG := g.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+
+		base := time.Now().UTC()
+		testsupport.AppendActivity(run.ActivityPath(f.logDir, f.run.GetId(), "implement", srF.GetAttempt()),
+			at(seq(testsupport.TextActivity("f-one"), 1), base),
+		)
+		testsupport.AppendActivity(run.ActivityPath(g.logDir, g.run.GetId(), "implement", srG.GetAttempt()),
+			at(seq(testsupport.TextActivity("g-two"), 1), base.Add(time.Second)),
+		)
+
+		// f's attempt seals — its record now comes from the index — while
+		// g's stays live, so the merge has to draw from both sources.
+		Expect(run.SealAttempt(ctx, f.logDir, f.run.GetId(), "implement", srF.GetAttempt(), srF.GetId(), "", f.client(), nil)).To(Succeed())
+
+		stream, err := f.client().Logs(ctx, connect.NewRequest(&millv1.LogsRequest{Since: timestamppb.New(base)}))
+		Expect(err).NotTo(HaveOccurred())
+		activities := drain(stream)
+
+		Expect(activities).To(HaveLen(2))
+		Expect(activities[0].GetText().GetText()).To(Equal("f-one"))
+		Expect(activities[1].GetText().GetText()).To(Equal("g-two"))
+	})
+
+	It("seals a frame under a fifth of its live file's size", func(ctx SpecContext) {
+		f := newFixture(ctx, "mill#122")
+		sr := f.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+		path := run.ActivityPath(f.logDir, f.run.GetId(), "implement", sr.GetAttempt())
+
+		args, err := structpb.NewStruct(map[string]any{
+			"path":    "internal/server/logs.go",
+			"pattern": "readEveryRunActivities",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		records := make([]*millv1.Activity, 0, 300)
+		for i := int64(1); i <= 300; i++ {
+			records = append(records, seq(&millv1.Activity{
+				Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS, Turn: 1,
+				Body: &millv1.Activity_ToolCall{ToolCall: &millv1.ToolCall{CallId: fmt.Sprintf("call-%d", i), Name: "grep", Arguments: args}},
+			}, i))
+		}
+		testsupport.AppendActivity(path, records...)
+
+		liveInfo, err := os.Stat(path)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(run.SealAttempt(ctx, f.logDir, f.run.GetId(), "implement", sr.GetAttempt(), sr.GetId(), "", f.client(), nil)).To(Succeed())
+
+		frameInfo, err := os.Stat(run.FramePath(f.logDir, f.run.GetId(), "implement", sr.GetAttempt()))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(frameInfo.Size()).To(BeNumerically("<", liveInfo.Size()/5))
 	})
 
 	It("limit is refused together with follow", func(ctx SpecContext) {

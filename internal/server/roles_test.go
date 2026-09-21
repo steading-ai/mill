@@ -28,6 +28,16 @@ var _ = Describe("A connection's uid", Label(testsupport.DBLabel), func() {
 		Expect(err).NotTo(HaveOccurred())
 	})
 
+	It("SealAttempt needs no entry of its own: it falls to the default write permission", func(ctx SpecContext) {
+		f := newFixture(ctx, "mill#39")
+		_, err := f.as(serviceUID).SealAttempt(ctx, connect.NewRequest(&millv1.SealAttemptRequest{StepRunId: f.run.GetId()}))
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = f.as(readerUID).SealAttempt(ctx, connect.NewRequest(&millv1.SealAttemptRequest{StepRunId: f.run.GetId()}))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodePermissionDenied))
+		Expect(err.Error()).To(ContainSubstring(string(interceptor.RoleReader)))
+	})
+
 	It("an operator uid reads and operates but writes no evidence", func(ctx SpecContext) {
 		f := newFixture(ctx, "mill#31")
 

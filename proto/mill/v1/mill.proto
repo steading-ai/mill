@@ -1212,3 +1212,36 @@ message Activity {
     AttemptEnded attempt_ended = 26;
   }
 }
+
+// ActivityIndexRow is one sealed record's row in the `activity` table
+// (docs/activity.md §The index row): everything a query needs to find and
+// page a record by, and none of its body. `Logs` reads bodies back from the
+// frame at `offset`.
+message ActivityIndexRow {
+  // The attempt this record belongs to.
+  string step_run_id = 1;
+  // The record's position in the sealed frame, after coalescing.
+  int64 seq = 2;
+  // When the record was written.
+  google.protobuf.Timestamp at = 3;
+  // Set for a record that spans time.
+  google.protobuf.Timestamp ended_at = 4;
+  // The oneof field name of the record's body, e.g. "tool_call".
+  string kind = 5;
+  // Who produced it.
+  ActivitySource source = 6;
+  // The model turn the record belongs to.
+  int64 turn = 7;
+  // Set on a tool_call or tool_result: the call it names.
+  string call_id = 8;
+  // Set when the event happened inside a subagent.
+  string parent_call_id = 9;
+  // Set on a tool_call: the tool's name.
+  string tool = 10;
+  // The body's size before any cap.
+  int64 bytes = 11;
+  // Whether the body was cut down after crossing the attempt's ceiling.
+  bool truncated = 12;
+  // The record's byte position in the uncompressed frame.
+  int64 offset = 13;
+}

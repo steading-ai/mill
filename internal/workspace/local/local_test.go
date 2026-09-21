@@ -16,6 +16,7 @@ import (
 
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/evidence"
+	"github.com/ivy/mill/internal/testsupport"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/local"
 	"github.com/ivy/mill/internal/workspace/redact"
@@ -504,6 +505,57 @@ var _ = Describe("The local workspace", Label("unit"), func() {
 			Expect(listed).NotTo(ContainSubstring("somebody@elsewhere.test"))
 			Expect(sessionGit("config", "user.email")).To(Equal(ws.Committer().Email))
 		})
+	})
+})
+
+// Twins are captured from $HOME, not the checkout, so these specs fabricate
+// their own HOME rather than reuse the workspace fixture above — nothing
+// here creates a workspace at all, only the directory CaptureTwin reads
+// from directly (internal/workspace/local.go's CaptureTwin).
+var _ = Describe("Capturing the session's twin", Label("unit"), func() {
+	var home string
+
+	BeforeEach(func() {
+		home = GinkgoT().TempDir()
+		GinkgoT().Setenv("HOME", home)
+	})
+
+	// transcriptDir is where CaptureTwin looks for root+runID's transcripts:
+	// $HOME/.claude/projects/<cwd-slug>, cwd being the run's checkout
+	// directory (docs/spikes/sdk-sessions.md §Q1; the transformation itself
+	// is pinned directly against the doc's own example in cwdslug_test.go).
+	transcriptDir := func(root, runID string) string {
+		cwd := filepath.Join(root, runID, "checkout")
+		slug := strings.NewReplacer("/", "-", ".", "-").Replace(cwd)
+		return filepath.Join(home, ".claude", "projects", slug)
+	}
+
+	It("tars every transcript file under the run's slug, main session and subagent alike", func(ctx context.Context) {
+		root := filepath.Join(GinkgoT().TempDir(), "workspaces")
+		dir := transcriptDir(root, "run-01")
+		Expect(os.MkdirAll(dir, 0o750)).To(Succeed())
+		main := []byte(`{"type":"turn","role":"user","content":"main session"}` + "\n")
+		sub := []byte(`{"type":"turn","role":"user","content":"a subagent's own session"}` + "\n")
+		Expect(os.WriteFile(filepath.Join(dir, "session-main.jsonl"), main, 0o600)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(dir, "session-sub.jsonl"), sub, 0o600)).To(Succeed())
+		// Not a transcript: CaptureTwin's own doc says every .jsonl, nothing else.
+		Expect(os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("not a transcript"), 0o600)).To(Succeed())
+
+		r, err := local.CaptureTwin(ctx, root, "run-01", "session-main")
+		Expect(err).NotTo(HaveOccurred())
+
+		files := testsupport.Untar(r)
+		Expect(files).To(HaveLen(2))
+		Expect(files).To(HaveKeyWithValue("session-main.jsonl", main))
+		Expect(files).To(HaveKeyWithValue("session-sub.jsonl", sub))
+	})
+
+	It("returns an empty tar and no error when the run left no transcript", func(ctx context.Context) {
+		root := filepath.Join(GinkgoT().TempDir(), "workspaces")
+
+		r, err := local.CaptureTwin(ctx, root, "run-never-ran", "session-1")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(testsupport.Untar(r)).To(BeEmpty())
 	})
 })
 

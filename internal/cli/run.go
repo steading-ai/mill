@@ -500,6 +500,7 @@ func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, 
 		SkillOverrides: overrides,
 		Log:            slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: slog.LevelInfo})),
 		OnActivity:     onActivity,
+		Twin:           twinFor(kind, opts),
 	}
 	gatewayRunOptions(gw, &options)
 	return run.New(options), nil
@@ -828,6 +829,34 @@ func machineWorkspaces(opts runOptions, redactor *redact.Redactor) run.Workspace
 		}
 		return ws, nil
 	}
+}
+
+// twinFor builds the factory recovery (internal/run/recover.go's
+// SealOrphans) uses to capture an orphaned attempt's transcript with no
+// live workspace open. Only the local backend has one today:
+// local.CaptureTwin needs nothing but a deterministic path under $HOME, not
+// a live workspace or machine. The machine backend's own capture
+// (docs/plans/2026-09-21-mill-16.md step 11) is not built yet, so it
+// returns nil, which SealOrphans already treats as "no twin" the same way
+// an attempt with no session does.
+func twinFor(kind workspace.Kind, opts runOptions) func(runID string) workspace.TwinSource {
+	if kind == workspace.KindMachine {
+		return nil
+	}
+	root := opts.workspaceDir
+	return func(runID string) workspace.TwinSource {
+		return localRecoveryTwin{root: root, runID: runID}
+	}
+}
+
+// localRecoveryTwin adapts local.CaptureTwin's free-function signature to
+// workspace.TwinSource for a bare run id, the same adapter
+// local.Workspace.CaptureTwin itself uses but without needing a live
+// *local.Workspace open.
+type localRecoveryTwin struct{ root, runID string }
+
+func (t localRecoveryTwin) CaptureTwin(ctx context.Context, sessionID string) (io.Reader, error) {
+	return local.CaptureTwin(ctx, t.root, t.runID, sessionID)
 }
 
 // attachOnlyWorkspaces is the selector for a workspace this host already

@@ -206,6 +206,11 @@ service StoreService {
   // activity instead, ordered for resume by a cursor. docs/activity.md
   // §The RPC is the specification this call implements.
   rpc Logs(LogsRequest) returns (stream LogsResponse);
+  // SealAttempt records a closed attempt's index rows, once its frame and
+  // twin are written. Idempotent: inserting a row seal already recorded
+  // (same step_run_id, seq) is a no-op, so a seal retried after a lost
+  // response never double-counts. docs/activity.md §Lifecycle's Seal step.
+  rpc SealAttempt(SealAttemptRequest) returns (SealAttemptResponse);
 }
 
 // GetRunByNodeRequest asks for the live run on a node.
@@ -1102,4 +1107,23 @@ message GateRef {
   string node_id = 1;
   // The gate node's reference.
   string node_ref = 2;
+}
+
+// SealAttemptRequest carries one attempt's index rows, computed by the
+// worker from the frame it just wrote and verified. It carries no lease:
+// the attempt this seals has already closed and released its own, and
+// activity is not one of the tables a lease fences.
+message SealAttemptRequest {
+  // The attempt these rows index.
+  string step_run_id = 1;
+  // One row per record in the sealed frame, in seq order.
+  repeated ActivityIndexRow records = 2;
+}
+
+// SealAttemptResponse carries the rows the call actually inserted. A row
+// whose (step_run_id, seq) was already recorded — a retry after a lost
+// response — is skipped, not returned, so an empty list is a valid answer.
+message SealAttemptResponse {
+  // The rows this call inserted, in the order given.
+  repeated ActivityIndexRow records = 1;
 }

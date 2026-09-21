@@ -7,14 +7,20 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	millv1 "github.com/ivy/mill/gen/mill/v1"
+	"github.com/ivy/mill/gen/mill/v1/millv1connect"
+	"github.com/ivy/mill/internal/domain"
 	"github.com/ivy/mill/internal/run"
 	"github.com/ivy/mill/internal/workspace"
 )
@@ -48,29 +54,41 @@ type logsOptions struct {
 func newLogsCommand() *cobra.Command {
 	opts := logsOptions{}
 	cmd := &cobra.Command{
-		Use:   "logs <run>",
+		Use:   "logs [run]",
 		Short: "Read a run's activity, live or in full",
 		Long: `Read a run's activity: every attempt of every step, oldest first, rendered
 the way the session's events read as a log. With no --step this is the
 whole run; --step narrows to one step, --attempt to one attempt of it.
 
+With no run, every run's activity is merged instead, oldest first, each
+line prefixed with the run it belongs to. --since narrows to records at or
+after a point in time, a duration ago (1h, 7d) or an absolute timestamp; a
+fresh --follow with no --since starts from now rather than replaying the
+ledger's whole history.
+
 With no --follow the whole answer is printed once, through $PAGER on a
 terminal, and the command exits 0. --follow (-f) prints the last --tail
 records (10 by default; --no-tail for the whole run first) and then keeps
-the stream open, printing new records as the run makes them, until the run
-ends: exit 0 done, 1 failed or abandoned, 3 waiting on a gate, 4 parked, 2
-the stream itself broke.
+the stream open, printing new records as the run makes them. Named a run,
+it ends when that run does: exit 0 done, 1 failed or abandoned, 3 waiting
+on a gate, 4 parked, 2 the stream itself broke. With no run it never ends
+on its own — ctrl-C exits 0, a broken stream still exits 2.
 
 The logs are redacted at write time. Full tool output is never written; a
 summary line per tool result is.`,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runLogs(cmd, opts, args[0])
+			var reference string
+			if len(args) > 0 {
+				reference = args[0]
+			}
+			return runLogs(cmd, opts, reference)
 		},
 	}
 	addReadFlags(cmd, &opts.readOptions)
 	cmd.Flags().StringVar(&opts.step, "step", "", "narrow to one step (default: the whole run)")
 	cmd.Flags().Int64Var(&opts.attempt, "attempt", 0, "narrow to one attempt of --step (default: every attempt)")
+	cmd.Flags().StringVar(&opts.since, "since", "", "with no run, only records at or after this point: a duration ago (1h, 7d) or an absolute timestamp")
 	cmd.Flags().BoolVar(&opts.json, "json", false, "emit each record as an Activity JSON line")
 	cmd.Flags().BoolVarP(&opts.follow, "follow", "f", false, "keep the stream open, printing new records as the run makes them")
 	cmd.Flags().Int64VarP(&opts.tail, "tail", "n", 10, "with --follow, print this many records before going live")
@@ -80,53 +98,126 @@ summary line per tool result is.`,
 	return cmd
 }
 
+// refText is reference as an error message names it: a run, or "every run"
+// for the no-run stream.
+func refText(reference string) string {
+	if reference == "" {
+		return "every run"
+	}
+	return reference
+}
+
 func runLogs(cmd *cobra.Command, opts logsOptions, reference string) error {
 	ctx := cmd.Context()
 	store := storeClient(opts.socket)
-	detail, err := inspected(ctx, store, "logs", reference)
-	if err != nil {
-		return err
-	}
-	lines := newLogsRenderer(detail.GetSteps(), opts.follow)
 
-	req := &millv1.LogsRequest{
-		Id:      detail.GetSummary().GetRun().GetId(),
-		Step:    opts.step,
-		Attempt: opts.attempt,
-		Follow:  opts.follow,
+	var req *millv1.LogsRequest
+	var lines *logsRenderer
+	var names *runNames
+
+	if reference == "" {
+		since, err := sinceBound(opts, time.Now())
+		if err != nil {
+			return err
+		}
+		req = &millv1.LogsRequest{Step: opts.step, Attempt: opts.attempt, Follow: opts.follow}
+		if since != nil {
+			req.Since = timestamppb.New(*since)
+		}
+		lines = newLogsRenderer(nil, opts.follow)
+		names = newRunNames(ctx, store)
+	} else {
+		detail, err := inspected(ctx, store, "logs", reference)
+		if err != nil {
+			return err
+		}
+		lines = newLogsRenderer(detail.GetSteps(), opts.follow)
+		req = &millv1.LogsRequest{
+			Id:      detail.GetSummary().GetRun().GetId(),
+			Step:    opts.step,
+			Attempt: opts.attempt,
+			Follow:  opts.follow,
+		}
 	}
 	if opts.follow && !opts.noTail {
 		req.Tail = opts.tail
 	}
 
+	// An every-run follow never ends on its own (the RPC's own contract) —
+	// ctrl-C is the only way this process is meant to stop it, so the
+	// context it streams over must actually hear the signal.
+	if opts.follow && reference == "" {
+		var stop context.CancelFunc
+		ctx, stop = signal.NotifyContext(ctx, os.Interrupt)
+		defer stop()
+	}
+
 	stream, err := store.Logs(ctx, connect.NewRequest(req))
 	if err != nil {
-		return fmt.Errorf("logs %s: %w", reference, err)
+		return fmt.Errorf("logs %s: %w", refText(reference), err)
 	}
 
 	if opts.follow {
-		if err := followLogs(cmd.OutOrStdout(), stream, opts, lines); err != nil {
-			return fmt.Errorf("logs %s: %w", reference, err)
+		if err := followLogs(ctx, cmd.OutOrStdout(), stream, opts, lines, names); err != nil {
+			return fmt.Errorf("logs %s: %w", refText(reference), err)
 		}
 		return nil
 	}
 
-	content, err := readLogs(stream, opts, lines)
+	content, err := readLogs(stream, opts, lines, names)
 	if err != nil {
-		return fmt.Errorf("logs %s: %w", reference, err)
+		return fmt.Errorf("logs %s: %w", refText(reference), err)
 	}
 	if err := page(ctx, cmd, opts, content); err != nil {
-		return fmt.Errorf("logs %s: %w", reference, err)
+		return fmt.Errorf("logs %s: %w", refText(reference), err)
 	}
 	return nil
 }
 
+// sinceBound is the lower bound a no-run stream applies: --since parsed
+// literally when given; otherwise no bound for a plain read (every record on
+// file, the same as naming a run), or now for a fresh --follow (mill#16's
+// Decisions) — so a follow with no run does not open by replaying the
+// ledger's entire history before going live.
+func sinceBound(opts logsOptions, now time.Time) (*time.Time, error) {
+	if opts.since != "" {
+		t, err := parseSince(opts.since, now)
+		if err != nil {
+			return nil, err
+		}
+		return &t, nil
+	}
+	if opts.follow {
+		return &now, nil
+	}
+	return nil, nil
+}
+
+// parseSince reads --since the way journalctl's own does: a duration ago
+// (1h, 7d, via parseWindow) or an absolute timestamp, RFC3339 or the
+// "2006-01-02 15:04:05" / "2006-01-02" forms journalctl also accepts,
+// read in the local timezone since neither carries one of its own.
+func parseSince(text string, now time.Time) (time.Time, error) {
+	if window, err := parseWindow(text); err == nil {
+		return now.Add(-window), nil
+	}
+	if t, err := time.Parse(time.RFC3339, text); err == nil {
+		return t, nil
+	}
+	for _, layout := range []string{"2006-01-02 15:04:05", "2006-01-02"} {
+		if t, err := time.ParseInLocation(layout, text, time.Local); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("--since: %q is not a duration (1h, 7d) or a timestamp", text)
+}
+
 // readLogs collects every record of an unfollowed stream, rendered, for
 // page to show at once.
-func readLogs(stream *connect.ServerStreamForClient[millv1.LogsResponse], opts logsOptions, lines *logsRenderer) ([]byte, error) {
+func readLogs(stream *connect.ServerStreamForClient[millv1.LogsResponse], opts logsOptions, lines *logsRenderer, names *runNames) ([]byte, error) {
 	var buf bytes.Buffer
 	for stream.Receive() {
-		if err := writeFrame(&buf, stream.Msg(), opts, lines); err != nil {
+		if err := writeFrame(&buf, stream.Msg(), opts, lines, names); err != nil {
 			return nil, err
 		}
 	}
@@ -138,18 +229,24 @@ func readLogs(stream *connect.ServerStreamForClient[millv1.LogsResponse], opts l
 
 // followLogs prints every record as it streams, then the line naming how
 // the run ended once a RunEnd frame arrives, or that the stream itself
-// broke when it ends without one.
-func followLogs(out io.Writer, stream *connect.ServerStreamForClient[millv1.LogsResponse], opts logsOptions, lines *logsRenderer) error {
+// broke when it ends without one. An every-run follow sends no RunEnd
+// (docs/activity.md: "over every run it does not end") — it reads to here
+// only once ctx itself ends, either ctrl-C's ctx.Err() (a clean stop, not a
+// broken stream) or the stream failing on its own.
+func followLogs(ctx context.Context, out io.Writer, stream *connect.ServerStreamForClient[millv1.LogsResponse], opts logsOptions, lines *logsRenderer, names *runNames) error {
 	for stream.Receive() {
 		msg := stream.Msg()
 		if end := msg.GetRun(); end != nil {
 			return endLogs(out, end)
 		}
-		if err := writeFrame(out, msg, opts, lines); err != nil {
+		if err := writeFrame(out, msg, opts, lines, names); err != nil {
 			return err
 		}
 	}
 	if err := stream.Err(); err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
 		if _, writeErr := fmt.Fprintf(out, "-- stream broke: %s --\n", err); writeErr != nil {
 			return writeErr
 		}
@@ -162,8 +259,9 @@ func followLogs(out io.Writer, stream *connect.ServerStreamForClient[millv1.Logs
 }
 
 // writeFrame renders one LogsResponse frame's activity, when it carries
-// one, as --json wants it or as text.
-func writeFrame(out io.Writer, msg *millv1.LogsResponse, opts logsOptions, lines *logsRenderer) error {
+// one, as --json wants it or as text. names is nil for a single-run stream,
+// which never prefixes a line with a run it is already scoped to.
+func writeFrame(out io.Writer, msg *millv1.LogsResponse, opts logsOptions, lines *logsRenderer, names *runNames) error {
 	a := msg.GetActivity()
 	if a == nil {
 		return nil
@@ -181,8 +279,84 @@ func writeFrame(out io.Writer, msg *millv1.LogsResponse, opts logsOptions, lines
 	if line == "" {
 		return nil
 	}
+	if names != nil {
+		line = prefixLines(names.prefix(a.GetStepRunId()), line)
+	}
 	_, err := io.WriteString(out, line)
 	return err
+}
+
+// prefixLines leads every line of text with prefix, not only its first —
+// docs/activity.md's prompt and check bodies render as several lines from
+// one record, and mill#16's every-run stream names which run each one of
+// them is from, not just the first.
+func prefixLines(prefix, text string) string {
+	if prefix == "" {
+		return text
+	}
+	lines := strings.SplitAfter(text, "\n")
+	var b strings.Builder
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		b.WriteString(prefix)
+		b.WriteString(line)
+	}
+	return b.String()
+}
+
+// runNames resolves an activity's step_run_id to the node_ref of the run it
+// belongs to, for the no-run stream's line prefix. The wire carries only
+// step_run_id — a live file and a sealed frame hold the same record either
+// way, and a run's identity is not one of its own facts — so this builds
+// the mapping from the two calls Inspect already exposes rather than the
+// server growing a new field for it (mill#16's Decisions names both and
+// leaves the choice to this step; the CLI-side lookup needs no wire
+// change).
+//
+// Seeded lazily and refreshed whenever a step_run_id it does not yet know
+// turns up: a new run, or a new attempt of one already known, appearing
+// mid-follow is exactly that case. A run Status or Inspect cannot presently
+// reach leaves that step_run_id unprefixed rather than failing the stream.
+type runNames struct {
+	ctx   context.Context
+	store millv1connect.StoreServiceClient
+	byID  map[string]string
+}
+
+func newRunNames(ctx context.Context, store millv1connect.StoreServiceClient) *runNames {
+	return &runNames{ctx: ctx, store: store, byID: map[string]string{}}
+}
+
+// prefix is stepRunID's run, ready to lead a rendered line, or empty when
+// it cannot be resolved.
+func (r *runNames) prefix(stepRunID string) string {
+	if name, ok := r.byID[stepRunID]; ok {
+		return name + " "
+	}
+	r.refresh()
+	if name := r.byID[stepRunID]; name != "" {
+		return name + " "
+	}
+	return ""
+}
+
+func (r *runNames) refresh() {
+	res, err := r.store.Status(r.ctx, connect.NewRequest(&millv1.StatusRequest{Statuses: domain.EveryRunStatus}))
+	if err != nil {
+		return
+	}
+	for _, summary := range res.Msg.GetRuns() {
+		run := summary.GetRun()
+		detail, err := r.store.Inspect(r.ctx, connect.NewRequest(&millv1.InspectRequest{Id: run.GetId()}))
+		if err != nil {
+			continue
+		}
+		for _, sd := range detail.Msg.GetSteps() {
+			r.byID[sd.GetStepRun().GetId()] = run.GetNodeRef()
+		}
+	}
 }
 
 // jsonLine is a as the Activity JSON a script reads, one record per line.

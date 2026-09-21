@@ -4,6 +4,7 @@ import (
 	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	harnessv1 "github.com/ivy/mill/gen/harness/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
@@ -226,6 +227,35 @@ var _ = Describe("The store's handlers", Label(testsupport.DBLabel), func() {
 		}))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(posted.Msg.GetMarked()).To(BeEquivalentTo(1))
+	})
+
+	It("SealAttempt inserts index rows once and never double-counts a retry", func(ctx SpecContext) {
+		f := newFixture(ctx, "mill#40")
+		stepRun := f.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+		rows := []*millv1.ActivityIndexRow{
+			{Seq: 1, At: timestamppb.Now(), Kind: "text", Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS, Bytes: 12},
+			{Seq: 2, At: timestamppb.Now(), Kind: "tool_call", Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS, CallId: "call-1", Tool: "bash", Bytes: 40},
+		}
+
+		sealed, err := f.client().SealAttempt(ctx, connect.NewRequest(&millv1.SealAttemptRequest{
+			StepRunId: stepRun.GetId(), Records: rows,
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(sealed.Msg.GetRecords()).To(HaveLen(2))
+		Expect(sealed.Msg.GetRecords()[1].GetTool()).To(Equal("bash"))
+
+		// A retry (the worker resending after a lost response) reports a
+		// mix of the same rows and one genuinely new one: the already-
+		// recorded seqs insert nothing new, and only the new one comes
+		// back.
+		retried, err := f.client().SealAttempt(ctx, connect.NewRequest(&millv1.SealAttemptRequest{
+			StepRunId: stepRun.GetId(), Records: append(rows, &millv1.ActivityIndexRow{
+				Seq: 3, At: timestamppb.Now(), Kind: "text", Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+			}),
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(retried.Msg.GetRecords()).To(HaveLen(1), "only the seq the first call never recorded comes back")
+		Expect(retried.Msg.GetRecords()[0].GetSeq()).To(BeEquivalentTo(3))
 	})
 
 	It("PutWorkflow is idempotent by content hash and GetWorkflow returns the version", func(ctx SpecContext) {

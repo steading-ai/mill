@@ -28,11 +28,14 @@ var readOnlyRPCs = map[string]bool{
 // Rerun is the same kind of act on a run no worker holds: the person says
 // the work from a step is to be redone, and the ledger is what says so.
 // RecordReconciliation is about no run at all: it is the record of what a
-// worker found on its host before it claimed anything.
+// worker found on its host before it claimed anything. SealAttempt is about
+// an attempt that has already closed and released its own lease; activity
+// is not one of the tables a lease fences.
 var leaselessRPCs = map[string]bool{
 	"Cancel":               true,
 	"Rerun":                true,
 	"RecordReconciliation": true,
+	"SealAttempt":          true,
 }
 
 // wantedRPCs is exactly the surface docs/ledger.md's resume algorithm calls,
@@ -49,6 +52,7 @@ var wantedRPCs = []string{
 	"RecordUsage", "MarkUsagePosted",
 	"GetWorkflow", "ListWorkflows", "PutWorkflow", "PutSkill", "GetSkill",
 	"Status", "Inspect", "History", "Cost", "Health", "WhoAmI", "Logs",
+	"SealAttempt",
 }
 
 var _ = Describe("store.proto", func() {

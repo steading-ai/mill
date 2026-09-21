@@ -327,6 +327,6 @@ Five nodes, filed in `mill`'s dagger from `patches/mill/activity-*.md` in the st
 
 1. **The record's shape.** `Activity`, the writer with `seq`, `turn` and boundaries, redaction over bodies, the live file replacing the text file, `mill logs` rendering lines from it locally. No RPC yet. The text log is gone at the end of this node and nothing visible changed.
 2. **Logs over the socket.** `mill#7` as re-specified here: the RPC with its cursors and limit, the observer, `serve --log-dir`, the client and the MCP tool on the stream, the pager and the exit table.
-3. **Seal.** Frames, the index, the twin, recovery, `--since`, and `mill logs` with no run.
+3. **Seal.** Frames, the index, the twin, recovery, `--since`, and `mill logs` with no run. Done.
 4. **Full fidelity from the harness and the workspace.** Deltas, thinking, subagent lineage, the sidecar's cap removed, streamed check and verb output, the attempt cap. This is the only node that touches `proto/harness/v1`.
 5. **Retention.** The policy, compaction, and the `mill doctor` line that says what the record on this host holds.

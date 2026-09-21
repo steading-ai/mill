@@ -330,6 +330,85 @@ var _ = Describe("mill logs", Label(testsupport.DBLabel), func() {
 		Expect(got.GetText().GetText()).To(Equal("json line"), "the line round-trips as the record it was")
 	})
 
+	// Acceptance criterion 5, end to end through the real CLI binary path:
+	// `mill logs` with no run merges every run's activity, oldest first,
+	// each line prefixed with the run it belongs to — including a body
+	// record's own content lines, not only its boundary lines.
+	It("prints every run's activity with --since, oldest first, each line prefixed with its run", func() {
+		logDir := GinkgoT().TempDir()
+		m := servingWithLogDir(ctx, logDir)
+		r := openRunOn(ctx, m, "millcli#50", nodeID(50))
+		g := openRunOn(ctx, m, "millcli#51", nodeID(51))
+
+		now := time.Now().UTC()
+		rAt, gAt := timestamppb.New(now), timestamppb.New(now.Add(time.Second))
+
+		implementR := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+		appendActivity(run.ActivityPath(logDir, r.run.GetId(), "implement", implementR.GetAttempt()),
+			&millv1.Activity{At: rAt, Body: &millv1.Activity_AttemptStarted{AttemptStarted: &millv1.AttemptStarted{
+				Step: "implement", Attempt: implementR.GetAttempt(),
+			}}},
+			&millv1.Activity{At: rAt, Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+				Body: &millv1.Activity_Text{Text: &millv1.Text{Text: "r's work", Final: true}}},
+		)
+
+		implementG := g.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+		appendActivity(run.ActivityPath(logDir, g.run.GetId(), "implement", implementG.GetAttempt()),
+			&millv1.Activity{At: gAt, Body: &millv1.Activity_AttemptStarted{AttemptStarted: &millv1.AttemptStarted{
+				Step: "implement", Attempt: implementG.GetAttempt(),
+			}}},
+			&millv1.Activity{At: gAt, Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+				Body: &millv1.Activity_Text{Text: &millv1.Text{Text: "g's work", Final: true}}},
+		)
+
+		out := r.cli(ctx, "logs", "--since", "1h", "--no-pager")
+
+		Expect(out).To(ContainSubstring("millcli#50 -- implement attempt 1 started --\n"))
+		Expect(out).To(ContainSubstring("millcli#51 -- implement attempt 1 started --\n"))
+		Expect(out).To(MatchRegexp(`millcli#50 \S+ text r's work\n`))
+		Expect(out).To(MatchRegexp(`millcli#51 \S+ text g's work\n`))
+
+		rIdx := strings.Index(out, "millcli#50")
+		gIdx := strings.Index(out, "millcli#51")
+		Expect(rIdx).To(BeNumerically(">=", 0))
+		Expect(gIdx).To(BeNumerically(">", rIdx), "r's records were stamped before g's, so they sort first")
+	})
+
+	// The -f side of acceptance criterion 5: with no run, the follow merges
+	// both runs' new records as they land and never ends on its own; the
+	// CLI itself ends it on ctrl-C, which for a spec is the context it
+	// handed ExecuteContext being canceled (internal/cli/logs.go's
+	// signal.NotifyContext wraps exactly that context, so the two are the
+	// same event from the command's point of view).
+	It("follows every run with no run named, printing both as they're written, and exits cleanly on ctrl-C", func() {
+		logDir := GinkgoT().TempDir()
+		m := servingWithLogDir(ctx, logDir)
+		r := openRunOn(ctx, m, "millcli#52", nodeID(52))
+		g := openRunOn(ctx, m, "millcli#53", nodeID(53))
+
+		implementR := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+		implementG := g.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+
+		followCtx, stopFollow := context.WithCancel(ctx)
+		out, stderr, done := runLogsEveryRun(followCtx, m, "--since", "5m")
+
+		appendActivity(run.ActivityPath(logDir, r.run.GetId(), "implement", implementR.GetAttempt()),
+			&millv1.Activity{At: timestamppb.New(time.Now().UTC()), Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+				Body: &millv1.Activity_Text{Text: &millv1.Text{Text: "r live", Final: true}}})
+		appendActivity(run.ActivityPath(logDir, g.run.GetId(), "implement", implementG.GetAttempt()),
+			&millv1.Activity{At: timestamppb.New(time.Now().UTC()), Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+				Body: &millv1.Activity_Text{Text: &millv1.Text{Text: "g live", Final: true}}})
+
+		Eventually(out.String, 10*time.Second, 50*time.Millisecond).Should(ContainSubstring("r live"))
+		Eventually(out.String, 10*time.Second, 50*time.Millisecond).Should(ContainSubstring("g live"))
+		Consistently(done, 500*time.Millisecond).ShouldNot(Receive())
+
+		stopFollow()
+		var followErr error
+		Eventually(done, 10*time.Second).Should(Receive(&followErr), stderr.String())
+		Expect(followErr).NotTo(HaveOccurred())
+	})
+
 	It("says the node has no run rather than printing nothing", func() {
 		r := openRun(ctx, "millcli#25", nodeID(25))
 
@@ -359,6 +438,26 @@ func runLogsFollow(ctx context.Context, m mill, reference string) (*bytes.Buffer
 	var stdout, stderr bytes.Buffer
 	root := cli.NewRootCommand(&stdout, &stderr)
 	root.SetArgs([]string{"logs", reference, "--follow", "--socket", m.socket})
+	done := make(chan error, 1)
+	go func() {
+		defer GinkgoRecover()
+		done <- root.ExecuteContext(ctx)
+	}()
+	return &stdout, &stderr, done
+}
+
+// runLogsEveryRun starts `mill logs -f` with no run named against m in the
+// background — the every-run follow that never ends on its own — and
+// returns its stdout and stderr buffers, live as the command writes to
+// them, and the channel its exit error lands on. Canceling ctx is this
+// helper's ctrl-C: internal/cli/logs.go wraps the very context ExecuteContext
+// is given with signal.NotifyContext, so the two are indistinguishable from
+// the command's side.
+func runLogsEveryRun(ctx context.Context, m mill, extra ...string) (*bytes.Buffer, *bytes.Buffer, chan error) {
+	GinkgoHelper()
+	var stdout, stderr bytes.Buffer
+	root := cli.NewRootCommand(&stdout, &stderr)
+	root.SetArgs(append([]string{"logs", "--follow", "--socket", m.socket}, extra...))
 	done := make(chan error, 1)
 	go func() {
 		defer GinkgoRecover()

@@ -12,6 +12,8 @@
 package local
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -609,6 +611,14 @@ func (w *Workspace) Redact(values ...string) { w.redactor.Add(values...) }
 // SetActivitySink installs sink, or clears it with nil (workspace.ActivitySink).
 func (w *Workspace) SetActivitySink(sink workspace.Sink) { w.verbSink.Set(sink) }
 
+// CaptureTwin implements workspace.TwinSource by delegating to CaptureTwin,
+// the free function, with this workspace's own root and run id — the run
+// id recovery (which has no live workspace) parses back out of the live
+// activity file's path instead.
+func (w *Workspace) CaptureTwin(ctx context.Context, sessionID string) (io.Reader, error) {
+	return CaptureTwin(ctx, w.options.Root, w.snapshot().RunID, sessionID)
+}
+
 // snapshot is the handle, copied, so a caller cannot edit the workspace's own.
 func (w *Workspace) snapshot() *workspace.Handle {
 	w.mu.RLock()
@@ -623,6 +633,64 @@ func (w *Workspace) snapshot() *workspace.Handle {
 
 func (w *Workspace) dirFor(runID string) string {
 	return filepath.Join(w.options.Root, runID)
+}
+
+// CaptureTwin tars every transcript file Claude Code left for root's runID:
+// every `.jsonl` under `$HOME/.claude/projects/<cwd-slug>`, cwd being the
+// run's checkout directory and cwd-slug its encoding
+// (docs/spikes/sdk-sessions.md §Q1) — not only sessionID's own file, since a
+// subagent's session id is not known in advance. sessionID names nothing
+// here; it is part of the signature to match [workspace.TwinSource], which
+// a backend needing it to select files would use.
+//
+// A directory with nothing in it — an encoding drift, or a session that
+// never wrote a transcript — returns an empty tar and no error: a missing
+// twin is the caller's call to make (docs/activity.md), not this
+// function's.
+func CaptureTwin(ctx context.Context, root, runID, sessionID string) (io.Reader, error) {
+	_ = sessionID
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("capture twin: %w", err)
+	}
+	dir := filepath.Join(home, ".claude", "projects", cwdSlug(filepath.Join(root, runID, checkoutDir)))
+	entries, err := os.ReadDir(dir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("capture twin: %w", err)
+	}
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".jsonl" {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			return nil, fmt.Errorf("capture twin: %s: %w", entry.Name(), err)
+		}
+		if err := tw.WriteHeader(&tar.Header{Name: entry.Name(), Size: int64(len(data)), Mode: 0o640}); err != nil {
+			return nil, fmt.Errorf("capture twin: %s: %w", entry.Name(), err)
+		}
+		if _, err := tw.Write(data); err != nil {
+			return nil, fmt.Errorf("capture twin: %s: %w", entry.Name(), err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return nil, fmt.Errorf("capture twin: %w", err)
+	}
+	return &buf, nil
+}
+
+// cwdSlug is Claude Code's own transcript-directory naming rule
+// (docs/spikes/sdk-sessions.md §Q1, observed CLI behavior rather than a
+// documented contract): every '/' and '.' in cwd becomes '-'.
+func cwdSlug(cwd string) string {
+	slug := strings.ReplaceAll(cwd, "/", "-")
+	return strings.ReplaceAll(slug, ".", "-")
 }
 
 // resolve turns a path a session named into an absolute one inside the

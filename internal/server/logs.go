@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"sort"
+	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
@@ -21,18 +22,17 @@ import (
 // stream with truncated set; unfollowed reads get bodies whole."
 const truncatedLimit = 64 * 1024
 
-// everyRunStatus is every status a run can hold, passed to Status in place
-// of no filter: Status treats an empty/nil statuses slice as "the runs that
-// still need attention" (selecting, running, waiting, parked), not "every
-// run" — the every-run Logs path means the latter, so it asks by name.
-var everyRunStatus = []millv1.RunStatus{
+// liveRunStatus is every status a run can hold while one of its step runs
+// may still be running and therefore not yet sealed. A run that has gone
+// done, failed or abandoned has no attempt still writing: whatever it
+// closed either sealed already (and is in the index) or is the same
+// accepted seal-failure gap SealOrphans (internal/run/recover.go) exists to
+// close, not one this read grows a live-file fallback for.
+var liveRunStatus = []millv1.RunStatus{
 	millv1.RunStatus_RUN_STATUS_SELECTING,
 	millv1.RunStatus_RUN_STATUS_RUNNING,
 	millv1.RunStatus_RUN_STATUS_WAITING,
 	millv1.RunStatus_RUN_STATUS_PARKED,
-	millv1.RunStatus_RUN_STATUS_DONE,
-	millv1.RunStatus_RUN_STATUS_FAILED,
-	millv1.RunStatus_RUN_STATUS_ABANDONED,
 }
 
 // Logs streams a run's activity, oldest first. With id or node_ref: every
@@ -99,23 +99,59 @@ func (s *StoreService) Logs(ctx context.Context, req *connect.Request[millv1.Log
 // in the order docs/activity.md's every-run semantics specify: (at,
 // step_run_id, seq). since, when set, drops everything before it; zero
 // means every record on file.
+//
+// Closed attempts never change once sealed, so their records come from the
+// index (readIndexedActivities), bounded by since at the database — not by
+// re-reading every attempt file of every run on every wake. Only runs that
+// may still have a running (unsealed) attempt are walked and read from disk
+// directly.
 func (s *StoreService) readEveryRunActivities(ctx context.Context, since *timestamppb.Timestamp) ([]*millv1.Activity, error) {
-	runs, _, err := s.svc.Status(ctx, everyRunStatus, "")
+	var sinceTime *time.Time
+	if since != nil {
+		t := since.AsTime()
+		sinceTime = &t
+	}
+	indexed, err := s.svc.ActivitySince(ctx, sinceTime)
 	if err != nil {
 		return nil, err
 	}
-	var out []*millv1.Activity
+	out, err := s.readIndexedActivities(ctx, indexed)
+	if err != nil {
+		return nil, err
+	}
+
+	runs, _, err := s.svc.Status(ctx, liveRunStatus, "")
+	if err != nil {
+		return nil, err
+	}
 	for _, summary := range runs {
 		detail, err := s.svc.Inspect(ctx, domain.InspectParams{ID: summary.GetRun().GetId()})
 		if err != nil {
 			return nil, err
 		}
-		activities, err := s.readRunActivities(detail, "", 0)
-		if err != nil {
-			return nil, err
+		runID := detail.Summary.GetRun().GetId()
+		for _, stepRunDetail := range detail.Steps {
+			stepRun := stepRunDetail.GetStepRun()
+			if stepRun.GetStatus() != millv1.StepRunStatus_STEP_RUN_STATUS_RUNNING {
+				// Not running: either already sealed (and read above, from
+				// the index) or the accepted seal-failure gap liveRunStatus's
+				// comment names.
+				continue
+			}
+			activities, err := run.ReadActivities(s.logDir, runID, stepRun.GetStepName(), stepRun.GetAttempt())
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			for _, a := range activities {
+				a.StepRunId = stepRun.GetId()
+			}
+			out = append(out, activities...)
 		}
-		out = append(out, activities...)
 	}
+
 	out = sinceFilter(out, since)
 	sort.Slice(out, func(i, j int) bool {
 		ai, aj := out[i], out[j]
@@ -128,6 +164,36 @@ func (s *StoreService) readEveryRunActivities(ctx context.Context, since *timest
 		}
 		return ai.GetSeq() < aj.GetSeq()
 	})
+	return out, nil
+}
+
+// readIndexedActivities reads the full sealed frame of every attempt named
+// in indexed, once per attempt no matter how many of its rows are in
+// indexed — the index only says an attempt has records since the read's
+// lower bound, not which ones, and sinceFilter (applied by the caller,
+// exactly as it already is for a live read) trims the rest.
+func (s *StoreService) readIndexedActivities(ctx context.Context, indexed []*millv1.ActivityIndexRow) ([]*millv1.Activity, error) {
+	seen := map[string]bool{}
+	var out []*millv1.Activity
+	for _, row := range indexed {
+		stepRunID := row.GetStepRunId()
+		if seen[stepRunID] {
+			continue
+		}
+		seen[stepRunID] = true
+		stepRun, err := s.svc.GetStepRun(ctx, stepRunID)
+		if err != nil {
+			return nil, err
+		}
+		activities, err := run.ReadFrame(run.FramePath(s.logDir, stepRun.GetRunId(), stepRun.GetStepName(), stepRun.GetAttempt()))
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range activities {
+			a.StepRunId = stepRunID
+		}
+		out = append(out, activities...)
+	}
 	return out, nil
 }
 
@@ -154,6 +220,11 @@ func sinceFilter(activities []*millv1.Activity, since *timestamppb.Timestamp) []
 // read: the ledger row and the file are written by different actors and the
 // gap between them is not an error here.
 //
+// Reads through [run.ReadSealedActivities]: a still-running attempt's live
+// file, or a closed one's sealed frame once SealAttempt has replaced it —
+// the two read byte-identical records for the same attempt (docs/
+// activity.md), so a caller narrowed to one run never needs to know which.
+//
 // The writer never stamps step_run_id on a record — a live file is already
 // scoped to one attempt by its path, so it has no need to — but the record's
 // documented primary key (docs/activity.md's index row) is (step_run_id,
@@ -171,7 +242,7 @@ func (s *StoreService) readRunActivities(detail *domain.RunDetail, step string, 
 		if attempt != 0 && stepRun.GetAttempt() != attempt {
 			continue
 		}
-		activities, err := run.ReadActivities(s.logDir, runID, stepRun.GetStepName(), stepRun.GetAttempt())
+		activities, err := run.ReadSealedActivities(s.logDir, runID, stepRun.GetStepName(), stepRun.GetAttempt())
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
@@ -389,7 +460,7 @@ func (s *StoreService) logsFollowEveryRun(ctx context.Context, msg *millv1.LogsR
 			last = &millv1.Cursor{StepRunId: a.GetStepRunId(), Seq: a.GetSeq()}
 		}
 
-		runs, _, err := s.svc.Status(ctx, everyRunStatus, "")
+		runs, _, err := s.svc.Status(ctx, domain.EveryRunStatus, "")
 		if err != nil {
 			return connectError(err)
 		}

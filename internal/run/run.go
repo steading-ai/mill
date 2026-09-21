@@ -235,6 +235,12 @@ type Options struct {
 	// co-located server to notify — `mill work` run standalone — which the
 	// observer's own fallback timer covers instead, only later.
 	OnActivity func(runID string)
+	// Twin builds a workspace.TwinSource for a run id alone, with no live
+	// workspace open — what SealOrphans (recover.go) needs to capture an
+	// orphaned attempt's transcript for a backend that has one. Nil (every
+	// backend without one yet) captures no twin; SealOrphans still seals
+	// the frame and the index.
+	Twin func(runID string) workspace.TwinSource
 }
 
 // Gateway is the run loop's view of the credential gateway

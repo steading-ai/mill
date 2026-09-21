@@ -95,11 +95,11 @@ var _ = Describe("The command tree", Label("unit"), func() {
 		Entry("cost", "cost"),
 	)
 
-	It("logs takes the step to read and whether to follow it", func() {
+	It("logs takes the step to read and whether to follow it, and a run is optional", func() {
 		Expect(run("logs", "--help")).To(BeZero(), stderr.String())
 		Expect(stdout.String()).To(ContainSubstring("--step"))
 		Expect(stdout.String()).To(ContainSubstring("--follow"))
-		Expect(run("logs")).NotTo(BeZero(), "a log is a log of one run")
+		Expect(run("logs", "one", "two")).NotTo(BeZero(), "at most one run may be named")
 	})
 
 	It("explain reaches dagger for the gate a run is blocked on", func() {

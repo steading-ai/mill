@@ -5301,6 +5301,112 @@ func (x *GateRef) GetNodeRef() string {
 	return ""
 }
 
+// SealAttemptRequest carries one attempt's index rows, computed by the
+// worker from the frame it just wrote and verified. It carries no lease:
+// the attempt this seals has already closed and released its own, and
+// activity is not one of the tables a lease fences.
+type SealAttemptRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The attempt these rows index.
+	StepRunId string `protobuf:"bytes,1,opt,name=step_run_id,json=stepRunId,proto3" json:"step_run_id,omitempty"`
+	// One row per record in the sealed frame, in seq order.
+	Records       []*ActivityIndexRow `protobuf:"bytes,2,rep,name=records,proto3" json:"records,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SealAttemptRequest) Reset() {
+	*x = SealAttemptRequest{}
+	mi := &file_mill_v1_store_proto_msgTypes[87]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SealAttemptRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SealAttemptRequest) ProtoMessage() {}
+
+func (x *SealAttemptRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_mill_v1_store_proto_msgTypes[87]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SealAttemptRequest.ProtoReflect.Descriptor instead.
+func (*SealAttemptRequest) Descriptor() ([]byte, []int) {
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{87}
+}
+
+func (x *SealAttemptRequest) GetStepRunId() string {
+	if x != nil {
+		return x.StepRunId
+	}
+	return ""
+}
+
+func (x *SealAttemptRequest) GetRecords() []*ActivityIndexRow {
+	if x != nil {
+		return x.Records
+	}
+	return nil
+}
+
+// SealAttemptResponse carries the rows the call actually inserted. A row
+// whose (step_run_id, seq) was already recorded — a retry after a lost
+// response — is skipped, not returned, so an empty list is a valid answer.
+type SealAttemptResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The rows this call inserted, in the order given.
+	Records       []*ActivityIndexRow `protobuf:"bytes,1,rep,name=records,proto3" json:"records,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SealAttemptResponse) Reset() {
+	*x = SealAttemptResponse{}
+	mi := &file_mill_v1_store_proto_msgTypes[88]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SealAttemptResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SealAttemptResponse) ProtoMessage() {}
+
+func (x *SealAttemptResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_mill_v1_store_proto_msgTypes[88]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SealAttemptResponse.ProtoReflect.Descriptor instead.
+func (*SealAttemptResponse) Descriptor() ([]byte, []int) {
+	return file_mill_v1_store_proto_rawDescGZIP(), []int{88}
+}
+
+func (x *SealAttemptResponse) GetRecords() []*ActivityIndexRow {
+	if x != nil {
+		return x.Records
+	}
+	return nil
+}
+
 var File_mill_v1_store_proto protoreflect.FileDescriptor
 
 const file_mill_v1_store_proto_rawDesc = "" +
@@ -5624,7 +5730,12 @@ const file_mill_v1_store_proto_rawDesc = "" +
 	"\x04gate\x18\x03 \x01(\v2\x10.mill.v1.GateRefR\x04gate\"=\n" +
 	"\aGateRef\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x19\n" +
-	"\bnode_ref\x18\x02 \x01(\tR\anodeRef2\xc0\x17\n" +
+	"\bnode_ref\x18\x02 \x01(\tR\anodeRef\"i\n" +
+	"\x12SealAttemptRequest\x12\x1e\n" +
+	"\vstep_run_id\x18\x01 \x01(\tR\tstepRunId\x123\n" +
+	"\arecords\x18\x02 \x03(\v2\x19.mill.v1.ActivityIndexRowR\arecords\"J\n" +
+	"\x13SealAttemptResponse\x123\n" +
+	"\arecords\x18\x01 \x03(\v2\x19.mill.v1.ActivityIndexRowR\arecords2\x8a\x18\n" +
 	"\fStoreService\x12K\n" +
 	"\fGetRunByNode\x12\x1c.mill.v1.GetRunByNodeRequest\x1a\x1d.mill.v1.GetRunByNodeResponse\x12B\n" +
 	"\tCreateRun\x12\x19.mill.v1.CreateRunRequest\x1a\x1a.mill.v1.CreateRunResponse\x12?\n" +
@@ -5666,7 +5777,8 @@ const file_mill_v1_store_proto_rawDesc = "" +
 	"\x04Cost\x12\x14.mill.v1.CostRequest\x1a\x15.mill.v1.CostResponse\x129\n" +
 	"\x06Health\x12\x16.mill.v1.HealthRequest\x1a\x17.mill.v1.HealthResponse\x129\n" +
 	"\x06WhoAmI\x12\x16.mill.v1.WhoAmIRequest\x1a\x17.mill.v1.WhoAmIResponse\x125\n" +
-	"\x04Logs\x12\x14.mill.v1.LogsRequest\x1a\x15.mill.v1.LogsResponse0\x01B(Z&github.com/ivy/mill/gen/mill/v1;millv1b\x06proto3"
+	"\x04Logs\x12\x14.mill.v1.LogsRequest\x1a\x15.mill.v1.LogsResponse0\x01\x12H\n" +
+	"\vSealAttempt\x12\x1b.mill.v1.SealAttemptRequest\x1a\x1c.mill.v1.SealAttemptResponseB(Z&github.com/ivy/mill/gen/mill/v1;millv1b\x06proto3"
 
 var (
 	file_mill_v1_store_proto_rawDescOnce sync.Once
@@ -5680,7 +5792,7 @@ func file_mill_v1_store_proto_rawDescGZIP() []byte {
 	return file_mill_v1_store_proto_rawDescData
 }
 
-var file_mill_v1_store_proto_msgTypes = make([]protoimpl.MessageInfo, 87)
+var file_mill_v1_store_proto_msgTypes = make([]protoimpl.MessageInfo, 89)
 var file_mill_v1_store_proto_goTypes = []any{
 	(*GetRunByNodeRequest)(nil),           // 0: mill.v1.GetRunByNodeRequest
 	(*GetRunByNodeResponse)(nil),          // 1: mill.v1.GetRunByNodeResponse
@@ -5769,186 +5881,193 @@ var file_mill_v1_store_proto_goTypes = []any{
 	(*LogsResponse)(nil),                  // 84: mill.v1.LogsResponse
 	(*RunEnd)(nil),                        // 85: mill.v1.RunEnd
 	(*GateRef)(nil),                       // 86: mill.v1.GateRef
-	(*Run)(nil),                           // 87: mill.v1.Run
-	(StepKind)(0),                         // 88: mill.v1.StepKind
-	(*StepRun)(nil),                       // 89: mill.v1.StepRun
-	(*Evidence)(nil),                      // 90: mill.v1.Evidence
-	(Tier)(0),                             // 91: mill.v1.Tier
-	(*v1.ProcessExit)(nil),                // 92: harness.v1.ProcessExit
-	(ParkedReason)(0),                     // 93: mill.v1.ParkedReason
-	(*timestamppb.Timestamp)(nil),         // 94: google.protobuf.Timestamp
-	(WorkspaceKind)(0),                    // 95: mill.v1.WorkspaceKind
-	(*Sandbox)(nil),                       // 96: mill.v1.Sandbox
-	(*Workspace)(nil),                     // 97: mill.v1.Workspace
-	(*SandboxLineage)(nil),                // 98: mill.v1.SandboxLineage
-	(Capability)(0),                       // 99: mill.v1.Capability
-	(*StepToken)(nil),                     // 100: mill.v1.StepToken
-	(*Usage)(nil),                         // 101: mill.v1.Usage
-	(Scope)(0),                            // 102: mill.v1.Scope
-	(*Workflow)(nil),                      // 103: mill.v1.Workflow
-	(*Skill)(nil),                         // 104: mill.v1.Skill
-	(RunStatus)(0),                        // 105: mill.v1.RunStatus
-	(*RunSummary)(nil),                    // 106: mill.v1.RunSummary
-	(*StepRunDetail)(nil),                 // 107: mill.v1.StepRunDetail
-	(*Event)(nil),                         // 108: mill.v1.Event
-	(*CostBucket)(nil),                    // 109: mill.v1.CostBucket
-	(*Activity)(nil),                      // 110: mill.v1.Activity
+	(*SealAttemptRequest)(nil),            // 87: mill.v1.SealAttemptRequest
+	(*SealAttemptResponse)(nil),           // 88: mill.v1.SealAttemptResponse
+	(*Run)(nil),                           // 89: mill.v1.Run
+	(StepKind)(0),                         // 90: mill.v1.StepKind
+	(*StepRun)(nil),                       // 91: mill.v1.StepRun
+	(*Evidence)(nil),                      // 92: mill.v1.Evidence
+	(Tier)(0),                             // 93: mill.v1.Tier
+	(*v1.ProcessExit)(nil),                // 94: harness.v1.ProcessExit
+	(ParkedReason)(0),                     // 95: mill.v1.ParkedReason
+	(*timestamppb.Timestamp)(nil),         // 96: google.protobuf.Timestamp
+	(WorkspaceKind)(0),                    // 97: mill.v1.WorkspaceKind
+	(*Sandbox)(nil),                       // 98: mill.v1.Sandbox
+	(*Workspace)(nil),                     // 99: mill.v1.Workspace
+	(*SandboxLineage)(nil),                // 100: mill.v1.SandboxLineage
+	(Capability)(0),                       // 101: mill.v1.Capability
+	(*StepToken)(nil),                     // 102: mill.v1.StepToken
+	(*Usage)(nil),                         // 103: mill.v1.Usage
+	(Scope)(0),                            // 104: mill.v1.Scope
+	(*Workflow)(nil),                      // 105: mill.v1.Workflow
+	(*Skill)(nil),                         // 106: mill.v1.Skill
+	(RunStatus)(0),                        // 107: mill.v1.RunStatus
+	(*RunSummary)(nil),                    // 108: mill.v1.RunSummary
+	(*StepRunDetail)(nil),                 // 109: mill.v1.StepRunDetail
+	(*Event)(nil),                         // 110: mill.v1.Event
+	(*CostBucket)(nil),                    // 111: mill.v1.CostBucket
+	(*Activity)(nil),                      // 112: mill.v1.Activity
+	(*ActivityIndexRow)(nil),              // 113: mill.v1.ActivityIndexRow
 }
 var file_mill_v1_store_proto_depIdxs = []int32{
-	87,  // 0: mill.v1.GetRunByNodeResponse.run:type_name -> mill.v1.Run
-	87,  // 1: mill.v1.CreateRunResponse.run:type_name -> mill.v1.Run
-	87,  // 2: mill.v1.SetLeaseResponse.run:type_name -> mill.v1.Run
-	88,  // 3: mill.v1.StartStepRunRequest.kind:type_name -> mill.v1.StepKind
-	89,  // 4: mill.v1.StartStepRunResponse.step_run:type_name -> mill.v1.StepRun
-	89,  // 5: mill.v1.RecordStepEnvironmentResponse.step_run:type_name -> mill.v1.StepRun
-	89,  // 6: mill.v1.MarkSessionStartedResponse.step_run:type_name -> mill.v1.StepRun
-	90,  // 7: mill.v1.CloseStepRunRequest.evidence:type_name -> mill.v1.Evidence
-	91,  // 8: mill.v1.CloseStepRunRequest.tier:type_name -> mill.v1.Tier
-	89,  // 9: mill.v1.CloseStepRunResponse.step_run:type_name -> mill.v1.StepRun
-	90,  // 10: mill.v1.CloseStepRunResponse.evidence:type_name -> mill.v1.Evidence
-	92,  // 11: mill.v1.FailStepRunRequest.exit:type_name -> harness.v1.ProcessExit
-	89,  // 12: mill.v1.FailStepRunResponse.step_run:type_name -> mill.v1.StepRun
-	89,  // 13: mill.v1.AbortOpenStepRunsResponse.step_runs:type_name -> mill.v1.StepRun
-	89,  // 14: mill.v1.SupersedeStepsResponse.step_runs:type_name -> mill.v1.StepRun
-	87,  // 15: mill.v1.MarkWaitingResponse.run:type_name -> mill.v1.Run
-	93,  // 16: mill.v1.ParkRequest.reason:type_name -> mill.v1.ParkedReason
-	87,  // 17: mill.v1.ParkResponse.run:type_name -> mill.v1.Run
-	94,  // 18: mill.v1.RecordReconciliationRequest.started_at:type_name -> google.protobuf.Timestamp
+	89,  // 0: mill.v1.GetRunByNodeResponse.run:type_name -> mill.v1.Run
+	89,  // 1: mill.v1.CreateRunResponse.run:type_name -> mill.v1.Run
+	89,  // 2: mill.v1.SetLeaseResponse.run:type_name -> mill.v1.Run
+	90,  // 3: mill.v1.StartStepRunRequest.kind:type_name -> mill.v1.StepKind
+	91,  // 4: mill.v1.StartStepRunResponse.step_run:type_name -> mill.v1.StepRun
+	91,  // 5: mill.v1.RecordStepEnvironmentResponse.step_run:type_name -> mill.v1.StepRun
+	91,  // 6: mill.v1.MarkSessionStartedResponse.step_run:type_name -> mill.v1.StepRun
+	92,  // 7: mill.v1.CloseStepRunRequest.evidence:type_name -> mill.v1.Evidence
+	93,  // 8: mill.v1.CloseStepRunRequest.tier:type_name -> mill.v1.Tier
+	91,  // 9: mill.v1.CloseStepRunResponse.step_run:type_name -> mill.v1.StepRun
+	92,  // 10: mill.v1.CloseStepRunResponse.evidence:type_name -> mill.v1.Evidence
+	94,  // 11: mill.v1.FailStepRunRequest.exit:type_name -> harness.v1.ProcessExit
+	91,  // 12: mill.v1.FailStepRunResponse.step_run:type_name -> mill.v1.StepRun
+	91,  // 13: mill.v1.AbortOpenStepRunsResponse.step_runs:type_name -> mill.v1.StepRun
+	91,  // 14: mill.v1.SupersedeStepsResponse.step_runs:type_name -> mill.v1.StepRun
+	89,  // 15: mill.v1.MarkWaitingResponse.run:type_name -> mill.v1.Run
+	95,  // 16: mill.v1.ParkRequest.reason:type_name -> mill.v1.ParkedReason
+	89,  // 17: mill.v1.ParkResponse.run:type_name -> mill.v1.Run
+	96,  // 18: mill.v1.RecordReconciliationRequest.started_at:type_name -> google.protobuf.Timestamp
 	31,  // 19: mill.v1.RecordReconciliationRequest.findings:type_name -> mill.v1.ReconciliationFinding
-	95,  // 20: mill.v1.RecordWorkspaceRequest.kind:type_name -> mill.v1.WorkspaceKind
-	96,  // 21: mill.v1.RecordWorkspaceRequest.sandbox:type_name -> mill.v1.Sandbox
-	97,  // 22: mill.v1.RecordWorkspaceResponse.workspace:type_name -> mill.v1.Workspace
-	98,  // 23: mill.v1.FinishWorkspaceRequest.promoted:type_name -> mill.v1.SandboxLineage
-	97,  // 24: mill.v1.FinishWorkspaceResponse.workspace:type_name -> mill.v1.Workspace
-	87,  // 25: mill.v1.SetCompleteRequestIdResponse.run:type_name -> mill.v1.Run
-	87,  // 26: mill.v1.DoneResponse.run:type_name -> mill.v1.Run
-	87,  // 27: mill.v1.FailResponse.run:type_name -> mill.v1.Run
-	87,  // 28: mill.v1.ResumeResponse.run:type_name -> mill.v1.Run
-	87,  // 29: mill.v1.AbandonResponse.run:type_name -> mill.v1.Run
-	87,  // 30: mill.v1.RerunResponse.run:type_name -> mill.v1.Run
-	89,  // 31: mill.v1.RerunResponse.step_runs:type_name -> mill.v1.StepRun
-	87,  // 32: mill.v1.CancelResponse.run:type_name -> mill.v1.Run
-	99,  // 33: mill.v1.IssueStepTokenRequest.capabilities:type_name -> mill.v1.Capability
-	100, // 34: mill.v1.IssueStepTokenResponse.step_token:type_name -> mill.v1.StepToken
-	100, // 35: mill.v1.RevokeStepTokenResponse.step_token:type_name -> mill.v1.StepToken
-	101, // 36: mill.v1.RecordUsageRequest.usage:type_name -> mill.v1.Usage
-	101, // 37: mill.v1.RecordUsageResponse.usage:type_name -> mill.v1.Usage
-	102, // 38: mill.v1.GetWorkflowRequest.scope:type_name -> mill.v1.Scope
-	103, // 39: mill.v1.GetWorkflowResponse.workflow:type_name -> mill.v1.Workflow
-	102, // 40: mill.v1.ListWorkflowsRequest.scope:type_name -> mill.v1.Scope
-	103, // 41: mill.v1.ListWorkflowsResponse.workflows:type_name -> mill.v1.Workflow
+	97,  // 20: mill.v1.RecordWorkspaceRequest.kind:type_name -> mill.v1.WorkspaceKind
+	98,  // 21: mill.v1.RecordWorkspaceRequest.sandbox:type_name -> mill.v1.Sandbox
+	99,  // 22: mill.v1.RecordWorkspaceResponse.workspace:type_name -> mill.v1.Workspace
+	100, // 23: mill.v1.FinishWorkspaceRequest.promoted:type_name -> mill.v1.SandboxLineage
+	99,  // 24: mill.v1.FinishWorkspaceResponse.workspace:type_name -> mill.v1.Workspace
+	89,  // 25: mill.v1.SetCompleteRequestIdResponse.run:type_name -> mill.v1.Run
+	89,  // 26: mill.v1.DoneResponse.run:type_name -> mill.v1.Run
+	89,  // 27: mill.v1.FailResponse.run:type_name -> mill.v1.Run
+	89,  // 28: mill.v1.ResumeResponse.run:type_name -> mill.v1.Run
+	89,  // 29: mill.v1.AbandonResponse.run:type_name -> mill.v1.Run
+	89,  // 30: mill.v1.RerunResponse.run:type_name -> mill.v1.Run
+	91,  // 31: mill.v1.RerunResponse.step_runs:type_name -> mill.v1.StepRun
+	89,  // 32: mill.v1.CancelResponse.run:type_name -> mill.v1.Run
+	101, // 33: mill.v1.IssueStepTokenRequest.capabilities:type_name -> mill.v1.Capability
+	102, // 34: mill.v1.IssueStepTokenResponse.step_token:type_name -> mill.v1.StepToken
+	102, // 35: mill.v1.RevokeStepTokenResponse.step_token:type_name -> mill.v1.StepToken
+	103, // 36: mill.v1.RecordUsageRequest.usage:type_name -> mill.v1.Usage
+	103, // 37: mill.v1.RecordUsageResponse.usage:type_name -> mill.v1.Usage
+	104, // 38: mill.v1.GetWorkflowRequest.scope:type_name -> mill.v1.Scope
+	105, // 39: mill.v1.GetWorkflowResponse.workflow:type_name -> mill.v1.Workflow
+	104, // 40: mill.v1.ListWorkflowsRequest.scope:type_name -> mill.v1.Scope
+	105, // 41: mill.v1.ListWorkflowsResponse.workflows:type_name -> mill.v1.Workflow
 	63,  // 42: mill.v1.ListWorkflowsResponse.findings:type_name -> mill.v1.UndecodableWorkflow
-	103, // 43: mill.v1.PutWorkflowRequest.workflow:type_name -> mill.v1.Workflow
-	103, // 44: mill.v1.PutWorkflowResponse.workflow:type_name -> mill.v1.Workflow
-	104, // 45: mill.v1.PutSkillRequest.skill:type_name -> mill.v1.Skill
-	104, // 46: mill.v1.PutSkillResponse.skill:type_name -> mill.v1.Skill
-	104, // 47: mill.v1.GetSkillResponse.skill:type_name -> mill.v1.Skill
-	105, // 48: mill.v1.StatusRequest.statuses:type_name -> mill.v1.RunStatus
-	106, // 49: mill.v1.StatusResponse.runs:type_name -> mill.v1.RunSummary
+	105, // 43: mill.v1.PutWorkflowRequest.workflow:type_name -> mill.v1.Workflow
+	105, // 44: mill.v1.PutWorkflowResponse.workflow:type_name -> mill.v1.Workflow
+	106, // 45: mill.v1.PutSkillRequest.skill:type_name -> mill.v1.Skill
+	106, // 46: mill.v1.PutSkillResponse.skill:type_name -> mill.v1.Skill
+	106, // 47: mill.v1.GetSkillResponse.skill:type_name -> mill.v1.Skill
+	107, // 48: mill.v1.StatusRequest.statuses:type_name -> mill.v1.RunStatus
+	108, // 49: mill.v1.StatusResponse.runs:type_name -> mill.v1.RunSummary
 	63,  // 50: mill.v1.StatusResponse.findings:type_name -> mill.v1.UndecodableWorkflow
-	106, // 51: mill.v1.InspectResponse.summary:type_name -> mill.v1.RunSummary
-	103, // 52: mill.v1.InspectResponse.workflow:type_name -> mill.v1.Workflow
-	107, // 53: mill.v1.InspectResponse.steps:type_name -> mill.v1.StepRunDetail
-	108, // 54: mill.v1.HistoryResponse.events:type_name -> mill.v1.Event
-	94,  // 55: mill.v1.CostRequest.since:type_name -> google.protobuf.Timestamp
-	109, // 56: mill.v1.CostResponse.by_run:type_name -> mill.v1.CostBucket
-	109, // 57: mill.v1.CostResponse.by_workflow:type_name -> mill.v1.CostBucket
-	109, // 58: mill.v1.CostResponse.by_step:type_name -> mill.v1.CostBucket
-	109, // 59: mill.v1.CostResponse.by_model:type_name -> mill.v1.CostBucket
+	108, // 51: mill.v1.InspectResponse.summary:type_name -> mill.v1.RunSummary
+	105, // 52: mill.v1.InspectResponse.workflow:type_name -> mill.v1.Workflow
+	109, // 53: mill.v1.InspectResponse.steps:type_name -> mill.v1.StepRunDetail
+	110, // 54: mill.v1.HistoryResponse.events:type_name -> mill.v1.Event
+	96,  // 55: mill.v1.CostRequest.since:type_name -> google.protobuf.Timestamp
+	111, // 56: mill.v1.CostResponse.by_run:type_name -> mill.v1.CostBucket
+	111, // 57: mill.v1.CostResponse.by_workflow:type_name -> mill.v1.CostBucket
+	111, // 58: mill.v1.CostResponse.by_step:type_name -> mill.v1.CostBucket
+	111, // 59: mill.v1.CostResponse.by_model:type_name -> mill.v1.CostBucket
 	83,  // 60: mill.v1.LogsRequest.after:type_name -> mill.v1.Cursor
 	83,  // 61: mill.v1.LogsRequest.before:type_name -> mill.v1.Cursor
-	94,  // 62: mill.v1.LogsRequest.since:type_name -> google.protobuf.Timestamp
-	110, // 63: mill.v1.LogsResponse.activity:type_name -> mill.v1.Activity
+	96,  // 62: mill.v1.LogsRequest.since:type_name -> google.protobuf.Timestamp
+	112, // 63: mill.v1.LogsResponse.activity:type_name -> mill.v1.Activity
 	85,  // 64: mill.v1.LogsResponse.run:type_name -> mill.v1.RunEnd
-	105, // 65: mill.v1.RunEnd.status:type_name -> mill.v1.RunStatus
+	107, // 65: mill.v1.RunEnd.status:type_name -> mill.v1.RunStatus
 	86,  // 66: mill.v1.RunEnd.gate:type_name -> mill.v1.GateRef
-	0,   // 67: mill.v1.StoreService.GetRunByNode:input_type -> mill.v1.GetRunByNodeRequest
-	2,   // 68: mill.v1.StoreService.CreateRun:input_type -> mill.v1.CreateRunRequest
-	4,   // 69: mill.v1.StoreService.SetLease:input_type -> mill.v1.SetLeaseRequest
-	6,   // 70: mill.v1.StoreService.StartStepRun:input_type -> mill.v1.StartStepRunRequest
-	8,   // 71: mill.v1.StoreService.RecordStepEnvironment:input_type -> mill.v1.RecordStepEnvironmentRequest
-	10,  // 72: mill.v1.StoreService.MarkSessionStarted:input_type -> mill.v1.MarkSessionStartedRequest
-	12,  // 73: mill.v1.StoreService.CloseStepRun:input_type -> mill.v1.CloseStepRunRequest
-	14,  // 74: mill.v1.StoreService.FailStepRun:input_type -> mill.v1.FailStepRunRequest
-	16,  // 75: mill.v1.StoreService.AbortOpenStepRuns:input_type -> mill.v1.AbortOpenStepRunsRequest
-	18,  // 76: mill.v1.StoreService.SupersedeSteps:input_type -> mill.v1.SupersedeStepsRequest
-	20,  // 77: mill.v1.StoreService.MarkWaiting:input_type -> mill.v1.MarkWaitingRequest
-	22,  // 78: mill.v1.StoreService.Park:input_type -> mill.v1.ParkRequest
-	24,  // 79: mill.v1.StoreService.RecordNotice:input_type -> mill.v1.RecordNoticeRequest
-	26,  // 80: mill.v1.StoreService.RecordHeartbeat:input_type -> mill.v1.RecordHeartbeatRequest
-	28,  // 81: mill.v1.StoreService.RecordInstall:input_type -> mill.v1.RecordInstallRequest
-	30,  // 82: mill.v1.StoreService.RecordReconciliation:input_type -> mill.v1.RecordReconciliationRequest
-	33,  // 83: mill.v1.StoreService.RecordWorkspace:input_type -> mill.v1.RecordWorkspaceRequest
-	35,  // 84: mill.v1.StoreService.FinishWorkspace:input_type -> mill.v1.FinishWorkspaceRequest
-	37,  // 85: mill.v1.StoreService.SetCompleteRequestId:input_type -> mill.v1.SetCompleteRequestIdRequest
-	39,  // 86: mill.v1.StoreService.Done:input_type -> mill.v1.DoneRequest
-	41,  // 87: mill.v1.StoreService.Fail:input_type -> mill.v1.FailRequest
-	43,  // 88: mill.v1.StoreService.Resume:input_type -> mill.v1.ResumeRequest
-	45,  // 89: mill.v1.StoreService.Abandon:input_type -> mill.v1.AbandonRequest
-	47,  // 90: mill.v1.StoreService.Cancel:input_type -> mill.v1.CancelRequest
-	48,  // 91: mill.v1.StoreService.Rerun:input_type -> mill.v1.RerunRequest
-	51,  // 92: mill.v1.StoreService.IssueStepToken:input_type -> mill.v1.IssueStepTokenRequest
-	53,  // 93: mill.v1.StoreService.RevokeStepToken:input_type -> mill.v1.RevokeStepTokenRequest
-	55,  // 94: mill.v1.StoreService.RecordUsage:input_type -> mill.v1.RecordUsageRequest
-	57,  // 95: mill.v1.StoreService.MarkUsagePosted:input_type -> mill.v1.MarkUsagePostedRequest
-	59,  // 96: mill.v1.StoreService.GetWorkflow:input_type -> mill.v1.GetWorkflowRequest
-	61,  // 97: mill.v1.StoreService.ListWorkflows:input_type -> mill.v1.ListWorkflowsRequest
-	64,  // 98: mill.v1.StoreService.PutWorkflow:input_type -> mill.v1.PutWorkflowRequest
-	66,  // 99: mill.v1.StoreService.PutSkill:input_type -> mill.v1.PutSkillRequest
-	68,  // 100: mill.v1.StoreService.GetSkill:input_type -> mill.v1.GetSkillRequest
-	70,  // 101: mill.v1.StoreService.Status:input_type -> mill.v1.StatusRequest
-	72,  // 102: mill.v1.StoreService.Inspect:input_type -> mill.v1.InspectRequest
-	74,  // 103: mill.v1.StoreService.History:input_type -> mill.v1.HistoryRequest
-	76,  // 104: mill.v1.StoreService.Cost:input_type -> mill.v1.CostRequest
-	78,  // 105: mill.v1.StoreService.Health:input_type -> mill.v1.HealthRequest
-	80,  // 106: mill.v1.StoreService.WhoAmI:input_type -> mill.v1.WhoAmIRequest
-	82,  // 107: mill.v1.StoreService.Logs:input_type -> mill.v1.LogsRequest
-	1,   // 108: mill.v1.StoreService.GetRunByNode:output_type -> mill.v1.GetRunByNodeResponse
-	3,   // 109: mill.v1.StoreService.CreateRun:output_type -> mill.v1.CreateRunResponse
-	5,   // 110: mill.v1.StoreService.SetLease:output_type -> mill.v1.SetLeaseResponse
-	7,   // 111: mill.v1.StoreService.StartStepRun:output_type -> mill.v1.StartStepRunResponse
-	9,   // 112: mill.v1.StoreService.RecordStepEnvironment:output_type -> mill.v1.RecordStepEnvironmentResponse
-	11,  // 113: mill.v1.StoreService.MarkSessionStarted:output_type -> mill.v1.MarkSessionStartedResponse
-	13,  // 114: mill.v1.StoreService.CloseStepRun:output_type -> mill.v1.CloseStepRunResponse
-	15,  // 115: mill.v1.StoreService.FailStepRun:output_type -> mill.v1.FailStepRunResponse
-	17,  // 116: mill.v1.StoreService.AbortOpenStepRuns:output_type -> mill.v1.AbortOpenStepRunsResponse
-	19,  // 117: mill.v1.StoreService.SupersedeSteps:output_type -> mill.v1.SupersedeStepsResponse
-	21,  // 118: mill.v1.StoreService.MarkWaiting:output_type -> mill.v1.MarkWaitingResponse
-	23,  // 119: mill.v1.StoreService.Park:output_type -> mill.v1.ParkResponse
-	25,  // 120: mill.v1.StoreService.RecordNotice:output_type -> mill.v1.RecordNoticeResponse
-	27,  // 121: mill.v1.StoreService.RecordHeartbeat:output_type -> mill.v1.RecordHeartbeatResponse
-	29,  // 122: mill.v1.StoreService.RecordInstall:output_type -> mill.v1.RecordInstallResponse
-	32,  // 123: mill.v1.StoreService.RecordReconciliation:output_type -> mill.v1.RecordReconciliationResponse
-	34,  // 124: mill.v1.StoreService.RecordWorkspace:output_type -> mill.v1.RecordWorkspaceResponse
-	36,  // 125: mill.v1.StoreService.FinishWorkspace:output_type -> mill.v1.FinishWorkspaceResponse
-	38,  // 126: mill.v1.StoreService.SetCompleteRequestId:output_type -> mill.v1.SetCompleteRequestIdResponse
-	40,  // 127: mill.v1.StoreService.Done:output_type -> mill.v1.DoneResponse
-	42,  // 128: mill.v1.StoreService.Fail:output_type -> mill.v1.FailResponse
-	44,  // 129: mill.v1.StoreService.Resume:output_type -> mill.v1.ResumeResponse
-	46,  // 130: mill.v1.StoreService.Abandon:output_type -> mill.v1.AbandonResponse
-	50,  // 131: mill.v1.StoreService.Cancel:output_type -> mill.v1.CancelResponse
-	49,  // 132: mill.v1.StoreService.Rerun:output_type -> mill.v1.RerunResponse
-	52,  // 133: mill.v1.StoreService.IssueStepToken:output_type -> mill.v1.IssueStepTokenResponse
-	54,  // 134: mill.v1.StoreService.RevokeStepToken:output_type -> mill.v1.RevokeStepTokenResponse
-	56,  // 135: mill.v1.StoreService.RecordUsage:output_type -> mill.v1.RecordUsageResponse
-	58,  // 136: mill.v1.StoreService.MarkUsagePosted:output_type -> mill.v1.MarkUsagePostedResponse
-	60,  // 137: mill.v1.StoreService.GetWorkflow:output_type -> mill.v1.GetWorkflowResponse
-	62,  // 138: mill.v1.StoreService.ListWorkflows:output_type -> mill.v1.ListWorkflowsResponse
-	65,  // 139: mill.v1.StoreService.PutWorkflow:output_type -> mill.v1.PutWorkflowResponse
-	67,  // 140: mill.v1.StoreService.PutSkill:output_type -> mill.v1.PutSkillResponse
-	69,  // 141: mill.v1.StoreService.GetSkill:output_type -> mill.v1.GetSkillResponse
-	71,  // 142: mill.v1.StoreService.Status:output_type -> mill.v1.StatusResponse
-	73,  // 143: mill.v1.StoreService.Inspect:output_type -> mill.v1.InspectResponse
-	75,  // 144: mill.v1.StoreService.History:output_type -> mill.v1.HistoryResponse
-	77,  // 145: mill.v1.StoreService.Cost:output_type -> mill.v1.CostResponse
-	79,  // 146: mill.v1.StoreService.Health:output_type -> mill.v1.HealthResponse
-	81,  // 147: mill.v1.StoreService.WhoAmI:output_type -> mill.v1.WhoAmIResponse
-	84,  // 148: mill.v1.StoreService.Logs:output_type -> mill.v1.LogsResponse
-	108, // [108:149] is the sub-list for method output_type
-	67,  // [67:108] is the sub-list for method input_type
-	67,  // [67:67] is the sub-list for extension type_name
-	67,  // [67:67] is the sub-list for extension extendee
-	0,   // [0:67] is the sub-list for field type_name
+	113, // 67: mill.v1.SealAttemptRequest.records:type_name -> mill.v1.ActivityIndexRow
+	113, // 68: mill.v1.SealAttemptResponse.records:type_name -> mill.v1.ActivityIndexRow
+	0,   // 69: mill.v1.StoreService.GetRunByNode:input_type -> mill.v1.GetRunByNodeRequest
+	2,   // 70: mill.v1.StoreService.CreateRun:input_type -> mill.v1.CreateRunRequest
+	4,   // 71: mill.v1.StoreService.SetLease:input_type -> mill.v1.SetLeaseRequest
+	6,   // 72: mill.v1.StoreService.StartStepRun:input_type -> mill.v1.StartStepRunRequest
+	8,   // 73: mill.v1.StoreService.RecordStepEnvironment:input_type -> mill.v1.RecordStepEnvironmentRequest
+	10,  // 74: mill.v1.StoreService.MarkSessionStarted:input_type -> mill.v1.MarkSessionStartedRequest
+	12,  // 75: mill.v1.StoreService.CloseStepRun:input_type -> mill.v1.CloseStepRunRequest
+	14,  // 76: mill.v1.StoreService.FailStepRun:input_type -> mill.v1.FailStepRunRequest
+	16,  // 77: mill.v1.StoreService.AbortOpenStepRuns:input_type -> mill.v1.AbortOpenStepRunsRequest
+	18,  // 78: mill.v1.StoreService.SupersedeSteps:input_type -> mill.v1.SupersedeStepsRequest
+	20,  // 79: mill.v1.StoreService.MarkWaiting:input_type -> mill.v1.MarkWaitingRequest
+	22,  // 80: mill.v1.StoreService.Park:input_type -> mill.v1.ParkRequest
+	24,  // 81: mill.v1.StoreService.RecordNotice:input_type -> mill.v1.RecordNoticeRequest
+	26,  // 82: mill.v1.StoreService.RecordHeartbeat:input_type -> mill.v1.RecordHeartbeatRequest
+	28,  // 83: mill.v1.StoreService.RecordInstall:input_type -> mill.v1.RecordInstallRequest
+	30,  // 84: mill.v1.StoreService.RecordReconciliation:input_type -> mill.v1.RecordReconciliationRequest
+	33,  // 85: mill.v1.StoreService.RecordWorkspace:input_type -> mill.v1.RecordWorkspaceRequest
+	35,  // 86: mill.v1.StoreService.FinishWorkspace:input_type -> mill.v1.FinishWorkspaceRequest
+	37,  // 87: mill.v1.StoreService.SetCompleteRequestId:input_type -> mill.v1.SetCompleteRequestIdRequest
+	39,  // 88: mill.v1.StoreService.Done:input_type -> mill.v1.DoneRequest
+	41,  // 89: mill.v1.StoreService.Fail:input_type -> mill.v1.FailRequest
+	43,  // 90: mill.v1.StoreService.Resume:input_type -> mill.v1.ResumeRequest
+	45,  // 91: mill.v1.StoreService.Abandon:input_type -> mill.v1.AbandonRequest
+	47,  // 92: mill.v1.StoreService.Cancel:input_type -> mill.v1.CancelRequest
+	48,  // 93: mill.v1.StoreService.Rerun:input_type -> mill.v1.RerunRequest
+	51,  // 94: mill.v1.StoreService.IssueStepToken:input_type -> mill.v1.IssueStepTokenRequest
+	53,  // 95: mill.v1.StoreService.RevokeStepToken:input_type -> mill.v1.RevokeStepTokenRequest
+	55,  // 96: mill.v1.StoreService.RecordUsage:input_type -> mill.v1.RecordUsageRequest
+	57,  // 97: mill.v1.StoreService.MarkUsagePosted:input_type -> mill.v1.MarkUsagePostedRequest
+	59,  // 98: mill.v1.StoreService.GetWorkflow:input_type -> mill.v1.GetWorkflowRequest
+	61,  // 99: mill.v1.StoreService.ListWorkflows:input_type -> mill.v1.ListWorkflowsRequest
+	64,  // 100: mill.v1.StoreService.PutWorkflow:input_type -> mill.v1.PutWorkflowRequest
+	66,  // 101: mill.v1.StoreService.PutSkill:input_type -> mill.v1.PutSkillRequest
+	68,  // 102: mill.v1.StoreService.GetSkill:input_type -> mill.v1.GetSkillRequest
+	70,  // 103: mill.v1.StoreService.Status:input_type -> mill.v1.StatusRequest
+	72,  // 104: mill.v1.StoreService.Inspect:input_type -> mill.v1.InspectRequest
+	74,  // 105: mill.v1.StoreService.History:input_type -> mill.v1.HistoryRequest
+	76,  // 106: mill.v1.StoreService.Cost:input_type -> mill.v1.CostRequest
+	78,  // 107: mill.v1.StoreService.Health:input_type -> mill.v1.HealthRequest
+	80,  // 108: mill.v1.StoreService.WhoAmI:input_type -> mill.v1.WhoAmIRequest
+	82,  // 109: mill.v1.StoreService.Logs:input_type -> mill.v1.LogsRequest
+	87,  // 110: mill.v1.StoreService.SealAttempt:input_type -> mill.v1.SealAttemptRequest
+	1,   // 111: mill.v1.StoreService.GetRunByNode:output_type -> mill.v1.GetRunByNodeResponse
+	3,   // 112: mill.v1.StoreService.CreateRun:output_type -> mill.v1.CreateRunResponse
+	5,   // 113: mill.v1.StoreService.SetLease:output_type -> mill.v1.SetLeaseResponse
+	7,   // 114: mill.v1.StoreService.StartStepRun:output_type -> mill.v1.StartStepRunResponse
+	9,   // 115: mill.v1.StoreService.RecordStepEnvironment:output_type -> mill.v1.RecordStepEnvironmentResponse
+	11,  // 116: mill.v1.StoreService.MarkSessionStarted:output_type -> mill.v1.MarkSessionStartedResponse
+	13,  // 117: mill.v1.StoreService.CloseStepRun:output_type -> mill.v1.CloseStepRunResponse
+	15,  // 118: mill.v1.StoreService.FailStepRun:output_type -> mill.v1.FailStepRunResponse
+	17,  // 119: mill.v1.StoreService.AbortOpenStepRuns:output_type -> mill.v1.AbortOpenStepRunsResponse
+	19,  // 120: mill.v1.StoreService.SupersedeSteps:output_type -> mill.v1.SupersedeStepsResponse
+	21,  // 121: mill.v1.StoreService.MarkWaiting:output_type -> mill.v1.MarkWaitingResponse
+	23,  // 122: mill.v1.StoreService.Park:output_type -> mill.v1.ParkResponse
+	25,  // 123: mill.v1.StoreService.RecordNotice:output_type -> mill.v1.RecordNoticeResponse
+	27,  // 124: mill.v1.StoreService.RecordHeartbeat:output_type -> mill.v1.RecordHeartbeatResponse
+	29,  // 125: mill.v1.StoreService.RecordInstall:output_type -> mill.v1.RecordInstallResponse
+	32,  // 126: mill.v1.StoreService.RecordReconciliation:output_type -> mill.v1.RecordReconciliationResponse
+	34,  // 127: mill.v1.StoreService.RecordWorkspace:output_type -> mill.v1.RecordWorkspaceResponse
+	36,  // 128: mill.v1.StoreService.FinishWorkspace:output_type -> mill.v1.FinishWorkspaceResponse
+	38,  // 129: mill.v1.StoreService.SetCompleteRequestId:output_type -> mill.v1.SetCompleteRequestIdResponse
+	40,  // 130: mill.v1.StoreService.Done:output_type -> mill.v1.DoneResponse
+	42,  // 131: mill.v1.StoreService.Fail:output_type -> mill.v1.FailResponse
+	44,  // 132: mill.v1.StoreService.Resume:output_type -> mill.v1.ResumeResponse
+	46,  // 133: mill.v1.StoreService.Abandon:output_type -> mill.v1.AbandonResponse
+	50,  // 134: mill.v1.StoreService.Cancel:output_type -> mill.v1.CancelResponse
+	49,  // 135: mill.v1.StoreService.Rerun:output_type -> mill.v1.RerunResponse
+	52,  // 136: mill.v1.StoreService.IssueStepToken:output_type -> mill.v1.IssueStepTokenResponse
+	54,  // 137: mill.v1.StoreService.RevokeStepToken:output_type -> mill.v1.RevokeStepTokenResponse
+	56,  // 138: mill.v1.StoreService.RecordUsage:output_type -> mill.v1.RecordUsageResponse
+	58,  // 139: mill.v1.StoreService.MarkUsagePosted:output_type -> mill.v1.MarkUsagePostedResponse
+	60,  // 140: mill.v1.StoreService.GetWorkflow:output_type -> mill.v1.GetWorkflowResponse
+	62,  // 141: mill.v1.StoreService.ListWorkflows:output_type -> mill.v1.ListWorkflowsResponse
+	65,  // 142: mill.v1.StoreService.PutWorkflow:output_type -> mill.v1.PutWorkflowResponse
+	67,  // 143: mill.v1.StoreService.PutSkill:output_type -> mill.v1.PutSkillResponse
+	69,  // 144: mill.v1.StoreService.GetSkill:output_type -> mill.v1.GetSkillResponse
+	71,  // 145: mill.v1.StoreService.Status:output_type -> mill.v1.StatusResponse
+	73,  // 146: mill.v1.StoreService.Inspect:output_type -> mill.v1.InspectResponse
+	75,  // 147: mill.v1.StoreService.History:output_type -> mill.v1.HistoryResponse
+	77,  // 148: mill.v1.StoreService.Cost:output_type -> mill.v1.CostResponse
+	79,  // 149: mill.v1.StoreService.Health:output_type -> mill.v1.HealthResponse
+	81,  // 150: mill.v1.StoreService.WhoAmI:output_type -> mill.v1.WhoAmIResponse
+	84,  // 151: mill.v1.StoreService.Logs:output_type -> mill.v1.LogsResponse
+	88,  // 152: mill.v1.StoreService.SealAttempt:output_type -> mill.v1.SealAttemptResponse
+	111, // [111:153] is the sub-list for method output_type
+	69,  // [69:111] is the sub-list for method input_type
+	69,  // [69:69] is the sub-list for extension type_name
+	69,  // [69:69] is the sub-list for extension extendee
+	0,   // [0:69] is the sub-list for field type_name
 }
 
 func init() { file_mill_v1_store_proto_init() }
@@ -5967,7 +6086,7 @@ func file_mill_v1_store_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_mill_v1_store_proto_rawDesc), len(file_mill_v1_store_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   87,
+			NumMessages:   89,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

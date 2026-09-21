@@ -658,6 +658,33 @@ var _ = Describe("A machine on a real host", Label("live"), Serial, Ordered, fun
 		Expect(ws.EndStep(ctx, 3, false)).To(Succeed())
 	})
 
+	// Scenario: A session's transcript is captured as a tar before Destroy
+	It("A session's transcript is captured as a tar before Destroy", func(ctx context.Context) {
+		id := "acceptance-twin-" + nonce
+		DeferCleanup(func() { sweep(id) })
+		ws := machine.New(real, config)
+		_, err := ws.Create(ctx, workspace.Spec{RunID: id, NodeRef: "mill#83"})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func(ctx context.Context) { Expect(ws.Destroy(ctx)).To(Succeed()) })
+
+		By("given a session wrote a transcript inside the machine, at the fixed path a machine-backed run's cwd always slugs to")
+		Expect(ws.BeginStep(ctx, 1)).To(Succeed())
+		dir := machineconfig.Home + "/.claude/projects/-work"
+		write, err := ws.Exec(ctx, workspace.Command{Path: "sh", Args: []string{"-c",
+			"mkdir -p " + dir + " && printf '%s' '{\"turn\":1}' > " + dir + "/session-main.jsonl"}})
+		Expect(err).NotTo(HaveOccurred())
+		out, stderr, result := drainProcess(write)
+		Expect(result.Status).To(BeZero(), out+stderr)
+
+		By("when CaptureTwin is called, before the step ends or the machine is destroyed")
+		r, err := ws.CaptureTwin(ctx, "session-main")
+		Expect(err).NotTo(HaveOccurred())
+		files := testsupport.Untar(r)
+		Expect(files).To(HaveKeyWithValue("session-main.jsonl", []byte(`{"turn":1}`)))
+
+		Expect(ws.EndStep(ctx, 1, false)).To(Succeed())
+	})
+
 	// Scenario: An exec without a step slice is refused
 	It("An exec without a step slice is refused before any command runs", func(ctx context.Context) {
 		id := "acceptance-noslice-" + nonce

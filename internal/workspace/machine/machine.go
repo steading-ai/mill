@@ -18,6 +18,7 @@
 package machine
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -709,6 +710,46 @@ func (w *Workspace) Redact(values ...string) { w.redactor.Add(values...) }
 // implementing workspace.ActivitySink.
 func (w *Workspace) SetActivitySink(sink workspace.Sink) { w.verbSink.Set(sink) }
 
+// transcriptDir is where Claude Code writes a session's transcript inside
+// every machine: config.Home/.claude/projects/<cwd-slug>
+// (docs/spikes/sdk-sessions.md §Q1). Unlike the local backend, the slug
+// here is not per-run: [Workspace.SessionCwd] is always [config.Work] for
+// every machine-backed run, so its encoding is always this one string.
+const transcriptDir = config.Home + "/.claude/projects/-work"
+
+// CaptureTwin implements workspace.TwinSource. The machine exposes no
+// primitive of its own for pulling a file out — Exec, the same chokepoint
+// every verb and the sidecar itself run through, is the only channel that
+// reaches inside it — so this tars transcriptDir with a shell command run
+// through Exec and streams its stdout back uncompressed. A missing or empty
+// directory falls through to `tar`'s own empty-archive rather than an
+// error: a missing twin is the caller's call to make (docs/activity.md),
+// not this method's.
+func (w *Workspace) CaptureTwin(ctx context.Context, sessionID string) (io.Reader, error) {
+	_ = sessionID
+	script := fmt.Sprintf(`cd %s 2>/dev/null && tar -cf - *.jsonl 2>/dev/null || tar -cf - -T /dev/null`, transcriptDir)
+	process, err := w.Exec(ctx, workspace.Command{Path: "sh", Args: []string{"-c", script}})
+	if err != nil {
+		return nil, fmt.Errorf("machine: capture twin: %w", err)
+	}
+	_ = process.Stdin.Close()
+	var stderr []byte
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		stderr, _ = io.ReadAll(process.Stderr)
+	}()
+	data, err := io.ReadAll(process.Stdout)
+	<-done
+	if err != nil {
+		return nil, fmt.Errorf("machine: capture twin: %w", err)
+	}
+	if result := process.Wait(); result.Status != 0 {
+		return nil, fmt.Errorf("machine: capture twin: tar exited %d: %s", result.Status, strings.TrimSpace(string(stderr)))
+	}
+	return bytes.NewReader(data), nil
+}
+
 // GitRunner runs git in the checkout on the host, through the chokepoint:
 // what the `commit` verifier asks about the repository.
 func (w *Workspace) GitRunner() forge.Git { return w.verbs.Runner() }
@@ -859,4 +900,5 @@ var (
 	_ workspace.Provisioned    = (*Workspace)(nil)
 	_ workspace.Reporter       = (*Workspace)(nil)
 	_ workspace.ActivitySink   = (*Workspace)(nil)
+	_ workspace.TwinSource     = (*Workspace)(nil)
 )

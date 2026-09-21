@@ -124,6 +124,15 @@ func stamp(value *time.Time) *timestamppb.Timestamp {
 	return timestamppb.New(*value)
 }
 
+// unstamp is stamp's inverse: an unset timestamp is NULL.
+func unstamp(value *timestamppb.Timestamp) *time.Time {
+	if value == nil {
+		return nil
+	}
+	t := value.AsTime()
+	return &t
+}
+
 // runProto builds the wire form of a run row.
 func runProto(row Run) *millv1.Run {
 	return &millv1.Run{
@@ -276,6 +285,25 @@ func usageSourceProto(text string) millv1.UsageSource {
 		return millv1.UsageSource_USAGE_SOURCE_GATEWAY
 	}
 	return millv1.UsageSource_USAGE_SOURCE_SDK
+}
+
+// activityIndexRowProto builds the wire form of a sealed activity index row.
+func activityIndexRowProto(row Activity) *millv1.ActivityIndexRow {
+	return &millv1.ActivityIndexRow{
+		StepRunId:    row.StepRunID,
+		Seq:          row.Seq,
+		At:           timestamppb.New(row.At),
+		EndedAt:      stamp(row.EndedAt),
+		Kind:         row.Kind,
+		Source:       parseEnum[millv1.ActivitySource](row.Source),
+		Turn:         row.Turn,
+		CallId:       text(row.CallID),
+		ParentCallId: text(row.ParentCallID),
+		Tool:         text(row.Tool),
+		Bytes:        row.Bytes,
+		Truncated:    row.Truncated,
+		Offset:       row.Offset,
+	}
 }
 
 // sessionProto builds the wire form of a session row.
