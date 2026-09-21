@@ -27,7 +27,7 @@ const DefaultWatchRunsKeepalive = 30 * time.Second
 const watchRunsCursorSep = "|"
 
 // encodeWatchRunsCursor is the wire form of the (occurred_at, id) pair
-// events_occurred_at_id_idx (00023_events_watch_index.sql) orders by —
+// events_occurred_at_id_idx (00024_events_watch_index.sql) orders by —
 // nanosecond precision, so two events in the same second never collide on
 // reconnect.
 func encodeWatchRunsCursor(at time.Time, id string) string {
