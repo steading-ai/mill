@@ -142,6 +142,21 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 	}
 	defer svc.Close()
 
+	// Every workflow under --workflows-root is pushed before anything is
+	// reachable: a definition the loader refuses fails the start here,
+	// loudly, rather than leaving the previous version silently in service
+	// (docs/architecture.md §"Deployment"). Re-running this same idempotent
+	// push at every start is what "push again when the digest changes"
+	// means in practice, since PutWorkflow and PutSkill already store
+	// nothing new for unchanged content.
+	var hostMcpServers map[string]struct{}
+	if opts.work {
+		hostMcpServers = mcpServerNames(opts.worker.run.mcpServers)
+	}
+	if err := pushWorkflowsRoot(ctx, svc, opts.worker.run.workflowsRoot, hostMcpServers, log); err != nil {
+		return fmt.Errorf("mill serve: %w", err)
+	}
+
 	// WorkerService is mounted only when a worker actually runs in this
 	// process: it answers the sidecar, signing and forge probes from this
 	// process's own settings, and a bare `serve` has none of those to
@@ -169,7 +184,7 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 	// a bare `serve` checks against nothing.
 	var storeOpts []server.StoreServiceOption
 	if opts.work {
-		storeOpts = append(storeOpts, server.WithMcpServers(mcpServerNames(opts.worker.run.mcpServers)))
+		storeOpts = append(storeOpts, server.WithMcpServers(hostMcpServers))
 	}
 
 	srv := server.New(server.Config{
