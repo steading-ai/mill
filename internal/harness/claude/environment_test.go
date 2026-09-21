@@ -246,6 +246,33 @@ printf '%s\n' '{"terminal":{"exit":{"status":0}}}'
 		Expect(env).To(HaveKeyWithValue("GIT_CONFIG_GLOBAL", "/run/mill/01J0RUN/gitconfig"))
 	})
 
+	It("The workspace's dead sockets reach the session, and neither can be carved out", func() {
+		By("given a workspace that decided dead DG_SOCKET and MILL_SOCKET paths, over a mill carrying its own")
+		carrying("DG_SOCKET", "/run/user/1000/dagger/dagger.sock")
+		carrying("MILL_SOCKET", "/run/user/1000/mill/mill.sock")
+		session.Workspace.Env = map[string]string{
+			"DG_SOCKET":   "/var/lib/mill/runs/01J0RUN/dead-dagger.sock",
+			"MILL_SOCKET": "/var/lib/mill/runs/01J0RUN/dead-mill.sock",
+		}
+
+		for _, mode := range []EnvMode{EnvInherit, EnvStrict} {
+			By("when the adapter spawns the sidecar in " + string(mode) + " mode")
+			env, _ := spawn(New(WithExecer(&watching{Execer: workspace.Spawner{}}), WithEnvMode(mode)))
+
+			By("then the sidecar holds the workspace's dead paths, not the mill's own")
+			Expect(env).To(HaveKeyWithValue("DG_SOCKET", "/var/lib/mill/runs/01J0RUN/dead-dagger.sock"), "mode %s", mode)
+			Expect(env).To(HaveKeyWithValue("MILL_SOCKET", "/var/lib/mill/runs/01J0RUN/dead-mill.sock"), "mode %s", mode)
+		}
+
+		By("and a step whose claude options name env.passthrough DG_SOCKET or MILL_SOCKET is refused before spawning")
+		for _, name := range []string{"DG_SOCKET", "MILL_SOCKET"} {
+			session.Options = map[string]any{"env": map[string]any{"passthrough": []any{name}}}
+			adapter := New(WithExecer(spawner), WithEntrypoint("/bin/sh", stub(`printf '%s\n' '{"terminal":{"exit":{"status":0}}}'`)))
+			_, err := adapter.Start(lifetime, session, harness.Prompt{Text: "implement"}, nil)
+			Expect(err).To(MatchError(ContainSubstring(name)))
+		}
+	})
+
 	It("The host's model credentials still do not", func() {
 		By("given CLAUDE_CODE_OAUTH_TOKEN exported on the host")
 		carrying("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-not-a-real-token")

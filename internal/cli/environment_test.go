@@ -105,7 +105,9 @@ var _ = Describe("A face's environment", Label("unit"), func() {
 		scrubEnvironment()
 		config := filepath.Join(GinkgoT().TempDir(), "empty.yaml")
 		Expect(os.WriteFile(config, []byte("{}\n"), 0o600)).To(Succeed())
-		exit := invoke("work", "--config", config)
+		exit := invoke("work", "--config", config,
+			"--socket", filepath.Join(GinkgoT().TempDir(), "no-mill.sock"),
+			"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "no-dagger.sock"))
 
 		By("then no lease is taken in dagger and the suite finishes")
 		Expect(exit).NotTo(BeZero())

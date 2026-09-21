@@ -40,7 +40,7 @@ import (
 // spec holds both to this list.
 var ProbeNames = []string{
 	"socket", "schema", "dagger", "sidecar", "signing",
-	"forge", "notify", "workspace", "space", "gateway", "mcp",
+	"forge", "notify", "workspace", "isolation", "space", "gateway", "mcp",
 }
 
 // probe is one check and what it found.
@@ -112,6 +112,9 @@ func newDoctorCommand() *cobra.Command {
   notify    the configured notify command runs and accepts a probe notice
   workspace the workspace kind in effect and, for machine, whether the
             sandbox root is btrfs
+  isolation a session's own tools see dead paths for DG_SOCKET and
+            MILL_SOCKET, answering no dial, never the production dagger
+            or mill socket this host actually serves
   space     free space on the sandbox volume against the eviction
             watermarks: a warning below the low one, a failure below the
             high one
@@ -232,6 +235,7 @@ func runProbes(ctx context.Context, opts doctorOptions) []probe {
 		probeForge(ctx, opts, worker, workerErr),
 		probeNotify(ctx, opts),
 		probeWorkspace(opts, driver.NewSystemd(workspace.Spawner{}, driver.Commands{})),
+		probeIsolation(ctx, opts),
 		probeSpace(opts, driver.NewSystemd(workspace.Spawner{}, driver.Commands{})),
 		probeGateway(ctx, opts, time.Now()),
 	}
@@ -537,6 +541,20 @@ func probeWorkspace(opts doctorOptions, host driver.Driver) probe {
 			kind, opts.sandboxRoot, fs.Type, driver.TypeBtrfs)
 	}
 	return pass("workspace", "%s: sandbox root %s is %s", kind, opts.sandboxRoot, fs.Type)
+}
+
+// probeIsolation asks whether a session's own tools would ever see the
+// production dagger or mill socket: the logic lives in internal/doctor, so
+// internal/server's WorkerService can answer the same question from the
+// worker's own process. It is local-only — no worker RPC round-trip,
+// following probeWorkspace/probeSpace's own pattern — because a session's
+// environment is a fact about this host's configuration and code, not about
+// a run in flight.
+func probeIsolation(ctx context.Context, opts doctorOptions) probe {
+	ctx, cancel := context.WithTimeout(ctx, doctor.ProbeTimeout)
+	defer cancel()
+	result := doctor.SessionSockets(ctx, opts.workspaceDir, opts.socket, opts.daggerSocket)
+	return probe{Name: "isolation", OK: result.OK, Reason: result.Reason}
 }
 
 // probeSpace reads free space on the sandbox volume against the eviction

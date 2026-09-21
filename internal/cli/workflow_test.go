@@ -41,7 +41,7 @@ func (m mill) run(ctx context.Context, args ...string) string {
 	GinkgoHelper()
 	var stdout, stderr bytes.Buffer
 	root := cli.NewRootCommand(&stdout, &stderr)
-	root.SetArgs(append(args, "--socket", m.socket))
+	root.SetArgs(m.argsWithSockets(args))
 	Expect(root.ExecuteContext(ctx)).To(Succeed(), stderr.String())
 	return stdout.String()
 }
@@ -51,9 +51,15 @@ func (m mill) run(ctx context.Context, args ...string) string {
 func (m mill) try(ctx context.Context, args ...string) (string, error) {
 	var stdout, stderr bytes.Buffer
 	root := cli.NewRootCommand(&stdout, &stderr)
-	root.SetArgs(append(args, "--socket", m.socket))
+	root.SetArgs(m.argsWithSockets(args))
 	err := root.ExecuteContext(ctx)
 	return stdout.String(), err
+}
+
+// argsWithSockets is [runCLIArgs] for m's socket.
+func (m mill) argsWithSockets(args []string) []string {
+	GinkgoHelper()
+	return runCLIArgs(m.socket, args)
 }
 
 // serving starts `mill serve` on its own database and socket for one spec.
@@ -100,6 +106,23 @@ func servingWith(ctx context.Context, extra ...string) mill {
 	}, 60*time.Second, 50*time.Millisecond).Should(Succeed(), stderr.String())
 	return mill{socket: socket, databaseURL: databaseURL}
 }
+
+var _ = Describe("mill.run/mill.try's socket guard", Label("unit"), func() {
+	It("panics rather than dial the production socket when the fixture holds none", func() {
+		Expect(func() { mill{}.run(context.Background(), "status") }).To(Panic())
+	})
+
+	It("appends a dead --dagger-socket when the target command takes one", func() {
+		m := mill{socket: "/nonexistent/mill.sock"}
+		args := m.argsWithSockets([]string{"explain", "millcli#1"})
+		Expect(args).To(ContainElement("--dagger-socket"))
+	})
+
+	It("does not hand an unknown flag to a command with no --dagger-socket", func() {
+		m := mill{socket: "/nonexistent/mill.sock"}
+		Expect(m.argsWithSockets([]string{"status"})).NotTo(ContainElement("--dagger-socket"))
+	})
+})
 
 // storedVersion reads the version out of a `workflow …` line of push or
 // pull output.

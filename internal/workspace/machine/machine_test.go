@@ -495,6 +495,23 @@ var _ = Describe("The machine workspace", Label("unit"), func() {
 		Expect(handle.Socket).To(BeAnExistingFile())
 	})
 
+	// The same dead-socket guarantee the local backend gives every child, as
+	// defense in depth — the machine's namespace never mounts
+	// handle.Socket's own directory, so neither side can resolve the value,
+	// but the environment no longer falls back to the production sockets
+	// either way.
+	It("hands every child a dead DG_SOCKET and MILL_SOCKET", func(ctx context.Context) {
+		ws := f.workspace()
+		handle, err := ws.Create(ctx, spec)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func(ctx context.Context) { _ = ws.Destroy(ctx) })
+
+		dead := workspace.DeadSockets(filepath.Dir(handle.Socket))
+		env := ws.Environment()
+		Expect(env).To(HaveKeyWithValue("DG_SOCKET", dead["DG_SOCKET"]))
+		Expect(env).To(HaveKeyWithValue("MILL_SOCKET", dead["MILL_SOCKET"]))
+	})
+
 	It("reads, writes and lists inside the checkout on the host and refuses paths outside it", func(ctx context.Context) {
 		ws := f.workspace()
 		_, err := ws.Create(ctx, spec)

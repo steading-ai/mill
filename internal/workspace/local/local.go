@@ -428,11 +428,17 @@ func (w *Workspace) environmentFor(token workspace.Token) map[string]string {
 		env = map[string]string{}
 	}
 	w.mu.RLock()
-	egress := w.egress
+	egress, handle := w.egress, w.handle
 	w.mu.RUnlock()
 	for name, value := range egress.Environment(token.Value) {
 		env[name] = value
 	}
+	// DG_SOCKET and MILL_SOCKET are real, dead paths under the run's own
+	// directory, so a child that names neither flag and finds neither in a
+	// real environment does not fall back to the compiled-in production
+	// sockets, which the local backend's shared filesystem and uid make
+	// reachable (workspace.DeadSockets).
+	workspace.MergeDeadSockets(env, handle)
 	return env
 }
 

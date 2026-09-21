@@ -257,6 +257,53 @@ var _ = Describe("The local workspace", Label("unit"), func() {
 
 			Expect(err).To(MatchError(local.ErrNotCreated))
 		})
+
+		// A child that finds no DG_SOCKET/MILL_SOCKET in its environment
+		// falls back to the compiled-in production sockets, which the local
+		// backend's shared filesystem and uid make reachable. Handing every
+		// child a real, dead path instead closes that fallback.
+		It("hands every child a dead DG_SOCKET and MILL_SOCKET, not the production ones", func(ctx context.Context) {
+			dead := workspace.DeadSockets(filepath.Dir(handle.Socket))
+			Expect(ws.Environment()).To(HaveKeyWithValue("DG_SOCKET", dead["DG_SOCKET"]))
+			Expect(ws.Environment()).To(HaveKeyWithValue("MILL_SOCKET", dead["MILL_SOCKET"]))
+			Expect(dead["DG_SOCKET"]).NotTo(BeAnExistingFile())
+			Expect(dead["MILL_SOCKET"]).NotTo(BeAnExistingFile())
+
+			session := step(ctx, workspace.Exec)
+			environment, err := session.Exec(ctx, socket.ExecRequest{Path: "/usr/bin/env"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(lines(environment.Stdout)).To(ContainElements(
+				"DG_SOCKET="+dead["DG_SOCKET"], "MILL_SOCKET="+dead["MILL_SOCKET"]))
+			Expect(environment.Stdout).NotTo(ContainSubstring("/run/dagger/dg.sock"))
+			Expect(environment.Stdout).NotTo(ContainSubstring("/run/mill/mill.sock"))
+		})
+
+		// Scenario: a session started with no --socket/--dagger-socket
+		// reaches nothing, and the failure names the path it tried.
+		//
+		// A real `mill`/`dg` invocation with neither flag given falls back to
+		// $MILL_SOCKET/$DG_SOCKET (internal/cli's own flag defaults); this
+		// exercises that same fallback without building either binary, by
+		// having a session's own shell try the two paths the way a unix
+		// socket client would before giving up.
+		It("a session with no socket flags reaches nothing, and fails naming the dead path", func(ctx context.Context) {
+			session := step(ctx, workspace.Exec)
+
+			result, err := session.Exec(ctx, socket.ExecRequest{
+				Path: "/bin/sh",
+				Args: []string{"-c", `
+					test -S "$DG_SOCKET" || { echo "no dagger at $DG_SOCKET"; exit 1; }
+					test -S "$MILL_SOCKET" || { echo "no mill at $MILL_SOCKET"; exit 1; }
+				`},
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Status).NotTo(BeEquivalentTo(0))
+			dead := workspace.DeadSockets(filepath.Dir(handle.Socket))
+			Expect(result.Stdout).To(ContainSubstring("no dagger at " + dead["DG_SOCKET"]))
+			Expect(result.Stdout).NotTo(ContainSubstring("/run/dagger/dg.sock"))
+			Expect(result.Stdout).NotTo(ContainSubstring("/run/mill/mill.sock"))
+		})
 	})
 
 	Describe("git", func() {

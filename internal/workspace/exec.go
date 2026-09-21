@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"syscall"
 )
@@ -101,6 +102,35 @@ func OnFloor(name string) bool {
 		}
 	}
 	return false
+}
+
+// DeadSockets are the DG_SOCKET and MILL_SOCKET a workspace hands every
+// process it spawns: real, absolute, non-empty paths under dir, so
+// envOr/defaultSocketPath's "empty means unset" fallback to the compiled-in
+// production sockets never triggers, and scoped to the run's own directory,
+// so two runs never collide and Destroy's removal of dir cleans them up with
+// everything else. Nothing ever binds either path — a dial against it fails
+// rather than reaching a worker — which is what makes handing it out safe:
+// scoped to dir, not necessarily visible from it, since the machine backend's
+// dir is a host-side path its namespace never mounts and the value still
+// closes the hole from the environment's side.
+func DeadSockets(dir string) map[string]string {
+	return map[string]string{
+		"DG_SOCKET":   filepath.Join(dir, "no-dagger.sock"),
+		"MILL_SOCKET": filepath.Join(dir, "no-mill.sock"),
+	}
+}
+
+// MergeDeadSockets adds handle's [DeadSockets] into env, scoped to the
+// directory holding handle.Socket. A workspace not yet attached has no
+// handle and so no run directory to scope them under; env is left alone.
+func MergeDeadSockets(env map[string]string, handle *Handle) {
+	if handle == nil {
+		return
+	}
+	for name, value := range DeadSockets(filepath.Dir(handle.Socket)) {
+		env[name] = value
+	}
 }
 
 // Result is how a spawned process ended: the raw facts, with none of the

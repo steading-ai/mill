@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path/filepath"
+	"slices"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -324,9 +326,10 @@ func rowFor(output, name string) string {
 // The command tree silences its own errors, because cli.Run is what prints
 // them; this puts the two back together.
 func runCLI(ctx context.Context, socket string, args ...string) (string, error) {
+	GinkgoHelper()
 	var stdout, stderr bytes.Buffer
 	root := cli.NewRootCommand(&stdout, &stderr)
-	root.SetArgs(append(args, "--socket", socket))
+	root.SetArgs(runCLIArgs(socket, args))
 	err := root.ExecuteContext(ctx)
 	out := stdout.String() + stderr.String()
 	if err != nil {
@@ -334,6 +337,51 @@ func runCLI(ctx context.Context, socket string, args ...string) (string, error) 
 	}
 	return out, err
 }
+
+// runCLIArgs is args with --socket appended and, when the target command
+// itself takes --dagger-socket and the caller did not already name one, a
+// --dagger-socket pointing at a path this process never listens on. An
+// empty socket means the fixture was called before the service it needs was
+// up, which is a bug in the spec, not a case to run against the production
+// socket. runCLI and (mill).run/(mill).try all build their args through this
+// one function.
+func runCLIArgs(socket string, args []string) []string {
+	GinkgoHelper()
+	if socket == "" {
+		panic("empty socket passed to runCLIArgs; start a service first")
+	}
+	if !slices.Contains(args, "--dagger-socket") && commandTakesDaggerSocket(args) {
+		args = append(args, "--dagger-socket", filepath.Join(GinkgoT().TempDir(), "no-dagger.sock"))
+	}
+	return append(args, "--socket", socket)
+}
+
+// commandTakesDaggerSocket is whether the command args resolve to declares
+// its own --dagger-socket flag: most of the command tree never reaches
+// dagger at all, and handing it an unknown flag is a sharper failure than
+// the one the socket guard exists to catch.
+func commandTakesDaggerSocket(args []string) bool {
+	var stdout, stderr bytes.Buffer
+	cmd, _, err := cli.NewRootCommand(&stdout, &stderr).Find(args)
+	if err != nil {
+		return false
+	}
+	return cmd.Flags().Lookup("dagger-socket") != nil
+}
+
+var _ = Describe("runCLI's socket guard", Label("unit"), func() {
+	It("panics rather than dial the production socket when called with none", func() {
+		Expect(func() { _, _ = runCLI(context.Background(), "", "status") }).To(Panic())
+	})
+
+	It("appends a dead --dagger-socket when the target command takes one", func() {
+		Expect(runCLIArgs("/nonexistent/mill.sock", []string{"explain", "millcli#1"})).To(ContainElement("--dagger-socket"))
+	})
+
+	It("does not hand an unknown flag to a command with no --dagger-socket", func() {
+		Expect(runCLIArgs("/nonexistent/mill.sock", []string{"status"})).NotTo(ContainElement("--dagger-socket"))
+	})
+})
 
 // nodeID is a ULID-shaped id for a node the ledger records but no dagger
 // holds, for the specs that need no dagger at all.

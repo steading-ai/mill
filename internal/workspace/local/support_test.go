@@ -90,5 +90,8 @@ func grant(ws *local.Workspace, socketPath, bearer string) []string {
 	for name, value := range ws.GitEnvironment() {
 		entries = append(entries, name+"="+value)
 	}
+	for name, value := range workspace.DeadSockets(filepath.Dir(socketPath)) {
+		entries = append(entries, name+"="+value)
+	}
 	return entries
 }

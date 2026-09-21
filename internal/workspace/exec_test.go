@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -130,5 +131,31 @@ while :; do sleep 0.1; done
 		cancel()
 		_, err = local.Exec(done, workspace.Command{Path: "/bin/sh"})
 		Expect(err).To(MatchError(context.Canceled))
+	})
+})
+
+var _ = Describe("The dead sockets a workspace hands a child", Label("unit"), func() {
+	It("are two distinct, absolute paths under the run's own directory", func() {
+		dir := GinkgoT().TempDir()
+		env := workspace.DeadSockets(dir)
+
+		Expect(env).To(HaveKey("DG_SOCKET"))
+		Expect(env).To(HaveKey("MILL_SOCKET"))
+		Expect(env["DG_SOCKET"]).NotTo(Equal(env["MILL_SOCKET"]))
+		for name, path := range env {
+			Expect(filepath.IsAbs(path)).To(BeTrue(), "%s is not absolute: %s", name, path)
+			Expect(strings.HasPrefix(path, dir+string(filepath.Separator))).To(BeTrue(), "%s is not under %s: %s", name, dir, path)
+			Expect(path).NotTo(Equal("/run/dagger/dg.sock"))
+			Expect(path).NotTo(Equal("/run/mill/mill.sock"))
+			Expect(path).NotTo(MatchRegexp(`^/run/user/\d+/mill/mill\.sock$`))
+		}
+	})
+
+	It("names paths nothing is listening on", func() {
+		env := workspace.DeadSockets(GinkgoT().TempDir())
+		for name, path := range env {
+			_, err := net.DialTimeout("unix", path, 100*time.Millisecond)
+			Expect(err).To(HaveOccurred(), "%s: something answers at %s", name, path)
+		}
 	})
 })

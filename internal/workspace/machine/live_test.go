@@ -276,6 +276,34 @@ var _ = Describe("A machine on a real host", Label("live"), Serial, Ordered, fun
 		Expect(out).To(ContainSubstring("ANTHROPIC_BASE_URL=" + machine.DefaultGateway))
 	})
 
+	// Scenario: The production sockets never reach the machine
+	//   Given a machine has booted
+	//   When a session execs inside it
+	//   Then /run/dagger does not exist and /run/mill holds only the workspace socket
+	//
+	// docs/sandbox.md §Credentials: the model credential never enters the
+	// machine, and neither does a path to the host's own dagger or mill
+	// socket — DG_SOCKET and MILL_SOCKET point at dead paths under the run's
+	// own directory instead (internal/workspace.DeadSockets).
+	It("The production sockets never reach the machine", func(ctx context.Context) {
+		id := "acceptance-nosocket-" + nonce
+		DeferCleanup(func() { sweep(id) })
+		ws := machine.New(real, config)
+		_, err := ws.Create(ctx, workspace.Spec{RunID: id, NodeRef: "mill#38"})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func(ctx context.Context) { Expect(ws.Destroy(ctx)).To(Succeed()) })
+		name := "mill-" + id
+
+		By("then /run/dagger does not exist inside the machine")
+		out, status := inMachine(name, "", "test", "-e", "/run/dagger")
+		Expect(status).NotTo(BeZero(), out)
+
+		By("and /run/mill holds only the workspace socket")
+		out, status = inMachine(name, "", "ls", "/run/mill")
+		Expect(status).To(BeZero(), out)
+		Expect(strings.Fields(out)).To(Equal([]string{"ws.sock"}))
+	})
+
 	It("A machine that never reaches ready is stopped and Create returns an error carrying the timeout and the digest; nothing is left in machinectl list", func(ctx context.Context) {
 		id := "acceptance-unready-" + nonce
 		DeferCleanup(func() { sweep(id) })
