@@ -456,6 +456,21 @@ with a prompt the store does not hold produces evidence nothing can be traced
 back to a pushed workflow. Nothing in a deployment sets that variable, and
 `mill work` has no such flag at all.
 
+`--skill-override` still spends tokens: the prompt is seeded, but a real
+model reads it and answers. A step whose `harness` table names `scripted`
+instead spends nothing — its turns are read from a file named by the step's
+own `harness.scripted.script` option and replayed verbatim, so a run using it
+never opens a connection to a model endpoint at all
+(`internal/harness/scripted`). It is the harness
+`tests/acceptance/testdata/workflows/scripted-feature` uses to prove the
+whole of a run's shape — two rounds, a revise, a clean-tree retry — without
+the cost or the flakiness of a model actually producing one. Like
+`--skill-override`, it is refused everywhere `MILL_ACCEPTANCE` is not set:
+at `mill workflow push`, so a workflow naming it can never reach the store
+without the variable, and again in the run's own harness registry, so
+nothing reachable from `mill run`, `mill work`, or `mill serve` can select it
+by accident.
+
 ## Without a forge
 
 With `MILL_ACCEPTANCE_FORGE_URL` unset, the suite runs in local-origin mode:

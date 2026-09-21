@@ -1,0 +1,3 @@
+- events:
+    - kind: sings
+      text: not a real event kind

@@ -30,6 +30,7 @@ import (
 	"github.com/ivy/mill/internal/gateway"
 	"github.com/ivy/mill/internal/harness"
 	"github.com/ivy/mill/internal/harness/claude"
+	"github.com/ivy/mill/internal/harness/scripted"
 	"github.com/ivy/mill/internal/notify"
 	"github.com/ivy/mill/internal/run"
 	"github.com/ivy/mill/internal/skill"
@@ -756,6 +757,11 @@ func harnessesFor(kind workspace.Kind, opts runOptions, envMode claude.EnvMode) 
 		registry := harness.NewRegistry()
 		if err := registry.Register(run.DefaultHarness, claudeAdapter(kind, opts, envMode, ws)); err != nil {
 			return nil, err
+		}
+		if os.Getenv(acceptanceEnv) != "" {
+			if err := registry.Register(scripted.Name, scripted.NewAdapter(opts.workflowDir)); err != nil {
+				return nil, err
+			}
 		}
 		return registry, nil
 	}

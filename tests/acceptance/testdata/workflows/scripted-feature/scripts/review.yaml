@@ -1,0 +1,44 @@
+# The `review` session's turns: review-plan's one verdict, then review's
+# two — a revise with two blocking findings, then an approve. mill#21's
+# plan, step 5's turn-order table, rows 4, 9 and 13.
+
+# 4. review-plan: approves, so the run proceeds past plan-approval's auto
+#    policy without a person.
+- events:
+    - kind: text
+      request_id: review-plan-1
+      text: the plan covers the fixture end to end
+  terminal:
+    structured_output:
+      decision: approve
+
+# 9. review, attempt 1: revise, with two blocking findings — a revise with
+#    zero blocking findings is refused as malformed (internal/evidence),
+#    so this is the smallest shape that exercises the real "on_failure:
+#    revise implement" path.
+- events:
+    - kind: text
+      request_id: review-1
+      text: two things block approval this round
+  terminal:
+    structured_output:
+      decision: revise
+      findings:
+        - criterion: correctness
+          severity: blocking
+          summary: the round 1 fixture file is missing a closing section
+          location: notes/scripted-fixture.md
+        - criterion: completeness
+          severity: blocking
+          summary: the fixture does not yet prove a second round of changes
+          location: notes/scripted-fixture.md
+
+# 13. review, attempt 2: approve — the run reaches done, `merge` having
+#     been dropped from this workflow.
+- events:
+    - kind: text
+      request_id: review-2
+      text: round 2 addresses both findings
+  terminal:
+    structured_output:
+      decision: approve

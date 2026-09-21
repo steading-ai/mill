@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 	"unicode"
@@ -106,6 +107,18 @@ const (
 	// policy is the failure mode this document's strict decoding exists to
 	// prevent.
 	retiredHarnessName = "claude-code"
+
+	// scriptedHarnessName is the key a step's `harness` table uses for the
+	// replay-only adapter (internal/harness/scripted). It costs no tokens
+	// and touches no model, so it is refused at load unless
+	// acceptanceEnv is set — a workflow that wants it is an acceptance
+	// fixture, not an ordinary run.
+	scriptedHarnessName = "scripted"
+
+	// acceptanceEnv is the variable that admits the scripted harness into a
+	// workflow, matching internal/cli/run.go's gate on the same name for
+	// registering the harness and for --skill-override.
+	acceptanceEnv = "MILL_ACCEPTANCE"
 )
 
 // A step's `harness` table maps a harness name to that harness's options
@@ -345,6 +358,10 @@ func (s stepYAML) toProto() (*millv1.Step, error) {
 			if name == retiredHarnessName {
 				return fail(fmt.Errorf("harness.%s: the adapter is named %s; rename the key to harness.%s",
 					retiredHarnessName, harnessName, harnessName))
+			}
+			if name == scriptedHarnessName && os.Getenv(acceptanceEnv) == "" {
+				return fail(fmt.Errorf("harness.%s: only an acceptance run may use this harness; set %s",
+					scriptedHarnessName, acceptanceEnv))
 			}
 			document, err := structpb.NewStruct(options)
 			if err != nil {
