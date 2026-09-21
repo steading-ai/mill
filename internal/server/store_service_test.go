@@ -352,6 +352,31 @@ var _ = Describe("The store's handlers", Label(testsupport.DBLabel), func() {
 		Expect(detail.Msg.GetSteps()[1].GetEvidence().GetCommit()).To(Equal(sha))
 	})
 
+	It("ListRuns returns a page of ended runs and pages to the next with its cursor", func(ctx SpecContext) {
+		f := newFixture(ctx, "mill#21")
+		_, err := f.client().Done(ctx, connect.NewRequest(&millv1.DoneRequest{LeaseId: lease, RunId: f.run.GetId()}))
+		Expect(err).NotTo(HaveOccurred())
+		other := f.anotherRun(ctx, "mill#22")
+		_, err = other.client().Done(ctx, connect.NewRequest(&millv1.DoneRequest{LeaseId: lease, RunId: other.run.GetId()}))
+		Expect(err).NotTo(HaveOccurred())
+
+		page1, err := f.client().ListRuns(ctx, connect.NewRequest(&millv1.ListRunsRequest{Limit: 1}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(page1.Msg.GetRuns()).To(HaveLen(1))
+		Expect(page1.Msg.GetLimitClamped()).To(BeFalse())
+		Expect(page1.Msg.GetNextCursor()).NotTo(BeEmpty(), "a second run is still waiting")
+
+		page2, err := f.client().ListRuns(ctx, connect.NewRequest(&millv1.ListRunsRequest{
+			Limit: 1, Cursor: page1.Msg.GetNextCursor(),
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(page2.Msg.GetRuns()).To(HaveLen(1))
+		Expect(page2.Msg.GetNextCursor()).To(BeEmpty(), "nothing is left to page")
+
+		Expect([]string{page1.Msg.GetRuns()[0].GetRun().GetId(), page2.Msg.GetRuns()[0].GetRun().GetId()}).To(
+			ConsistOf(f.run.GetId(), other.run.GetId()))
+	})
+
 	It("Inspect with neither a run id nor a node ref is refused as invalid", func(ctx SpecContext) {
 		f := newService(ctx)
 		_, err := f.client().Inspect(ctx, connect.NewRequest(&millv1.InspectRequest{}))

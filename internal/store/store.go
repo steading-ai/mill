@@ -2001,6 +2001,181 @@ func (s *Store) Status(ctx context.Context, statuses []millv1.RunStatus, project
 	return summaries, findings, nil
 }
 
+// listRunsDefaultLimit and listRunsMaxLimit are ListRuns's page-size
+// default and ceiling, matching the work order's acceptance criterion.
+const (
+	listRunsDefaultLimit = 50
+	listRunsMaxLimit     = 200
+)
+
+// ListRunsPageParams is the page ListRuns asks for. Its type is not named
+// ListRunsParams because that name already belongs to the sqlc query behind
+// [Store.Status] (internal/store/queries/runs.sql).
+type ListRunsPageParams struct {
+	// Statuses restricts the listing to these run states. Empty means every
+	// terminal state (done, failed, abandoned).
+	Statuses []millv1.RunStatus
+	// Project, NodeRef, WorkerRef, WorkflowID narrow the listing the same
+	// way Status's Project does; empty means unrestricted.
+	Project    string
+	NodeRef    string
+	WorkerRef  string
+	WorkflowID string
+	// EndedAfter and EndedBefore bound the window on ended_at. Nil means no
+	// bound. Ignored when the statuses filter is not all-terminal.
+	EndedAfter  *time.Time
+	EndedBefore *time.Time
+	// Limit is how many rows to return, before clamping. 0 means the
+	// default.
+	Limit int32
+	// Cursor replays a previous response's NextCursor. Empty asks for the
+	// first page.
+	Cursor string
+	// View is "refs", "summary", or "full"; empty means "summary".
+	View string
+}
+
+// ListRuns returns one page of runs, filtered and windowed, ordered
+// newest-first by ended_at when every requested status is terminal (or the
+// filter is empty and so defaults to the three terminal states), or by
+// updated_at when any requested status is not — a live run has no ended_at
+// to order by. nextCursor is empty when this page was the last, and
+// clamped reports whether the request's limit exceeded the 200 ceiling.
+func (s *Store) ListRuns(ctx context.Context, p ListRunsPageParams) (runs []*millv1.RunSummary, nextCursor string, clamped bool, findings []UndecodableWorkflow, err error) {
+	limit := p.Limit
+	switch {
+	case limit <= 0:
+		limit = listRunsDefaultLimit
+	case limit > listRunsMaxLimit:
+		limit = listRunsMaxLimit
+		clamped = true
+	}
+	cursorValue, cursorID, err := decodeRunsCursor(p.Cursor)
+	if err != nil {
+		return nil, "", false, nil, err
+	}
+
+	wanted := enumTexts(p.Statuses)
+	if len(wanted) == 0 {
+		wanted = []string{"done", "failed", "abandoned"}
+	}
+	q := New(s.pool)
+	var rows []Run
+	byEnded := allTerminal(wanted)
+	if byEnded {
+		var cursorEndedAt *time.Time
+		var cursorRowID *string
+		if p.Cursor != "" {
+			cursorEndedAt, cursorRowID = &cursorValue, &cursorID
+		}
+		rows, err = q.ListRunsByEnded(ctx, ListRunsByEndedParams{
+			Statuses:      wanted,
+			Project:       nullable(p.Project),
+			NodeRef:       nullable(p.NodeRef),
+			WorkerRef:     nullable(p.WorkerRef),
+			WorkflowID:    nullable(p.WorkflowID),
+			EndedAfter:    p.EndedAfter,
+			EndedBefore:   p.EndedBefore,
+			CursorEndedAt: cursorEndedAt,
+			CursorID:      cursorRowID,
+			Lim:           limit + 1,
+		})
+	} else {
+		var cursorUpdatedAt *time.Time
+		var cursorRowID *string
+		if p.Cursor != "" {
+			cursorUpdatedAt, cursorRowID = &cursorValue, &cursorID
+		}
+		rows, err = q.ListRunsByUpdated(ctx, ListRunsByUpdatedParams{
+			Statuses:        wanted,
+			Project:         nullable(p.Project),
+			NodeRef:         nullable(p.NodeRef),
+			WorkerRef:       nullable(p.WorkerRef),
+			WorkflowID:      nullable(p.WorkflowID),
+			CursorUpdatedAt: cursorUpdatedAt,
+			CursorID:        cursorRowID,
+			Lim:             limit + 1,
+		})
+	}
+	if err != nil {
+		return nil, "", false, nil, fmt.Errorf("list runs: %w", err)
+	}
+
+	if int32(len(rows)) > limit {
+		last := rows[limit-1]
+		if byEnded {
+			nextCursor = encodeRunsCursor(*last.EndedAt, last.ID)
+		} else {
+			nextCursor = encodeRunsCursor(last.UpdatedAt, last.ID)
+		}
+		rows = rows[:limit]
+	}
+
+	summaries := make([]*millv1.RunSummary, 0, len(rows))
+	reported := map[string]bool{}
+	for _, row := range rows {
+		if p.View == "refs" {
+			summaries = append(summaries, &millv1.RunSummary{Run: runProto(row)})
+			continue
+		}
+		summary, finding, err := summarize(ctx, q, row)
+		if err != nil {
+			return nil, "", false, nil, err
+		}
+		if finding != nil && !reported[finding.WorkflowID] {
+			reported[finding.WorkflowID] = true
+			findings = append(findings, *finding)
+		}
+		summaries = append(summaries, summary)
+	}
+	return summaries, nextCursor, clamped, findings, nil
+}
+
+// allTerminal reports whether every status in a ListRuns request orders by
+// ended_at: true for the empty (default) filter, since that defaults to the
+// three terminal states.
+func allTerminal(statuses []string) bool {
+	for _, status := range statuses {
+		if !terminalStatuses[status] {
+			return false
+		}
+	}
+	return true
+}
+
+// runsCursorSep separates a ListRuns cursor's sort value from its row id.
+// Neither an RFC3339Nano timestamp nor a ULID contains it.
+const runsCursorSep = "|"
+
+// encodeRunsCursor renders ListRuns's opaque cursor: the sort column's value
+// and the row's id, which together are what its keyset predicate compares
+// the next page against.
+func encodeRunsCursor(sortValue time.Time, id string) string {
+	raw := sortValue.UTC().Format(time.RFC3339Nano) + runsCursorSep + id
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+// decodeRunsCursor reads a cursor back. Empty is the first page and decodes
+// to the zero value with no error.
+func decodeRunsCursor(cursor string) (sortValue time.Time, id string, err error) {
+	if cursor == "" {
+		return time.Time{}, "", nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("decode cursor: %w", err)
+	}
+	sortText, id, ok := strings.Cut(string(raw), runsCursorSep)
+	if !ok {
+		return time.Time{}, "", fmt.Errorf("decode cursor: malformed")
+	}
+	sortValue, err = time.Parse(time.RFC3339Nano, sortText)
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("decode cursor: %w", err)
+	}
+	return sortValue, id, nil
+}
+
 // summarize derives one run's summary. The finding is set when the run's
 // workflow row would not decode, and the summary is then derived without
 // it.
@@ -2033,7 +2208,12 @@ func summarize(ctx context.Context, q *Queries, row Run) (*millv1.RunSummary, *U
 	if err != nil {
 		return nil, nil, err
 	}
+	feedback, err := q.CountRunFeedback(ctx, row.ID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("feedback count of run %s: %w", row.ID, err)
+	}
 	currentStep, attempt := CurrentStep(state, workflow)
+	lastStep, lastStepStatus := LastStep(state)
 	summary := &millv1.RunSummary{
 		Run:            state.Run,
 		CurrentStep:    currentStep,
@@ -2041,6 +2221,9 @@ func summarize(ctx context.Context, q *Queries, row Run) (*millv1.RunSummary, *U
 		Totals:         make([]*millv1.ModelTotals, 0, len(totals)),
 		Leases:         leases,
 		Workspace:      workspace,
+		LastStep:       lastStep,
+		LastStepStatus: lastStepStatus,
+		Rounds:         feedback + 1,
 	}
 	// The run's cost is what its sessions reported. The gateway's count is
 	// read per attempt, beside the adapter's, and never summed into it.

@@ -92,7 +92,8 @@ var _ = Describe("The read tools' view of the machine", Label("unit"), func() {
 		summary := render(func(cmd *cobra.Command) error { return renderStatus(cmd, runs, viewSummary) })
 		Expect(summary).To(ContainSubstring("MACHINE"))
 		Expect(rowOf(summary, "mill#80")).To(ContainSubstring("mill-01jrun"))
-		Expect(rowOf(summary, "mill#81")).To(HaveSuffix("-"), "a local run has no machine")
+		local81 := strings.Fields(rowOf(summary, "mill#81"))
+		Expect(local81[len(local81)-3]).To(Equal("-"), "a local run has no machine")
 		Expect(summary).NotTo(ContainSubstring("sha256:3c9a43"))
 
 		full := render(func(cmd *cobra.Command) error { return renderStatus(cmd, runs, viewFull) })
@@ -102,7 +103,8 @@ var _ = Describe("The read tools' view of the machine", Label("unit"), func() {
 		Expect(row).To(ContainSubstring("ve-mill-01jru"))
 		Expect(row).To(ContainSubstring("global/mise@3->4, repo/abc123/go-build@0"))
 		cells := strings.Fields(rowOf(full, "mill#81"))
-		Expect(cells[len(cells)-4:]).To(Equal([]string{"-", "-", "-", "-"}), "a local run has none of the four")
+		Expect(cells[len(cells)-6:]).To(Equal([]string{"-", "-", "-", "-", "-", "0"}),
+			"a local run has none of the four machine cells, nor a last step, nor a revise round")
 	})
 })
 

@@ -488,6 +488,127 @@ var _ = Describe("The reads the CLI needs", Label(testsupport.DBLabel), func() {
 	}, SpecTimeout(time.Minute))
 })
 
+var _ = Describe("ListRuns", Label(testsupport.DBLabel), func() {
+	It("and Inspect agree on last_step, last_step_status and rounds after one revise round", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		run, _ := l.runWithWorkflow(ctx, "mill#8")
+		for _, name := range []string{"implement", "simplify", "commit", "pr"} {
+			l.close(ctx, run.GetId(), name)
+		}
+		firstReview := l.fail(ctx, run.GetId(), "review")
+		secondReview := l.revise(ctx, run.GetId(), "review", firstReview.GetId())
+		_, err := l.store.FailStepRun(ctx, l.lease, secondReview.GetId(), nil)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = l.store.Failed(ctx, l.lease, run.GetId(), "denied")
+		Expect(err).NotTo(HaveOccurred())
+
+		runs, _, _, _, err := l.store.ListRuns(ctx, store.ListRunsPageParams{})
+		Expect(err).NotTo(HaveOccurred())
+		var listed *millv1.RunSummary
+		for _, summary := range runs {
+			if summary.GetRun().GetId() == run.GetId() {
+				listed = summary
+			}
+		}
+		Expect(listed).NotTo(BeNil(), "the failed run must be on the default (terminal) listing")
+		Expect(listed.GetLastStep()).To(Equal("review"))
+		Expect(listed.GetLastStepStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_FAILED))
+		Expect(listed.GetRounds()).To(Equal(int64(2)))
+
+		detail, err := l.store.Inspect(ctx, store.InspectParams{ID: run.GetId()})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(detail.Summary.GetLastStep()).To(Equal(listed.GetLastStep()))
+		Expect(detail.Summary.GetLastStepStatus()).To(Equal(listed.GetLastStepStatus()))
+		Expect(detail.Summary.GetRounds()).To(Equal(listed.GetRounds()))
+	}, SpecTimeout(time.Minute))
+
+	It("excludes a run that ended a second before the window", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		window := time.Now().UTC().Truncate(time.Second)
+
+		before, _ := l.runWithWorkflow(ctx, "mill#8")
+		_, err := l.store.Done(ctx, l.lease, before.GetId())
+		Expect(err).NotTo(HaveOccurred())
+		l.endAt(ctx, before.GetId(), window.Add(-time.Second))
+
+		within, _ := l.runWithWorkflow(ctx, "mill#9")
+		_, err = l.store.Done(ctx, l.lease, within.GetId())
+		Expect(err).NotTo(HaveOccurred())
+		l.endAt(ctx, within.GetId(), window)
+
+		runs, _, _, _, err := l.store.ListRuns(ctx, store.ListRunsPageParams{EndedAfter: &window})
+		Expect(err).NotTo(HaveOccurred())
+		ids := make([]string, 0, len(runs))
+		for _, summary := range runs {
+			ids = append(ids, summary.GetRun().GetId())
+		}
+		Expect(ids).To(ConsistOf(within.GetId()))
+	}, SpecTimeout(time.Minute))
+
+	It("pages two runs with an equal ended_at once each, with no overlap", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		tie := time.Now().UTC().Truncate(time.Second)
+
+		first, _ := l.runWithWorkflow(ctx, "mill#8")
+		_, err := l.store.Done(ctx, l.lease, first.GetId())
+		Expect(err).NotTo(HaveOccurred())
+		l.endAt(ctx, first.GetId(), tie)
+
+		second, _ := l.runWithWorkflow(ctx, "mill#9")
+		_, err = l.store.Done(ctx, l.lease, second.GetId())
+		Expect(err).NotTo(HaveOccurred())
+		l.endAt(ctx, second.GetId(), tie)
+
+		page1, next1, _, _, err := l.store.ListRuns(ctx, store.ListRunsPageParams{Limit: 1})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(page1).To(HaveLen(1))
+		Expect(next1).NotTo(BeEmpty(), "a second run is still waiting")
+
+		page2, next2, _, _, err := l.store.ListRuns(ctx, store.ListRunsPageParams{Limit: 1, Cursor: next1})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(page2).To(HaveLen(1))
+		Expect(next2).To(BeEmpty(), "nothing is left to page")
+
+		Expect([]string{page1[0].GetRun().GetId(), page2[0].GetRun().GetId()}).To(
+			ConsistOf(first.GetId(), second.GetId()), "each run exactly once, no overlap or gap")
+	}, SpecTimeout(time.Minute))
+
+	It("returns every generation for a node_ref", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		first, _ := l.runWithWorkflow(ctx, "mill#20")
+		_, err := l.store.Abandon(ctx, l.lease, first.GetId(), "restart")
+		Expect(err).NotTo(HaveOccurred())
+
+		second, err := l.store.CreateRun(ctx, "", store.CreateRunParams{
+			NodeID: first.GetNodeId(), NodeRef: "mill#20", Generation: 2, Branch: "mill/20",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		second, err = l.store.SetLease(ctx, second.GetId(), l.lease, "worker-1")
+		Expect(err).NotTo(HaveOccurred())
+		_, err = l.store.Failed(ctx, l.lease, second.GetId(), "denied")
+		Expect(err).NotTo(HaveOccurred())
+
+		runs, _, _, _, err := l.store.ListRuns(ctx, store.ListRunsPageParams{NodeRef: "mill#20"})
+		Expect(err).NotTo(HaveOccurred())
+		ids := make([]string, 0, len(runs))
+		for _, summary := range runs {
+			ids = append(ids, summary.GetRun().GetId())
+		}
+		Expect(ids).To(ConsistOf(first.GetId(), second.GetId()))
+	}, SpecTimeout(time.Minute))
+
+	It("clamps a limit above 200 and says so", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		run, _ := l.runWithWorkflow(ctx, "mill#8")
+		_, err := l.store.Done(ctx, l.lease, run.GetId())
+		Expect(err).NotTo(HaveOccurred())
+
+		_, _, clamped, _, err := l.store.ListRuns(ctx, store.ListRunsPageParams{Limit: 500})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(clamped).To(BeTrue())
+	}, SpecTimeout(time.Minute))
+})
+
 // statusText renders a run status the way the ledger stores it, for the
 // specs that assert a refusal names the status.
 func statusText(status millv1.RunStatus) string {
