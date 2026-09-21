@@ -113,6 +113,22 @@ var _ = Describe("The fake driver", Label("unit"), func() {
 		Expect(fake.StopUnit(ctx, "", "x")).To(MatchError(ContainSubstring("cannot return a scripted driver.Machine")))
 	})
 
+	It("is ready by default and reports a scripted reason, recording the root and machines it was asked about", func(ctx context.Context) {
+		reason, err := fake.SandboxReady(ctx, "/var/lib/mill", "/var/lib/machines")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(reason).To(BeEmpty(), "the fake is a sandbox-capable host unless told otherwise")
+
+		fake.Script(driver.SandboxReady, "systemd-nspawn is not on PATH")
+		reason, err = fake.SandboxReady(ctx, "/var/lib/mill", "/var/lib/machines")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(reason).To(Equal("systemd-nspawn is not on PATH"))
+
+		Expect(fake.CallsTo(driver.SandboxReady)).To(Equal([]driver.Call{
+			{Method: driver.SandboxReady, Args: []any{"/var/lib/mill", "/var/lib/machines"}},
+			{Method: driver.SandboxReady, Args: []any{"/var/lib/mill", "/var/lib/machines"}},
+		}))
+	})
+
 	It("is a Driver", func() {
 		var _ driver.Driver = fake
 		process, err := fake.Exec(context.Background(), driver.ExecRequest{})

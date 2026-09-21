@@ -212,6 +212,7 @@ type runOptions struct {
 	workflow      string
 	tier          string
 	workflowDir   string
+	workflowsRoot string
 	sidecar       string
 	origin        string
 	ref           string

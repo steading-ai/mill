@@ -1,8 +1,11 @@
 package store_test
 
 import (
+	"time"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/store"
@@ -95,6 +98,34 @@ var _ = Describe("CurrentStep", func() {
 		name, attempts := store.CurrentStep(stateWith(map[string]string{}), nil)
 		Expect(name).To(BeEmpty())
 		Expect(attempts).To(BeZero())
+	})
+})
+
+var _ = Describe("LastStep", func() {
+	It("has no last step for a run with no attempts", func() {
+		name, status := store.LastStep(stateWith(map[string]string{}))
+		Expect(name).To(BeEmpty())
+		Expect(status).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_UNSPECIFIED))
+	})
+
+	It("is the step whose latest attempt started most recently", func() {
+		state := stateWith(map[string]string{"implement": "closed", "simplify": "failed"})
+		state.Latest["implement"].StartedAt = timestamppb.New(time.Unix(100, 0))
+		state.Latest["simplify"].StartedAt = timestamppb.New(time.Unix(200, 0))
+
+		name, status := store.LastStep(state)
+		Expect(name).To(Equal("simplify"))
+		Expect(status).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_FAILED))
+	})
+
+	It("need not be the workflow's current step: an earlier step revised after a later one was already superseded", func() {
+		state := stateWith(map[string]string{"implement": "failed", "simplify": "superseded"})
+		state.Latest["simplify"].StartedAt = timestamppb.New(time.Unix(100, 0))
+		state.Latest["implement"].StartedAt = timestamppb.New(time.Unix(200, 0))
+
+		name, status := store.LastStep(state)
+		Expect(name).To(Equal("implement"))
+		Expect(status).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_FAILED))
 	})
 })
 

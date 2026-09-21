@@ -398,15 +398,22 @@ func onFailureText(onFailure *millv1.OnFailure) string {
 // version hash, so two people pushing the same files still store one
 // version.
 func pushSource(dir string) *millv1.Source {
-	path, err := filepath.Abs(dir)
-	if err != nil {
-		path = dir
-	}
 	pushedBy := os.Getenv("USER")
 	if current, err := user.Current(); err == nil {
 		pushedBy = current.Username
 	}
-	return &millv1.Source{Kind: millv1.SourceKind_SOURCE_KIND_CLI, Path: path, PushedBy: pushedBy}
+	return &millv1.Source{Kind: millv1.SourceKind_SOURCE_KIND_CLI, Path: absPath(dir), PushedBy: pushedBy}
+}
+
+// absPath is dir made absolute, or dir itself when that fails: a Source's
+// path is informational, not load-bearing, so it degrades rather than
+// erroring.
+func absPath(dir string) string {
+	path, err := filepath.Abs(dir)
+	if err != nil {
+		return dir
+	}
+	return path
 }
 
 func parseScope(text string) millv1.Scope {

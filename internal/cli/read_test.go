@@ -165,6 +165,53 @@ var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 			Eventually(done, 10*time.Second).Should(Receive(&followErr), stderr.String())
 			Expect(followErr).NotTo(HaveOccurred())
 		})
+
+		It("--ended lists ended runs with LAST STEP and ROUNDS, and pages by its printed cursor", func() {
+			m := serving(ctx)
+			first := openRunOn(ctx, m, "millcli#90", nodeID(90))
+			first.fail(ctx, "implement", 1)
+			_, err := first.store.Fail(ctx, connect.NewRequest(&millv1.FailRequest{
+				LeaseId: first.lease, RunId: first.run.GetId(), Reason: "denied",
+			}))
+			Expect(err).NotTo(HaveOccurred())
+
+			second := openRunOn(ctx, m, "millcli#91", nodeID(91))
+			second.closeGatherContext(ctx, "sha256:"+strings.Repeat("c", 64))
+			_, err = second.store.Done(ctx, connect.NewRequest(&millv1.DoneRequest{
+				LeaseId: second.lease, RunId: second.run.GetId(),
+			}))
+			Expect(err).NotTo(HaveOccurred())
+
+			By("still-live runs are not listed as ended")
+			third := openRunOn(ctx, m, "millcli#92", nodeID(92))
+
+			// newest-ended first: #91 finished after #90 failed, so it pages first.
+			page1, err := runCLI(ctx, m.socket, "status", "--ended", "--since", "24h", "--view", "full", "--limit", "1")
+			Expect(err).NotTo(HaveOccurred(), page1)
+			Expect(rowFor(page1, "millcli#91")).NotTo(BeEmpty())
+			Expect(rowFor(page1, "millcli#92")).To(BeEmpty(), "a still-running run is not ended")
+			Expect(rowFor(page1, "millcli#91")).To(ContainSubstring("gather-context (closed)"))
+			fields91 := strings.Fields(rowFor(page1, "millcli#91"))
+			Expect(fields91[len(fields91)-1]).To(Equal("1"), "one attempt, no revise round")
+
+			var cursorLine string
+			for _, line := range lines(page1) {
+				if strings.HasPrefix(line, "next: --cursor ") {
+					cursorLine = line
+				}
+			}
+			Expect(cursorLine).NotTo(BeEmpty(), "a first page of one leaves a second waiting")
+			cursor := strings.TrimPrefix(cursorLine, "next: --cursor ")
+
+			page2, err := runCLI(ctx, m.socket, "status", "--ended", "--view", "full", "--limit", "1", "--cursor", cursor)
+			Expect(err).NotTo(HaveOccurred(), page2)
+			Expect(rowFor(page1, "millcli#90")).To(BeEmpty(), "the two ended runs must not share a page")
+			Expect(rowFor(page2, "millcli#90")).NotTo(BeEmpty())
+			Expect(rowFor(page2, "millcli#90")).To(ContainSubstring("implement (failed)"))
+			Expect(rowFor(page2, "millcli#91")).To(BeEmpty())
+			Expect(page2).NotTo(ContainSubstring("next: --cursor"), "nothing is left to page")
+			_ = third
+		})
 	})
 
 	Describe("mill inspect", func() {

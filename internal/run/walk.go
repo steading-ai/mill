@@ -9,6 +9,7 @@ import (
 	"time"
 
 	millv1 "github.com/ivy/mill/gen/mill/v1"
+	"github.com/ivy/mill/internal/dagger"
 	"github.com/ivy/mill/internal/evidence"
 	"github.com/ivy/mill/internal/gateway"
 	"github.com/ivy/mill/internal/workspace"
@@ -22,8 +23,20 @@ import (
 // finding out: a workflow whose fifth step names an unknown harness would
 // otherwise commit and open a pull request first. The message names the
 // harness and the step, which is what a definition's author has to fix.
-func (r *Runner) requireHarnesses(s *state) error {
-	return r.requireHarnessesOf(s, s.workflow)
+//
+// The refusal is deterministic given this worker's own adapters and the
+// workflow's own definition, so the node is held rather than released back
+// to the ready set: any worker with the same adapters would refuse it the
+// same way, and it will not answer differently until the binary or the
+// workflow changes (mill#39, matching [Runner.noRepository]'s pattern).
+func (r *Runner) requireHarnesses(ctx context.Context, s *state) error {
+	err := r.requireHarnessesOf(s, s.workflow)
+	if err == nil {
+		return nil
+	}
+	reason := fmt.Sprintf("missing harness: %s", err)
+	r.hold(ctx, s, dagger.RequestID(s.run.GetId(), "missing-harness", s.run.GetGeneration()), reason)
+	return err
 }
 
 // requireHarnessesOf is that check over one definition: the run's workflow,

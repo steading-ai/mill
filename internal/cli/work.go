@@ -82,6 +82,7 @@ func bindWorkFlags(cmd *cobra.Command, opts *workOptions) {
 	f.StringVar(&opts.run.workflow, "workflow", "", "workflow to select when a run has none (default: assess the node and let the assessment name one)")
 	f.StringVar(&opts.run.tier, "tier", "", "tier that workflow stands for, which gate policies compare against (default: quick-fix, or the assessed tier)")
 	f.StringVar(&opts.run.workflowDir, "workflow-dir", "", "directory the workflow was loaded from, for a check step's scripts")
+	f.StringVar(&opts.run.workflowsRoot, "workflows-root", "", "directory of workflow subdirectories `serve` pushes to the store at every start (default: none, meaning nothing is pushed)")
 	f.StringVar(&opts.run.sidecar, "sidecar", envOr(sidecarEnv, claude.DefaultEntrypoint), "path of the harness sidecar's entrypoint (default: $"+sidecarEnv+")")
 	f.StringVar(&opts.run.origin, "origin", "", "repository a new workspace clones (default: the project's repository)")
 	f.StringVar(&opts.run.ref, "ref", "", "ref a new workspace checks out (default: the repository's own HEAD)")
@@ -164,7 +165,7 @@ func applyConfig(cmd *cobra.Command, opts *workOptions) error {
 func stringTargets(opts *workOptions) map[string]*string {
 	return map[string]*string{
 		"workflow": &opts.run.workflow, "tier": &opts.run.tier,
-		"workflow-dir": &opts.run.workflowDir, "sidecar": &opts.run.sidecar,
+		"workflow-dir": &opts.run.workflowDir, "workflows-root": &opts.run.workflowsRoot, "sidecar": &opts.run.sidecar,
 		"origin": &opts.run.origin, "ref": &opts.run.ref, "forge": &opts.run.forge,
 		"identity": &opts.run.identity, "name": &opts.run.name,
 		"workspace-dir": &opts.run.workspaceDir, "log-dir": &opts.run.logDir,
@@ -178,7 +179,7 @@ func stringTargets(opts *workOptions) map[string]*string {
 func stringValues(config Config) map[string]string {
 	return map[string]string{
 		"workflow": config.Workflow, "tier": config.Tier,
-		"workflow-dir": config.WorkflowDir, "sidecar": config.Sidecar,
+		"workflow-dir": config.WorkflowDir, "workflows-root": config.WorkflowsRoot, "sidecar": config.Sidecar,
 		"origin": config.Origin, "ref": config.Ref, "forge": config.Forge,
 		"identity": config.Identity, "name": config.Name,
 		"workspace-dir": config.WorkspaceDir, "log-dir": config.LogDir,

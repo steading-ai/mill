@@ -167,16 +167,16 @@ sidecar-build: sidecar-deps
 	pnpm --dir sidecar run build
 
 # The packages: one rpm per architecture under DESTDIR, dist/ by default,
-# from nfpm.yaml. A
+# from packaging/nfpm.yaml. A
 # package is the binary, the built sidecar with its production dependencies,
 # the workflows, the system unit and the default configuration, so a host
-# installs it with no checkout, no Go toolchain and no pnpm (contrib/rpm/).
+# installs it with no checkout, no Go toolchain and no pnpm (packaging/).
 # The architectures share one staging tree, so they are built one after the
 # other whatever -j says.
 package: sidecar-build
 	@for arch in $(PACKAGE_ARCHES); do $(MAKE) --no-print-directory package-$$arch || exit 1; done
 
-# One architecture's package, from the staging tree nfpm.yaml reads: the
+# One architecture's package, from the staging tree packaging/nfpm.yaml reads: the
 # binary cross-compiled, the sidecar's dependencies resolved for linux on
 # that CPU, and nfpm over the two. Both products are pure Go and plain
 # JavaScript, so this builds on any host.
@@ -196,7 +196,7 @@ package-%: sidecar-build
 	pnpm install --dir $(STAGE)/sidecar --prod --frozen-lockfile --prefer-offline --silent
 	rm -rf $(STAGE)/sidecar/node_modules/@anthropic-ai/claude-agent-sdk-linux-*-musl
 	mkdir -p $(DESTDIR)
-	MILL_VERSION=$(VERSION) MILL_ARCH=$* nfpm package --packager rpm --target $(DESTDIR)/
+	MILL_VERSION=$(VERSION) MILL_ARCH=$* nfpm package --config packaging/nfpm.yaml --packager rpm --target $(DESTDIR)/
 
 clean:
 	rm -f $(BINARY)

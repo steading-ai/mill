@@ -137,6 +137,8 @@ const (
 	StoreServiceGetSkillProcedure = "/mill.v1.StoreService/GetSkill"
 	// StoreServiceStatusProcedure is the fully-qualified name of the StoreService's Status RPC.
 	StoreServiceStatusProcedure = "/mill.v1.StoreService/Status"
+	// StoreServiceListRunsProcedure is the fully-qualified name of the StoreService's ListRuns RPC.
+	StoreServiceListRunsProcedure = "/mill.v1.StoreService/ListRuns"
 	// StoreServiceInspectProcedure is the fully-qualified name of the StoreService's Inspect RPC.
 	StoreServiceInspectProcedure = "/mill.v1.StoreService/Inspect"
 	// StoreServiceHistoryProcedure is the fully-qualified name of the StoreService's History RPC.
@@ -299,6 +301,17 @@ type StoreServiceClient interface {
 	// Status lists runs by state with what the ledger derives: current step,
 	// cost, and the gate a waiting run is blocked on.
 	Status(context.Context, *connect.Request[v1.StatusRequest]) (*connect.Response[v1.StatusResponse], error)
+	// ListRuns lists runs filtered and windowed, in keyset pages: the runs
+	// that ended, newest first, for a console's run history that wants
+	// enough on each row to say what a run came to without an Inspect per
+	// row. Empty statuses means every terminal state, ordered and paged by
+	// (ended_at, id); a non-terminal status among them orders and pages by
+	// (updated_at, id) instead, since ended_at is null on a live run — so a
+	// caller can list live runs through this one RPC too. Mixing a terminal
+	// and a non-terminal status in one call orders and pages the whole
+	// response by (updated_at, id), the same rule as an all-non-terminal
+	// filter.
+	ListRuns(context.Context, *connect.Request[v1.ListRunsRequest]) (*connect.Response[v1.ListRunsResponse], error)
 	// Inspect returns one run's every attempt in order with its evidence,
 	// exit, session, and usage.
 	Inspect(context.Context, *connect.Request[v1.InspectRequest]) (*connect.Response[v1.InspectResponse], error)
@@ -558,6 +571,12 @@ func NewStoreServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(storeServiceMethods.ByName("Status")),
 			connect.WithClientOptions(opts...),
 		),
+		listRuns: connect.NewClient[v1.ListRunsRequest, v1.ListRunsResponse](
+			httpClient,
+			baseURL+StoreServiceListRunsProcedure,
+			connect.WithSchema(storeServiceMethods.ByName("ListRuns")),
+			connect.WithClientOptions(opts...),
+		),
 		inspect: connect.NewClient[v1.InspectRequest, v1.InspectResponse](
 			httpClient,
 			baseURL+StoreServiceInspectProcedure,
@@ -646,6 +665,7 @@ type storeServiceClient struct {
 	putSkill              *connect.Client[v1.PutSkillRequest, v1.PutSkillResponse]
 	getSkill              *connect.Client[v1.GetSkillRequest, v1.GetSkillResponse]
 	status                *connect.Client[v1.StatusRequest, v1.StatusResponse]
+	listRuns              *connect.Client[v1.ListRunsRequest, v1.ListRunsResponse]
 	inspect               *connect.Client[v1.InspectRequest, v1.InspectResponse]
 	history               *connect.Client[v1.HistoryRequest, v1.HistoryResponse]
 	cost                  *connect.Client[v1.CostRequest, v1.CostResponse]
@@ -831,6 +851,11 @@ func (c *storeServiceClient) Status(ctx context.Context, req *connect.Request[v1
 	return c.status.CallUnary(ctx, req)
 }
 
+// ListRuns calls mill.v1.StoreService.ListRuns.
+func (c *storeServiceClient) ListRuns(ctx context.Context, req *connect.Request[v1.ListRunsRequest]) (*connect.Response[v1.ListRunsResponse], error) {
+	return c.listRuns.CallUnary(ctx, req)
+}
+
 // Inspect calls mill.v1.StoreService.Inspect.
 func (c *storeServiceClient) Inspect(ctx context.Context, req *connect.Request[v1.InspectRequest]) (*connect.Response[v1.InspectResponse], error) {
 	return c.inspect.CallUnary(ctx, req)
@@ -1014,6 +1039,17 @@ type StoreServiceHandler interface {
 	// Status lists runs by state with what the ledger derives: current step,
 	// cost, and the gate a waiting run is blocked on.
 	Status(context.Context, *connect.Request[v1.StatusRequest]) (*connect.Response[v1.StatusResponse], error)
+	// ListRuns lists runs filtered and windowed, in keyset pages: the runs
+	// that ended, newest first, for a console's run history that wants
+	// enough on each row to say what a run came to without an Inspect per
+	// row. Empty statuses means every terminal state, ordered and paged by
+	// (ended_at, id); a non-terminal status among them orders and pages by
+	// (updated_at, id) instead, since ended_at is null on a live run — so a
+	// caller can list live runs through this one RPC too. Mixing a terminal
+	// and a non-terminal status in one call orders and pages the whole
+	// response by (updated_at, id), the same rule as an all-non-terminal
+	// filter.
+	ListRuns(context.Context, *connect.Request[v1.ListRunsRequest]) (*connect.Response[v1.ListRunsResponse], error)
 	// Inspect returns one run's every attempt in order with its evidence,
 	// exit, session, and usage.
 	Inspect(context.Context, *connect.Request[v1.InspectRequest]) (*connect.Response[v1.InspectResponse], error)
@@ -1269,6 +1305,12 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(storeServiceMethods.ByName("Status")),
 		connect.WithHandlerOptions(opts...),
 	)
+	storeServiceListRunsHandler := connect.NewUnaryHandler(
+		StoreServiceListRunsProcedure,
+		svc.ListRuns,
+		connect.WithSchema(storeServiceMethods.ByName("ListRuns")),
+		connect.WithHandlerOptions(opts...),
+	)
 	storeServiceInspectHandler := connect.NewUnaryHandler(
 		StoreServiceInspectProcedure,
 		svc.Inspect,
@@ -1389,6 +1431,8 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 			storeServiceGetSkillHandler.ServeHTTP(w, r)
 		case StoreServiceStatusProcedure:
 			storeServiceStatusHandler.ServeHTTP(w, r)
+		case StoreServiceListRunsProcedure:
+			storeServiceListRunsHandler.ServeHTTP(w, r)
 		case StoreServiceInspectProcedure:
 			storeServiceInspectHandler.ServeHTTP(w, r)
 		case StoreServiceHistoryProcedure:
@@ -1552,6 +1596,10 @@ func (UnimplementedStoreServiceHandler) GetSkill(context.Context, *connect.Reque
 
 func (UnimplementedStoreServiceHandler) Status(context.Context, *connect.Request[v1.StatusRequest]) (*connect.Response[v1.StatusResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.Status is not implemented"))
+}
+
+func (UnimplementedStoreServiceHandler) ListRuns(context.Context, *connect.Request[v1.ListRunsRequest]) (*connect.Response[v1.ListRunsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.ListRuns is not implemented"))
 }
 
 func (UnimplementedStoreServiceHandler) Inspect(context.Context, *connect.Request[v1.InspectRequest]) (*connect.Response[v1.InspectResponse], error) {

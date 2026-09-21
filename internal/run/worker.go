@@ -41,6 +41,21 @@ const (
 	// DefaultStopGrace is how long a stopping worker gives its runs to
 	// reach a boundary before a second stop kills them.
 	DefaultStopGrace = 30 * time.Second
+	// BackoffBase is a node's wait after the first claim the worker could
+	// not open, doubled on every consecutive one and capped at BackoffCap.
+	// This is the safety net for refusals that are not deterministic enough
+	// to Hold (docs/sandbox.md §Reconciliation): it does not need to match
+	// the lease TTL, only to stop a bad node from being reclaimed as fast as
+	// dagger's round-robin will hand it back (mill#39).
+	BackoffBase = time.Second
+	// BackoffCap bounds BackoffBase's doubling.
+	BackoffCap = 5 * time.Minute
+	// backoffSlice is the longest one pass of the claim loop sleeps while a
+	// node is within its backoff window. A node's own window can run to
+	// BackoffCap, but the loop never sleeps past this slice in one go, so a
+	// different, unrelated node's readiness is never starved behind one
+	// node's backoff (mill#39).
+	backoffSlice = time.Second
 )
 
 // ErrKilled ends the worker when it was stopped a second time inside the
@@ -121,6 +136,22 @@ type Worker struct {
 	// that fails on this the same as any other, but the same broken project
 	// saying so on every claim is noise a person has already been told once.
 	loggedNoRepo sync.Map
+	// backoffMu guards backoff.
+	backoffMu sync.Mutex
+	// backoff is every node this worker currently owes a wait, by node id:
+	// the general safety net for a claim it could not open (mill#39). A
+	// node a deterministic refusal already Held is not claimed again
+	// regardless, so an entry surviving here past that point is only ever
+	// consulted if the Hold write itself failed.
+	backoff map[string]*nodeBackoff
+}
+
+// nodeBackoff is one node's current refusal streak: until is when the
+// worker may claim it for real again, and wait is the delay that reached
+// it, doubled on the streak's next refusal and dropped on a real takeover.
+type nodeBackoff struct {
+	until time.Time
+	wait  time.Duration
 }
 
 // NewWorker builds a worker, applying the defaults. Every run it drives
@@ -148,6 +179,7 @@ func NewWorker(options WorkerOptions) (*Worker, error) {
 		options:  options,
 		slots:    make(chan struct{}, options.Concurrency),
 		stopping: make(chan struct{}),
+		backoff:  make(map[string]*nodeBackoff),
 	}, nil
 }
 
@@ -223,6 +255,50 @@ func (w *Worker) sweep(ctx context.Context) error {
 func (w *Worker) driving(nodeID string) bool {
 	_, ok := w.inFlight.Load(nodeID)
 	return ok
+}
+
+// backoffRemaining reports how long is left of a node's current backoff
+// window, if it is in one. A window that has already elapsed is treated as
+// none: the node is due, whether or not the entry has been swept out yet.
+func (w *Worker) backoffRemaining(nodeID string) (time.Duration, bool) {
+	w.backoffMu.Lock()
+	defer w.backoffMu.Unlock()
+	b, ok := w.backoff[nodeID]
+	if !ok {
+		return 0, false
+	}
+	remaining := time.Until(b.until)
+	if remaining <= 0 {
+		return 0, false
+	}
+	return remaining, true
+}
+
+// backoffRefused starts or extends a node's backoff window after a claim
+// the worker could not open, doubling the previous wait up to BackoffCap.
+// It is only ever called once per actual refusal — [Worker.claim] never
+// hands a node to [Worker.drive] while it is still within a window — so the
+// caller's one log line per call is already one per refusal, not per cycle.
+func (w *Worker) backoffRefused(nodeID string) time.Duration {
+	w.backoffMu.Lock()
+	defer w.backoffMu.Unlock()
+	b, ok := w.backoff[nodeID]
+	if !ok {
+		b = &nodeBackoff{wait: BackoffBase}
+		w.backoff[nodeID] = b
+	} else {
+		b.wait = min(b.wait*2, BackoffCap)
+	}
+	b.until = time.Now().Add(b.wait)
+	return b.wait
+}
+
+// backoffCleared drops a node's backoff streak: a real takeover happened,
+// so whatever it owed before is paid.
+func (w *Worker) backoffCleared(nodeID string) {
+	w.backoffMu.Lock()
+	defer w.backoffMu.Unlock()
+	delete(w.backoff, nodeID)
 }
 
 // claim is the loop itself: a slot, a claim, a run, repeat.
@@ -301,6 +377,26 @@ func (w *Worker) claim(ctx context.Context, wg *sync.WaitGroup) error {
 		}
 
 		nodeID := claimed.Node.GetId()
+
+		// A node still within its own backoff window (mill#39): give it
+		// straight back, the same as the stop case above, and nothing is
+		// written to the run either. The sleep is a bounded slice of the
+		// window rather than all of it, so a node still backing off never
+		// stalls an unrelated one that is ready right now; the loop simply
+		// asks again; a window not yet elapsed is caught here again next
+		// time this same node comes back off dagger's round-robin.
+		if wait, ok := w.backoffRemaining(nodeID); ok {
+			ref := claimed.Node.GetReference()
+			if err := runner.options.Dagger.Release(ctx, claimed.Lease.GetId(),
+				daggerv1.ReleaseReason_RELEASE_REASON_PREEMPTED,
+				fmt.Sprintf("worker: backing off %s, %s left", ref, wait)); err != nil {
+				w.options.Log.Warn("releasing a node still backing off", "node", ref, "error", err)
+			}
+			<-w.slots
+			w.sleepBackoff(ctx, min(wait, backoffSlice))
+			continue
+		}
+
 		w.inFlight.Store(nodeID, struct{}{})
 		wg.Add(1)
 		go func() {
@@ -312,6 +408,18 @@ func (w *Worker) claim(ctx context.Context, wg *sync.WaitGroup) error {
 	}
 }
 
+// sleepBackoff waits out one slice of a node's backoff window, cut short by
+// a stop or a kill so neither has to wait for it.
+func (w *Worker) sleepBackoff(ctx context.Context, d time.Duration) {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-w.stopping:
+	case <-ctx.Done():
+	}
+}
+
 // drive runs one claimed node and decides what its ending means to the loop.
 //
 // Nothing a single run does stops the worker. A failed run has already
@@ -320,6 +428,7 @@ func (w *Worker) claim(ctx context.Context, wg *sync.WaitGroup) error {
 // the same: ask for more work.
 func (w *Worker) drive(ctx context.Context, claimed *dagger.Claimed) {
 	ref := claimed.Node.GetReference()
+	nodeID := claimed.Node.GetId()
 	err := w.options.Runner.ExecuteClaimed(ctx, claimed, w.stopping)
 	if ctx.Err() != nil {
 		w.killed.Store(true)
@@ -327,6 +436,7 @@ func (w *Worker) drive(ctx context.Context, claimed *dagger.Claimed) {
 	var missing *forge.NoVCSURLError
 	switch {
 	case err == nil:
+		w.backoffCleared(nodeID)
 	case errors.Is(err, ErrFenced):
 		w.options.Log.Info("fenced out; the node belongs to another worker", "node", ref)
 	case errors.As(err, &missing):
@@ -334,6 +444,15 @@ func (w *Worker) drive(ctx context.Context, claimed *dagger.Claimed) {
 			w.options.Log.Warn("a project has no repository; nodes there are held rather than claimed",
 				"project", missing.Project, "error", err)
 		}
+		// Backstop for a Hold write that itself failed (docs/sandbox.md
+		// §Reconciliation, mill#39): the node ought to be out of every
+		// ready set already, so this window is not expected to be
+		// consulted, only to matter if that write was lost.
+		w.backoffRefused(nodeID)
+	case errors.Is(err, ErrCouldNotOpen):
+		wait := w.backoffRefused(nodeID)
+		w.options.Log.Warn("could not open a claimed node; backing off before reclaiming it",
+			"node", ref, "wait", wait, "error", err)
 	default:
 		w.options.Log.Error("the run ended badly", "node", ref, "error", err)
 		w.printf("%s: %v\n", ref, err)

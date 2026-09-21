@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/gen/mill/v1/millv1connect"
@@ -499,6 +500,41 @@ func (s *StoreService) Status(ctx context.Context, req *connect.Request[millv1.S
 		return nil, connectError(err)
 	}
 	return connect.NewResponse(&millv1.StatusResponse{Runs: runs, Findings: undecodableProtos(findings)}), nil
+}
+
+// optionalTime is a proto timestamp field's Go form when nil means unset
+// rather than the zero time.
+func optionalTime(ts *timestamppb.Timestamp) *time.Time {
+	if ts == nil {
+		return nil
+	}
+	t := ts.AsTime()
+	return &t
+}
+
+// ListRuns returns one page of runs, filtered and windowed, in keyset order.
+func (s *StoreService) ListRuns(ctx context.Context, req *connect.Request[millv1.ListRunsRequest]) (*connect.Response[millv1.ListRunsResponse], error) {
+	runs, nextCursor, clamped, findings, err := s.svc.ListRuns(ctx, domain.ListRunsParams{
+		Statuses:    req.Msg.GetStatuses(),
+		Project:     req.Msg.GetProject(),
+		NodeRef:     req.Msg.GetNodeRef(),
+		WorkerRef:   req.Msg.GetWorkerRef(),
+		WorkflowID:  req.Msg.GetWorkflowId(),
+		EndedAfter:  optionalTime(req.Msg.GetEndedAfter()),
+		EndedBefore: optionalTime(req.Msg.GetEndedBefore()),
+		Limit:       req.Msg.GetLimit(),
+		Cursor:      req.Msg.GetCursor(),
+		View:        req.Msg.GetView(),
+	})
+	if err != nil {
+		return nil, connectError(err)
+	}
+	return connect.NewResponse(&millv1.ListRunsResponse{
+		Runs:         runs,
+		NextCursor:   nextCursor,
+		Findings:     undecodableProtos(findings),
+		LimitClamped: clamped,
+	}), nil
 }
 
 // Inspect returns one run's every attempt in order.

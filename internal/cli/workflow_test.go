@@ -28,6 +28,10 @@ var feature = filepath.Join("..", "..", "workflows", "feature")
 // project default assesses with (docs/domain-model.md §Selection).
 var buildWorkflow = filepath.Join("..", "..", "workflows", "build-workflow")
 
+// workflowsRoot is the directory every packaged workflow lives under in this
+// repository, the same layout --workflows-root expects on a deployed host.
+var workflowsRoot = filepath.Join("..", "..", "workflows")
+
 // mill runs the binary's command tree against a socket a service is
 // listening on, and returns everything it printed.
 type mill struct {

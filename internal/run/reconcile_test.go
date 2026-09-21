@@ -204,6 +204,44 @@ var _ = Describe("Reconciliation on resume, in the loop", Label(testsupport.DBLa
 		Expect(err).To(MatchError(run.ErrRefused))
 		Expect(err.Error()).To(ContainSubstring("mill restart"))
 		Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_FAILED), "nothing moved it")
+
+		By("and the node is held again, rather than left claimable for the same refusal")
+		node, err := f.client.Node(ctx, f.nodeRef)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(node.GetHold().GetReason()).To(ContainSubstring("mill restart"),
+			"held under the same reason the refusal gave, so a second claim does not repeat it (mill#39)")
+	})
+
+	It("refuses to drive a done run on an open node rather than resume it", func() {
+		By("given the ledger says the run is done but dagger's node was never told (Invariant 11 violated)")
+		claimed, err := f.client.Claim(ctx, f.nodeRef)
+		Expect(err).NotTo(HaveOccurred())
+		created, err := f.store.CreateRun(ctx, connect.NewRequest(&millv1.CreateRunRequest{
+			NodeId: claimed.Node.GetId(), NodeRef: claimed.Node.GetReference(), ContextId: claimed.Node.GetContextId(),
+			Generation: 1, WorkerRef: f.worker, Branch: workspace.BranchFor(claimed.Node.GetReference()),
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		runID := created.Msg.GetRun().GetId()
+		_, err = f.store.SetLease(ctx, connect.NewRequest(&millv1.SetLeaseRequest{
+			RunId: runID, LeaseId: claimed.Lease.GetId(), WorkerRef: f.worker,
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = f.store.Done(ctx, connect.NewRequest(&millv1.DoneRequest{
+			LeaseId: claimed.Lease.GetId(), RunId: runID,
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		f.expire(ctx, claimed.Lease.GetId())
+
+		By("when the node is claimed again")
+		err = f.runner(quick).Execute(ctx, f.nodeRef)
+
+		By("then it is refused rather than resumed, and held so a second claim does not repeat it")
+		Expect(err).To(MatchError(run.ErrRefused))
+		Expect(err.Error()).To(ContainSubstring("is done but"))
+		node, err := f.client.Node(ctx, f.nodeRef)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(node.GetHold().GetReason()).To(ContainSubstring("is done but"))
+		Expect(node.GetStatus()).To(Equal(daggerv1.Status_STATUS_OPEN))
 	})
 
 	// Scenario: A live run resumes at its step with a fresh slice
