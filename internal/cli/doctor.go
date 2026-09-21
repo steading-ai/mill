@@ -198,6 +198,13 @@ func runDoctor(cmd *cobra.Command, opts doctorOptions) error {
 	if config.WorkflowsRoot != "" && unset(cmd, "workflows-root") {
 		opts.workflowsRoot = config.WorkflowsRoot
 	}
+	// opts.project's flag default is already $DG_PROJECT (newDoctorCommand
+	// declares it that way), so empty here means neither the flag nor the
+	// variable supplied one — the file's project is read last, same as the
+	// socket resolver's precedence (sockets.go).
+	if opts.project == "" && unset(cmd, "project") && len(config.Projects) > 0 {
+		opts.project = config.Projects[0]
+	}
 	if err := resolveSandboxRoot(cmd, &opts.sandboxRoot, config.SandboxRoot); err != nil {
 		return err
 	}
