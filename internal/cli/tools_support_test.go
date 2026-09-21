@@ -330,14 +330,26 @@ func lines(output string) []string {
 	return out
 }
 
-// rowFor is the table row whose first cell is name.
-func rowFor(output, name string) string {
+// rowMatching is the table row whose first cell satisfies match.
+func rowMatching(output string, match func(key string) bool) string {
 	for _, line := range lines(output) {
-		if fields := strings.Fields(line); len(fields) > 0 && fields[0] == name {
+		if fields := strings.Fields(line); len(fields) > 0 && match(fields[0]) {
 			return line
 		}
 	}
 	return ""
+}
+
+// rowFor is the table row whose first cell is name.
+func rowFor(output, name string) string {
+	return rowMatching(output, func(key string) bool { return key == name })
+}
+
+// rowForStep is the table row whose first cell is a STEP key ending in
+// "/name" — a by_step key carries the workflow's name and version ahead of
+// the step name, so an exact match like rowFor's would miss it.
+func rowForStep(output, name string) string {
+	return rowMatching(output, func(key string) bool { return strings.HasSuffix(key, "/"+name) })
 }
 
 // runCLI runs one command and returns everything a shell would have seen —

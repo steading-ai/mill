@@ -544,13 +544,19 @@ func (s *StoreService) History(ctx context.Context, req *connect.Request[millv1.
 	return connect.NewResponse(&millv1.HistoryResponse{Events: events}), nil
 }
 
-// Cost rolls a window of usage up by run, workflow, step and model.
+// Cost rolls a window of usage up by run, workflow, step, model and,
+// optionally, day, and folds in the per-step funnel.
 func (s *StoreService) Cost(ctx context.Context, req *connect.Request[millv1.CostRequest]) (*connect.Response[millv1.CostResponse], error) {
-	var since time.Time
+	var since, until time.Time
 	if req.Msg.GetSince() != nil {
 		since = req.Msg.GetSince().AsTime()
 	}
-	cost, err := s.svc.Cost(ctx, domain.CostParams{Since: since, Project: req.Msg.GetProject()})
+	if req.Msg.GetUntil() != nil {
+		until = req.Msg.GetUntil().AsTime()
+	}
+	cost, err := s.svc.Cost(ctx, domain.CostParams{
+		Since: since, Until: until, Project: req.Msg.GetProject(), Bucket: req.Msg.GetBucket(),
+	})
 	if err != nil {
 		return nil, connectError(err)
 	}
@@ -559,6 +565,7 @@ func (s *StoreService) Cost(ctx context.Context, req *connect.Request[millv1.Cos
 		ByWorkflow: cost.ByWorkflow,
 		ByStep:     cost.ByStep,
 		ByModel:    cost.ByModel,
+		ByDay:      cost.ByDay,
 	}), nil
 }
 

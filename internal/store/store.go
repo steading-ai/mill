@@ -2427,32 +2427,50 @@ func (s *Store) History(ctx context.Context, p InspectParams) ([]*millv1.Event, 
 type CostParams struct {
 	// Since bounds the window below. Zero means every row ever recorded.
 	Since time.Time
+	// Until bounds the window above. Zero means no upper bound.
+	Until time.Time
 	// Project narrows to one dagger project. Empty means every project.
 	Project string
+	// Bucket says whether, and how, to also group the window over time.
+	Bucket millv1.TimeBucket
 }
 
-// Cost is a window of usage rolled up four ways at once. One pass over the
-// rows answers "what did this run cost", "what does this workflow cost",
-// "which step is expensive" and "which model billed", which is the whole of
-// what docs/ledger.md §"Queries the CLI needs" asks of `cost --since`.
+// Cost is a window of usage rolled up four ways at once, plus the per-step
+// funnel and, when asked, a day bucket. One pass over the rows answers "what
+// did this run cost", "what does this workflow cost", "which step is
+// expensive, and where does it die" and "which model billed", which is the
+// whole of what docs/ledger.md §"Queries the CLI needs" asks of
+// `cost --since`.
 type Cost struct {
 	// ByRun is keyed by node reference, ByWorkflow by name and version,
-	// ByStep by step name, ByModel by model.
-	ByRun, ByWorkflow, ByStep, ByModel []*millv1.CostBucket
+	// ByStep by workflow name, version and step name, ByModel by model,
+	// ByDay by UTC calendar date. ByDay is empty unless CostParams.Bucket
+	// asked for it.
+	ByRun, ByWorkflow, ByStep, ByModel, ByDay []*millv1.CostBucket
 }
 
-// Cost rolls a window of usage up by run, workflow, step and model.
+// Cost rolls a window of usage up by run, workflow, step, model and,
+// optionally, day, and folds in the per-step funnel. Two queries — usage is
+// windowed on when it was recorded, the funnel on when its step runs
+// started, because a check or gate step never bills usage and would
+// otherwise have no funnel at all — but still the one pass over each this
+// type's doc comment promises: nothing here re-reads a row.
 func (s *Store) Cost(ctx context.Context, p CostParams) (*Cost, error) {
-	params := UsageSinceParams{Project: nullable(p.Project)}
+	q := New(s.pool)
+	window := UsageSinceParams{Project: nullable(p.Project)}
 	if !p.Since.IsZero() {
 		since := p.Since
-		params.Since = &since
+		window.Since = &since
 	}
-	rows, err := New(s.pool).UsageSince(ctx, params)
+	if !p.Until.IsZero() {
+		until := p.Until
+		window.Until = &until
+	}
+	rows, err := q.UsageSince(ctx, window)
 	if err != nil {
 		return nil, fmt.Errorf("usage rollup: %w", err)
 	}
-	byRun, byWorkflow, byStep, byModel := newRollup(), newRollup(), newRollup(), newRollup()
+	byRun, byWorkflow, byStep, byModel, byDay := newRollup(), newRollup(), newRollup(), newRollup(), newRollup()
 	for _, row := range rows {
 		counts := &millv1.ModelTotals{
 			Model:            row.Model,
@@ -2462,26 +2480,139 @@ func (s *Store) Cost(ctx context.Context, p CostParams) (*Cost, error) {
 			CacheReadTokens:  row.CacheReadTokens,
 			CacheWriteTokens: row.CacheWriteTokens,
 		}
+		key := workflowKey(row.WorkflowName, row.WorkflowVersion)
 		byRun.add(row.NodeRef, counts)
-		byWorkflow.add(workflowKey(row), counts)
-		byStep.add(row.StepName, counts)
+		byWorkflow.add(key, counts)
+		byStep.add(key+"/"+row.StepName, counts)
 		byModel.add(row.Model, counts)
+		if p.Bucket == millv1.TimeBucket_TIME_BUCKET_DAY {
+			byDay.add(dayKey(row.RecordedAt), counts)
+		}
 	}
-	return &Cost{
+
+	stepRows, err := q.StepRunsSince(ctx, StepRunsSinceParams(window))
+	if err != nil {
+		return nil, fmt.Errorf("step run funnel: %w", err)
+	}
+
+	cost := &Cost{
 		ByRun:      byRun.buckets(),
 		ByWorkflow: byWorkflow.buckets(),
-		ByStep:     byStep.buckets(),
+		ByStep:     stepBuckets(byStep, foldFunnel(stepRows)),
 		ByModel:    byModel.buckets(),
-	}, nil
+	}
+	if p.Bucket == millv1.TimeBucket_TIME_BUCKET_DAY {
+		cost.ByDay = byDay.buckets()
+	}
+	return cost, nil
 }
 
-// workflowKey names the workflow version a usage row was billed under. A run
-// still selecting has none, and says so rather than rolling up under "".
-func workflowKey(row UsageSinceRow) string {
-	if row.WorkflowName == nil {
+// dayKey is a timestamp's UTC calendar day, the key `mill cost --bucket day`
+// groups usage under.
+func dayKey(t time.Time) string {
+	return t.UTC().Format("2006-01-02")
+}
+
+// workflowKey names a workflow version: what usage and step runs are billed
+// or attempted under. A run still selecting has none, and says so rather
+// than rolling up under "".
+func workflowKey(name, version *string) string {
+	if name == nil {
 		return "(selecting)"
 	}
-	return text(row.WorkflowName) + "@" + short(text(row.WorkflowVersion))
+	return text(name) + "@" + short(text(version))
+}
+
+// foldFunnel turns a window's step runs into per-step counts: how many runs
+// reached a step, passed it, died at it (its run's last-started step run,
+// by started_at, whose run ended failed or abandoned — docs/domain-model.md
+// on why the last attempt is not the same thing), needed more than one
+// attempt, and how many revise rounds it answered, plus every attempt seen.
+// Keyed the same way by_step's usage rollup is, so the two merge by key.
+func foldFunnel(rows []StepRunsSinceRow) map[string]*millv1.StepCounts {
+	counts := map[string]*millv1.StepCounts{}
+	get := func(key string) *millv1.StepCounts {
+		c, ok := counts[key]
+		if !ok {
+			c = &millv1.StepCounts{}
+			counts[key] = c
+		}
+		return c
+	}
+
+	type attempts struct {
+		count  int64
+		closed bool
+	}
+	seen := map[string]map[string]*attempts{} // run id -> step key -> attempts
+	last := map[string]StepRunsSinceRow{}     // run id -> its last-started row
+
+	for _, row := range rows {
+		key := workflowKey(row.WorkflowName, row.WorkflowVersion) + "/" + row.StepName
+		byStep, ok := seen[row.RunID]
+		if !ok {
+			byStep = map[string]*attempts{}
+			seen[row.RunID] = byStep
+		}
+		a, ok := byStep[key]
+		if !ok {
+			a = &attempts{}
+			byStep[key] = a
+		}
+		a.count++
+		if row.Status == "closed" {
+			a.closed = true
+		}
+		if row.FeedbackFrom != nil && row.FeedbackFromStep != nil {
+			target := workflowKey(row.WorkflowName, row.WorkflowVersion) + "/" + *row.FeedbackFromStep
+			get(target).Revises++
+		}
+		last[row.RunID] = row
+	}
+	for _, byStep := range seen {
+		for key, a := range byStep {
+			c := get(key)
+			c.Reached++
+			if a.closed {
+				c.Passed++
+			}
+			if a.count > 1 {
+				c.Retried++
+			}
+			c.Attempts += a.count
+		}
+	}
+	for _, row := range last {
+		if row.RunStatus != "failed" && row.RunStatus != "abandoned" {
+			continue
+		}
+		key := workflowKey(row.WorkflowName, row.WorkflowVersion) + "/" + row.StepName
+		get(key).Died++
+	}
+	return counts
+}
+
+// stepBuckets merges by_step's usage rollup with its funnel counts, so a
+// step with counts but no billed usage — a check or a gate, which never
+// runs a model — still gets a bucket, rather than vanishing from the funnel
+// the way it would if by_step were derived from usage rows alone.
+func stepBuckets(usage *rollup, counts map[string]*millv1.StepCounts) []*millv1.CostBucket {
+	buckets := usage.buckets()
+	byKey := make(map[string]*millv1.CostBucket, len(buckets))
+	for _, bucket := range buckets {
+		byKey[bucket.GetKey()] = bucket
+	}
+	for key, c := range counts {
+		bucket, ok := byKey[key]
+		if !ok {
+			bucket = &millv1.CostBucket{Key: key}
+			buckets = append(buckets, bucket)
+			byKey[key] = bucket
+		}
+		bucket.Counts = c
+	}
+	sort.Slice(buckets, func(i, j int) bool { return buckets[i].GetKey() < buckets[j].GetKey() })
+	return buckets
 }
 
 // short is a content hash as a human reads it.

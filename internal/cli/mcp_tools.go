@@ -238,16 +238,23 @@ already ended. ` + runIdiom,
 		},
 		{
 			name: "cost",
-			description: `Roll a window of usage up four ways: by run, by workflow version, by step
-name, and by model. Counts, never currency: the ledger records tokens and a
-rate table is applied by whoever wants money.`,
+			description: `Roll a window of usage up by run, by workflow version, by step name, and by
+model — and, with bucket "day", by UTC calendar day too. Counts, never
+currency: the ledger records tokens and a rate table is applied by whoever
+wants money. by_step also carries the funnel: how many runs reached each
+step, passed it, died there, needed more than one attempt, and how many
+revise rounds it answered.`,
 			schema: objectSchema(map[string]any{
 				"since":   stringProp("Only usage recorded within this window, such as 24h or 7d. Empty means everything."),
+				"until":   stringProp("Exclude usage within this window of now, such as 1h. Empty means up to now."),
+				"bucket":  stringProp(`Also group the window over time: "day". Empty means no time grouping.`),
 				"project": stringProp("Only runs on nodes in this dagger project."),
 			}),
 			call: func(ctx context.Context, raw json.RawMessage) (any, error) {
 				var args struct {
 					Since   string `json:"since"`
+					Until   string `json:"until"`
+					Bucket  string `json:"bucket"`
 					Project string `json:"project"`
 				}
 				if err := decodeArgs(raw, &args); err != nil {
@@ -261,6 +268,18 @@ rate table is applied by whoever wants money.`,
 					}
 					request.Since = timestamp(time.Now().Add(-window))
 				}
+				if args.Until != "" {
+					window, err := parseWindow(args.Until)
+					if err != nil {
+						return nil, err
+					}
+					request.Until = timestamp(time.Now().Add(-window))
+				}
+				bucket, err := parseBucket(args.Bucket)
+				if err != nil {
+					return nil, err
+				}
+				request.Bucket = bucket
 				res, err := storeClient(s.opts.socket).Cost(ctx, connect.NewRequest(request))
 				if err != nil {
 					return nil, err

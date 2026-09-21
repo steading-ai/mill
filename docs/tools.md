@@ -337,10 +337,13 @@ WHEN                  OP              AFTER
 
 One window of usage rolled up four ways, because "what did this cost" is
 asked of a run, of a workflow, of a step and of a model. `--since` takes a
-window such as `24h` or `7d`.
+window such as `24h` or `7d`; `--until` takes the same kind of window, this
+long ago, for a bound below now instead of below `--since`. `--bucket day`
+adds a fifth table, one row per UTC calendar day, for a window wider than a
+glance.
 
 ```
-$ mill cost --since 7d
+$ mill cost --since 7d --bucket day
 RUN        SOURCE   INPUT   OUTPUT  CACHE READ  CACHE WRITE
 millcli#1  sdk      184213  9820    1204331     0
 millcli#1  gateway  184301  9820    1204331     0
@@ -349,13 +352,18 @@ WORKFLOW                SOURCE   INPUT   OUTPUT  CACHE READ  CACHE WRITE
 quick-fix@fb2764fd70fd  sdk      184213  9820    1204331     0
 quick-fix@fb2764fd70fd  gateway  184301  9820    1204331     0
 
-STEP       SOURCE   INPUT   OUTPUT  CACHE READ  CACHE WRITE
-implement  sdk      184213  9820    1204331     0
-implement  gateway  184301  9820    1204331     0
+STEP                             SOURCE   INPUT   OUTPUT  CACHE READ  CACHE WRITE  REACHED  PASSED  DIED  RETRIED  REVISES  ATTEMPTS
+quick-fix@fb2764fd70fd/implement sdk      184213  9820    1204331     0            12       11      1     3        2        15
+quick-fix@fb2764fd70fd/implement gateway  184301  9820    1204331     0            12       11      1     3        2        15
+quick-fix@fb2764fd70fd/lint      -        0       0       0           0            12       12      0     0        0        12
 
 MODEL                       SOURCE   INPUT   OUTPUT  CACHE READ  CACHE WRITE
 claude-sonnet-4-5           sdk      184213  9820    1204331     0
 claude-sonnet-4-5-20250929  gateway  184301  9820    1204331     0
+
+DAY         SOURCE   INPUT   OUTPUT  CACHE READ  CACHE WRITE
+2026-09-20  sdk      90112   4210    602165      0
+2026-09-21  sdk      94101   5610    602166      0
 ```
 
 SOURCE is who counted: `sdk` is the adapter's report of what the harness
@@ -371,6 +379,20 @@ model by its resolved id.
 The MODEL table is summed from the rows the STEP table renders — every step's
 bucket carries its own totals per model and per source — so the two tables
 agree by construction and one of them cannot come back empty under the other.
+
+STEP is keyed by `<workflow>@<version>/<step>`, not by step name alone: two
+versions of one workflow are two groups, because a step's shape — and so
+what it costs and how often it dies — can change between them. Its rows also
+carry the funnel a step run goes through, counted from `step_runs` in the
+window rather than from `usage`, so a check or gate step that never bills a
+model still gets a row — SOURCE reads `-` and the four token columns read
+`0`, but REACHED through ATTEMPTS are real. REACHED is runs that attempted
+the step at least once; PASSED is runs with a closed attempt; DIED is runs
+whose *last-started* step run — not their last failed one — was this step,
+on a run that ended failed or abandoned; RETRIED is runs that needed more
+than one attempt; REVISES is attempts elsewhere in the window whose
+feedback answers this step's verdict; ATTEMPTS is every attempt, retried or
+not.
 
 ## workflow show
 

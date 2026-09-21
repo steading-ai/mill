@@ -356,7 +356,7 @@ var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 			out := r.cli(ctx, "cost")
 
 			Expect(rowFor(out, "millcli#5")).To(ContainSubstring("100"))
-			Expect(rowFor(out, "implement")).To(ContainSubstring("100"))
+			Expect(rowForStep(out, "implement")).To(ContainSubstring("100"))
 			Expect(rowFor(out, "claude-sonnet")).To(ContainSubstring("20"))
 			Expect(out).To(ContainSubstring("quick-fix@"))
 		})
@@ -396,6 +396,151 @@ var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 			// And the two tables agree: 300+7+500+90 either way.
 			Expect(inputTotal(section(out, "MODEL"))).To(Equal(inputTotal(section(out, "STEP"))))
 			Expect(inputTotal(section(out, "MODEL"))).To(Equal(int64(897)))
+		})
+
+		It("buckets by day, summing to the MODEL section's totals, and only when --bucket day is asked", func() {
+			r := openRun(ctx, "millcli#27", nodeID(27))
+			sr := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+			record(ctx, r, sr, map[string]int64{"claude-sonnet": 42})
+
+			out := r.cli(ctx, "cost", "--since", "7d", "--bucket", "day")
+
+			// Nothing in this suite can backdate usage.recorded_at (it is
+			// always the database's now()), so everything lands on today:
+			// one DAY row.
+			day := section(out, "DAY")
+			Expect(lines(day)).To(HaveLen(1), out)
+			Expect(inputTotal(day)).To(Equal(inputTotal(section(out, "MODEL"))))
+
+			without := r.cli(ctx, "cost", "--since", "7d")
+			Expect(section(without, "DAY")).To(BeEmpty(), without)
+		})
+
+		It("excludes usage recorded within --until of now, and includes it without", func() {
+			r := openRun(ctx, "millcli#28", nodeID(28))
+			sr := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+			record(ctx, r, sr, map[string]int64{"claude-sonnet": 55})
+
+			excluded := r.cli(ctx, "cost", "--since", "7d", "--until", "1h")
+			Expect(rowFor(excluded, "millcli#28")).To(BeEmpty(), excluded)
+
+			included := r.cli(ctx, "cost", "--since", "7d")
+			Expect(rowFor(included, "millcli#28")).NotTo(BeEmpty(), included)
+		})
+
+		// "Died at" is the run's last-started step run, not the last failed
+		// one — putting the second, failing review attempt after
+		// implement's revision is what makes review, not implement, the run's
+		// last-started step run.
+		It("counts reached, died, retried and revises on a run that revises then dies", func() {
+			m := serving(ctx)
+			definition := &millv1.Workflow{Name: "funnel", Scope: millv1.Scope_SCOPE_ORG, Steps: []*millv1.Step{
+				{Name: "gather-context"}, {Name: "implement"}, {Name: "review"},
+			}}
+			r := openRunFollowing(ctx, m, definition, "millcli#29", nodeID(29))
+
+			r.closeGatherContext(ctx, "sha256:"+strings.Repeat("1", 64))
+
+			implement1 := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+			r.close(ctx, implement1, artifactEvidence("sha256:"+strings.Repeat("2", 64)))
+
+			// A reviewer's revise verdict fails its own attempt — a verdict
+			// closes a step only when it approves (internal/domain/evidence.go)
+			// — and the engine's own revise flow (internal/run/revise.go)
+			// sends the work back by starting a fresh attempt at the target
+			// step with FeedbackFrom naming the failing attempt.
+			review1 := r.start(ctx, "review", millv1.StepKind_STEP_KIND_SKILL)
+			_, err := r.store.FailStepRun(ctx, connect.NewRequest(&millv1.FailStepRunRequest{
+				LeaseId: r.lease, StepRunId: review1.GetId(), Exit: processExit(1),
+			}))
+			Expect(err).NotTo(HaveOccurred())
+
+			started, err := r.store.StartStepRun(ctx, connect.NewRequest(&millv1.StartStepRunRequest{
+				LeaseId: r.lease, RunId: r.run.GetId(), StepName: "implement",
+				Kind: millv1.StepKind_STEP_KIND_SKILL, WorkerRef: "spec@host",
+				FeedbackFrom: review1.GetId(),
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			r.close(ctx, started.Msg.GetStepRun(), artifactEvidence("sha256:"+strings.Repeat("3", 64)))
+
+			r.fail(ctx, "review", 1)
+
+			_, err = r.store.Fail(ctx, connect.NewRequest(&millv1.FailRequest{
+				LeaseId: r.lease, RunId: r.run.GetId(), Reason: "review found a terminal problem",
+			}))
+			Expect(err).NotTo(HaveOccurred())
+
+			out := r.cli(ctx, "cost", "--since", "7d")
+			step := section(out, "STEP")
+
+			Expect(strings.Fields(rowForStep(step, "gather-context"))[1:]).To(Equal(
+				[]string{"-", "0", "0", "0", "0", "1", "1", "0", "0", "0", "1"}))
+			Expect(strings.Fields(rowForStep(step, "implement"))[1:]).To(Equal(
+				[]string{"-", "0", "0", "0", "0", "1", "1", "0", "1", "0", "2"}))
+			Expect(strings.Fields(rowForStep(step, "review"))[1:]).To(Equal(
+				[]string{"-", "0", "0", "0", "0", "1", "0", "1", "1", "1", "2"}))
+		})
+
+		// Four runs of feature@v1, three of them failing at review-plan
+		// after exhausting retries, plus a run of feature@v2 that survives.
+		It("keeps two workflow versions' STEP groups separate, reproducing the scenario's own died count", func() {
+			m := serving(ctx)
+			v1 := &millv1.Workflow{Name: "feature", Scope: millv1.Scope_SCOPE_ORG, Steps: []*millv1.Step{
+				{Name: "gather-context"}, {Name: "implement"}, {Name: "review-plan"},
+			}}
+
+			dies := func(nodeRef, node string) *runs {
+				r := openRunFollowing(ctx, m, v1, nodeRef, node)
+				r.closeGatherContext(ctx, "sha256:"+strings.Repeat("a", 64))
+				implement := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+				r.close(ctx, implement, artifactEvidence("sha256:"+strings.Repeat("b", 64)))
+				r.fail(ctx, "review-plan", 1)
+				r.fail(ctx, "review-plan", 1)
+				_, err := r.store.Fail(ctx, connect.NewRequest(&millv1.FailRequest{
+					LeaseId: r.lease, RunId: r.run.GetId(), Reason: "exhausted retries",
+				}))
+				Expect(err).NotTo(HaveOccurred())
+				return r
+			}
+			first := dies("millcli#30", nodeID(30))
+			dies("millcli#31", nodeID(31))
+			dies("millcli#32", nodeID(32))
+			v1Version := first.workflow.GetVersion()
+
+			survives := openRunFollowing(ctx, m, v1, "millcli#33", nodeID(33))
+			survives.closeGatherContext(ctx, "sha256:"+strings.Repeat("c", 64))
+			implement := survives.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+			survives.close(ctx, implement, artifactEvidence("sha256:"+strings.Repeat("d", 64)))
+			reviewPlan := survives.start(ctx, "review-plan", millv1.StepKind_STEP_KIND_SKILL)
+			survives.close(ctx, reviewPlan, approveEvidence())
+
+			v2 := &millv1.Workflow{Name: "feature", Scope: millv1.Scope_SCOPE_ORG, Steps: []*millv1.Step{
+				{Name: "gather-context"}, {Name: "implement"},
+				{Name: "review-plan", Retries: 5},
+			}}
+			secondVersion := openRunFollowing(ctx, m, v2, "millcli#34", nodeID(34))
+			v2Version := secondVersion.workflow.GetVersion()
+			secondVersion.closeGatherContext(ctx, "sha256:"+strings.Repeat("e", 64))
+			implement2 := secondVersion.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+			secondVersion.close(ctx, implement2, artifactEvidence("sha256:"+strings.Repeat("f", 64)))
+			reviewPlan2 := secondVersion.start(ctx, "review-plan", millv1.StepKind_STEP_KIND_SKILL)
+			secondVersion.close(ctx, reviewPlan2, approveEvidence())
+
+			out := m.run(ctx, "cost", "--since", "7d")
+			step := section(out, "STEP")
+
+			v1Key := func(name string) string { return "feature@" + shortVersion(v1Version) + "/" + name }
+			v2Key := func(name string) string { return "feature@" + shortVersion(v2Version) + "/" + name }
+
+			Expect(strings.Fields(rowFor(step, v1Key("gather-context")))[1:]).To(Equal(
+				[]string{"-", "0", "0", "0", "0", "4", "4", "0", "0", "0", "4"}))
+			Expect(strings.Fields(rowFor(step, v1Key("implement")))[1:]).To(Equal(
+				[]string{"-", "0", "0", "0", "0", "4", "4", "0", "0", "0", "4"}))
+			Expect(strings.Fields(rowFor(step, v1Key("review-plan")))[1:]).To(Equal(
+				[]string{"-", "0", "0", "0", "0", "4", "1", "3", "3", "0", "7"}))
+
+			Expect(strings.Fields(rowFor(step, v2Key("review-plan")))[1:]).To(Equal(
+				[]string{"-", "0", "0", "0", "0", "1", "1", "0", "0", "0", "1"}))
 		})
 	})
 
@@ -448,10 +593,19 @@ var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 
 			By("and mill cost lists it beside the SDK's row for the same turn")
 			out := r.cli(ctx, "cost")
-			steps := section(out, "STEP")
-			Expect(lines(steps)).To(HaveLen(2), out)
-			Expect(lines(steps)[0]).To(MatchRegexp(`implement\s+sdk\s+100\s+20\s+1000`))
-			Expect(lines(steps)[1]).To(MatchRegexp(`implement\s+gateway\s+102\s+20\s+1000`))
+			// The STEP section now also carries a row for every step that
+			// ran with no usage at all (select, toolchain) — the funnel's
+			// whole point — so filter down to implement's own rows rather
+			// than asserting the section's total length.
+			var implement []string
+			for _, line := range lines(section(out, "STEP")) {
+				if fields := strings.Fields(line); len(fields) > 0 && strings.HasSuffix(fields[0], "/implement") {
+					implement = append(implement, line)
+				}
+			}
+			Expect(implement).To(HaveLen(2), out)
+			Expect(implement[0]).To(MatchRegexp(`implement\s+sdk\s+100\s+20\s+1000`))
+			Expect(implement[1]).To(MatchRegexp(`implement\s+gateway\s+102\s+20\s+1000`))
 			models := section(out, "MODEL")
 			Expect(rowFor(models, "claude-sonnet-4-5")).To(ContainSubstring("sdk"))
 			Expect(rowFor(models, "claude-sonnet-4-5-20250929")).To(ContainSubstring("gateway"))
@@ -485,6 +639,40 @@ var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 		})
 	})
 })
+
+// artifactEvidence closes a step generically, the way closeGatherContext
+// closes gather-context, for a step this suite has no dedicated helper for.
+func artifactEvidence(digest string) *millv1.CloseStepRunRequest {
+	return &millv1.CloseStepRunRequest{
+		Evidence: &millv1.Evidence{
+			Kind:       millv1.EvidenceKind_EVIDENCE_KIND_ARTIFACT,
+			Value:      &millv1.Evidence_Artifact{Artifact: digest},
+			VerifiedBy: "spec",
+		},
+	}
+}
+
+// approveEvidence closes a review step clean.
+func approveEvidence() *millv1.CloseStepRunRequest {
+	return &millv1.CloseStepRunRequest{
+		Evidence: &millv1.Evidence{
+			Kind: millv1.EvidenceKind_EVIDENCE_KIND_VERDICT,
+			Value: &millv1.Evidence_Verdict{Verdict: &millv1.Verdict{
+				Decision: millv1.VerdictDecision_VERDICT_DECISION_APPROVE,
+			}},
+		},
+	}
+}
+
+// shortVersion mirrors internal/store's short(): a content hash as a
+// by_step key carries it, so a spec that only has the full version from
+// PutWorkflow's response can still compute the key it expects.
+func shortVersion(version string) string {
+	if len(version) > 12 {
+		return version[:12]
+	}
+	return version
+}
 
 // record puts one attempt's usage in the ledger, one entry per model, as a
 // session's terminal record does.
