@@ -13,6 +13,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/ivy/mill/internal/cli"
+	"github.com/ivy/mill/internal/testsupport"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/machine/cache"
 	"github.com/ivy/mill/internal/workspace/machine/driver"
@@ -169,6 +170,8 @@ var _ = Describe("mill cache prune on the sandbox volume", Label("live"), Serial
 		if manager, err := host.Container(ctx); err == nil && manager == driver.ContainerNspawn {
 			Expect(driver.EnsureNestedRoot(ctx, host, driver.NestedRoot)).To(Succeed())
 			sandbox = driver.NestedRoot
+		} else {
+			testsupport.SkipUnlessSandboxReady(ctx, host, sandbox, driver.DefaultMachines)
 		}
 		root, err := os.MkdirTemp(sandbox, "cache-prune-live-*")
 		Expect(err).NotTo(HaveOccurred(), "%s is not this account's", sandbox)
