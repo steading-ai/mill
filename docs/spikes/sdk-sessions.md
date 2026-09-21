@@ -349,21 +349,23 @@ prompt that would otherwise wait for a human who is not there.
 ## Addendum, 2026-09-21 — what `includePartialMessages`/`forwardSubagentText` forward
 
 R-24's full-fidelity node (mill#15) needed the exact shape of a streamed
-delta and a folded subagent event before wiring the sidecar to them. Unlike
-Q1-Q6, this addendum is not a script run against a live session: it runs
-unattended, with no approval available, and this host's Claude credentials
-are the same ones a real session would bill and act as — spending them on a
-throwaway spike query is not this node's call to make alone. What follows is
-instead read directly off the pinned SDK's own shipped type declarations
-(`@anthropic-ai/claude-agent-sdk` **0.3.263**, the same pin as the rest of
-this document, `sdk.d.ts`) and the `@anthropic-ai/sdk` **0.122.0** beta
-message types it re-exports — an observation of what the package ships and
-documents, not an assumption about it, just sourced from the artifact
-instead of a transcript. The sidecar's own behavior against these shapes is
-then exercised by a fake harness standing in for the SDK
+delta and a folded subagent event before wiring the sidecar to them. Like
+Q1-Q6, this addendum is a script run against a live session — the sidecar
+built against these flags, pointed at the real, pinned SDK
+(`@anthropic-ai/claude-agent-sdk` **0.3.263**) through this step's own
+gateway token, spending exactly what one session costs. What follows starts
+from the pinned SDK's own shipped type declarations (`sdk.d.ts`) and the
+`@anthropic-ai/sdk` **0.122.0** beta message types it re-exports, and is then
+confirmed against a real turn — one that streamed thinking, streamed text,
+and ran a subagent through the `Task` tool — in "Confirmed against a live
+session" below. The sidecar's own behavior against these shapes is also
+exercised by a fake harness standing in for the SDK
 (`sidecar/spec/fake_sdk.ts`'s `streamEvent`/`messageStart`/`blockStart`/
 `textDelta`/`thinkingDelta`/`blockStop` helpers, built from this same
-reading) and proved end-to-end by `sidecar/streaming_test.go`.
+reading) and proved end-to-end by
+`sidecar/streaming_test.go`, which is the coverage that runs on every build;
+the live run is what grounds that fake in the SDK's real behavior rather
+than in its own types read twice.
 
 **`includePartialMessages`**, `sdk.d.ts`:
 
@@ -439,12 +441,49 @@ without the flag.
 it grounds the two fields it specifies as sidecar output (`Text`/`Thinking`'s
 `block_id`/`delta`/`final`, and `Event`'s `parent_call_id`) in the SDK's own
 documented shape rather than in an inference from `session.ts`'s existing
-`"assistant"`/`"user"` handling alone. One caveat worth carrying forward: the
-type declarations promise the *shape*, not timing guarantees beyond
-"during streaming" — how a `content_block_delta` interleaves with a
-concurrent subagent's own stream, and whether index reuse across blocks in
-one message is possible, remain open questions a live multi-block,
-multi-subagent session would settle. `sidecar/streaming_test.go`'s specs
-exercise the shape above against a fake harness built from this reading, not
-a live one; a follow-up spike script under `spikes/sdk/`, run with
-deliberate, budgeted API spend, is the natural way to close that gap.
+`"assistant"`/`"user"` handling alone.
+
+**Confirmed against a live session.** Run once, against the built sidecar
+with both flags on (an ad hoc spec, deleted after its output was read): one
+turn with a prompt asking for reasoning before an answer, then a `Task` call
+to a subagent. The sidecar's own translated `harness.v1.Event` stream — the
+code this node ships, not the SDK's raw JSON — showed:
+
+- **`block_id` is `<message id>:<index>`**, exactly `StreamBlocks.blockId`'s
+  own scheme: a thinking block opened as `msg_011CfG…ghH:0`, the text block
+  that followed it in the same message as `msg_011CfG…ghH:1`.
+- **A thinking block streamed two deltas (`delta: true`, `final: false`)
+  then one empty `final: true` record on the same block id** — the model's
+  reasoning for this prompt was brief enough that both deltas carried little
+  text, but the shape (deltas, then an empty final closing the same id) is
+  exactly `docs/activity.md`'s design and exactly what the type declarations
+  above promise.
+- **The completed message's own `usage` arrived mid-turn, before the tool
+  call it was for had a result** — confirming the node's own note: several
+  `usage` events appeared between the subagent's tool calls and its final
+  result, not just once at the end.
+- **A subagent's tool calls, results and usage all carried `parent_call_id`
+  set to the `Agent` call's own `call_id`**, while the `Agent` call itself
+  and the `tool_result` that answered it carried none — the fold
+  `docs/activity.md` §Turns and `streaming_test.go`'s fake-harness spec
+  describe, reproduced against the real SDK: `TOOLCALL parent="" name=Agent
+  call=toolu_01Dwd…`, then `TOOLCALL parent="toolu_01Dwd…" name=Glob …`,
+  `TOOLRESULT parent="toolu_01Dwd…" …`, `USAGE parent="toolu_01Dwd…"` for
+  everything the subagent itself did, and finally `TOOLRESULT parent=""
+  call=toolu_01Dwd…` answering the top-level `Agent` call.
+- **The subagent in this run reported its finding through the `Agent` call's
+  own `tool_result` rather than a `text` block of its own** — this prompt's
+  subagent answered in one shot with no intermediate narration, so no
+  subagent-tagged `Event_Text` appeared to confirm `forwardSubagentText`'s
+  text-delta path specifically. What was confirmed instead is that
+  `parent_tool_use_id` tags every message kind the same way regardless of
+  content (tool calls, results, and usage all got it); since a `text`/
+  `thinking` block under a subagent travels through the identical
+  `content_block_delta`/`parent_tool_use_id` machinery already confirmed
+  above for the top-level turn's own deltas, a subagent that narrates in
+  words would fold the same way, but this run did not produce one to show
+  it firsthand.
+
+No surprise turned up: the fake harness's `streamEvent` helpers, and the
+`sidecar/streaming_test.go` specs built against them, already matched what
+the real SDK sent.
