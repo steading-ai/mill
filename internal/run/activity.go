@@ -682,6 +682,8 @@ func RenderActivity(a *millv1.Activity) string {
 			fmt.Fprintf(&b, "%s check failed: %s\n", stamp, reason)
 		}
 		return b.String()
+	case *millv1.Activity_Compacted:
+		return body.Compacted.GetText()
 	default:
 		return ""
 	}

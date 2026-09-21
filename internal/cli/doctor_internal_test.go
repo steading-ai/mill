@@ -6,10 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/ivy/mill/internal/run"
 	"github.com/ivy/mill/internal/workspace/machine/cache"
 	"github.com/ivy/mill/internal/workspace/machine/driver"
 )
@@ -161,6 +163,55 @@ var _ = Describe("The doctor's space probe", Label("unit"), func() {
 		result = probeSpace(opts, fake)
 		Expect(result.OK).To(BeFalse())
 		Expect(result.Reason).To(ContainSubstring("low watermark 5% is below the high watermark 50G"))
+	})
+})
+
+var _ = Describe("The doctor's activity probe", Label("unit"), func() {
+	It("passes with 'no log directory configured' when --log-dir is empty", func() {
+		result := probeActivity(doctorOptions{})
+
+		Expect(result.OK).To(BeTrue())
+		Expect(result.Name).To(Equal("activity"))
+		Expect(result.Reason).To(Equal("no log directory configured"))
+	})
+
+	It("passes naming nothing held, and the policy in force, on an empty directory", func() {
+		dir := GinkgoT().TempDir()
+
+		result := probeActivity(doctorOptions{logDir: dir, retention: run.Policy{TwinDays: 7}})
+
+		Expect(result.OK).To(BeTrue())
+		Expect(result.Reason).To(Equal(dir + ": nothing held; policy twin_days=7"))
+	})
+
+	It("counts frames and twins, sums their bytes, and reports the oldest one's age", func() {
+		dir := GinkgoT().TempDir()
+		framePath := run.FramePath(dir, "run-1", "implement", 1)
+		twinPath := run.TwinPath(dir, "run-1", "implement", 1)
+		Expect(os.MkdirAll(filepath.Dir(framePath), 0o755)).To(Succeed())
+		Expect(os.WriteFile(framePath, []byte("12345"), 0o600)).To(Succeed())
+		Expect(os.WriteFile(twinPath, []byte("1234567890"), 0o600)).To(Succeed())
+		old := time.Now().Add(-72 * time.Hour)
+		Expect(os.Chtimes(framePath, old, old)).To(Succeed())
+		Expect(os.Chtimes(twinPath, old, old)).To(Succeed())
+
+		result := probeActivity(doctorOptions{logDir: dir})
+
+		Expect(result.OK).To(BeTrue())
+		Expect(result.Reason).To(Equal(dir + ": 1 frame(s), 1 twin(s), 15B, oldest 3 day(s) old; policy keep"))
+	})
+
+	It("resolves a project's own policy over the deployment default", func() {
+		dir := GinkgoT().TempDir()
+
+		result := probeActivity(doctorOptions{
+			logDir:            dir,
+			project:           "demo",
+			retention:         run.Policy{TwinDays: 7},
+			retentionProjects: map[string]run.Policy{"demo": {CompactDays: 30}},
+		})
+
+		Expect(result.Reason).To(ContainSubstring("policy compact_days=30"))
 	})
 })
 
