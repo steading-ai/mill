@@ -182,6 +182,51 @@ var _ = Describe("The activity writer", Label("unit"), func() {
 		Expect(activities[3].GetSeq()).To(Equal(int64(4)))
 	})
 
+	It("makes the file on reopen when the attempt has none, at seq 0", func() {
+		reopened, err := reopenActivityWriter(dir, "run-1", "gather-context", 1, redact.New(), now, defaultActivityCeiling)
+		Expect(err).NotTo(HaveOccurred(), "a gate filed on another host, or by a mill that wrote no record, still closes")
+		Expect(reopened.Record(&millv1.Activity{
+			Source: millv1.ActivitySource_ACTIVITY_SOURCE_MILL,
+			Body:   &millv1.Activity_HarnessStderr{HarnessStderr: &millv1.HarnessStderr{Text: "y"}},
+		})).To(Succeed())
+		Expect(reopened.Close()).To(Succeed())
+
+		activities := read()
+		Expect(activities).To(HaveLen(1))
+		Expect(activities[0].GetSeq()).To(Equal(int64(1)))
+	})
+
+	It("cuts a torn record off the tail on reopen, so what follows still decodes", func() {
+		w := open()
+		for i := 0; i < 2; i++ {
+			Expect(w.Record(&millv1.Activity{
+				Source: millv1.ActivitySource_ACTIVITY_SOURCE_MILL,
+				Body:   &millv1.Activity_HarnessStderr{HarnessStderr: &millv1.HarnessStderr{Text: "x"}},
+			})).To(Succeed())
+		}
+		Expect(w.Close()).To(Succeed())
+		path := ActivityPath(dir, "run-1", "gather-context", 1)
+		torn, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o640)
+		Expect(err).NotTo(HaveOccurred())
+		// A header promising 100 bytes, and three of them: the writer died here.
+		_, err = torn.Write([]byte{0, 0, 0, 100, 1, 2, 3})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(torn.Close()).To(Succeed())
+
+		reopened, err := reopenActivityWriter(dir, "run-1", "gather-context", 1, redact.New(), now, defaultActivityCeiling)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(reopened.Record(&millv1.Activity{
+			Source: millv1.ActivitySource_ACTIVITY_SOURCE_MILL,
+			Body:   &millv1.Activity_HarnessStderr{HarnessStderr: &millv1.HarnessStderr{Text: "y"}},
+		})).To(Succeed())
+		Expect(reopened.Close()).To(Succeed())
+
+		activities := read()
+		Expect(activities).To(HaveLen(3), "two whole records, the torn one gone, and the new one")
+		Expect(activities[2].GetSeq()).To(Equal(int64(3)))
+		Expect(activities[2].GetHarnessStderr().GetText()).To(Equal("y"))
+	})
+
 	It("round-trips a record's bytes through the length-prefixed decoder", func() {
 		w := open()
 		Expect(w.Record(&millv1.Activity{

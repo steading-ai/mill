@@ -131,21 +131,31 @@ func newActivityWriter(dir, runID, step string, attempt int64, redactor *redact.
 	return newActivityWriterOver(file, 0, 0, redactor, now, ceiling), nil
 }
 
-// reopenActivityWriter opens an existing attempt's activity file for append
-// and primes seq by decoding the file once to find its highest existing
-// seq. This is what a gate resumed by a process that did not file it needs:
-// the worker answering the gate is frequently not the one that filed it, so
-// seq has to be recovered from the file rather than carried in memory.
+// reopenActivityWriter opens an attempt's activity file for append and
+// primes seq by decoding the file once to find its highest existing seq.
+// This is what a gate resumed by a process that did not file it needs: the
+// worker answering the gate is frequently not the one that filed it, so seq
+// has to be recovered from the file rather than carried in memory.
+//
+// A file that is not there is made, at seq 0: the attempt was filed by a
+// worker on another host, under another log directory, or by a mill that
+// wrote no record at all, and none of those is a reason the gate cannot
+// close. A file that ends in a torn record — the writer was killed
+// mid-frame — is cut back to its last whole record before anything is
+// appended, so what follows stays decodable.
 func reopenActivityWriter(dir, runID, step string, attempt int64, redactor *redact.Redactor, now func() time.Time, ceiling int64) (*activityWriter, error) {
 	if dir == "" {
 		return nil, nil
 	}
 	path := ActivityPath(dir, runID, step, attempt)
 	existing, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return newActivityWriter(dir, runID, step, attempt, redactor, now, ceiling)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("activity: reopen: %w", err)
 	}
-	activities, decodeErr := decodeActivities(existing)
+	activities, whole, decodeErr := decodeActivitiesUpTo(existing)
 	closeErr := existing.Close()
 	if decodeErr != nil {
 		return nil, fmt.Errorf("activity: reopen: %w", decodeErr)
@@ -159,15 +169,14 @@ func reopenActivityWriter(dir, runID, step string, attempt int64, redactor *reda
 			seq = a.GetSeq()
 		}
 	}
-	info, err := os.Stat(path)
-	if err != nil {
+	if err := os.Truncate(path, whole); err != nil {
 		return nil, fmt.Errorf("activity: reopen: %w", err)
 	}
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o640)
 	if err != nil {
 		return nil, fmt.Errorf("activity: reopen: %w", err)
 	}
-	return newActivityWriterOver(file, seq, info.Size(), redactor, now, ceiling), nil
+	return newActivityWriterOver(file, seq, whole, redactor, now, ceiling), nil
 }
 
 func newActivityWriterOver(file *os.File, seq, written int64, redactor *redact.Redactor, now func() time.Time, ceiling int64) *activityWriter {
@@ -651,27 +660,37 @@ func ReadActivity(r io.ReadSeeker) (*millv1.Activity, bool, error) {
 // [reopenActivityWriter] and the CLI's reader, so the file has exactly one
 // decode loop.
 func decodeActivities(r io.Reader) ([]*millv1.Activity, error) {
+	activities, _, err := decodeActivitiesUpTo(r)
+	return activities, err
+}
+
+// decodeActivitiesUpTo is decodeActivities that also says how many bytes
+// held whole records: a cut-off header or body at the end is a writer that
+// was killed mid-frame, and the read ends cleanly before it.
+func decodeActivitiesUpTo(r io.Reader) ([]*millv1.Activity, int64, error) {
 	var out []*millv1.Activity
+	var whole int64
 	var header [activityLengthPrefix]byte
 	for {
 		if _, err := io.ReadFull(r, header[:]); err != nil {
-			if errors.Is(err, io.EOF) {
-				return out, nil
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+				return out, whole, nil
 			}
-			return out, fmt.Errorf("activity: decode: %w", err)
+			return out, whole, fmt.Errorf("activity: decode: %w", err)
 		}
 		size := binary.BigEndian.Uint32(header[:])
 		body := make([]byte, size)
 		if _, err := io.ReadFull(r, body); err != nil {
 			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-				return out, nil
+				return out, whole, nil
 			}
-			return out, fmt.Errorf("activity: decode: %w", err)
+			return out, whole, fmt.Errorf("activity: decode: %w", err)
 		}
 		a := &millv1.Activity{}
 		if err := proto.Unmarshal(body, a); err != nil {
-			return out, fmt.Errorf("activity: decode: %w", err)
+			return out, whole, fmt.Errorf("activity: decode: %w", err)
 		}
 		out = append(out, a)
+		whole += int64(activityLengthPrefix) + int64(size)
 	}
 }
