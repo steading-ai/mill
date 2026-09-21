@@ -40,6 +40,8 @@ const (
 const (
 	// WorkerServiceProbeProcedure is the fully-qualified name of the WorkerService's Probe RPC.
 	WorkerServiceProbeProcedure = "/mill.v1.WorkerService/Probe"
+	// WorkerServiceClaimsProcedure is the fully-qualified name of the WorkerService's Claims RPC.
+	WorkerServiceClaimsProcedure = "/mill.v1.WorkerService/Claims"
 )
 
 // WorkerServiceClient is a client for the mill.v1.WorkerService service.
@@ -47,6 +49,10 @@ type WorkerServiceClient interface {
 	// Probe answers the sidecar, signing, and forge probes from the worker's
 	// own configuration and process.
 	Probe(context.Context, *connect.Request[v1.ProbeRequest]) (*connect.Response[v1.ProbeResponse], error)
+	// Claims answers what the worker claims from and which host it runs on,
+	// from its own already-resolved configuration: no probe, no side effect,
+	// safe to call on every `status`, `doctor` or `run` invocation.
+	Claims(context.Context, *connect.Request[v1.ClaimsRequest]) (*connect.Response[v1.ClaimsResponse], error)
 }
 
 // NewWorkerServiceClient constructs a client for the mill.v1.WorkerService service. By default, it
@@ -66,12 +72,19 @@ func NewWorkerServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(workerServiceMethods.ByName("Probe")),
 			connect.WithClientOptions(opts...),
 		),
+		claims: connect.NewClient[v1.ClaimsRequest, v1.ClaimsResponse](
+			httpClient,
+			baseURL+WorkerServiceClaimsProcedure,
+			connect.WithSchema(workerServiceMethods.ByName("Claims")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // workerServiceClient implements WorkerServiceClient.
 type workerServiceClient struct {
-	probe *connect.Client[v1.ProbeRequest, v1.ProbeResponse]
+	probe  *connect.Client[v1.ProbeRequest, v1.ProbeResponse]
+	claims *connect.Client[v1.ClaimsRequest, v1.ClaimsResponse]
 }
 
 // Probe calls mill.v1.WorkerService.Probe.
@@ -79,11 +92,20 @@ func (c *workerServiceClient) Probe(ctx context.Context, req *connect.Request[v1
 	return c.probe.CallUnary(ctx, req)
 }
 
+// Claims calls mill.v1.WorkerService.Claims.
+func (c *workerServiceClient) Claims(ctx context.Context, req *connect.Request[v1.ClaimsRequest]) (*connect.Response[v1.ClaimsResponse], error) {
+	return c.claims.CallUnary(ctx, req)
+}
+
 // WorkerServiceHandler is an implementation of the mill.v1.WorkerService service.
 type WorkerServiceHandler interface {
 	// Probe answers the sidecar, signing, and forge probes from the worker's
 	// own configuration and process.
 	Probe(context.Context, *connect.Request[v1.ProbeRequest]) (*connect.Response[v1.ProbeResponse], error)
+	// Claims answers what the worker claims from and which host it runs on,
+	// from its own already-resolved configuration: no probe, no side effect,
+	// safe to call on every `status`, `doctor` or `run` invocation.
+	Claims(context.Context, *connect.Request[v1.ClaimsRequest]) (*connect.Response[v1.ClaimsResponse], error)
 }
 
 // NewWorkerServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -99,10 +121,18 @@ func NewWorkerServiceHandler(svc WorkerServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(workerServiceMethods.ByName("Probe")),
 		connect.WithHandlerOptions(opts...),
 	)
+	workerServiceClaimsHandler := connect.NewUnaryHandler(
+		WorkerServiceClaimsProcedure,
+		svc.Claims,
+		connect.WithSchema(workerServiceMethods.ByName("Claims")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/mill.v1.WorkerService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case WorkerServiceProbeProcedure:
 			workerServiceProbeHandler.ServeHTTP(w, r)
+		case WorkerServiceClaimsProcedure:
+			workerServiceClaimsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -114,4 +144,8 @@ type UnimplementedWorkerServiceHandler struct{}
 
 func (UnimplementedWorkerServiceHandler) Probe(context.Context, *connect.Request[v1.ProbeRequest]) (*connect.Response[v1.ProbeResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.WorkerService.Probe is not implemented"))
+}
+
+func (UnimplementedWorkerServiceHandler) Claims(context.Context, *connect.Request[v1.ClaimsRequest]) (*connect.Response[v1.ClaimsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.WorkerService.Claims is not implemented"))
 }

@@ -15,8 +15,11 @@ session's own output surfaces is `mill logs`, which reads a file the redactor
 already wrote.
 
 **`run` is not among them.** It executes in the calling process and is local
-to the mill's host and account. A session elsewhere that wants work done
-files a dagger node ([prd.md](prd.md) R-55).
+to the mill's host and account. If the socket it dials belongs to a worker
+running on a different host, it refuses rather than execute there under this
+host's files and login, and names the worker's host instead. A session
+elsewhere that wants work done files a dagger node ([prd.md](prd.md) R-55),
+or drives that worker's own `mill run` through `mill work` on its host.
 
 Every tool takes `--socket`; the readers take `--view`; the two `workspace`
 subcommands take `--workspace-dir`, since the files they answer about are on
@@ -78,11 +81,12 @@ interval (`--sweep-interval`, fifteen minutes by default) of noticing, and
 `history` then shows the `failed` event with the reason
 (`docs/ledger.md` §Sweep).
 
-The header line names what the worker claims from: `project` in the
-configuration file (§Configuration), read for this line alone — empty is
-every project the worker's principal may read, and a list is only those.
-`status`'s own `--project` is a different thing: it narrows which rows this
-listing shows, not what a worker claims.
+The header line names what the worker claims from: if a worker shares this
+process (`serve --work`), its own `--project` and `--label` filters; otherwise
+`project` in the configuration file (§Configuration), read for this line
+alone — empty is every project the reader's principal may read, and a list
+is only those. `status`'s own `--project` is a different thing: it narrows
+which rows this listing shows, not what a worker claims.
 
 ```
 $ mill status
@@ -535,10 +539,10 @@ probe is reported; the command exits non-zero when any of them failed. A
 probe that passed with something still worth looking at is marked `warn`
 and does not fail the command.
 
-Before the probes, one line names what the worker's `--project` filter is:
-`project` in the configuration file (§Configuration), the same filter a
-worker claims from — empty is every project its principal may read, and a
-list is only those.
+Before the probes, one line names what the worker claims from: if a worker
+shares this process (`serve --work`), its own `--project` and `--label`
+filters; otherwise `project` in the configuration file (§Configuration) —
+empty is every project its principal may read, and a list is only those.
 
 ```
 $ mill doctor

@@ -222,14 +222,20 @@ func LoadConfig(path string) (Config, error) {
 	return config, nil
 }
 
-// claimsFrom is a worker's project filter in words, the way `doctor` and
-// `status` report it: an empty filter claims from every project the
-// worker's principal may read, and a configured one claims only from it.
-func claimsFrom(projects []string) string {
-	if len(projects) == 0 {
-		return "every project"
+// claimsFrom is a worker's claim filter in words, the way `doctor` and
+// `status` report it: an empty project filter claims from every project the
+// worker's principal may read, and a configured one claims only from it. A
+// non-empty label filter is appended, since a node outside it is never
+// claimed either.
+func claimsFrom(projects, labels []string) string {
+	text := "every project"
+	if len(projects) > 0 {
+		text = strings.Join(projects, ", ")
 	}
-	return strings.Join(projects, ", ")
+	if len(labels) > 0 {
+		text += ", label " + strings.Join(labels, ", ")
+	}
+	return text
 }
 
 // deploymentConfig is the deployment's own configuration file, for a caller

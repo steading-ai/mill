@@ -185,6 +185,111 @@ func (x *ProbeResult) GetReason() string {
 	return ""
 }
 
+// ClaimsRequest asks the worker what it claims from. It takes nothing: the
+// worker answers for its own configuration, not one the caller names.
+type ClaimsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ClaimsRequest) Reset() {
+	*x = ClaimsRequest{}
+	mi := &file_mill_v1_worker_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClaimsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClaimsRequest) ProtoMessage() {}
+
+func (x *ClaimsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_mill_v1_worker_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClaimsRequest.ProtoReflect.Descriptor instead.
+func (*ClaimsRequest) Descriptor() ([]byte, []int) {
+	return file_mill_v1_worker_proto_rawDescGZIP(), []int{3}
+}
+
+// ClaimsResponse carries the worker's already-resolved claim filter and the
+// host it runs on — the fields `mill status` and `mill doctor` print a
+// "claims from" line from, and `mill run` compares its own host against.
+type ClaimsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The worker's OS hostname.
+	Host string `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"`
+	// The dagger projects the worker claims from; empty means every project
+	// its principal may read.
+	Projects []string `protobuf:"bytes,2,rep,name=projects,proto3" json:"projects,omitempty"`
+	// The labels every claimed node must carry.
+	Labels        []string `protobuf:"bytes,3,rep,name=labels,proto3" json:"labels,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ClaimsResponse) Reset() {
+	*x = ClaimsResponse{}
+	mi := &file_mill_v1_worker_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClaimsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClaimsResponse) ProtoMessage() {}
+
+func (x *ClaimsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_mill_v1_worker_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClaimsResponse.ProtoReflect.Descriptor instead.
+func (*ClaimsResponse) Descriptor() ([]byte, []int) {
+	return file_mill_v1_worker_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ClaimsResponse) GetHost() string {
+	if x != nil {
+		return x.Host
+	}
+	return ""
+}
+
+func (x *ClaimsResponse) GetProjects() []string {
+	if x != nil {
+		return x.Projects
+	}
+	return nil
+}
+
+func (x *ClaimsResponse) GetLabels() []string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
+}
+
 var File_mill_v1_worker_proto protoreflect.FileDescriptor
 
 const file_mill_v1_worker_proto_rawDesc = "" +
@@ -197,9 +302,15 @@ const file_mill_v1_worker_proto_rawDesc = "" +
 	"\x05forge\x18\x03 \x01(\v2\x14.mill.v1.ProbeResultR\x05forge\"5\n" +
 	"\vProbeResult\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason2G\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"\x0f\n" +
+	"\rClaimsRequest\"X\n" +
+	"\x0eClaimsResponse\x12\x12\n" +
+	"\x04host\x18\x01 \x01(\tR\x04host\x12\x1a\n" +
+	"\bprojects\x18\x02 \x03(\tR\bprojects\x12\x16\n" +
+	"\x06labels\x18\x03 \x03(\tR\x06labels2\x82\x01\n" +
 	"\rWorkerService\x126\n" +
-	"\x05Probe\x12\x15.mill.v1.ProbeRequest\x1a\x16.mill.v1.ProbeResponseB(Z&github.com/ivy/mill/gen/mill/v1;millv1b\x06proto3"
+	"\x05Probe\x12\x15.mill.v1.ProbeRequest\x1a\x16.mill.v1.ProbeResponse\x129\n" +
+	"\x06Claims\x12\x16.mill.v1.ClaimsRequest\x1a\x17.mill.v1.ClaimsResponseB(Z&github.com/ivy/mill/gen/mill/v1;millv1b\x06proto3"
 
 var (
 	file_mill_v1_worker_proto_rawDescOnce sync.Once
@@ -213,20 +324,24 @@ func file_mill_v1_worker_proto_rawDescGZIP() []byte {
 	return file_mill_v1_worker_proto_rawDescData
 }
 
-var file_mill_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_mill_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_mill_v1_worker_proto_goTypes = []any{
-	(*ProbeRequest)(nil),  // 0: mill.v1.ProbeRequest
-	(*ProbeResponse)(nil), // 1: mill.v1.ProbeResponse
-	(*ProbeResult)(nil),   // 2: mill.v1.ProbeResult
+	(*ProbeRequest)(nil),   // 0: mill.v1.ProbeRequest
+	(*ProbeResponse)(nil),  // 1: mill.v1.ProbeResponse
+	(*ProbeResult)(nil),    // 2: mill.v1.ProbeResult
+	(*ClaimsRequest)(nil),  // 3: mill.v1.ClaimsRequest
+	(*ClaimsResponse)(nil), // 4: mill.v1.ClaimsResponse
 }
 var file_mill_v1_worker_proto_depIdxs = []int32{
 	2, // 0: mill.v1.ProbeResponse.sidecar:type_name -> mill.v1.ProbeResult
 	2, // 1: mill.v1.ProbeResponse.signing:type_name -> mill.v1.ProbeResult
 	2, // 2: mill.v1.ProbeResponse.forge:type_name -> mill.v1.ProbeResult
 	0, // 3: mill.v1.WorkerService.Probe:input_type -> mill.v1.ProbeRequest
-	1, // 4: mill.v1.WorkerService.Probe:output_type -> mill.v1.ProbeResponse
-	4, // [4:5] is the sub-list for method output_type
-	3, // [3:4] is the sub-list for method input_type
+	3, // 4: mill.v1.WorkerService.Claims:input_type -> mill.v1.ClaimsRequest
+	1, // 5: mill.v1.WorkerService.Probe:output_type -> mill.v1.ProbeResponse
+	4, // 6: mill.v1.WorkerService.Claims:output_type -> mill.v1.ClaimsResponse
+	5, // [5:7] is the sub-list for method output_type
+	3, // [3:5] is the sub-list for method input_type
 	3, // [3:3] is the sub-list for extension type_name
 	3, // [3:3] is the sub-list for extension extendee
 	0, // [0:3] is the sub-list for field type_name
@@ -243,7 +358,7 @@ func file_mill_v1_worker_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_mill_v1_worker_proto_rawDesc), len(file_mill_v1_worker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

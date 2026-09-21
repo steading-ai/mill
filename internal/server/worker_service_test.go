@@ -46,4 +46,29 @@ var _ = Describe("WorkerService", Label("unit"), func() {
 		_, err := client.Probe(ctx, connect.NewRequest(&millv1.ProbeRequest{}))
 		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnimplemented))
 	})
+
+	It("answers Claims from this process's own configuration, with no probe and no side effect", func(ctx SpecContext) {
+		ts := httptest.NewServer(workerMux(server.NewWorkerService(server.WorkerServiceConfig{
+			Host:     "mill-worker.example",
+			Projects: []string{"mill"},
+			Labels:   []string{"quick"},
+		})))
+		DeferCleanup(ts.Close)
+		client := millv1connect.NewWorkerServiceClient(ts.Client(), ts.URL)
+
+		res, err := client.Claims(ctx, connect.NewRequest(&millv1.ClaimsRequest{}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.Msg.GetHost()).To(Equal("mill-worker.example"))
+		Expect(res.Msg.GetProjects()).To(Equal([]string{"mill"}))
+		Expect(res.Msg.GetLabels()).To(Equal([]string{"quick"}))
+	})
+
+	It("is CodeUnimplemented for Claims too, when no worker runs in this process", func(ctx SpecContext) {
+		ts := httptest.NewServer(workerMux(nil))
+		DeferCleanup(ts.Close)
+		client := millv1connect.NewWorkerServiceClient(ts.Client(), ts.URL)
+
+		_, err := client.Claims(ctx, connect.NewRequest(&millv1.ClaimsRequest{}))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnimplemented))
+	})
 })
