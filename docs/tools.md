@@ -921,6 +921,8 @@ flag added or removed without this table changing is a failing spec.
 | `project` | | yes | yes |
 | `label` | | yes | yes |
 | `concurrency` | | yes | yes |
+| `ttl` | | yes | yes |
+| `heartbeat` | | yes | yes |
 | `workflow` | | yes | yes |
 | `tier` | | yes | yes |
 | `workflow-dir` | | yes | yes |

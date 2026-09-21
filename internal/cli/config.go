@@ -38,12 +38,18 @@ type Config struct {
 	Projects     []string `yaml:"project"`
 	Labels       []string `yaml:"label"`
 	Concurrency  int      `yaml:"concurrency"`
-	Workflow     string   `yaml:"workflow"`
-	Tier         string   `yaml:"tier"`
-	WorkflowDir  string   `yaml:"workflow-dir"`
-	Sidecar      string   `yaml:"sidecar"`
-	Origin       string   `yaml:"origin"`
-	Ref          string   `yaml:"ref"`
+	// TTL and Heartbeat are durations as `time.ParseDuration` reads them.
+	// A host that sleeps — a laptop with its lid closed — freezes the
+	// worker past its lease, and every run it held is fenced on wake, so a
+	// deployment on such a host asks for the longest TTL dagger allows.
+	TTL         string `yaml:"ttl"`
+	Heartbeat   string `yaml:"heartbeat"`
+	Workflow    string `yaml:"workflow"`
+	Tier        string `yaml:"tier"`
+	WorkflowDir string `yaml:"workflow-dir"`
+	Sidecar     string `yaml:"sidecar"`
+	Origin      string `yaml:"origin"`
+	Ref         string `yaml:"ref"`
 	// Forge names the adapter every project's repository is delivered
 	// through, `github` or `gitlab`; empty leaves it to the repository's
 	// host. A value that names no adapter stops the worker at startup.
@@ -267,6 +273,8 @@ var configKeys = []configKey{
 	{"project", "project"},
 	{"label", "label"},
 	{"concurrency", "concurrency"},
+	{"ttl", "ttl"},
+	{"heartbeat", "heartbeat"},
 	{"workflow", "workflow"},
 	{"tier", "tier"},
 	{"workflow-dir", "workflow-dir"},

@@ -131,6 +131,17 @@ func applyConfig(cmd *cobra.Command, opts *workOptions) error {
 	if config.Concurrency > 0 && unset(cmd, "concurrency") {
 		opts.concurrency = config.Concurrency
 	}
+	for name, target := range map[string]*time.Duration{"ttl": &opts.run.ttl, "heartbeat": &opts.run.interval} {
+		value := map[string]string{"ttl": config.TTL, "heartbeat": config.Heartbeat}[name]
+		if value == "" || !unset(cmd, name) {
+			continue
+		}
+		d, err := time.ParseDuration(value)
+		if err != nil {
+			return fmt.Errorf("mill: %s: %s: %w", opts.config, name, err)
+		}
+		*target = d
+	}
 	if config.Gateway && unset(cmd, "gateway") {
 		opts.run.gateway.enabled = true
 	}

@@ -105,6 +105,8 @@ project:
 label:
   - agent
 concurrency: 4
+ttl: 1h
+heartbeat: 10m
 workflow: feature
 dagger-socket: /run/dagger/other.sock
 env_mode: strict
@@ -134,6 +136,10 @@ model_credential_minted: 2026-09-01
 		Expect(opts.projects).To(Equal([]string{"mill", "dagger"}))
 		Expect(opts.labels).To(Equal([]string{"agent"}))
 		Expect(opts.concurrency).To(Equal(4))
+		// The lease is the deployment's to size: a host that sleeps longer
+		// than the TTL loses every run it held.
+		Expect(opts.run.ttl).To(Equal(time.Hour))
+		Expect(opts.run.interval).To(Equal(10 * time.Minute))
 		Expect(opts.run.workflow).To(Equal("feature"))
 		Expect(opts.run.daggerSocket).To(Equal("/run/dagger/other.sock"))
 		// The environment mode is what a deployment sets and the one
@@ -154,6 +160,17 @@ model_credential_minted: 2026-09-01
 		Expect(opts.run.gateway.listen).To(Equal("10.99.255.1:8081"))
 		Expect(opts.run.gateway.upstream).To(Equal("https://api.example.test"))
 		Expect(opts.run.gateway.credentialFile).To(Equal("/run/credentials/mill.service/claude-oauth"))
+	})
+
+	It("refuses a lease TTL it cannot read as a duration", func() {
+		Expect(os.WriteFile(path, []byte("ttl: an hour\n"), 0o600)).To(Succeed())
+		opts := workOptions{}
+		cmd := &cobra.Command{Use: "work"}
+		bindWorkFlags(cmd, &opts)
+		Expect(cmd.Flags().Parse([]string{"--config", path})).To(Succeed())
+		err := applyConfig(cmd, &opts)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("ttl"))
 	})
 
 	It("defaults the workspace to local and the gateway to off when the file says nothing", func() {
