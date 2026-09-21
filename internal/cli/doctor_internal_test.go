@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -27,7 +28,7 @@ var _ = Describe("The doctor's workspace probe", Label("unit"), func() {
 	It("names the local backend and asks the host nothing", func() {
 		opts.workspace = ""
 
-		result := probeWorkspace(opts, fake)
+		result := probeWorkspace(context.Background(), opts, fake)
 
 		Expect(result.OK).To(BeTrue())
 		Expect(result.Name).To(Equal("workspace"))
@@ -39,7 +40,7 @@ var _ = Describe("The doctor's workspace probe", Label("unit"), func() {
 		opts.workspace = "machine"
 		fake.Script(driver.Statfs, driver.Filesystem{Type: "xfs"})
 
-		result := probeWorkspace(opts, fake)
+		result := probeWorkspace(context.Background(), opts, fake)
 
 		Expect(result.OK).To(BeFalse())
 		Expect(result.Reason).To(HavePrefix("machine:"))
@@ -53,7 +54,7 @@ var _ = Describe("The doctor's workspace probe", Label("unit"), func() {
 		opts.workspace = "machine"
 		fake.Script(driver.Statfs, driver.Filesystem{Type: driver.TypeBtrfs})
 
-		result := probeWorkspace(opts, fake)
+		result := probeWorkspace(context.Background(), opts, fake)
 
 		Expect(result.OK).To(BeTrue())
 		Expect(result.Reason).To(Equal("machine: sandbox root /var/lib/mill is btrfs"))
@@ -63,7 +64,7 @@ var _ = Describe("The doctor's workspace probe", Label("unit"), func() {
 		opts.workspace = "machine"
 		fake.Script(driver.Statfs, errors.New("statfs /var/lib/mill: no such file or directory"))
 
-		result := probeWorkspace(opts, fake)
+		result := probeWorkspace(context.Background(), opts, fake)
 
 		Expect(result.OK).To(BeFalse())
 		Expect(result.Reason).To(ContainSubstring("no such file or directory"))
@@ -72,11 +73,33 @@ var _ = Describe("The doctor's workspace probe", Label("unit"), func() {
 	It("fails a kind it does not know rather than probing something else", func() {
 		opts.workspace = "podman"
 
-		result := probeWorkspace(opts, fake)
+		result := probeWorkspace(context.Background(), opts, fake)
 
 		Expect(result.OK).To(BeFalse())
 		Expect(result.Reason).To(ContainSubstring("podman"))
 		Expect(fake.Calls()).To(BeEmpty())
+	})
+
+	It("fails the machine backend on a host missing what the sandbox needs, naming the reason", func() {
+		opts.workspace = "machine"
+		fake.Script(driver.Statfs, driver.Filesystem{Type: driver.TypeBtrfs})
+		fake.Script(driver.SandboxReady, "systemd-nspawn is not on PATH")
+
+		result := probeWorkspace(context.Background(), opts, fake)
+
+		Expect(result.OK).To(BeFalse())
+		Expect(result.Reason).To(Equal("machine: systemd-nspawn is not on PATH"))
+	})
+
+	It("does not ask the sandbox is ready from inside a machine", func() {
+		opts.workspace = "machine"
+		fake.Script(driver.Statfs, driver.Filesystem{Type: driver.TypeBtrfs})
+		fake.Script(driver.Container, driver.ContainerNspawn)
+
+		result := probeWorkspace(context.Background(), opts, fake)
+
+		Expect(result.OK).To(BeTrue())
+		Expect(fake.CallsTo(driver.SandboxReady)).To(BeEmpty())
 	})
 })
 

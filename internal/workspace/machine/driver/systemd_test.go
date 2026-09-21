@@ -50,6 +50,7 @@ func newHost() *host {
 			Setcap:     stub("setcap"),
 			Du:         stub("du"),
 			DetectVirt: stub("systemd-detect-virt"),
+			Nspawn:     stub("systemd-nspawn"),
 		},
 	}
 }
@@ -325,6 +326,78 @@ var _ = Describe("The systemd driver", Label("unit"), func() {
 		manager, err = d.Container(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(manager).To(BeEmpty(), "`none` and a non-zero exit is a host, not an error")
+	})
+
+	Describe("SandboxReady", func() {
+		// The fixture's Helper is the real host path, since every other
+		// test only ever passes it as an argument to a stubbed sudo;
+		// SandboxReady stats it directly, so this spec points it at a
+		// file of its own instead.
+		var helper string
+
+		BeforeEach(func() {
+			helper = filepath.Join(GinkgoT().TempDir(), "mill-machine")
+			h.commands.Helper = helper
+			d = driver.NewSystemd(h.spawner, h.commands)
+		})
+
+		It("names systemd-nspawn missing before anything else is checked", func(ctx context.Context) {
+			reason, err := d.SandboxReady(ctx, GinkgoT().TempDir(), GinkgoT().TempDir())
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reason).To(ContainSubstring("systemd-nspawn"))
+			Expect(h.calls("machinectl")).To(BeEmpty(), "nspawn is checked first")
+		})
+
+		It("names machinectl missing once nspawn is on PATH", func(ctx context.Context) {
+			h.stub("systemd-nspawn", "exit 0")
+
+			reason, err := d.SandboxReady(ctx, GinkgoT().TempDir(), GinkgoT().TempDir())
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reason).To(ContainSubstring("machinectl"))
+			Expect(h.calls("systemctl")).To(BeEmpty(), "the template unit is checked after machinectl")
+		})
+
+		It("names the template unit missing once the PATH tools are there", func(ctx context.Context) {
+			h.stub("systemd-nspawn", "exit 0")
+			h.stub("machinectl", "exit 0")
+			h.stub("systemctl", "exit 1") // list-unit-files: no matching unit file
+
+			reason, err := d.SandboxReady(ctx, GinkgoT().TempDir(), GinkgoT().TempDir())
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reason).To(ContainSubstring("mill-machine@"))
+			Expect(h.calls("systemctl")).To(Equal([]string{"list-unit-files", "mill-machine@.service", "--no-legend"}))
+		})
+
+		It("names the helper missing once the template unit is installed", func(ctx context.Context) {
+			h.stub("systemd-nspawn", "exit 0")
+			h.stub("machinectl", "exit 0")
+			h.stub("systemctl", "exit 0")
+
+			reason, err := d.SandboxReady(ctx, GinkgoT().TempDir(), GinkgoT().TempDir())
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reason).To(ContainSubstring(helper))
+		})
+
+		It("names the root not btrfs once the helper is there", func(ctx context.Context) {
+			h.stub("systemd-nspawn", "exit 0")
+			h.stub("machinectl", "exit 0")
+			h.stub("systemctl", "exit 0")
+			Expect(os.WriteFile(helper, []byte{}, 0o755)).To(Succeed()) //nolint:gosec // a spec's own stub
+
+			// A plain TempDir() is whatever this machine happens to run
+			// on, never asserted to be a specific type — the same
+			// non-committal style the Statfs spec above uses, since this
+			// unit spec must pass wherever `go test` runs, not only on a
+			// host whose temp directory is btrfs.
+			reason, err := d.SandboxReady(ctx, GinkgoT().TempDir(), GinkgoT().TempDir())
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reason).To(ContainSubstring("not btrfs"))
+		})
 	})
 
 	It("finds the mount holding a path, and refuses a nested root that is not on the ephemeral root", func() {

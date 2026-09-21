@@ -101,6 +101,15 @@ type Driver interface {
 	// empty on a host. A worker inside a machine is a nested one and roots
 	// its sandbox under its own ephemeral root (§Self-hosting).
 	Container(ctx context.Context) (string, error)
+	// SandboxReady is what a run needs of this host before sudo -n is even
+	// asked: systemd-nspawn and machinectl on PATH, the mill-machine@
+	// template unit installed, the helper file in place, and root on
+	// btrfs with a machines subvolume (§Self-hosting, §Storage), checked
+	// in that order. reason names the first of these missing; empty means
+	// ready. root and machines are the caller's facts, not a default read
+	// internally, so a live spec and mill doctor's workspace probe ask the
+	// identical question of the identical host.
+	SandboxReady(ctx context.Context, root, machines string) (reason string, err error)
 
 	// The verbs below are the image pipeline's (§Images): the one place the
 	// worker runs a container outside a machine, and the export that turns

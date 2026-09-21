@@ -35,6 +35,7 @@ import (
 const (
 	liveVar        = "MILL_SANDBOX_HOST"
 	liveRoot       = "/var/lib/mill"
+	liveMachines   = driver.DefaultMachines
 	liveRegistry   = image.DefaultRegistry
 	liveRepository = "mill/base-live"
 	livePackage    = "libpq-devel"
@@ -112,6 +113,11 @@ var _ = Describe("Images on a real host", Label("live"), Serial, Ordered, func()
 		if testsupport.InsideMachine() {
 			Skip(testsupport.HostOnlySkip("the host's podman and image volume to build and export an image"))
 		}
+		real := driver.NewSystemd(workspace.Spawner{}, driver.Commands{Sudo: "sudo"})
+		testsupport.SkipUnlessSandboxReady(ctx, real, liveRoot, liveMachines)
+		if _, err := exec.LookPath("podman"); err != nil {
+			Skip("podman is not on PATH; the base and derived images need it")
+		}
 		if _, _, status := host("sudo", "-n", "true"); status != 0 {
 			Skip("sudo -n is refused; the export writes the image tree as root")
 		}
@@ -129,7 +135,7 @@ var _ = Describe("Images on a real host", Label("live"), Serial, Ordered, func()
 			}
 		})
 
-		counted = &countingDriver{Driver: driver.NewSystemd(workspace.Spawner{}, driver.Commands{Sudo: "sudo"})}
+		counted = &countingDriver{Driver: real}
 		store = image.New(counted, image.Config{
 			Root:        GinkgoT().TempDir(),
 			Machines:    machines,
