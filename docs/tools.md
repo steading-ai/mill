@@ -209,41 +209,69 @@ printed and nothing else is lost.
 
 ## logs
 
-The per-step-run log: the session's events, one summary line each, as the
-worker wrote them through the redactor
-([architecture.md](architecture.md) §Observability). What is on disk is the
-activity record itself, not a rendering of it; this command is a line
-renderer over that record ([activity.md](activity.md)). With no `--step`
-this is the step the run is on, or — for a run that has finished, and so is
-on none — the last step it attempted. `--follow` tails the file and returns
-when the attempt leaves `running`, so a session watching a step is told the
-step ended rather than guessing from silence.
+A run's activity, oldest first, read over the `Logs` RPC
+([activity.md](activity.md) §The RPC) rather than a file on this host: the
+store holds the record now, so `mill logs` reads a run's log wherever it was
+made, from a host with no log directory of its own. With no `--step` this is
+the whole run, every attempt of every step in order; `--step` narrows to one
+step, `--attempt` to one attempt of it. `attempt_started` and `attempt_ended`
+are records in the stream, so `mill logs` prints them as the boundary each
+fold opens and closes on, rather than a viewer inferring one from silence.
 
 ```
-$ mill logs mill#18 --step implement --follow
+$ mill logs mill#18
+-- gather-context attempt 1 started --
+2026-09-08T16:03:40Z tool Read call=toolu_004
+-- gather-context attempt 1 ended: closed --
+-- implement attempt 1 started --
 2026-09-08T16:04:08Z text reading the work order
 2026-09-08T16:04:11Z tool Read call=toolu_017
 2026-09-08T16:04:11Z result call=toolu_017 ok out=package cli assembles the cobra command tree…
 2026-09-08T16:05:52Z usage claude-sonnet-4-5 in=184213 out=9820
+-- implement attempt 1 ended: closed --
 ```
+
+Without `--follow` the whole answer is printed once, through `$PAGER` when
+stdout is a terminal (`--no-pager` to skip it, `--pager-end` (`-e`) to open
+at the end, `LESS=FRX` when the operator has not set their own), and the
+command exits 0.
+`--follow` (`-f`) prints the last `--tail` records (10 by default;
+`--no-tail` for the whole run first) and then keeps the stream open,
+printing new records — including a later step's own boundary — as the run
+makes them, straight to stdout with no pager, until the run ends: exit 0
+`done`, 1 `failed`/`abandoned`, 3 `waiting` on a gate, 4 `parked`, or 2 if
+the stream itself broke. A followed stream over a run that is waiting or
+parked names the gate it stopped on:
+
+```
+$ mill logs mill#19 --follow
+…
+-- waiting on gate mill#19/approve --
+$ echo $?
+3
+```
+
+`--json` emits one `Activity` JSON line per record instead, for a script.
 
 The redaction happened at write time and there is no unredacted copy: a value
 a session registered with the workspace's `redact` verb was masked before it
-reached the file. Full tool output is never written; a summary line per
+reached the record. Full tool output is never written; a summary line per
 result is.
 
 Every kind of step writes one. A **check** step has no session and no events,
-so its file is what its command wrote: the exit status, then stdout when the
-check's contract keeps it, then stderr — which is where a check says why it
-failed.
+so its record is what its command wrote: the exit status, then stdout when
+the check's contract keeps it, then stderr — which is where a check says why
+it failed.
 
 ```
 $ mill logs mill#18 --step clean-tree
+-- clean-tree attempt 1 started --
 2026-09-08T16:11:02Z check clean-tree exit status=1
 2026-09-08T16:11:02Z check clean-tree stderr begin bytes=29
 the tree is dirty: README.md
 2026-09-08T16:11:02Z check clean-tree stderr end
 2026-09-08T16:11:02Z check clean-tree failed: exited 1
+-- clean-tree attempt 1 ended: failed --
 ```
 
 A **skill** step whose harness refused or crashed carries the harness's own
@@ -253,9 +281,8 @@ terminal record leaves its stack trace there and nowhere else, and the
 failure's own message is that stream's last twenty lines rather than the one
 line a crash ends on.
 
-Logs live under `--log-dir`, one file per attempt, defaulting to
-`$XDG_STATE_HOME/mill/logs`. A worker started without one keeps no logs and
-this tool has nothing to read.
+The MCP `logs` tool calls the same RPC with `tail`, defaulting `step` to the
+step the run is on.
 
 ## history
 

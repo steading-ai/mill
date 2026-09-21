@@ -182,7 +182,6 @@ how the plugin's reference document is checked against this server.`,
 	cmd.Flags().BoolVar(&describe, "describe", false, "print the tool list as JSON and exit, without serving")
 	addReadFlags(cmd, &opts)
 	addDaggerFlags(cmd, &opts)
-	cmd.Flags().StringVar(&opts.logDir, "log-dir", defaultLogDir(), "directory the worker writes step logs under")
 	cmd.Flags().StringVar(&opts.workspaceDir, "workspace-dir", defaultWorkspaceDir(), "directory run workspaces live under")
 	return cmd
 }

@@ -532,42 +532,56 @@ account this server runs as. ` + runIdiom,
 	}
 }
 
-// logs reads a step run's log for a tool call.
+// logs reads a step run's log for a tool call, over the same Logs RPC
+// internal/cli/logs.go reads: the store holds the record now, not this
+// process's own host, so a session sees a run's log wherever it was made.
 func (s *mcpServer) logs(ctx context.Context, reference, step string, tail int) (any, error) {
-	detail, err := storeClient(s.opts.socket).Inspect(ctx, connect.NewRequest(target(reference)))
+	store := storeClient(s.opts.socket)
+	detail, err := inspected(ctx, store, "logs", reference)
 	if err != nil {
 		return nil, err
 	}
 	if step == "" {
-		// The step the run is on, or the last one it attempted: the two
-		// faces read the same file for the same reference
-		// (internal/cli/logs.go).
-		step = currentOrLastStep(detail.Msg)
+		step = detail.GetSummary().GetCurrentStep()
 	}
 	if step == "" {
 		return nil, fmt.Errorf("the run has attempted no step; there is nothing to read")
 	}
-	attempt := latestAttempt(detail.Msg.GetSteps(), step)
+	attempt := latestAttempt(detail.GetSteps(), step)
 	if attempt == nil {
 		return nil, fmt.Errorf("no attempt at step %q has been made", step)
 	}
-	activities, err := run.ReadActivities(s.opts.logDir, detail.Msg.GetSummary().GetRun().GetId(), step, attempt.GetStepRun().GetAttempt())
+
+	noLog := func(err error) error {
+		return fmt.Errorf("no log for %s attempt %d: %w", step, attempt.GetStepRun().GetAttempt(), err)
+	}
+
+	stream, err := store.Logs(ctx, connect.NewRequest(&millv1.LogsRequest{
+		Id:      detail.GetSummary().GetRun().GetId(),
+		Step:    step,
+		Attempt: attempt.GetStepRun().GetAttempt(),
+		Tail:    int64(tail),
+	}))
 	if err != nil {
-		return nil, fmt.Errorf("no log for %s attempt %d: %w", step, attempt.GetStepRun().GetAttempt(), err)
+		return nil, noLog(err)
 	}
 	var lines []string
-	for _, a := range activities {
+	for stream.Receive() {
+		a := stream.Msg().GetActivity()
+		if a == nil {
+			continue
+		}
 		rendered := run.RenderActivity(a)
 		if rendered == "" {
 			continue
 		}
 		lines = append(lines, strings.Split(strings.TrimRight(rendered, "\n"), "\n")...)
 	}
-	if tail > 0 && len(lines) > tail {
-		lines = lines[len(lines)-tail:]
+	if err := stream.Err(); err != nil {
+		return nil, noLog(err)
 	}
 	return map[string]any{
-		"run":     detail.Msg.GetSummary().GetRun().GetId(),
+		"run":     detail.GetSummary().GetRun().GetId(),
 		"step":    step,
 		"attempt": attempt.GetStepRun().GetAttempt(),
 		"status":  stepRunStatusName(attempt.GetStepRun().GetStatus()),

@@ -228,6 +228,13 @@ type Options struct {
 	// rotation, and reads a budget refusal off it when the session ends.
 	// Nil means no gateway sits in front of the sessions.
 	Gateway Gateway
+	// OnActivity is called, with the run's id, after every record an
+	// attempt's activity writer appends. It is how a followed `Logs` stream
+	// in the same process (`serve --work`) learns of new activity without
+	// polling (docs/activity.md §Observer). Nil is a worker with no
+	// co-located server to notify — `mill work` run standalone — which the
+	// observer's own fallback timer covers instead, only later.
+	OnActivity func(runID string)
 }
 
 // Gateway is the run loop's view of the credential gateway

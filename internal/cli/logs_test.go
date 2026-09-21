@@ -3,16 +3,13 @@ package cli_test
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"connectrpc.com/connect"
@@ -24,35 +21,23 @@ import (
 	"github.com/ivy/mill/internal/testsupport"
 )
 
-// appendActivity writes one or more activity records to path, length-prefixed
-// exactly as the writer does (internal/run/activity.go), so a spec can hand
-// `mill logs` a fixture attempt without driving a real one through the
-// worker.
-func appendActivity(path string, activities ...*millv1.Activity) {
-	GinkgoHelper()
-	Expect(os.MkdirAll(filepath.Dir(path), 0o750)).To(Succeed())
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640)
-	Expect(err).NotTo(HaveOccurred())
-	defer func() { Expect(file.Close()).To(Succeed()) }()
-	for _, a := range activities {
-		raw, err := proto.Marshal(a)
-		Expect(err).NotTo(HaveOccurred())
-		var header [4]byte
-		binary.BigEndian.PutUint32(header[:], uint32(len(raw)))
-		_, err = file.Write(header[:])
-		Expect(err).NotTo(HaveOccurred())
-		_, err = file.Write(raw)
-		Expect(err).NotTo(HaveOccurred())
-	}
-}
+// appendActivity and textActivity are internal/testsupport's, shared with
+// internal/server's Logs RPC specs so both build the same fixture attempts.
+var (
+	appendActivity = testsupport.AppendActivity
+	textActivity   = testsupport.TextActivity
+)
 
-// textActivity is a harness `text` record, the simplest kind that renders as
-// one line: "text <content>".
-func textActivity(text string) *millv1.Activity {
-	return &millv1.Activity{
-		Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
-		Body:   &millv1.Activity_Text{Text: &millv1.Text{Text: text, Final: true}},
-	}
+// gateFiled is a gate_filed fixture record, the one activity kind that
+// populates RunEnd.Gate (internal/server/logs.go's gateRef: built from the
+// record already on file, not a fresh call to dagger). It is written to the
+// attempt's own activity file before the ledger write that signals the
+// observer, exactly as a worker's own gate step would, so a follow opened
+// either before or after that write sees it.
+func gateFiled(kind, nodeID, nodeRef, title string) *millv1.Activity {
+	return &millv1.Activity{Body: &millv1.Activity_GateFiled{GateFiled: &millv1.GateFiled{
+		Kind: kind, NodeId: nodeID, NodeRef: nodeRef, Title: title,
+	}}}
 }
 
 var _ = Describe("mill logs", Label(testsupport.DBLabel), func() {
@@ -64,61 +49,141 @@ var _ = Describe("mill logs", Label(testsupport.DBLabel), func() {
 		DeferCleanup(cancel)
 	})
 
-	It("tails the running step's activity record and exits when the step run leaves running", func() {
-		r := openRun(ctx, "millcli#20", nodeID(20))
-		sr := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+	// Acceptance criterion: from a host with no log directory, `mill logs`
+	// against a socket whose worker is elsewhere prints every attempt with
+	// its boundaries and exits 0. The command takes no --log-dir at all any
+	// more — the RPC answers from whichever host holds the record — so this
+	// spec's own process holds none either.
+	It("prints every attempt with its boundaries and exits 0", func() {
+		logDir := GinkgoT().TempDir()
+		m := servingWithLogDir(ctx, logDir)
+		r := openRunOn(ctx, m, "millcli#20", nodeID(20))
 
-		// The record as the worker writes it: length-prefixed, already
-		// redacted by the time it lands (the writer redacts before it ever
-		// marshals a record — there is no unredacted copy to re-read).
-		logDir := filepath.Join(GinkgoT().TempDir(), "logs")
-		path := run.ActivityPath(logDir, r.run.GetId(), "implement", sr.GetAttempt())
-		appendActivity(path, textActivity("reaching the forge with a masked value"))
-
-		var stdout, stderr bytes.Buffer
-		root := cli.NewRootCommand(&stdout, &stderr)
-		root.SetArgs([]string{"logs", "millcli#20", "--step", "implement", "--follow",
-			"--socket", r.mill.socket, "--log-dir", logDir})
-		done := make(chan error, 1)
-		go func() {
-			defer GinkgoRecover()
-			done <- root.ExecuteContext(ctx)
-		}()
-
-		// The first record is tailed while the attempt is still running, and
-		// the command does not return.
-		Eventually(stdout.String, 10*time.Second, 50*time.Millisecond).
-			Should(ContainSubstring("reaching the forge with a masked value"))
-		Consistently(done, 500*time.Millisecond).ShouldNot(Receive())
-
-		// A record written after the tail started reaches it too, and
-		// closing the attempt ends the command.
-		appendActivity(path, textActivity("more output, still masked"))
-		r.close(ctx, sr, &millv1.CloseStepRunRequest{
+		implement := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+		appendActivity(run.ActivityPath(logDir, r.run.GetId(), "implement", implement.GetAttempt()),
+			&millv1.Activity{Body: &millv1.Activity_AttemptStarted{AttemptStarted: &millv1.AttemptStarted{
+				Step: "implement", Attempt: implement.GetAttempt(),
+			}}},
+			textActivity("doing the work"),
+			&millv1.Activity{Body: &millv1.Activity_AttemptEnded{AttemptEnded: &millv1.AttemptEnded{
+				Status: millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED, Reason: "closed",
+			}}},
+		)
+		r.close(ctx, implement, &millv1.CloseStepRunRequest{
 			Evidence: &millv1.Evidence{
 				Kind:       millv1.EvidenceKind_EVIDENCE_KIND_ARTIFACT,
-				Value:      &millv1.Evidence_Artifact{Artifact: "sha256:" + string(bytes.Repeat([]byte("d"), 64))},
+				Value:      &millv1.Evidence_Artifact{Artifact: "sha256:" + strings.Repeat("a", 64)},
 				VerifiedBy: "spec",
 			},
 		})
 
-		Eventually(done, 10*time.Second).Should(Receive(BeNil()), stderr.String())
-		Expect(stdout.String()).To(ContainSubstring("more output, still masked"))
+		commit := r.start(ctx, "commit", millv1.StepKind_STEP_KIND_SKILL)
+		appendActivity(run.ActivityPath(logDir, r.run.GetId(), "commit", commit.GetAttempt()),
+			&millv1.Activity{Body: &millv1.Activity_AttemptStarted{AttemptStarted: &millv1.AttemptStarted{
+				Step: "commit", Attempt: commit.GetAttempt(),
+			}}},
+			textActivity("committing"),
+		)
+
+		out := r.cli(ctx, "logs", "millcli#20", "--no-pager")
+		Expect(out).To(ContainSubstring("-- implement attempt 1 started --"))
+		Expect(out).To(ContainSubstring("doing the work"))
+		Expect(out).To(ContainSubstring("-- implement attempt 1 ended: closed --"))
+		Expect(out).To(ContainSubstring("-- commit attempt 1 started --"))
+		Expect(out).To(ContainSubstring("committing"))
 	})
 
-	It("reads the step the run is on when no step is named", func() {
-		r := openRun(ctx, "millcli#21", nodeID(21))
-		sr := r.start(ctx, "gather-context", millv1.StepKind_STEP_KIND_SKILL)
+	// Acceptance criterion and the Gherkin scenario "One tail for the whole
+	// run": -f prints the last --tail records, follows across a step change
+	// with no gap, and ends with "-- run done --" and exit 0 once the run
+	// completes.
+	It("follows across a step change and ends the stream when the run finishes", func() {
+		logDir := GinkgoT().TempDir()
+		m := servingWithLogDir(ctx, logDir)
+		r := openRunOn(ctx, m, "millcli#30", nodeID(30))
 
-		logDir := filepath.Join(GinkgoT().TempDir(), "logs")
-		path := run.ActivityPath(logDir, r.run.GetId(), "gather-context", sr.GetAttempt())
-		appendActivity(path, &millv1.Activity{
-			Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
-			Body:   &millv1.Activity_ToolCall{ToolCall: &millv1.ToolCall{CallId: "call-1", Name: "Read"}},
+		implement := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+		path := run.ActivityPath(logDir, r.run.GetId(), "implement", implement.GetAttempt())
+		appendActivity(path, &millv1.Activity{Body: &millv1.Activity_AttemptStarted{AttemptStarted: &millv1.AttemptStarted{
+			Step: "implement", Attempt: implement.GetAttempt(),
+		}}})
+		for i := 1; i <= 12; i++ {
+			appendActivity(path, textActivity(fmt.Sprintf("line-%d", i)))
+		}
+
+		out, stderr, done := runLogsFollow(ctx, m, "millcli#30")
+
+		// --tail defaults to 10: the boundary plus 12 lines is 13 records,
+		// so only the last 10 (line-3 through line-12) are there to start.
+		Eventually(out.String, 10*time.Second, 50*time.Millisecond).Should(ContainSubstring("line-12"))
+		Expect(out.String()).NotTo(ContainSubstring("line-1\n"))
+		Expect(out.String()).NotTo(ContainSubstring("line-2\n"))
+		Expect(out.String()).To(ContainSubstring("line-3\n"))
+		Consistently(done, 500*time.Millisecond).ShouldNot(Receive())
+
+		appendActivity(path, &millv1.Activity{Body: &millv1.Activity_AttemptEnded{AttemptEnded: &millv1.AttemptEnded{
+			Status: millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED, Reason: "closed",
+		}}})
+		r.close(ctx, implement, &millv1.CloseStepRunRequest{
+			Evidence: &millv1.Evidence{
+				Kind:       millv1.EvidenceKind_EVIDENCE_KIND_ARTIFACT,
+				Value:      &millv1.Evidence_Artifact{Artifact: "sha256:" + strings.Repeat("b", 64)},
+				VerifiedBy: "spec",
+			},
 		})
+		Eventually(out.String, 10*time.Second, 50*time.Millisecond).
+			Should(ContainSubstring("-- implement attempt 1 ended: closed --"))
 
-		out := r.cli(ctx, "logs", "millcli#21", "--log-dir", logDir)
-		Expect(out).To(ContainSubstring("tool Read call=call-1"))
+		appendActivity(run.ActivityPath(logDir, r.run.GetId(), "commit", 1),
+			&millv1.Activity{Body: &millv1.Activity_AttemptStarted{AttemptStarted: &millv1.AttemptStarted{Step: "commit", Attempt: 1}}})
+		r.start(ctx, "commit", millv1.StepKind_STEP_KIND_SKILL)
+		Eventually(out.String, 10*time.Second, 50*time.Millisecond).
+			Should(ContainSubstring("-- commit attempt 1 started --"))
+
+		_, err := r.store.Done(ctx, connectRequest(&millv1.DoneRequest{LeaseId: r.lease, RunId: r.run.GetId()}))
+		Expect(err).NotTo(HaveOccurred())
+
+		var runErr error
+		Eventually(done, 10*time.Second).Should(Receive(&runErr), stderr.String())
+		Expect(runErr).NotTo(HaveOccurred())
+		Expect(out.String()).To(ContainSubstring("-- run done --"))
+	})
+
+	// Acceptance criterion: a run that files a gate ends a followed stream
+	// naming the gate and exits 3; a parked run exits 4. The gate_filed
+	// fixture and the ledger write that signals it (wait/park) both happen
+	// before the follow opens, which internal/server/logs.go's
+	// logsFollowOneRun reads on its very first pass — no race to synchronize
+	// around at this level; that ordering is already proven server-side
+	// (internal/server/logs_test.go's own gate/parked specs).
+	It("names the gate and exits 3 when the run waits on one", func() {
+		logDir := GinkgoT().TempDir()
+		m := servingWithLogDir(ctx, logDir)
+		r := openRunOn(ctx, m, "millcli#40", nodeID(40))
+
+		gate := r.start(ctx, "approve", millv1.StepKind_STEP_KIND_GATE)
+		appendActivity(run.ActivityPath(logDir, r.run.GetId(), "approve", gate.GetAttempt()),
+			gateFiled("merge", "gate-1", "millcli#40/approve", "Approve millcli#40"))
+		r.wait(ctx, "gate-1", gate)
+
+		out, err := m.try(ctx, "logs", "millcli#40", "--follow", "--no-pager")
+		Expect(cli.ExitCode(err)).To(Equal(cli.ExitLogsWaiting))
+		Expect(out).To(ContainSubstring("-- waiting on gate millcli#40/approve --"))
+	})
+
+	It("names the gate and exits 4 when the run is parked on one", func() {
+		logDir := GinkgoT().TempDir()
+		m := servingWithLogDir(ctx, logDir)
+		r := openRunOn(ctx, m, "millcli#41", nodeID(41))
+
+		gate := r.start(ctx, "approve", millv1.StepKind_STEP_KIND_GATE)
+		appendActivity(run.ActivityPath(logDir, r.run.GetId(), "approve", gate.GetAttempt()),
+			gateFiled("park", "gate-2", "millcli#41/approve", ""))
+		r.park(ctx, "gate-2")
+
+		out, err := m.try(ctx, "logs", "millcli#41", "--follow", "--no-pager")
+		Expect(cli.ExitCode(err)).To(Equal(cli.ExitLogsParked))
+		Expect(out).To(ContainSubstring("-- parked on gate millcli#41/approve --"))
 	})
 
 	// The acceptance criterion's own wording: `mill logs` reads byte-identical
@@ -127,10 +192,11 @@ var _ = Describe("mill logs", Label(testsupport.DBLabel), func() {
 	// attempt carries one of each, and the expected text is built from the
 	// exact formats the deleted internal/run/logs.go used to write.
 	It("renders every activity kind byte-identical to the log format it replaces", func() {
-		r := openRun(ctx, "millcli#26", nodeID(26))
+		logDir := GinkgoT().TempDir()
+		m := servingWithLogDir(ctx, logDir)
+		r := openRunOn(ctx, m, "millcli#26", nodeID(26))
 		sr := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
 
-		logDir := filepath.Join(GinkgoT().TempDir(), "logs")
 		path := run.ActivityPath(logDir, r.run.GetId(), "implement", sr.GetAttempt())
 		at := timestamppb.New(time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC))
 		stamp := at.AsTime().UTC().Format(time.RFC3339)
@@ -164,7 +230,7 @@ var _ = Describe("mill logs", Label(testsupport.DBLabel), func() {
 				Body: &millv1.Activity_Check{Check: &millv1.CheckResult{Exit: processExit(1), Reason: "lint failed"}}},
 		)
 
-		out := r.cli(ctx, "logs", "millcli#26", "--step", "implement", "--log-dir", logDir)
+		out := r.cli(ctx, "logs", "millcli#26", "--step", "implement", "--no-pager")
 
 		expected := strings.Join([]string{
 			fmt.Sprintf("%s prompt begin bytes=%d", stamp, len("do the thing\n")),
@@ -193,47 +259,21 @@ var _ = Describe("mill logs", Label(testsupport.DBLabel), func() {
 		Expect(out).To(Equal(expected))
 	})
 
-	It("says which attempt has no log rather than printing nothing", func() {
-		r := openRun(ctx, "millcli#22", nodeID(22))
-		r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
-
-		out, err := runCLI(ctx, r.mill.socket, "logs", "millcli#22", "--step", "implement",
-			"--log-dir", filepath.Join(GinkgoT().TempDir(), "empty"))
-		Expect(err).To(HaveOccurred())
-		Expect(out).To(ContainSubstring("no log for implement attempt 1"))
-	})
-
-	// A node reference is what an operator has in front of them, and the
-	// run it names has usually ended by the time they ask. A run that has
-	// ended is on no step, and answering "the run is on no step" to a
-	// question about the only run the node has is a tool refusing to read a
-	// file it can name.
-	It("reads the last step a finished run attempted, given the node's reference", func() {
-		r := openRun(ctx, "millcli#24", nodeID(24))
-		r.closeGatherContext(ctx, "sha256:"+strings.Repeat("a", 64))
+	It("emits one Activity JSON line per record with --json", func() {
+		logDir := GinkgoT().TempDir()
+		m := servingWithLogDir(ctx, logDir)
+		r := openRunOn(ctx, m, "millcli#27", nodeID(27))
 		sr := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
-		r.close(ctx, sr, &millv1.CloseStepRunRequest{
-			Evidence: &millv1.Evidence{
-				Kind:       millv1.EvidenceKind_EVIDENCE_KIND_ARTIFACT,
-				Value:      &millv1.Evidence_Artifact{Artifact: "sha256:" + strings.Repeat("b", 64)},
-				VerifiedBy: "spec",
-			},
-		})
 
-		logDir := filepath.Join(GinkgoT().TempDir(), "logs")
-		path := run.ActivityPath(logDir, r.run.GetId(), "implement", sr.GetAttempt())
-		appendActivity(path, textActivity("the implementer's last words"))
+		appendActivity(run.ActivityPath(logDir, r.run.GetId(), "implement", sr.GetAttempt()), textActivity("json line"))
 
-		// The rest of quick-fix, closed: the run is on no step now, which
-		// is the state every finished run is in.
-		last := finish(ctx, r)
-		lastPath := run.ActivityPath(logDir, r.run.GetId(), last, 1)
-		appendActivity(lastPath, textActivity("status merged"))
+		out := r.cli(ctx, "logs", "millcli#27", "--step", "implement", "--json", "--no-pager")
 
-		out := r.cli(ctx, "logs", "millcli#24", "--log-dir", logDir)
-
-		Expect(out).To(ContainSubstring("status merged"))
-		Expect(out).NotTo(ContainSubstring("is on no step"))
+		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+		Expect(lines).To(HaveLen(1))
+		var got millv1.Activity
+		Expect(protojson.Unmarshal([]byte(lines[0]), &got)).To(Succeed())
+		Expect(got.GetText().GetText()).To(Equal("json line"), "the line round-trips as the record it was")
 	})
 
 	It("says the node has no run rather than printing nothing", func() {
@@ -257,36 +297,18 @@ var _ = Describe("mill logs", Label(testsupport.DBLabel), func() {
 	})
 })
 
-// finish closes the rest of quick-fix — commit, clean-tree, pr, merge — each
-// on the evidence its step takes, and names the last step it closed. A run
-// with every step closed is on no step, which is what a finished run looks
-// like to the read tools.
-func finish(ctx context.Context, r *runs) string {
+// runLogsFollow starts `mill logs -f` against m in the background and
+// returns its stdout and stderr buffers, live as the command writes to
+// them, and the channel its exit error lands on.
+func runLogsFollow(ctx context.Context, m mill, reference string) (*bytes.Buffer, *bytes.Buffer, chan error) {
 	GinkgoHelper()
-	for _, step := range []struct {
-		name  string
-		kind  millv1.StepKind
-		value *millv1.Evidence
-	}{
-		{"commit", millv1.StepKind_STEP_KIND_SKILL, &millv1.Evidence{
-			Kind:  millv1.EvidenceKind_EVIDENCE_KIND_COMMIT,
-			Value: &millv1.Evidence_Commit{Commit: strings.Repeat("c", 40)},
-		}},
-		{"clean-tree", millv1.StepKind_STEP_KIND_CHECK, &millv1.Evidence{
-			Kind:  millv1.EvidenceKind_EVIDENCE_KIND_EXIT,
-			Value: &millv1.Evidence_Exit{Exit: processExit(0)},
-		}},
-		{"pr", millv1.StepKind_STEP_KIND_SKILL, &millv1.Evidence{
-			Kind:  millv1.EvidenceKind_EVIDENCE_KIND_URL,
-			Value: &millv1.Evidence_Url{Url: "https://gitlab.example.test/group/thing/-/merge_requests/1"},
-		}},
-		{"merge", millv1.StepKind_STEP_KIND_SKILL, &millv1.Evidence{
-			Kind:  millv1.EvidenceKind_EVIDENCE_KIND_STATUS,
-			Value: &millv1.Evidence_Status{Status: "merged"},
-		}},
-	} {
-		step.value.VerifiedBy = "spec"
-		r.close(ctx, r.start(ctx, step.name, step.kind), &millv1.CloseStepRunRequest{Evidence: step.value})
-	}
-	return "merge"
+	var stdout, stderr bytes.Buffer
+	root := cli.NewRootCommand(&stdout, &stderr)
+	root.SetArgs([]string{"logs", reference, "--follow", "--socket", m.socket})
+	done := make(chan error, 1)
+	go func() {
+		defer GinkgoRecover()
+		done <- root.ExecuteContext(ctx)
+	}()
+	return &stdout, &stderr, done
 }
