@@ -74,7 +74,7 @@ steps:
             - Read
             - Write
     retries: 3
-    timeout: 1h
+    timeout: 2h
 
   - name: commit
     kind: skill

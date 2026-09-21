@@ -209,7 +209,7 @@ steps:
             - Read
             - Write
     retries: 2
-    timeout: 45m
+    timeout: 3h
 
   # Reuse, simplification, efficiency and altitude on the diff this run
   # made, applied rather than reported. Behaviour is identical when it is
@@ -236,7 +236,7 @@ steps:
             - Read
             - Write
     retries: 2
-    timeout: 30m
+    timeout: 1h
 
   - name: commit
     kind: skill
@@ -321,7 +321,7 @@ steps:
             - NotebookEdit
     on_failure: revise implement
     retries: 2
-    timeout: 30m
+    timeout: 45m
 
   # Auto-merged on an approving verdict at this tier or below; anything
   # bigger is a person's decision. Repo protections are the repo's job
