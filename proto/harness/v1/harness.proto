@@ -128,6 +128,28 @@ message Workspace {
   string token = 2;
 }
 
+// McpServer is one MCP server the sidecar may mount into the session, merged
+// by the mill from the host's own `mcp-servers` and the run's workflow
+// before it reaches the wire (docs/tools.md §Configuration). The sidecar
+// spawns it as a child of its own process, over stdio, with the session's
+// environment; it interprets nothing else about it beyond what mounting and
+// allow-by-mount need.
+message McpServer {
+  // The command to spawn.
+  string command = 1;
+  // Arguments to the command. A literal ${MCP_DIR} in an argument is
+  // replaced with the session's per-run browser directory before the
+  // sidecar spawns it.
+  repeated string args = 2;
+  // Environment variables added for the spawned process, on top of the
+  // session's own. The same ${MCP_DIR} substitution applies to values here.
+  map<string, string> env = 3;
+  // Whether this server is mounted on every step regardless of what the
+  // step's options ask for. Set by the host's own configuration; a
+  // workflow's own servers are never global.
+  bool global = 4;
+}
+
 // Attachment is one piece of context handed to the session alongside the
 // prompt: a prior step's artifact, or a predecessor node's result.
 message Attachment {
@@ -180,6 +202,16 @@ message Start {
   // (docs/sandbox.md §Network). Empty when the workspace decided neither,
   // and then nothing is appended.
   string system_prompt = 9;
+  // The MCP servers mounted for this session, by name, merged from the
+  // host's `mcp-servers` and the run's workflow. Mounting and allow-by-mount
+  // are the sidecar's to resolve from the step's `mcp` option; the mill
+  // interprets nothing here beyond passing the catalog through.
+  map<string, McpServer> mcp_servers = 10;
+  // The per-run directory a mounted server's working directory and
+  // ${MCP_DIR} substitutions resolve to: <workspace-dir>/<run>/browser,
+  // beside the checkout, never in it. Empty when the run has none, which
+  // mounts nothing.
+  string mcp_dir = 11;
 }
 
 // Resume continues an existing session with a new prompt, so a `revise`
@@ -223,6 +255,16 @@ message Resume {
   // (docs/sandbox.md §Network). Empty when the workspace decided neither,
   // and then nothing is appended.
   string system_prompt = 9;
+  // The MCP servers mounted for this session, by name, merged from the
+  // host's `mcp-servers` and the run's workflow. Mounting and allow-by-mount
+  // are the sidecar's to resolve from the step's `mcp` option; the mill
+  // interprets nothing here beyond passing the catalog through.
+  map<string, McpServer> mcp_servers = 10;
+  // The per-run directory a mounted server's working directory and
+  // ${MCP_DIR} substitutions resolve to: <workspace-dir>/<run>/browser,
+  // beside the checkout, never in it. Empty when the run has none, which
+  // mounts nothing.
+  string mcp_dir = 11;
 }
 
 // Cancel stops a running session: SIGTERM, a grace window, SIGKILL. The

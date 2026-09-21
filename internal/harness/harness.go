@@ -46,6 +46,27 @@ type Workspace struct {
 	Env map[string]string
 }
 
+// McpServer is one MCP server the harness may mount into the session, merged
+// by the run from the host's own `mcp-servers` and the run's workflow
+// (docs/tools.md §Configuration). Mill interprets nothing about it beyond
+// this shape: which of the step's options mount it, and what its tools are
+// named, are the harness's to resolve.
+type McpServer struct {
+	// Command is what to spawn.
+	Command string
+	// Args are the command's arguments. A literal ${MCP_DIR} in one is the
+	// harness's to replace with the session's per-run browser directory.
+	Args []string
+	// Env are variables added for the spawned process, on top of the
+	// session's own. The same ${MCP_DIR} substitution applies to a value
+	// here.
+	Env map[string]string
+	// Global mounts this server on every step regardless of what the step's
+	// options ask for. Set by the host's own configuration; a workflow's own
+	// servers are never global.
+	Global bool
+}
+
 // Sink receives a turn's events as they arrive, in the order the harness
 // produced them. The caller supplies it because the events belong to the step
 // run's log — one file per step run, through the redactor, per
@@ -102,6 +123,16 @@ type Session struct {
 	Timeout time.Duration
 	// Events receives this turn's events as they arrive.
 	Events Sink
+	// McpServers is the run's per-run catalog of MCP servers, merged from
+	// the host's own `mcp-servers` and the run's workflow, by name. Which of
+	// them a session actually mounts is the harness's to resolve from its
+	// own options document (docs/architecture.md §"Skill steps: the harness
+	// adapter").
+	McpServers map[string]McpServer
+	// McpDir is the per-run directory a mounted server's working directory
+	// and ${MCP_DIR} substitutions resolve to: beside the checkout, never in
+	// it, removed with the workspace. Empty mounts nothing.
+	McpDir string
 }
 
 // Prompt is what the session is asked to do.

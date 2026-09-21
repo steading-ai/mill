@@ -116,9 +116,9 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 	// worker serves and keeps the checkout at (docs/sandbox.md §Naming,
 	// §"Session identity"). A workspace whose sessions run on the host does
 	// not implement this and the handle's own socket and root stand.
-	sessionSocket, sessionCwd := handle.Socket, handle.Root
+	sessionSocket, sessionCwd, sessionMcpDir := handle.Socket, handle.Root, handle.McpDir
 	if inMachine, ok := s.workspace.(inMachineSession); ok {
-		sessionSocket, sessionCwd = inMachine.SessionSocket(), inMachine.SessionCwd()
+		sessionSocket, sessionCwd, sessionMcpDir = inMachine.SessionSocket(), inMachine.SessionCwd(), inMachine.SessionMcpDir()
 	}
 
 	// The step's own credential is registered with the redactor before the
@@ -141,8 +141,10 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 		Cwd: sessionCwd,
 		// The step's budget, which is also how long the session may wait
 		// in the foreground for anything it runs.
-		Timeout: step.GetTimeout().AsDuration(),
-		Events:  r.sessionEvents(ctx, s, sr),
+		Timeout:    step.GetTimeout().AsDuration(),
+		Events:     r.sessionEvents(ctx, s, sr),
+		McpServers: mergeMcpServers(r.options.McpServers, s.workflow.GetMcpServers()),
+		McpDir:     sessionMcpDir,
 	}
 
 	// The prompt heads the attempt's activity record. What a session was
@@ -524,6 +526,30 @@ func (r *Runner) recordHeartbeat(ctx context.Context, s *state, sr *millv1.StepR
 // an event in a session. It is what says a session exists to be resumed:
 // every attempt at every step is considered, because a session outlives the
 // step that opened it and a workflow may run several steps in one.
+// mergeMcpServers builds a step's MCP catalog from the worker's own
+// (global) servers and the workflow's own (per-run, never global) ones. A
+// name the workflow also declares overrides the worker's entry, since
+// `mill workflow push` (internal/server/store_service.go) has already
+// refused a workflow whose names collide with the worker's and this is only
+// reached if that check has since been bypassed.
+func mergeMcpServers(host map[string]harness.McpServer, workflow map[string]*millv1.WorkflowMcpServer) map[string]harness.McpServer {
+	if len(host) == 0 && len(workflow) == 0 {
+		return nil
+	}
+	servers := make(map[string]harness.McpServer, len(host)+len(workflow))
+	for name, server := range host {
+		servers[name] = server
+	}
+	for name, server := range workflow {
+		servers[name] = harness.McpServer{
+			Command: server.GetCommand(),
+			Args:    server.GetArgs(),
+			Env:     server.GetEnv(),
+		}
+	}
+	return servers
+}
+
 func sessionStarted(detail *millv1.InspectResponse, sessionID string) bool {
 	if sessionID == "" {
 		return false

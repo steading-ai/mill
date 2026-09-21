@@ -53,6 +53,12 @@ const SidecarPath = Home + "/.local/share/mill/sidecar"
 // host runs from here.
 const WorkflowPath = Home + "/.local/share/mill/workflow"
 
+// BrowserPath is where a mounted MCP server's working directory is bound
+// inside the machine: beside the checkout at [Work], never in it, so a
+// Playwright screenshot never lands in the tree a check step diffs
+// (docs/architecture.md §"Skill steps: the harness adapter").
+const BrowserPath = Home + "/browser"
+
 // Binds derives a run's bind mounts from its configuration. Every host
 // side is under the run directory, the socket directory or the skill
 // directory: a cache's host side is named by the lineage, whose name
@@ -61,6 +67,7 @@ const WorkflowPath = Home + "/.local/share/mill/workflow"
 func Binds(config Config, mounts Mounts) []Bind {
 	binds := []Bind{
 		{Host: filepath.Join(mounts.Run, "workspace"), Machine: Work},
+		{Host: filepath.Join(mounts.Run, "browser"), Machine: BrowserPath},
 		{Host: mounts.Socket, Machine: RunDir},
 		{Host: mounts.Skill, Machine: SkillPath, ReadOnly: true},
 		{Host: mounts.Sidecar, Machine: SidecarPath, ReadOnly: true},

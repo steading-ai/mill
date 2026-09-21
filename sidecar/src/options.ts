@@ -94,6 +94,11 @@ export interface HarnessOptions {
   tools?: Tools;
   permissionMode?: PermissionMode;
   env?: Env;
+  // mcp names the step's own MCP servers, mounted alongside every server the
+  // worker itself marks global (session.ts §buildOptions). A name this
+  // session's catalog does not carry is a PolicyError, the same as any other
+  // key this harness cannot apply.
+  mcp?: string[];
 }
 
 // parseOptions validates a step's options document and returns it typed. It
@@ -120,6 +125,9 @@ export function parseOptions(document: JsonObject | undefined): HarnessOptions {
         break;
       case "env":
         options.env = envAt(key, value);
+        break;
+      case "mcp":
+        options.mcp = stringsAt(key, value);
         break;
       default:
         throw new PolicyError(`${key} is not an option this harness has`);

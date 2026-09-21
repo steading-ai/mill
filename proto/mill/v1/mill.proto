@@ -707,6 +707,20 @@ message ArtifactSource {
   string path = 1;
 }
 
+// WorkflowMcpServer is one MCP server a workflow mounts on the steps that
+// name it, in the same shape as the host's own `mcp-servers`
+// (docs/tools.md §Configuration) but never global: a workflow cannot mount a
+// server on every step of every project that runs it.
+message WorkflowMcpServer {
+  // The command to spawn.
+  string command = 1;
+  // Arguments to the command.
+  repeated string args = 2;
+  // Environment variables added for the spawned process, on top of the
+  // session's own.
+  map<string, string> env = 3;
+}
+
 // Workflow is a named, immutable, versioned definition of how a class of node
 // gets worked. Data, not code. A workflow is never edited: a change is a new
 // version, and runs in flight keep the version they started with.
@@ -732,6 +746,11 @@ message Workflow {
   // How a `status` step watches the forge's checks. Unset means the
   // documented defaults.
   StatusPolicy status = 9;
+  // MCP servers this workflow's steps may mount, by name, with a step's
+  // `mcp` option naming which. A name that collides with one the host's own
+  // `mcp-servers` defines is refused at `mill workflow push`, naming the
+  // collision.
+  map<string, WorkflowMcpServer> mcp_servers = 10;
 }
 
 // StatusPolicy is how long a `status` step waits for the forge's checks to

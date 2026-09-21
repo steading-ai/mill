@@ -142,6 +142,10 @@ var _ = Describe("The machine workspace", Label("unit"), func() {
 		Expect(handle.Socket).To(Equal(filepath.Join(f.socketDir(), "ws.sock")))
 		Expect(handle.Branch).To(Equal("mill/mill-61"))
 
+		By("and a mounted MCP server's working directory is beside the checkout, not in it")
+		Expect(handle.McpDir).To(Equal(filepath.Join(f.runDir(), "browser")))
+		Expect(handle.McpDir).To(BeADirectory())
+
 		By("and the machine's root is the ensured image, discarded with the machine after destroy")
 		m := f.manifest()
 		Expect(m.Image).To(Equal(string(base)), "no packages: the derived digest is the base's")
@@ -149,6 +153,7 @@ var _ = Describe("The machine workspace", Label("unit"), func() {
 		Expect(ws.Destroy(ctx)).To(Succeed())
 		Expect(f.host.registered()).To(BeEmpty())
 		Expect(f.runDir()).NotTo(BeADirectory())
+		Expect(handle.McpDir).NotTo(BeADirectory())
 		Expect(ws.Handle()).To(BeNil())
 	})
 
@@ -193,6 +198,7 @@ var _ = Describe("The machine workspace", Label("unit"), func() {
 		}
 		Expect(targets).To(HaveKey("/work"))
 		Expect(targets["/work"].Source).To(Equal(filepath.Join(f.runDir(), "workspace")))
+		Expect(targets["/home/agent/browser"].Source).To(Equal(filepath.Join(f.runDir(), "browser")))
 		Expect(targets["/run/mill"].Source).To(Equal(f.socketDir()))
 		Expect(targets["/home/agent/.claude/skills/mill"]).To(Equal(machine.Bind{Source: f.skill, Target: "/home/agent/.claude/skills/mill", ReadOnly: true}))
 		Expect(targets["/home/agent/.local/share/mill/sidecar"]).To(Equal(machine.Bind{Source: f.sidecar, Target: "/home/agent/.local/share/mill/sidecar", ReadOnly: true}))

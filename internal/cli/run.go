@@ -226,10 +226,15 @@ type runOptions struct {
 	notifyCommand string
 	skillOverride map[string]string
 	gateway       gatewayOptions
-	ttl           time.Duration
-	interval      time.Duration
-	dryRun        bool
-	noAsk         bool
+	// mcpServers is the host's own `mcp-servers`, read from the
+	// configuration file the same way sandbox is: no flag of its own,
+	// because a map has none, and so unset for `mill run`, which reads no
+	// file (docs/tools.md §Configuration).
+	mcpServers map[string]McpServerConfig
+	ttl        time.Duration
+	interval   time.Duration
+	dryRun     bool
+	noAsk      bool
 }
 
 // newRunCommand is "work" with the claim replaced by an argument: one node,
@@ -501,9 +506,29 @@ func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, 
 		Log:            slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: slog.LevelInfo})),
 		OnActivity:     onActivity,
 		Twin:           twinFor(kind, opts),
+		McpServers:     hostMcpServers(opts.mcpServers),
 	}
 	gatewayRunOptions(gw, &options)
 	return run.New(options), nil
+}
+
+// hostMcpServers translates the file's own `mcp-servers` into the run
+// loop's shape. Nil in, nil out: `mill run` reads no file and so mounts none
+// of the host's own.
+func hostMcpServers(configured map[string]McpServerConfig) map[string]harness.McpServer {
+	if len(configured) == 0 {
+		return nil
+	}
+	servers := make(map[string]harness.McpServer, len(configured))
+	for name, server := range configured {
+		servers[name] = harness.McpServer{
+			Command: server.Command,
+			Args:    server.Args,
+			Env:     server.Env,
+			Global:  server.Global,
+		}
+	}
+	return servers
 }
 
 // notifier is the deployment's notify command, or nothing at all. It is a

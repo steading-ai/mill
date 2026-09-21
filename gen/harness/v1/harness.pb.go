@@ -435,6 +435,89 @@ func (x *Workspace) GetToken() string {
 	return ""
 }
 
+// McpServer is one MCP server the sidecar may mount into the session, merged
+// by the mill from the host's own `mcp-servers` and the run's workflow
+// before it reaches the wire (docs/tools.md §Configuration). The sidecar
+// spawns it as a child of its own process, over stdio, with the session's
+// environment; it interprets nothing else about it beyond what mounting and
+// allow-by-mount need.
+type McpServer struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The command to spawn.
+	Command string `protobuf:"bytes,1,opt,name=command,proto3" json:"command,omitempty"`
+	// Arguments to the command. A literal ${MCP_DIR} in an argument is
+	// replaced with the session's per-run browser directory before the
+	// sidecar spawns it.
+	Args []string `protobuf:"bytes,2,rep,name=args,proto3" json:"args,omitempty"`
+	// Environment variables added for the spawned process, on top of the
+	// session's own. The same ${MCP_DIR} substitution applies to values here.
+	Env map[string]string `protobuf:"bytes,3,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Whether this server is mounted on every step regardless of what the
+	// step's options ask for. Set by the host's own configuration; a
+	// workflow's own servers are never global.
+	Global        bool `protobuf:"varint,4,opt,name=global,proto3" json:"global,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *McpServer) Reset() {
+	*x = McpServer{}
+	mi := &file_harness_v1_harness_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *McpServer) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*McpServer) ProtoMessage() {}
+
+func (x *McpServer) ProtoReflect() protoreflect.Message {
+	mi := &file_harness_v1_harness_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use McpServer.ProtoReflect.Descriptor instead.
+func (*McpServer) Descriptor() ([]byte, []int) {
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *McpServer) GetCommand() string {
+	if x != nil {
+		return x.Command
+	}
+	return ""
+}
+
+func (x *McpServer) GetArgs() []string {
+	if x != nil {
+		return x.Args
+	}
+	return nil
+}
+
+func (x *McpServer) GetEnv() map[string]string {
+	if x != nil {
+		return x.Env
+	}
+	return nil
+}
+
+func (x *McpServer) GetGlobal() bool {
+	if x != nil {
+		return x.Global
+	}
+	return false
+}
+
 // Attachment is one piece of context handed to the session alongside the
 // prompt: a prior step's artifact, or a predecessor node's result.
 type Attachment struct {
@@ -456,7 +539,7 @@ type Attachment struct {
 
 func (x *Attachment) Reset() {
 	*x = Attachment{}
-	mi := &file_harness_v1_harness_proto_msgTypes[5]
+	mi := &file_harness_v1_harness_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -468,7 +551,7 @@ func (x *Attachment) String() string {
 func (*Attachment) ProtoMessage() {}
 
 func (x *Attachment) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[5]
+	mi := &file_harness_v1_harness_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -481,7 +564,7 @@ func (x *Attachment) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Attachment.ProtoReflect.Descriptor instead.
 func (*Attachment) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{5}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *Attachment) GetName() string {
@@ -548,14 +631,24 @@ type Start struct {
 	// the proxy named in the environment and the model through the gateway
 	// (docs/sandbox.md §Network). Empty when the workspace decided neither,
 	// and then nothing is appended.
-	SystemPrompt  string `protobuf:"bytes,9,opt,name=system_prompt,json=systemPrompt,proto3" json:"system_prompt,omitempty"`
+	SystemPrompt string `protobuf:"bytes,9,opt,name=system_prompt,json=systemPrompt,proto3" json:"system_prompt,omitempty"`
+	// The MCP servers mounted for this session, by name, merged from the
+	// host's `mcp-servers` and the run's workflow. Mounting and allow-by-mount
+	// are the sidecar's to resolve from the step's `mcp` option; the mill
+	// interprets nothing here beyond passing the catalog through.
+	McpServers map[string]*McpServer `protobuf:"bytes,10,rep,name=mcp_servers,json=mcpServers,proto3" json:"mcp_servers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// The per-run directory a mounted server's working directory and
+	// ${MCP_DIR} substitutions resolve to: <workspace-dir>/<run>/browser,
+	// beside the checkout, never in it. Empty when the run has none, which
+	// mounts nothing.
+	McpDir        string `protobuf:"bytes,11,opt,name=mcp_dir,json=mcpDir,proto3" json:"mcp_dir,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Start) Reset() {
 	*x = Start{}
-	mi := &file_harness_v1_harness_proto_msgTypes[6]
+	mi := &file_harness_v1_harness_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -567,7 +660,7 @@ func (x *Start) String() string {
 func (*Start) ProtoMessage() {}
 
 func (x *Start) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[6]
+	mi := &file_harness_v1_harness_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -580,7 +673,7 @@ func (x *Start) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Start.ProtoReflect.Descriptor instead.
 func (*Start) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{6}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *Start) GetSessionId() string {
@@ -646,6 +739,20 @@ func (x *Start) GetSystemPrompt() string {
 	return ""
 }
 
+func (x *Start) GetMcpServers() map[string]*McpServer {
+	if x != nil {
+		return x.McpServers
+	}
+	return nil
+}
+
+func (x *Start) GetMcpDir() string {
+	if x != nil {
+		return x.McpDir
+	}
+	return ""
+}
+
 // Resume continues an existing session with a new prompt, so a `revise`
 // returns to the implementing session and the model picks up its own prior
 // context. A step is never resumed mid-flight; a session is.
@@ -687,14 +794,24 @@ type Resume struct {
 	// the proxy named in the environment and the model through the gateway
 	// (docs/sandbox.md §Network). Empty when the workspace decided neither,
 	// and then nothing is appended.
-	SystemPrompt  string `protobuf:"bytes,9,opt,name=system_prompt,json=systemPrompt,proto3" json:"system_prompt,omitempty"`
+	SystemPrompt string `protobuf:"bytes,9,opt,name=system_prompt,json=systemPrompt,proto3" json:"system_prompt,omitempty"`
+	// The MCP servers mounted for this session, by name, merged from the
+	// host's `mcp-servers` and the run's workflow. Mounting and allow-by-mount
+	// are the sidecar's to resolve from the step's `mcp` option; the mill
+	// interprets nothing here beyond passing the catalog through.
+	McpServers map[string]*McpServer `protobuf:"bytes,10,rep,name=mcp_servers,json=mcpServers,proto3" json:"mcp_servers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// The per-run directory a mounted server's working directory and
+	// ${MCP_DIR} substitutions resolve to: <workspace-dir>/<run>/browser,
+	// beside the checkout, never in it. Empty when the run has none, which
+	// mounts nothing.
+	McpDir        string `protobuf:"bytes,11,opt,name=mcp_dir,json=mcpDir,proto3" json:"mcp_dir,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Resume) Reset() {
 	*x = Resume{}
-	mi := &file_harness_v1_harness_proto_msgTypes[7]
+	mi := &file_harness_v1_harness_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -706,7 +823,7 @@ func (x *Resume) String() string {
 func (*Resume) ProtoMessage() {}
 
 func (x *Resume) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[7]
+	mi := &file_harness_v1_harness_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -719,7 +836,7 @@ func (x *Resume) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Resume.ProtoReflect.Descriptor instead.
 func (*Resume) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{7}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Resume) GetSessionId() string {
@@ -785,6 +902,20 @@ func (x *Resume) GetSystemPrompt() string {
 	return ""
 }
 
+func (x *Resume) GetMcpServers() map[string]*McpServer {
+	if x != nil {
+		return x.McpServers
+	}
+	return nil
+}
+
+func (x *Resume) GetMcpDir() string {
+	if x != nil {
+		return x.McpDir
+	}
+	return ""
+}
+
 // Cancel stops a running session: SIGTERM, a grace window, SIGKILL. The
 // sidecar answers with a Terminal whose exit reason is CANCELLED.
 type Cancel struct {
@@ -800,7 +931,7 @@ type Cancel struct {
 
 func (x *Cancel) Reset() {
 	*x = Cancel{}
-	mi := &file_harness_v1_harness_proto_msgTypes[8]
+	mi := &file_harness_v1_harness_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -812,7 +943,7 @@ func (x *Cancel) String() string {
 func (*Cancel) ProtoMessage() {}
 
 func (x *Cancel) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[8]
+	mi := &file_harness_v1_harness_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -825,7 +956,7 @@ func (x *Cancel) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Cancel.ProtoReflect.Descriptor instead.
 func (*Cancel) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{8}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Cancel) GetSessionId() string {
@@ -862,7 +993,7 @@ type Request struct {
 
 func (x *Request) Reset() {
 	*x = Request{}
-	mi := &file_harness_v1_harness_proto_msgTypes[9]
+	mi := &file_harness_v1_harness_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -874,7 +1005,7 @@ func (x *Request) String() string {
 func (*Request) ProtoMessage() {}
 
 func (x *Request) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[9]
+	mi := &file_harness_v1_harness_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -887,7 +1018,7 @@ func (x *Request) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Request.ProtoReflect.Descriptor instead.
 func (*Request) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{9}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *Request) GetId() string {
@@ -980,7 +1111,7 @@ type Text struct {
 
 func (x *Text) Reset() {
 	*x = Text{}
-	mi := &file_harness_v1_harness_proto_msgTypes[10]
+	mi := &file_harness_v1_harness_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -992,7 +1123,7 @@ func (x *Text) String() string {
 func (*Text) ProtoMessage() {}
 
 func (x *Text) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[10]
+	mi := &file_harness_v1_harness_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1005,7 +1136,7 @@ func (x *Text) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Text.ProtoReflect.Descriptor instead.
 func (*Text) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{10}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *Text) GetText() string {
@@ -1062,7 +1193,7 @@ type Thinking struct {
 
 func (x *Thinking) Reset() {
 	*x = Thinking{}
-	mi := &file_harness_v1_harness_proto_msgTypes[11]
+	mi := &file_harness_v1_harness_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1074,7 +1205,7 @@ func (x *Thinking) String() string {
 func (*Thinking) ProtoMessage() {}
 
 func (x *Thinking) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[11]
+	mi := &file_harness_v1_harness_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1087,7 +1218,7 @@ func (x *Thinking) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Thinking.ProtoReflect.Descriptor instead.
 func (*Thinking) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{11}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *Thinking) GetText() string {
@@ -1133,7 +1264,7 @@ type ToolCall struct {
 
 func (x *ToolCall) Reset() {
 	*x = ToolCall{}
-	mi := &file_harness_v1_harness_proto_msgTypes[12]
+	mi := &file_harness_v1_harness_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1145,7 +1276,7 @@ func (x *ToolCall) String() string {
 func (*ToolCall) ProtoMessage() {}
 
 func (x *ToolCall) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[12]
+	mi := &file_harness_v1_harness_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1158,7 +1289,7 @@ func (x *ToolCall) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolCall.ProtoReflect.Descriptor instead.
 func (*ToolCall) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{12}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ToolCall) GetCallId() string {
@@ -1199,7 +1330,7 @@ type ToolResult struct {
 
 func (x *ToolResult) Reset() {
 	*x = ToolResult{}
-	mi := &file_harness_v1_harness_proto_msgTypes[13]
+	mi := &file_harness_v1_harness_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1211,7 +1342,7 @@ func (x *ToolResult) String() string {
 func (*ToolResult) ProtoMessage() {}
 
 func (x *ToolResult) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[13]
+	mi := &file_harness_v1_harness_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1224,7 +1355,7 @@ func (x *ToolResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolResult.ProtoReflect.Descriptor instead.
 func (*ToolResult) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{13}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ToolResult) GetCallId() string {
@@ -1269,7 +1400,7 @@ type Heartbeat struct {
 
 func (x *Heartbeat) Reset() {
 	*x = Heartbeat{}
-	mi := &file_harness_v1_harness_proto_msgTypes[14]
+	mi := &file_harness_v1_harness_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1281,7 +1412,7 @@ func (x *Heartbeat) String() string {
 func (*Heartbeat) ProtoMessage() {}
 
 func (x *Heartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[14]
+	mi := &file_harness_v1_harness_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1294,7 +1425,7 @@ func (x *Heartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
 func (*Heartbeat) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{14}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *Heartbeat) GetStrike() int32 {
@@ -1354,7 +1485,7 @@ type Event struct {
 
 func (x *Event) Reset() {
 	*x = Event{}
-	mi := &file_harness_v1_harness_proto_msgTypes[15]
+	mi := &file_harness_v1_harness_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1366,7 +1497,7 @@ func (x *Event) String() string {
 func (*Event) ProtoMessage() {}
 
 func (x *Event) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[15]
+	mi := &file_harness_v1_harness_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1379,7 +1510,7 @@ func (x *Event) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Event.ProtoReflect.Descriptor instead.
 func (*Event) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{15}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *Event) GetRequestId() string {
@@ -1530,7 +1661,7 @@ type Terminal struct {
 
 func (x *Terminal) Reset() {
 	*x = Terminal{}
-	mi := &file_harness_v1_harness_proto_msgTypes[16]
+	mi := &file_harness_v1_harness_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1542,7 +1673,7 @@ func (x *Terminal) String() string {
 func (*Terminal) ProtoMessage() {}
 
 func (x *Terminal) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[16]
+	mi := &file_harness_v1_harness_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1555,7 +1686,7 @@ func (x *Terminal) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Terminal.ProtoReflect.Descriptor instead.
 func (*Terminal) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{16}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *Terminal) GetRequestId() string {
@@ -1609,7 +1740,7 @@ type Failure struct {
 
 func (x *Failure) Reset() {
 	*x = Failure{}
-	mi := &file_harness_v1_harness_proto_msgTypes[17]
+	mi := &file_harness_v1_harness_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1621,7 +1752,7 @@ func (x *Failure) String() string {
 func (*Failure) ProtoMessage() {}
 
 func (x *Failure) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[17]
+	mi := &file_harness_v1_harness_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1634,7 +1765,7 @@ func (x *Failure) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Failure.ProtoReflect.Descriptor instead.
 func (*Failure) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{17}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *Failure) GetRequestId() string {
@@ -1668,7 +1799,7 @@ type Response struct {
 
 func (x *Response) Reset() {
 	*x = Response{}
-	mi := &file_harness_v1_harness_proto_msgTypes[18]
+	mi := &file_harness_v1_harness_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1680,7 +1811,7 @@ func (x *Response) String() string {
 func (*Response) ProtoMessage() {}
 
 func (x *Response) ProtoReflect() protoreflect.Message {
-	mi := &file_harness_v1_harness_proto_msgTypes[18]
+	mi := &file_harness_v1_harness_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1693,7 +1824,7 @@ func (x *Response) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Response.ProtoReflect.Descriptor instead.
 func (*Response) Descriptor() ([]byte, []int) {
-	return file_harness_v1_harness_proto_rawDescGZIP(), []int{18}
+	return file_harness_v1_harness_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *Response) GetBody() isResponse_Body {
@@ -1781,14 +1912,22 @@ const file_harness_v1_harness_proto_rawDesc = "" +
 	"\aoptions\x18\x01 \x01(\v2\x17.google.protobuf.StructR\aoptions\"9\n" +
 	"\tWorkspace\x12\x16\n" +
 	"\x06socket\x18\x01 \x01(\tR\x06socket\x12\x14\n" +
-	"\x05token\x18\x02 \x01(\tR\x05token\"q\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\"\xbb\x01\n" +
+	"\tMcpServer\x12\x18\n" +
+	"\acommand\x18\x01 \x01(\tR\acommand\x12\x12\n" +
+	"\x04args\x18\x02 \x03(\tR\x04args\x120\n" +
+	"\x03env\x18\x03 \x03(\v2\x1e.harness.v1.McpServer.EnvEntryR\x03env\x12\x16\n" +
+	"\x06global\x18\x04 \x01(\bR\x06global\x1a6\n" +
+	"\bEnvEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"q\n" +
 	"\n" +
 	"Attachment\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x16\n" +
 	"\x06source\x18\x02 \x01(\tR\x06source\x12\x1d\n" +
 	"\n" +
 	"media_type\x18\x03 \x01(\tR\tmediaType\x12\x18\n" +
-	"\acontent\x18\x04 \x01(\tR\acontent\"\xda\x02\n" +
+	"\acontent\x18\x04 \x01(\tR\acontent\"\x8d\x04\n" +
 	"\x05Start\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x16\n" +
@@ -1800,7 +1939,14 @@ const file_harness_v1_harness_proto_rawDesc = "" +
 	"\x03cwd\x18\a \x01(\tR\x03cwd\x12\x1d\n" +
 	"\n" +
 	"timeout_ms\x18\b \x01(\x05R\ttimeoutMs\x12#\n" +
-	"\rsystem_prompt\x18\t \x01(\tR\fsystemPrompt\"\xdb\x02\n" +
+	"\rsystem_prompt\x18\t \x01(\tR\fsystemPrompt\x12B\n" +
+	"\vmcp_servers\x18\n" +
+	" \x03(\v2!.harness.v1.Start.McpServersEntryR\n" +
+	"mcpServers\x12\x17\n" +
+	"\amcp_dir\x18\v \x01(\tR\x06mcpDir\x1aT\n" +
+	"\x0fMcpServersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12+\n" +
+	"\x05value\x18\x02 \x01(\v2\x15.harness.v1.McpServerR\x05value:\x028\x01\"\x8f\x04\n" +
 	"\x06Resume\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x16\n" +
@@ -1812,7 +1958,14 @@ const file_harness_v1_harness_proto_rawDesc = "" +
 	"\x03cwd\x18\a \x01(\tR\x03cwd\x12\x1d\n" +
 	"\n" +
 	"timeout_ms\x18\b \x01(\x05R\ttimeoutMs\x12#\n" +
-	"\rsystem_prompt\x18\t \x01(\tR\fsystemPrompt\"B\n" +
+	"\rsystem_prompt\x18\t \x01(\tR\fsystemPrompt\x12C\n" +
+	"\vmcp_servers\x18\n" +
+	" \x03(\v2\".harness.v1.Resume.McpServersEntryR\n" +
+	"mcpServers\x12\x17\n" +
+	"\amcp_dir\x18\v \x01(\tR\x06mcpDir\x1aT\n" +
+	"\x0fMcpServersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12+\n" +
+	"\x05value\x18\x02 \x01(\v2\x15.harness.v1.McpServerR\x05value:\x028\x01\"B\n" +
 	"\x06Cancel\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x19\n" +
@@ -1897,7 +2050,7 @@ func file_harness_v1_harness_proto_rawDescGZIP() []byte {
 }
 
 var file_harness_v1_harness_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_harness_v1_harness_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_harness_v1_harness_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_harness_v1_harness_proto_goTypes = []any{
 	(ExitReason)(0),         // 0: harness.v1.ExitReason
 	(*ProcessExit)(nil),     // 1: harness.v1.ProcessExit
@@ -1905,55 +2058,64 @@ var file_harness_v1_harness_proto_goTypes = []any{
 	(*Usage)(nil),           // 3: harness.v1.Usage
 	(*Settings)(nil),        // 4: harness.v1.Settings
 	(*Workspace)(nil),       // 5: harness.v1.Workspace
-	(*Attachment)(nil),      // 6: harness.v1.Attachment
-	(*Start)(nil),           // 7: harness.v1.Start
-	(*Resume)(nil),          // 8: harness.v1.Resume
-	(*Cancel)(nil),          // 9: harness.v1.Cancel
-	(*Request)(nil),         // 10: harness.v1.Request
-	(*Text)(nil),            // 11: harness.v1.Text
-	(*Thinking)(nil),        // 12: harness.v1.Thinking
-	(*ToolCall)(nil),        // 13: harness.v1.ToolCall
-	(*ToolResult)(nil),      // 14: harness.v1.ToolResult
-	(*Heartbeat)(nil),       // 15: harness.v1.Heartbeat
-	(*Event)(nil),           // 16: harness.v1.Event
-	(*Terminal)(nil),        // 17: harness.v1.Terminal
-	(*Failure)(nil),         // 18: harness.v1.Failure
-	(*Response)(nil),        // 19: harness.v1.Response
-	nil,                     // 20: harness.v1.Usage.ByModelEntry
-	(*structpb.Struct)(nil), // 21: google.protobuf.Struct
+	(*McpServer)(nil),       // 6: harness.v1.McpServer
+	(*Attachment)(nil),      // 7: harness.v1.Attachment
+	(*Start)(nil),           // 8: harness.v1.Start
+	(*Resume)(nil),          // 9: harness.v1.Resume
+	(*Cancel)(nil),          // 10: harness.v1.Cancel
+	(*Request)(nil),         // 11: harness.v1.Request
+	(*Text)(nil),            // 12: harness.v1.Text
+	(*Thinking)(nil),        // 13: harness.v1.Thinking
+	(*ToolCall)(nil),        // 14: harness.v1.ToolCall
+	(*ToolResult)(nil),      // 15: harness.v1.ToolResult
+	(*Heartbeat)(nil),       // 16: harness.v1.Heartbeat
+	(*Event)(nil),           // 17: harness.v1.Event
+	(*Terminal)(nil),        // 18: harness.v1.Terminal
+	(*Failure)(nil),         // 19: harness.v1.Failure
+	(*Response)(nil),        // 20: harness.v1.Response
+	nil,                     // 21: harness.v1.Usage.ByModelEntry
+	nil,                     // 22: harness.v1.McpServer.EnvEntry
+	nil,                     // 23: harness.v1.Start.McpServersEntry
+	nil,                     // 24: harness.v1.Resume.McpServersEntry
+	(*structpb.Struct)(nil), // 25: google.protobuf.Struct
 }
 var file_harness_v1_harness_proto_depIdxs = []int32{
 	0,  // 0: harness.v1.ProcessExit.reason:type_name -> harness.v1.ExitReason
-	20, // 1: harness.v1.Usage.by_model:type_name -> harness.v1.Usage.ByModelEntry
-	21, // 2: harness.v1.Settings.options:type_name -> google.protobuf.Struct
-	6,  // 3: harness.v1.Start.attachments:type_name -> harness.v1.Attachment
-	4,  // 4: harness.v1.Start.settings:type_name -> harness.v1.Settings
-	5,  // 5: harness.v1.Start.workspace:type_name -> harness.v1.Workspace
-	6,  // 6: harness.v1.Resume.attachments:type_name -> harness.v1.Attachment
-	4,  // 7: harness.v1.Resume.settings:type_name -> harness.v1.Settings
-	5,  // 8: harness.v1.Resume.workspace:type_name -> harness.v1.Workspace
-	7,  // 9: harness.v1.Request.start:type_name -> harness.v1.Start
-	8,  // 10: harness.v1.Request.resume:type_name -> harness.v1.Resume
-	9,  // 11: harness.v1.Request.cancel:type_name -> harness.v1.Cancel
-	21, // 12: harness.v1.ToolCall.arguments:type_name -> google.protobuf.Struct
-	11, // 13: harness.v1.Event.text:type_name -> harness.v1.Text
-	13, // 14: harness.v1.Event.tool_call:type_name -> harness.v1.ToolCall
-	14, // 15: harness.v1.Event.tool_result:type_name -> harness.v1.ToolResult
-	3,  // 16: harness.v1.Event.usage:type_name -> harness.v1.Usage
-	15, // 17: harness.v1.Event.heartbeat:type_name -> harness.v1.Heartbeat
-	12, // 18: harness.v1.Event.thinking:type_name -> harness.v1.Thinking
-	21, // 19: harness.v1.Terminal.structured_output:type_name -> google.protobuf.Struct
-	3,  // 20: harness.v1.Terminal.usage:type_name -> harness.v1.Usage
-	1,  // 21: harness.v1.Terminal.exit:type_name -> harness.v1.ProcessExit
-	16, // 22: harness.v1.Response.event:type_name -> harness.v1.Event
-	17, // 23: harness.v1.Response.terminal:type_name -> harness.v1.Terminal
-	18, // 24: harness.v1.Response.failure:type_name -> harness.v1.Failure
-	2,  // 25: harness.v1.Usage.ByModelEntry.value:type_name -> harness.v1.TokenCounts
-	26, // [26:26] is the sub-list for method output_type
-	26, // [26:26] is the sub-list for method input_type
-	26, // [26:26] is the sub-list for extension type_name
-	26, // [26:26] is the sub-list for extension extendee
-	0,  // [0:26] is the sub-list for field type_name
+	21, // 1: harness.v1.Usage.by_model:type_name -> harness.v1.Usage.ByModelEntry
+	25, // 2: harness.v1.Settings.options:type_name -> google.protobuf.Struct
+	22, // 3: harness.v1.McpServer.env:type_name -> harness.v1.McpServer.EnvEntry
+	7,  // 4: harness.v1.Start.attachments:type_name -> harness.v1.Attachment
+	4,  // 5: harness.v1.Start.settings:type_name -> harness.v1.Settings
+	5,  // 6: harness.v1.Start.workspace:type_name -> harness.v1.Workspace
+	23, // 7: harness.v1.Start.mcp_servers:type_name -> harness.v1.Start.McpServersEntry
+	7,  // 8: harness.v1.Resume.attachments:type_name -> harness.v1.Attachment
+	4,  // 9: harness.v1.Resume.settings:type_name -> harness.v1.Settings
+	5,  // 10: harness.v1.Resume.workspace:type_name -> harness.v1.Workspace
+	24, // 11: harness.v1.Resume.mcp_servers:type_name -> harness.v1.Resume.McpServersEntry
+	8,  // 12: harness.v1.Request.start:type_name -> harness.v1.Start
+	9,  // 13: harness.v1.Request.resume:type_name -> harness.v1.Resume
+	10, // 14: harness.v1.Request.cancel:type_name -> harness.v1.Cancel
+	25, // 15: harness.v1.ToolCall.arguments:type_name -> google.protobuf.Struct
+	12, // 16: harness.v1.Event.text:type_name -> harness.v1.Text
+	14, // 17: harness.v1.Event.tool_call:type_name -> harness.v1.ToolCall
+	15, // 18: harness.v1.Event.tool_result:type_name -> harness.v1.ToolResult
+	3,  // 19: harness.v1.Event.usage:type_name -> harness.v1.Usage
+	16, // 20: harness.v1.Event.heartbeat:type_name -> harness.v1.Heartbeat
+	13, // 21: harness.v1.Event.thinking:type_name -> harness.v1.Thinking
+	25, // 22: harness.v1.Terminal.structured_output:type_name -> google.protobuf.Struct
+	3,  // 23: harness.v1.Terminal.usage:type_name -> harness.v1.Usage
+	1,  // 24: harness.v1.Terminal.exit:type_name -> harness.v1.ProcessExit
+	17, // 25: harness.v1.Response.event:type_name -> harness.v1.Event
+	18, // 26: harness.v1.Response.terminal:type_name -> harness.v1.Terminal
+	19, // 27: harness.v1.Response.failure:type_name -> harness.v1.Failure
+	2,  // 28: harness.v1.Usage.ByModelEntry.value:type_name -> harness.v1.TokenCounts
+	6,  // 29: harness.v1.Start.McpServersEntry.value:type_name -> harness.v1.McpServer
+	6,  // 30: harness.v1.Resume.McpServersEntry.value:type_name -> harness.v1.McpServer
+	31, // [31:31] is the sub-list for method output_type
+	31, // [31:31] is the sub-list for method input_type
+	31, // [31:31] is the sub-list for extension type_name
+	31, // [31:31] is the sub-list for extension extendee
+	0,  // [0:31] is the sub-list for field type_name
 }
 
 func init() { file_harness_v1_harness_proto_init() }
@@ -1961,12 +2123,12 @@ func file_harness_v1_harness_proto_init() {
 	if File_harness_v1_harness_proto != nil {
 		return
 	}
-	file_harness_v1_harness_proto_msgTypes[9].OneofWrappers = []any{
+	file_harness_v1_harness_proto_msgTypes[10].OneofWrappers = []any{
 		(*Request_Start)(nil),
 		(*Request_Resume)(nil),
 		(*Request_Cancel)(nil),
 	}
-	file_harness_v1_harness_proto_msgTypes[15].OneofWrappers = []any{
+	file_harness_v1_harness_proto_msgTypes[16].OneofWrappers = []any{
 		(*Event_Text)(nil),
 		(*Event_ToolCall)(nil),
 		(*Event_ToolResult)(nil),
@@ -1974,7 +2136,7 @@ func file_harness_v1_harness_proto_init() {
 		(*Event_Heartbeat)(nil),
 		(*Event_Thinking)(nil),
 	}
-	file_harness_v1_harness_proto_msgTypes[18].OneofWrappers = []any{
+	file_harness_v1_harness_proto_msgTypes[19].OneofWrappers = []any{
 		(*Response_Event)(nil),
 		(*Response_Terminal)(nil),
 		(*Response_Failure)(nil),
@@ -1985,7 +2147,7 @@ func file_harness_v1_harness_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_harness_v1_harness_proto_rawDesc), len(file_harness_v1_harness_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   20,
+			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

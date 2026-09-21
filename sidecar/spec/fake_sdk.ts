@@ -10,12 +10,18 @@
 // docs/spikes/sdk-sessions.md, including the SDK's own wording where the
 // sidecar keys off it.
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcessByStdio } from "node:child_process";
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import type { Readable, Writable } from "node:stream";
 
 import type { Options, QueryFn, SDKMessage, SDKUserMessage } from "../src/sdk.js";
 import { taskOutputPath } from "../src/tasks.js";
+
+// McpChild is a mounted server spawned with a piped stdin/stdout — the shape
+// `stdio: ["pipe", "pipe", "inherit"]` produces — and the type mcpLine and
+// mcpRequest speak the fixture's protocol over.
+type McpChild = ChildProcessByStdio<Writable, Readable, null>;
 
 // SCENARIO_VAR names the scenario the fake plays.
 export const SCENARIO_VAR = "MILL_FAKE_SCENARIO";
@@ -223,6 +229,34 @@ async function checked(options: Options, command: string): Promise<string> {
   return "allowed";
 }
 
+// mcpLine reads one line of the newline-delimited JSON-RPC a mounted stdio
+// MCP server answers on — the framing the SDK's own stdio transport uses
+// (spikes/mcp/workspace-server.ts's LineTransport frames a socket the same
+// way).
+function mcpLine(child: McpChild): Promise<{ result?: unknown }> {
+  return new Promise((resolve, reject) => {
+    let buffer = "";
+    const onData = (chunk: Buffer) => {
+      buffer += chunk.toString("utf8");
+      const newline = buffer.indexOf("\n");
+      if (newline === -1) {
+        return;
+      }
+      child.stdout.off("data", onData);
+      resolve(JSON.parse(buffer.slice(0, newline)));
+    };
+    child.stdout.on("data", onData);
+    child.stdout.once("error", reject);
+  });
+}
+
+let mcpRequestID = 0;
+
+function mcpRequest(child: McpChild, method: string, params?: unknown): void {
+  mcpRequestID += 1;
+  child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: mcpRequestID, method, params }) + "\n");
+}
+
 async function* play(
   scenario: string,
   options: Options,
@@ -388,6 +422,41 @@ async function* play(
       yield toolCall("toolu_plain", "Bash", { command: plain });
       yield toolResult("toolu_plain", await checked(options, plain));
       yield success("Checked both commands.");
+      return;
+    }
+    case "mcp-mount": {
+      // Stands in for the SDK spawning a session's own `options.mcpServers`:
+      // the process and the protocol spoken to it are real, down to killing
+      // the server when the turn it was mounted for is done — the part
+      // "the server process is gone when the step ends" needs proved.
+      const [name, server] = Object.entries(options.mcpServers ?? {})[0] as [
+        string,
+        { command: string; args?: string[]; env?: Record<string, string> },
+      ];
+      const child = spawn(server.command, server.args ?? [], {
+        env: server.env as NodeJS.ProcessEnv,
+        stdio: ["pipe", "pipe", "inherit"],
+      }) as McpChild;
+      const target = process.env[PID_VAR];
+      if (target !== undefined) {
+        writeFileSync(target, String(child.pid));
+      }
+      mcpRequest(child, "initialize", {
+        protocolVersion: "2024-11-05",
+        capabilities: {},
+        clientInfo: { name: "fake", version: "0.0.0" },
+      });
+      await mcpLine(child);
+      mcpRequest(child, "tools/list");
+      const listed = await mcpLine(child);
+      const tool = (listed.result as { tools: Array<{ name: string }> }).tools[0];
+      yield toolCall("toolu_mcp", `mcp__${name}__${tool.name}`, { echo: "ping" });
+      mcpRequest(child, "tools/call", { name: tool.name, arguments: { echo: "ping" } });
+      const called = await mcpLine(child);
+      const content = (called.result as { content: Array<{ text: string }> }).content;
+      yield toolResult("toolu_mcp", content[0]?.text ?? "");
+      yield success(`Called ${name}.`);
+      child.kill();
       return;
     }
     default:

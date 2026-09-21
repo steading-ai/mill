@@ -364,6 +364,39 @@ printf '%s\n' '{"terminal":{"exit":{"status":0}}}'
 		Expect(start.GetAttachments()[0].GetSource()).To(Equal("predecessor"))
 	})
 
+	It("carries the session's MCP catalog and browser directory to the sidecar", func() {
+		requestFile := scratch("request.json")
+		script := stub(`
+read -r line
+printf '%s' "$line" > REQUEST
+printf '%s\n' '{"terminal":{"exit":{"status":0}}}'
+`, "REQUEST", requestFile)
+
+		session.McpServers = map[string]harness.McpServer{
+			"playwright": {Command: "npx", Args: []string{"@playwright/mcp"}, Global: true},
+		}
+		session.McpDir = "/workspaces/run-1/browser"
+
+		turn, err := adapter(script).Start(lifetime, session,
+			harness.Prompt{Text: "implement the node"}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = turn.Wait(lifetime)
+		Expect(err).NotTo(HaveOccurred())
+
+		raw, err := os.ReadFile(requestFile) //nolint:gosec // a spec's own scratch file
+		Expect(err).NotTo(HaveOccurred())
+		request := &harnessv1.Request{}
+		Expect(protojson.Unmarshal(raw, request)).To(Succeed())
+
+		start := request.GetStart()
+		Expect(start.GetMcpDir()).To(Equal("/workspaces/run-1/browser"))
+		Expect(start.GetMcpServers()).To(HaveKey("playwright"))
+		playwright := start.GetMcpServers()["playwright"]
+		Expect(playwright.GetCommand()).To(Equal("npx"))
+		Expect(playwright.GetArgs()).To(Equal([]string{"@playwright/mcp"}))
+		Expect(playwright.GetGlobal()).To(BeTrue())
+	})
+
 	It("Mill does not interpret the options", func() {
 		By("given a step whose claude options carry model, effort and tools")
 		document := map[string]any{

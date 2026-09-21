@@ -72,6 +72,7 @@ A named, immutable, versioned definition of how a class of node gets worked. Dat
 | `version` | Content hash of the definition. Two definitions with the same hash are the same version |
 | `scope` | `org` or `project`, plus the project when `project`. Project overrides org; a shadowing definition logs a warning at load, mirroring the agent-skills precedence rule |
 | `steps` | Ordered list. See [Step](#step) |
+| `mcp-servers` | MCP servers this workflow's own steps may mount, by name: `{command, args, env}`, no `global` — a workflow cannot reach for every step the way the host's own `mcp-servers` can. A name that collides with one the host already configures is refused at `mill workflow push`, naming it, so a step's `mcp` is never ambiguous between the two catalogs (`docs/tools.md` §Configuration) |
 | `source` | Where this version came from: repo, commit, path — or `cli-push` with the pushing principal |
 | `created_at` | |
 
@@ -178,7 +179,10 @@ harness:
     effort: high
     tools:
       deny: [Write, Edit, Bash, NotebookEdit]
+    mcp: [docs]
 ```
+
+`mcp` names the MCP servers this step's session mounts by name, from either catalog — the host's own `mcp-servers` and the workflow's own, merged once per run (a name the merged catalog does not carry is a `PolicyError` naming it). Every server either catalog marks `global` is mounted on every step regardless of `mcp`; `mcp` is for the rest, mounted only on the steps that ask. A mounted server's tools join the session's allow list as `mcp__<name>__*`, so `tools.deny` is the only way to keep a mounted server's tools out of a step that does not want them — mounting and allowing are separate questions, the same as a built-in tool.
 
 `tools.deny` is the harness's half of a read-only step, and the [capability set](#capability-set) is mill's: the workspace refuses `fs.write` and `git.commit` under a step token whose capabilities lack `write`, whatever the session was offered, and on the machine backend every process the step runs sees the checkout read-only (`docs/sandbox.md` §Exec, `ReadOnlyPaths=/work`) — the SDK's own file tools and the shell never reach the socket, and this is what bounds them. A reviewer step declares both — no `write` capability, and a `tools.deny` that keeps the write tools out of the session — so the model is not handed a tool it may not use and no turn is spent on a write that would only fail; it keeps its shell, because a shell against a read-only checkout is how it fetches the diff and runs the suite. The `local` backend has no such mount and is a test backend, not one for production work: there the tool policy is the only enforcement and a `clean-tree` check after a read-only step detects what it could not prevent.
 

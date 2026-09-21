@@ -117,13 +117,17 @@ type Repositories func(ctx context.Context, project *daggerv1.Project) (Reposito
 // inMachineSession is a workspace whose sessions run inside a sandbox, so
 // the paths a session's sidecar uses are the sandbox's and not the host's:
 // the socket's in-machine mount rather than the host path the worker serves
-// on, and the checkout at `/work` rather than the host directory the worker
-// keeps it in (docs/sandbox.md §Naming, §"Session identity"). The machine
-// backend implements it; a workspace whose sessions run on the host — the
-// local one — does not, and the handle's own socket and root stand.
+// on, the checkout at `/work` rather than the host directory the worker
+// keeps it in, and a mounted MCP server's working directory at its own
+// in-machine mount rather than the host path the worker keeps the run's
+// browser directory at (docs/sandbox.md §Naming, §"Session identity"). The
+// machine backend implements it; a workspace whose sessions run on the
+// host — the local one — does not, and the handle's own socket, root and
+// MCP directory stand.
 type inMachineSession interface {
 	SessionSocket() string
 	SessionCwd() string
+	SessionMcpDir() string
 }
 
 // HarnessesFor builds the adapter table for one run, given the workspace it
@@ -241,6 +245,10 @@ type Options struct {
 	// backend without one yet) captures no twin; SealOrphans still seals
 	// the frame and the index.
 	Twin func(runID string) workspace.TwinSource
+	// McpServers is the host's own `mcp-servers`, by name, merged with each
+	// run's workflow into the per-run catalog a session's harness resolves
+	// (docs/tools.md §Configuration). Nil mounts none of the host's own.
+	McpServers map[string]harness.McpServer
 }
 
 // Gateway is the run loop's view of the credential gateway

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"text/tabwriter"
 	"time"
 
@@ -39,7 +40,7 @@ import (
 // spec holds both to this list.
 var ProbeNames = []string{
 	"socket", "schema", "dagger", "sidecar", "signing",
-	"forge", "notify", "workspace", "space", "gateway",
+	"forge", "notify", "workspace", "space", "gateway", "mcp",
 }
 
 // probe is one check and what it found.
@@ -87,6 +88,9 @@ type doctorOptions struct {
 	// zero is the default.
 	highWatermark cache.Watermark
 	lowWatermark  cache.Watermark
+	// mcpServers is the host's own mcp-servers, from the configuration
+	// file: file-only, like McpServers itself (no flag spelling).
+	mcpServers map[string]McpServerConfig
 }
 
 func newDoctorCommand() *cobra.Command {
@@ -114,6 +118,9 @@ func newDoctorCommand() *cobra.Command {
   gateway   the credential gateway's upstream answers one token count
             through it, and a warning once the credential is eleven
             months old
+  mcp       each configured mcp-servers entry starts, answers initialize
+            and tools/list, and is stopped: one line per server, naming
+            the tool count or what kept it from answering
 
 Every probe is reported. The command exits non-zero when any of them
 failed; a warning does not fail it.`,
@@ -183,6 +190,7 @@ func runDoctor(cmd *cobra.Command, opts doctorOptions) error {
 	}
 	applyGatewayConfig(cmd, config, &opts.gateway)
 	opts.credentialMinted = config.ModelCredentialMinted
+	opts.mcpServers = config.McpServers
 	var expiry time.Duration
 	if err := applyEvictionConfig(config, &expiry, &opts.highWatermark, &opts.lowWatermark); err != nil {
 		return err
@@ -215,7 +223,7 @@ func runDoctor(cmd *cobra.Command, opts doctorOptions) error {
 func runProbes(ctx context.Context, opts doctorOptions) []probe {
 	socket, schema := probeService(ctx, opts)
 	worker, workerErr := workerProbe(ctx, opts.socket)
-	return []probe{
+	probes := []probe{
 		socket,
 		schema,
 		probeDagger(ctx, opts),
@@ -227,6 +235,29 @@ func runProbes(ctx context.Context, opts doctorOptions) []probe {
 		probeSpace(opts, driver.NewSystemd(workspace.Spawner{}, driver.Commands{})),
 		probeGateway(ctx, opts, time.Now()),
 	}
+	return append(probes, probeMcp(ctx, opts)...)
+}
+
+// probeMcp starts every configured mcp-servers entry, in name order so two
+// runs report them the same way, and reports one line each. A host with
+// none configured reports a single line saying so, rather than one for an
+// empty set.
+func probeMcp(ctx context.Context, opts doctorOptions) []probe {
+	if len(opts.mcpServers) == 0 {
+		return []probe{pass("mcp", "no mcp-servers are configured")}
+	}
+	names := make([]string, 0, len(opts.mcpServers))
+	for name := range opts.mcpServers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	probes := make([]probe, 0, len(names))
+	for _, name := range names {
+		server := opts.mcpServers[name]
+		result := doctor.Mcp(ctx, name, server.Command, server.Args, server.Env)
+		probes = append(probes, probe{Name: "mcp", OK: result.OK, Reason: result.Reason})
+	}
+	return probes
 }
 
 // workerProbe asks the worker behind opts.socket to run the sidecar,
