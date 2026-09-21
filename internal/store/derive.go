@@ -1,6 +1,8 @@
 package store
 
 import (
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 )
 
@@ -47,4 +49,22 @@ func CurrentStep(run RunState, workflow *millv1.Workflow) (name string, attempts
 		}
 	}
 	return "", 0
+}
+
+// LastStep is the step run in run.Latest with the newest started_at: the
+// attempt the run most recently did something at, regardless of where it
+// sits in the workflow. Attempts within a step are strictly time-ordered, so
+// this is always one of the rows CurrentStep already looks at — no separate
+// query is needed to find it.
+//
+// An empty name means the run has made no attempt at all.
+func LastStep(run RunState) (name string, status millv1.StepRunStatus) {
+	var latest *timestamppb.Timestamp
+	for stepName, attempt := range run.Latest {
+		started := attempt.GetStartedAt()
+		if latest == nil || started.AsTime().After(latest.AsTime()) {
+			name, status, latest = stepName, attempt.GetStatus(), started
+		}
+	}
+	return name, status
 }

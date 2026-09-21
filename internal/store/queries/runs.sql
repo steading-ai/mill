@@ -104,6 +104,45 @@ WHERE (cardinality(sqlc.arg('statuses')::text[]) = 0 OR status = ANY(sqlc.arg('s
   AND (sqlc.narg('project')::text IS NULL OR node_ref LIKE sqlc.narg('project')::text || '#%')
 ORDER BY updated_at DESC, id DESC;
 
+-- ListRuns (the RPC, distinct from the query above that backs Status): a
+-- page of runs that ended, filtered and windowed, newest-ended first. The
+-- cursor names the previous page's last row; both its fields are null for
+-- the first page, and the OR before each makes that a no-op filter rather
+-- than a comparison against null. ended_at is never null here because a
+-- terminal status always carries one (runs_terminal_has_ended,
+-- 00004_runs.sql), which is why this ordering is only used for an
+-- all-terminal statuses filter — a non-terminal one uses ListRunsByUpdated
+-- instead (docs/ledger.md §"Queries the CLI needs").
+-- name: ListRunsByEnded :many
+SELECT * FROM runs
+WHERE (cardinality(sqlc.arg('statuses')::text[]) = 0 OR status = ANY(sqlc.arg('statuses')::text[]))
+  AND (sqlc.narg('project')::text IS NULL OR node_ref LIKE sqlc.narg('project')::text || '#%')
+  AND (sqlc.narg('node_ref')::text IS NULL OR node_ref = sqlc.narg('node_ref')::text)
+  AND (sqlc.narg('worker_ref')::text IS NULL OR worker_ref = sqlc.narg('worker_ref')::text)
+  AND (sqlc.narg('workflow_id')::text IS NULL OR workflow_id = sqlc.narg('workflow_id')::text)
+  AND (sqlc.narg('ended_after')::timestamptz IS NULL OR ended_at >= sqlc.narg('ended_after')::timestamptz)
+  AND (sqlc.narg('ended_before')::timestamptz IS NULL OR ended_at < sqlc.narg('ended_before')::timestamptz)
+  AND (sqlc.narg('cursor_ended_at')::timestamptz IS NULL
+       OR (ended_at, id) < (sqlc.narg('cursor_ended_at')::timestamptz, sqlc.narg('cursor_id')::text))
+ORDER BY ended_at DESC, id DESC
+LIMIT sqlc.arg('lim');
+
+-- ListRuns's page for a statuses filter that names (or defaults to) a
+-- non-terminal state: ended_at is null on a live run, so this orders and
+-- pages by (updated_at, id) instead — the same columns and tie-break
+-- Status's own listing uses.
+-- name: ListRunsByUpdated :many
+SELECT * FROM runs
+WHERE (cardinality(sqlc.arg('statuses')::text[]) = 0 OR status = ANY(sqlc.arg('statuses')::text[]))
+  AND (sqlc.narg('project')::text IS NULL OR node_ref LIKE sqlc.narg('project')::text || '#%')
+  AND (sqlc.narg('node_ref')::text IS NULL OR node_ref = sqlc.narg('node_ref')::text)
+  AND (sqlc.narg('worker_ref')::text IS NULL OR worker_ref = sqlc.narg('worker_ref')::text)
+  AND (sqlc.narg('workflow_id')::text IS NULL OR workflow_id = sqlc.narg('workflow_id')::text)
+  AND (sqlc.narg('cursor_updated_at')::timestamptz IS NULL
+       OR (updated_at, id) < (sqlc.narg('cursor_updated_at')::timestamptz, sqlc.narg('cursor_id')::text))
+ORDER BY updated_at DESC, id DESC
+LIMIT sqlc.arg('lim');
+
 -- How many dagger leases this run has held, counted from the event log
 -- rather than stored: every SetLease writes one. Distinct from a step's
 -- attempt, which counts review rounds.

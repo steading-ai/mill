@@ -6,6 +6,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
 	harnessv1 "github.com/ivy/mill/gen/harness/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/harness"
@@ -119,5 +120,11 @@ var _ = Describe("A step's harness options", Label(testsupport.DBLabel), func() 
 		Expect(err).To(MatchError(ContainSubstring("other")))
 		Expect(stepRuns(f.inspect(ctx), "gather-context")).To(BeEmpty())
 		Expect(stepRuns(f.inspect(ctx), "pr")).To(BeEmpty())
+
+		By("and the node is held under the same reason, so a second claim does not repeat it (mill#39)")
+		node, err := f.client.Node(ctx, f.nodeRef)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(node.GetHold().GetReason()).To(And(ContainSubstring("other"), ContainSubstring("pr")))
+		Expect(node.GetStatus()).To(Equal(daggerv1.Status_STATUS_OPEN))
 	})
 })

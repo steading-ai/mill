@@ -64,6 +64,23 @@ var ErrFenced = errors.New("run: fenced out; another worker holds this node")
 // could not reconcile, such as a done run on an open node.
 var ErrRefused = errors.New("run: refused")
 
+// ErrCouldNotOpen marks a claim that ended before any step ran: the node was
+// handed back without the run ever reaching [Runner.walk]. The worker uses it
+// to tell "this claim never got started" from "this run tried a step and
+// failed," so a wait is only ever spent on the former
+// (docs/sandbox.md §Reconciliation).
+var ErrCouldNotOpen = errors.New("run: could not open")
+
+// couldNotOpen marks err as [ErrCouldNotOpen] unless it is nil, in which case
+// it is returned unchanged. Both the original error and ErrCouldNotOpen still
+// match errors.Is on the result.
+func couldNotOpen(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %w", ErrCouldNotOpen, err)
+}
+
 // Workspace is the run loop's view of a workspace: the verbs a step reaches
 // through the socket, plus the two things the loop itself needs — the handle
 // it records, and a git runner for the `commit` verifier.
@@ -518,7 +535,7 @@ func (r *Runner) drive(ctx context.Context, claimed *dagger.Claimed, stopping <-
 	r.printf("claimed %s under lease %s\n", s.node.GetReference(), s.lease)
 
 	if err := r.openRun(ctx, s); err != nil {
-		return r.stop(ctx, s, err)
+		return couldNotOpen(r.stop(ctx, s, err))
 	}
 	// The repository comes from the project the claim carried: read here,
 	// after the run exists and before anything is cloned, so a project
@@ -528,9 +545,9 @@ func (r *Runner) drive(ctx context.Context, claimed *dagger.Claimed, stopping <-
 	if err != nil {
 		var missing *forge.NoVCSURLError
 		if errors.As(err, &missing) {
-			return r.noRepository(ctx, s, missing)
+			return couldNotOpen(r.noRepository(ctx, s, missing))
 		}
-		return r.stop(ctx, s, fmt.Errorf("run %s: %w", s.run.GetId(), err))
+		return couldNotOpen(r.stop(ctx, s, fmt.Errorf("run %s: %w", s.run.GetId(), err)))
 	}
 	s.repo = repo
 	r.printf("delivers to %s\n", repo.Origin)
@@ -539,20 +556,22 @@ func (r *Runner) drive(ctx context.Context, claimed *dagger.Claimed, stopping <-
 	defer s.beat.stop()
 
 	if err := r.openWorkspace(s.beat.ctx, s); err != nil {
-		return r.stop(ctx, s, err)
+		return couldNotOpen(r.stop(ctx, s, err))
 	}
 	if err := r.selectWorkflow(s.beat.ctx, s); err != nil {
-		return r.stop(ctx, s, err)
+		return couldNotOpen(r.stop(ctx, s, err))
 	}
-	if err := r.requireHarnesses(s); err != nil {
-		return r.stop(ctx, s, err)
+	if err := r.requireHarnesses(s.beat.ctx, s); err != nil {
+		return couldNotOpen(r.stop(ctx, s, err))
 	}
 	if err := r.restoreRetried(s.beat.ctx, s); err != nil {
-		return r.stop(ctx, s, err)
+		return couldNotOpen(r.stop(ctx, s, err))
 	}
 	if err := r.resumePark(s.beat.ctx, s); err != nil {
-		return r.stop(ctx, s, err)
+		return couldNotOpen(r.stop(ctx, s, err))
 	}
+	// Not wrapped: a run that reached its first step and then failed is not
+	// a claim the worker could not open, and must not be throttled like one.
 	return r.stop(ctx, s, r.walk(s.beat.ctx, s))
 }
 
@@ -688,15 +707,28 @@ func (r *Runner) openRun(ctx context.Context, s *state) error {
 	case run.GetStatus() == millv1.RunStatus_RUN_STATUS_DONE:
 		// The node is open — Execute returned above if it were not — so a
 		// done run on it is Invariant 11 violated. Park rather than guess.
-		return fmt.Errorf("%w: run %s is done but %s is open", ErrRefused, run.GetId(), s.node.GetReference())
+		//
+		// Held under the same reason a failed run's refusal is (below), so
+		// the node leaves every ready set rather than being claimed and
+		// refused again on the very next ClaimNext (mill#39): this answer
+		// cannot change until a person acts, and every worker would reach it.
+		reason := fmt.Sprintf("run %s is done but %s is open", run.GetId(), s.node.GetReference())
+		r.hold(ctx, s, dagger.RequestID(run.GetId(), "refused-done", run.GetGeneration()), reason)
+		return fmt.Errorf("%w: %s", ErrRefused, reason)
 
 	case run.GetStatus() == millv1.RunStatus_RUN_STATUS_FAILED:
 		// A failed run is terminal to the loop: nothing mill does on its
 		// own leaves it (docs/domain-model.md §"Run states"). A lost
 		// sandbox leaves one on an open node, and a claim on that node is
 		// refused rather than driven, until a person reruns or restarts.
-		return fmt.Errorf("%w: run %s of %s failed; `mill restart` starts the next generation, `mill rerun` reopens this one",
-			ErrRefused, run.GetId(), s.node.GetReference())
+		//
+		// Held for the same reason the done branch above is (mill#39): a
+		// person unholding this without restarting or rerunning would only
+		// see the same refusal, on this worker or any other.
+		reason := fmt.Sprintf("run %s of %s failed; `mill restart` starts the next generation, `mill rerun` reopens this one",
+			run.GetId(), s.node.GetReference())
+		r.hold(ctx, s, dagger.RequestID(run.GetId(), "refused-failed", run.GetGeneration()), reason)
+		return fmt.Errorf("%w: %s", ErrRefused, reason)
 
 	default:
 		// The circuit breaker parked this run and a human has been asked
@@ -848,11 +880,20 @@ func (r *Runner) failRun(ctx context.Context, s *state, requestKey, reason strin
 	}); err != nil {
 		return err
 	}
-	if err := s.dagger.Hold(ctx, requestKey, s.lease, s.node.GetReference(), reason); err != nil {
-		r.options.Log.Warn("holding the node of a failed run", "node", s.node.GetReference(), "error", err)
-	}
+	r.hold(ctx, s, requestKey, reason)
 	r.printf("%s: run %s failed: %s\n", s.node.GetReference(), s.run.GetId(), reason)
 	return cause
+}
+
+// hold puts a node under reason after a refusal deterministic enough that
+// every worker would reach it the same way: the node leaves the ready set
+// rather than being claimed straight back into the same refusal. The write
+// is logged rather than failed on: a refusal this deterministic should not
+// stay claimable just because the hold write itself did not land.
+func (r *Runner) hold(ctx context.Context, s *state, requestKey, reason string) {
+	if err := s.dagger.Hold(ctx, requestKey, s.lease, s.node.GetReference(), reason); err != nil {
+		r.options.Log.Warn("holding a refused node", "node", s.node.GetReference(), "reason", reason, "error", err)
+	}
 }
 
 // repository resolves the run's repository: from the project the claim
