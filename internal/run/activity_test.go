@@ -37,7 +37,7 @@ var _ = Describe("The activity writer", Label("unit"), func() {
 
 	open := func() *activityWriter {
 		GinkgoHelper()
-		w, err := newActivityWriter(dir, "run-1", "gather-context", 1, redact.New(), now, defaultActivityCeiling)
+		w, err := newActivityWriter(dir, "run-1", "gather-context", 1, redact.New(), now, defaultActivityCeiling, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(w).NotTo(BeNil())
 		return w
@@ -154,7 +154,7 @@ var _ = Describe("The activity writer", Label("unit"), func() {
 		Expect(w.End(millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED, millv1.EvidenceKind_EVIDENCE_KIND_EXIT, "")).To(Succeed())
 		Expect(w.Close()).To(Succeed())
 
-		writer, err := newActivityWriter("", "run-1", "gather-context", 1, redact.New(), now, defaultActivityCeiling)
+		writer, err := newActivityWriter("", "run-1", "gather-context", 1, redact.New(), now, defaultActivityCeiling, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(writer).To(BeNil())
 	})
@@ -169,7 +169,7 @@ var _ = Describe("The activity writer", Label("unit"), func() {
 		}
 		Expect(w.Close()).To(Succeed())
 
-		reopened, err := reopenActivityWriter(dir, "run-1", "gather-context", 1, redact.New(), now, defaultActivityCeiling)
+		reopened, err := reopenActivityWriter(dir, "run-1", "gather-context", 1, redact.New(), now, defaultActivityCeiling, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(reopened.Record(&millv1.Activity{
 			Source: millv1.ActivitySource_ACTIVITY_SOURCE_MILL,
@@ -183,7 +183,7 @@ var _ = Describe("The activity writer", Label("unit"), func() {
 	})
 
 	It("makes the file on reopen when the attempt has none, at seq 0", func() {
-		reopened, err := reopenActivityWriter(dir, "run-1", "gather-context", 1, redact.New(), now, defaultActivityCeiling)
+		reopened, err := reopenActivityWriter(dir, "run-1", "gather-context", 1, redact.New(), now, defaultActivityCeiling, nil)
 		Expect(err).NotTo(HaveOccurred(), "a gate filed on another host, or by a mill that wrote no record, still closes")
 		Expect(reopened.Record(&millv1.Activity{
 			Source: millv1.ActivitySource_ACTIVITY_SOURCE_MILL,
@@ -213,7 +213,7 @@ var _ = Describe("The activity writer", Label("unit"), func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(torn.Close()).To(Succeed())
 
-		reopened, err := reopenActivityWriter(dir, "run-1", "gather-context", 1, redact.New(), now, defaultActivityCeiling)
+		reopened, err := reopenActivityWriter(dir, "run-1", "gather-context", 1, redact.New(), now, defaultActivityCeiling, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(reopened.Record(&millv1.Activity{
 			Source: millv1.ActivitySource_ACTIVITY_SOURCE_MILL,
@@ -260,7 +260,7 @@ var _ = Describe("The activity writer", Label("unit"), func() {
 
 	It("truncates results and drops further stream output once the ceiling is crossed, keeping the file within it plus one record", func() {
 		const ceiling = 100
-		w, err := newActivityWriter(dir, "run-1", "gather-context", 1, redact.New(), now, ceiling)
+		w, err := newActivityWriter(dir, "run-1", "gather-context", 1, redact.New(), now, ceiling, nil)
 		Expect(err).NotTo(HaveOccurred())
 
 		large := strings.Repeat("x", 300)

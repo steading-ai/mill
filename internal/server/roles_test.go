@@ -107,6 +107,15 @@ var _ = Describe("A connection's uid", Label(testsupport.DBLabel), func() {
 		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnauthenticated))
 		Expect(err.Error()).To(ContainSubstring("9003"), "the refusal names the uid it could not place")
 	})
+
+	It("a reader uid can call Logs", func(ctx SpecContext) {
+		f := newFixture(ctx, "mill#38")
+		stream, err := f.as(readerUID).Logs(ctx, connect.NewRequest(&millv1.LogsRequest{Id: f.run.GetId()}))
+		Expect(err).NotTo(HaveOccurred())
+		stream.Receive()
+		Expect(connect.CodeOf(stream.Err())).NotTo(Equal(connect.CodePermissionDenied),
+			"the role let the call through; only the handler's own answer is what this run's fixture drives")
+	})
 })
 
 var _ = Describe("The unix socket", Label(testsupport.DBLabel), func() {
@@ -118,7 +127,7 @@ var _ = Describe("The unix socket", Label(testsupport.DBLabel), func() {
 			Logger:     specLogger(),
 			Interceptors: []connect.Interceptor{interceptor.NewRoles(
 				interceptor.RoleMap{ServiceUID: os.Getuid()}, server.Requirement())},
-		}, server.NewStoreService(domain.New(pool)), nil)
+		}, server.NewStoreService(domain.New(pool), server.NewObserver(server.DefaultObserverFallback), GinkgoT().TempDir()), nil)
 		Expect(srv.Listen()).To(Succeed())
 
 		serveCtx, stop := context.WithCancel(ctx)

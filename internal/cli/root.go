@@ -39,6 +39,15 @@ func ExitCode(err error) int {
 	if errors.Is(err, run.ErrFenced) {
 		return ExitFenced
 	}
+	if errors.Is(err, errLogsWaiting) {
+		return ExitLogsWaiting
+	}
+	if errors.Is(err, errLogsParked) {
+		return ExitLogsParked
+	}
+	if errors.Is(err, errLogsStreamBroken) {
+		return ExitLogsStreamBroken
+	}
 	return 1
 }
 

@@ -412,7 +412,7 @@ func detachActivitySink(s *state) {
 // attaches it as the workspace's verb sink, and records the attempt's
 // opening frame.
 func (r *Runner) openActivity(s *state, step *millv1.Step, sr *millv1.StepRun) error {
-	activity, err := newActivityWriter(r.options.LogDir, s.run.GetId(), step.GetName(), sr.GetAttempt(), r.options.Redactor, r.options.Now, r.options.ActivityCeiling)
+	activity, err := newActivityWriter(r.options.LogDir, s.run.GetId(), step.GetName(), sr.GetAttempt(), r.options.Redactor, r.options.Now, r.options.ActivityCeiling, r.onActivity(s))
 	if err != nil {
 		return err
 	}
@@ -425,13 +425,24 @@ func (r *Runner) openActivity(s *state, step *millv1.Step, sr *millv1.StepRun) e
 // attempt, for a run resuming a filed gate rather than starting a new
 // attempt.
 func (r *Runner) reopenActivity(s *state, step *millv1.Step, sr *millv1.StepRun) error {
-	activity, err := reopenActivityWriter(r.options.LogDir, s.run.GetId(), step.GetName(), sr.GetAttempt(), r.options.Redactor, r.options.Now, r.options.ActivityCeiling)
+	activity, err := reopenActivityWriter(r.options.LogDir, s.run.GetId(), step.GetName(), sr.GetAttempt(), r.options.Redactor, r.options.Now, r.options.ActivityCeiling, r.onActivity(s))
 	if err != nil {
 		return err
 	}
 	s.activity = activity
 	attachActivitySink(s)
 	return nil
+}
+
+// onActivity binds [Options.OnActivity] to s's run, or returns nil when the
+// option is unset, so a writer built with it never has to know the run's id
+// itself.
+func (r *Runner) onActivity(s *state) func() {
+	if r.options.OnActivity == nil {
+		return nil
+	}
+	runID := s.run.GetId()
+	return func() { r.options.OnActivity(runID) }
 }
 
 // abortActivity closes the attempt's activity record without recording an

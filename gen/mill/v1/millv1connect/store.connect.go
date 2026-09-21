@@ -147,6 +147,8 @@ const (
 	StoreServiceHealthProcedure = "/mill.v1.StoreService/Health"
 	// StoreServiceWhoAmIProcedure is the fully-qualified name of the StoreService's WhoAmI RPC.
 	StoreServiceWhoAmIProcedure = "/mill.v1.StoreService/WhoAmI"
+	// StoreServiceLogsProcedure is the fully-qualified name of the StoreService's Logs RPC.
+	StoreServiceLogsProcedure = "/mill.v1.StoreService/Logs"
 )
 
 // StoreServiceClient is a client for the mill.v1.StoreService service.
@@ -310,6 +312,12 @@ type StoreServiceClient interface {
 	// something the store does not hold, so a reader is refused by the same
 	// policy that refuses it Cancel.
 	WhoAmI(context.Context, *connect.Request[v1.WhoAmIRequest]) (*connect.Response[v1.WhoAmIResponse], error)
+	// Logs streams one run's activity, oldest first: every closed attempt of
+	// the step in start order, then the live attempt, then — with follow —
+	// whatever arrives next. With no run named it streams every run's
+	// activity instead, ordered for resume by a cursor. docs/activity.md
+	// §The RPC is the specification this call implements.
+	Logs(context.Context, *connect.Request[v1.LogsRequest]) (*connect.ServerStreamForClient[v1.LogsResponse], error)
 }
 
 // NewStoreServiceClient constructs a client for the mill.v1.StoreService service. By default, it
@@ -563,6 +571,12 @@ func NewStoreServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(storeServiceMethods.ByName("WhoAmI")),
 			connect.WithClientOptions(opts...),
 		),
+		logs: connect.NewClient[v1.LogsRequest, v1.LogsResponse](
+			httpClient,
+			baseURL+StoreServiceLogsProcedure,
+			connect.WithSchema(storeServiceMethods.ByName("Logs")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -608,6 +622,7 @@ type storeServiceClient struct {
 	cost                  *connect.Client[v1.CostRequest, v1.CostResponse]
 	health                *connect.Client[v1.HealthRequest, v1.HealthResponse]
 	whoAmI                *connect.Client[v1.WhoAmIRequest, v1.WhoAmIResponse]
+	logs                  *connect.Client[v1.LogsRequest, v1.LogsResponse]
 }
 
 // GetRunByNode calls mill.v1.StoreService.GetRunByNode.
@@ -810,6 +825,11 @@ func (c *storeServiceClient) WhoAmI(ctx context.Context, req *connect.Request[v1
 	return c.whoAmI.CallUnary(ctx, req)
 }
 
+// Logs calls mill.v1.StoreService.Logs.
+func (c *storeServiceClient) Logs(ctx context.Context, req *connect.Request[v1.LogsRequest]) (*connect.ServerStreamForClient[v1.LogsResponse], error) {
+	return c.logs.CallServerStream(ctx, req)
+}
+
 // StoreServiceHandler is an implementation of the mill.v1.StoreService service.
 type StoreServiceHandler interface {
 	// GetRunByNode returns the live run for a dagger node, or nothing. The
@@ -971,6 +991,12 @@ type StoreServiceHandler interface {
 	// something the store does not hold, so a reader is refused by the same
 	// policy that refuses it Cancel.
 	WhoAmI(context.Context, *connect.Request[v1.WhoAmIRequest]) (*connect.Response[v1.WhoAmIResponse], error)
+	// Logs streams one run's activity, oldest first: every closed attempt of
+	// the step in start order, then the live attempt, then — with follow —
+	// whatever arrives next. With no run named it streams every run's
+	// activity instead, ordered for resume by a cursor. docs/activity.md
+	// §The RPC is the specification this call implements.
+	Logs(context.Context, *connect.Request[v1.LogsRequest], *connect.ServerStream[v1.LogsResponse]) error
 }
 
 // NewStoreServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -1220,6 +1246,12 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(storeServiceMethods.ByName("WhoAmI")),
 		connect.WithHandlerOptions(opts...),
 	)
+	storeServiceLogsHandler := connect.NewServerStreamHandler(
+		StoreServiceLogsProcedure,
+		svc.Logs,
+		connect.WithSchema(storeServiceMethods.ByName("Logs")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/mill.v1.StoreService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case StoreServiceGetRunByNodeProcedure:
@@ -1302,6 +1334,8 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 			storeServiceHealthHandler.ServeHTTP(w, r)
 		case StoreServiceWhoAmIProcedure:
 			storeServiceWhoAmIHandler.ServeHTTP(w, r)
+		case StoreServiceLogsProcedure:
+			storeServiceLogsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1469,4 +1503,8 @@ func (UnimplementedStoreServiceHandler) Health(context.Context, *connect.Request
 
 func (UnimplementedStoreServiceHandler) WhoAmI(context.Context, *connect.Request[v1.WhoAmIRequest]) (*connect.Response[v1.WhoAmIResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.WhoAmI is not implemented"))
+}
+
+func (UnimplementedStoreServiceHandler) Logs(context.Context, *connect.Request[v1.LogsRequest], *connect.ServerStream[v1.LogsResponse]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.Logs is not implemented"))
 }

@@ -178,7 +178,7 @@ func runWork(cmd *cobra.Command, opts *workOptions) error {
 	if err := applyConfig(cmd, opts); err != nil {
 		return err
 	}
-	worker, err := newWorker(cmd, opts)
+	worker, err := newWorker(cmd, opts, nil)
 	if err != nil {
 		return err
 	}
@@ -201,7 +201,10 @@ func stopSignals() (<-chan os.Signal, func()) {
 }
 
 // newWorker assembles one runner per project and the loop over them.
-func newWorker(cmd *cobra.Command, opts *workOptions) (*run.Worker, error) {
+// onActivity, when not nil, is wired into every runner's [run.Options] so
+// its attempts' activity writers reach a same-process observer
+// (`serve --work`); nil is a worker with no co-located server to notify.
+func newWorker(cmd *cobra.Command, opts *workOptions, onActivity func(string)) (*run.Worker, error) {
 	projects := opts.projects
 	if len(projects) == 0 {
 		if fallback := os.Getenv(daggerProjectEnv); fallback != "" {
@@ -226,7 +229,7 @@ func newWorker(cmd *cobra.Command, opts *workOptions) (*run.Worker, error) {
 		// No answerer: a worker has nobody at its terminal, so a gate is
 		// filed and the lease released, and whoever answers does it in
 		// dagger (docs/architecture.md §"Gate steps").
-		runner, err := newRunner(cmd, opts.run, project, "", nil, gw)
+		runner, err := newRunner(cmd, opts.run, project, "", nil, gw, onActivity)
 		if err != nil {
 			return nil, err
 		}

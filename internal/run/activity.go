@@ -110,13 +110,20 @@ type activityWriter struct {
 	// already emitted their one truncated marker, so every chunk after it
 	// is dropped rather than adding a second marker.
 	truncatedStreams map[string]bool
+
+	// onWrite is called after every record actually reaches the file, so a
+	// followed Logs stream in the same process learns about it without
+	// polling (docs/activity.md §Observer: "the activity writer on every
+	// append"). Nil when [Options.OnActivity] is nil — a worker with no
+	// co-located server, which the observer's fallback timer covers instead.
+	onWrite func()
 }
 
 // newActivityWriter creates `<step>.<attempt>.activity` fresh: seq starts at
 // 0, so the first Record call, whatever kind it is, becomes seq 1. An empty
 // dir keeps no activity record, matching [Options.LogDir]'s existing
 // contract, and returns a nil writer.
-func newActivityWriter(dir, runID, step string, attempt int64, redactor *redact.Redactor, now func() time.Time, ceiling int64) (*activityWriter, error) {
+func newActivityWriter(dir, runID, step string, attempt int64, redactor *redact.Redactor, now func() time.Time, ceiling int64, onWrite func()) (*activityWriter, error) {
 	if dir == "" {
 		return nil, nil
 	}
@@ -128,7 +135,7 @@ func newActivityWriter(dir, runID, step string, attempt int64, redactor *redact.
 	if err != nil {
 		return nil, fmt.Errorf("activity: %w", err)
 	}
-	return newActivityWriterOver(file, 0, 0, redactor, now, ceiling), nil
+	return newActivityWriterOver(file, 0, 0, redactor, now, ceiling, onWrite), nil
 }
 
 // reopenActivityWriter opens an attempt's activity file for append and
@@ -143,14 +150,14 @@ func newActivityWriter(dir, runID, step string, attempt int64, redactor *redact.
 // close. A file that ends in a torn record — the writer was killed
 // mid-frame — is cut back to its last whole record before anything is
 // appended, so what follows stays decodable.
-func reopenActivityWriter(dir, runID, step string, attempt int64, redactor *redact.Redactor, now func() time.Time, ceiling int64) (*activityWriter, error) {
+func reopenActivityWriter(dir, runID, step string, attempt int64, redactor *redact.Redactor, now func() time.Time, ceiling int64, onWrite func()) (*activityWriter, error) {
 	if dir == "" {
 		return nil, nil
 	}
 	path := ActivityPath(dir, runID, step, attempt)
 	existing, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return newActivityWriter(dir, runID, step, attempt, redactor, now, ceiling)
+		return newActivityWriter(dir, runID, step, attempt, redactor, now, ceiling, onWrite)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("activity: reopen: %w", err)
@@ -176,10 +183,10 @@ func reopenActivityWriter(dir, runID, step string, attempt int64, redactor *reda
 	if err != nil {
 		return nil, fmt.Errorf("activity: reopen: %w", err)
 	}
-	return newActivityWriterOver(file, seq, whole, redactor, now, ceiling), nil
+	return newActivityWriterOver(file, seq, whole, redactor, now, ceiling, onWrite), nil
 }
 
-func newActivityWriterOver(file *os.File, seq, written int64, redactor *redact.Redactor, now func() time.Time, ceiling int64) *activityWriter {
+func newActivityWriterOver(file *os.File, seq, written int64, redactor *redact.Redactor, now func() time.Time, ceiling int64, onWrite func()) *activityWriter {
 	return &activityWriter{
 		file:             file,
 		redactor:         redactor,
@@ -193,6 +200,7 @@ func newActivityWriterOver(file *os.File, seq, written int64, redactor *redact.R
 		written:          written,
 		ceiling:          ceiling,
 		truncatedStreams: map[string]bool{},
+		onWrite:          onWrite,
 	}
 }
 
@@ -262,6 +270,9 @@ func (w *activityWriter) append(a *millv1.Activity) error {
 		return fmt.Errorf("activity: write: %w", err)
 	}
 	w.written += int64(activityLengthPrefix + len(raw))
+	if w.onWrite != nil {
+		w.onWrite()
+	}
 	return nil
 }
 

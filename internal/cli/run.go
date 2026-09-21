@@ -50,6 +50,15 @@ import (
 // supervisor restarting on this is restarting on the normal path.
 const ExitFenced = 75
 
+// Exit statuses for `mill logs -f`, distinct from an ordinary failure (1)
+// the way ExitFenced is: 2 is stead's doctor code for "could not tell", and
+// the rest are free. None collide with ExitFenced.
+const (
+	ExitLogsStreamBroken = 2
+	ExitLogsWaiting      = 3
+	ExitLogsParked       = 4
+)
+
 // daggerSocketEnv and daggerProjectEnv are dagger's own variables, so a
 // shell already set up for `dg` needs nothing more for `mill run`.
 const (
@@ -399,7 +408,7 @@ func execute(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 	if gw != nil {
 		defer func() { _ = gw.Close() }()
 	}
-	runner, err := newRunner(cmd, opts, opts.project, nodeRef, answers, gw)
+	runner, err := newRunner(cmd, opts, opts.project, nodeRef, answers, gw, nil)
 	if err != nil {
 		return err
 	}
@@ -418,7 +427,11 @@ func execute(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 //
 // gw is the process's credential gateway, started once by the caller and
 // shared by every runner, or nil when none is configured.
-func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, answers run.Answerer, gw *gateway.Server) (*run.Runner, error) {
+//
+// onActivity, when not nil, is wired onto [run.Options.OnActivity] so this
+// runner's attempts reach a same-process `Logs` observer; nil is every
+// caller but `serve --work`, which has one to reach.
+func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, answers run.Answerer, gw *gateway.Server, onActivity func(string)) (*run.Runner, error) {
 	// The first thing, because it is the cheapest thing that can be wrong
 	// and the most expensive to find out late: a backend that cannot serve
 	// a run on this host fails after the node has been claimed and cloned
@@ -486,6 +499,7 @@ func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, 
 		Redactor:       redactor,
 		SkillOverrides: overrides,
 		Log:            slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: slog.LevelInfo})),
+		OnActivity:     onActivity,
 	}
 	gatewayRunOptions(gw, &options)
 	return run.New(options), nil

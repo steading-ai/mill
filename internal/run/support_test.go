@@ -177,7 +177,7 @@ func start(ctx context.Context) *fixture {
 
 	f.db = pg.Database(ctx)
 	srv := server.New(server.Config{Logger: slog.New(slog.NewTextHandler(GinkgoWriter, nil))},
-		server.NewStoreService(domain.New(f.db)), nil)
+		server.NewStoreService(domain.New(f.db), server.NewObserver(server.DefaultObserverFallback), GinkgoT().TempDir()), nil)
 	ts := httptest.NewServer(srv.Handler())
 	DeferCleanup(ts.Close)
 	f.store = millv1connect.NewStoreServiceClient(ts.Client(), ts.URL)

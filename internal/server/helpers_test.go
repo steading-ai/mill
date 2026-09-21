@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"time"
 
 	"log/slog"
 
@@ -48,11 +49,26 @@ type service struct {
 	pool    *pgxpool.Pool
 	handler http.Handler
 	clients map[int]millv1connect.StoreServiceClient
+	// logDir is where this service's Logs handler reads activity records
+	// from, empty unless a spec populates it (internal/testsupport's
+	// AppendActivity, at run.ActivityPath under this directory).
+	logDir string
 }
 
 // newService clones a migrated database and mounts the handlers over it,
-// behind the role interceptor and the specs' role map.
+// behind the role interceptor and the specs' role map, with the observer's
+// default fallback. Its Logs handler reads from a fresh temp directory,
+// empty unless a spec populates it.
 func newService(ctx context.Context) *service {
+	return newServiceFallback(ctx, server.DefaultObserverFallback)
+}
+
+// newServiceFallback is newService with the observer's fallback given
+// rather than defaulted — what a spec proving a followed stream woke on
+// signal, not the fallback timer, needs: a fallback long enough that the
+// spec's own close-and-signal always beats it, but short enough that the
+// spec does not sit through the default 5s if that proof is ever wrong.
+func newServiceFallback(ctx context.Context, fallback time.Duration) *service {
 	GinkgoHelper()
 	pool := pg.Database(ctx)
 	roles := interceptor.RoleMap{
@@ -62,11 +78,12 @@ func newService(ctx context.Context) *service {
 			readerUID:   interceptor.RoleReader,
 		},
 	}
+	logDir := GinkgoT().TempDir()
 	srv := server.New(server.Config{
 		Logger:       specLogger(),
 		Interceptors: []connect.Interceptor{interceptor.NewRoles(roles, server.Requirement())},
-	}, server.NewStoreService(domain.New(pool)), nil)
-	return &service{pool: pool, handler: srv.Handler(), clients: map[int]millv1connect.StoreServiceClient{}}
+	}, server.NewStoreService(domain.New(pool), server.NewObserver(fallback), logDir), nil)
+	return &service{pool: pool, handler: srv.Handler(), clients: map[int]millv1connect.StoreServiceClient{}, logDir: logDir}
 }
 
 // specLogger sends the server's log to the spec's writer, where Ginkgo
@@ -128,7 +145,22 @@ var steps = []*millv1.Step{
 // step, which is what moves a run from selecting to running.
 func newFixture(ctx context.Context, nodeRef string) *fixture {
 	GinkgoHelper()
-	f := &fixture{service: newService(ctx)}
+	return newFixtureOn(ctx, newService(ctx), nodeRef)
+}
+
+// newFixtureFallback is newFixture over a service built with fallback
+// rather than the observer's default — see newServiceFallback.
+func newFixtureFallback(ctx context.Context, nodeRef string, fallback time.Duration) *fixture {
+	GinkgoHelper()
+	return newFixtureOn(ctx, newServiceFallback(ctx, fallback), nodeRef)
+}
+
+// newFixtureOn is newFixture over a service newFixture or newFixtureFallback
+// already built: store the workflow, create a run and close its selection
+// step, which is what moves a run from selecting to running.
+func newFixtureOn(ctx context.Context, svc *service, nodeRef string) *fixture {
+	GinkgoHelper()
+	f := &fixture{service: svc}
 	client := f.client()
 
 	stored, err := client.PutWorkflow(ctx, connect.NewRequest(&millv1.PutWorkflowRequest{
@@ -161,6 +193,38 @@ func newFixture(ctx context.Context, nodeRef string) *fixture {
 	f.run = f.reload(ctx)
 	Expect(f.run.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
 	return f
+}
+
+// anotherRun creates a second run on this fixture's own service, under the
+// workflow newFixture already stored — which is what an every-run spec
+// needs to see more than one run without paying for a second database.
+func (f *fixture) anotherRun(ctx context.Context, nodeRef string) *fixture {
+	GinkgoHelper()
+	client := f.client()
+	created, err := client.CreateRun(ctx, connect.NewRequest(&millv1.CreateRunRequest{
+		LeaseId:   lease,
+		NodeId:    "node-" + nodeRef,
+		NodeRef:   nodeRef,
+		ContextId: "ctx-" + nodeRef,
+		WorkerRef: "worker-1",
+		Branch:    "mill/" + nodeRef,
+	}))
+	Expect(err).NotTo(HaveOccurred())
+	g := &fixture{service: f.service, workflow: f.workflow, run: created.Msg.GetRun()}
+
+	assess := g.start(ctx, "assess", millv1.StepKind_STEP_KIND_SKILL)
+	closed, err := client.CloseStepRun(ctx, connect.NewRequest(&millv1.CloseStepRunRequest{
+		LeaseId:    lease,
+		StepRunId:  assess.GetId(),
+		Evidence:   structuredEvidence(),
+		WorkflowId: g.workflow.GetId(),
+		Tier:       millv1.Tier_TIER_FEATURE,
+	}))
+	Expect(err).NotTo(HaveOccurred())
+	Expect(closed.Msg.GetStepRun().GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED))
+	g.run = g.reload(ctx)
+	Expect(g.run.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+	return g
 }
 
 // start opens an attempt at a step.

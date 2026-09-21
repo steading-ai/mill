@@ -75,7 +75,6 @@ type readOptions struct {
 	since        string
 	step         string
 	follow       bool
-	logDir       string
 	workspaceDir string
 	reason       string
 }

@@ -19,11 +19,19 @@ import (
 // rule of its own, and it never reaches the store, which depguard enforces.
 // Who the caller is comes from the connection, never from a request body.
 type StoreService struct {
-	svc *domain.Service
+	svc      *domain.Service
+	observer *Observer
+	logDir   string
 }
 
-// NewStoreService mounts svc as the store's handlers.
-func NewStoreService(svc *domain.Service) *StoreService { return &StoreService{svc: svc} }
+// NewStoreService mounts svc as the store's handlers. observer is signalled
+// on every write that changes what a followed Logs stream waits on
+// (docs/activity.md §Observer). logDir is where Logs reads an attempt's
+// activity record from — the same directory the worker's --log-dir writes
+// it under.
+func NewStoreService(svc *domain.Service, observer *Observer, logDir string) *StoreService {
+	return &StoreService{svc: svc, observer: observer, logDir: logDir}
+}
 
 var _ millv1connect.StoreServiceHandler = (*StoreService)(nil)
 
@@ -53,6 +61,11 @@ func (s *StoreService) CreateRun(ctx context.Context, req *connect.Request[millv
 	if err != nil {
 		return nil, connectError(err)
 	}
+	// The empty key is what lets a stream over every run notice one just
+	// started; the run's own key has nothing to signal yet, since no
+	// client could have subscribed to an id that did not exist until this
+	// call returns it.
+	s.observer.Signal("")
 	return connect.NewResponse(&millv1.CreateRunResponse{Run: run}), nil
 }
 
@@ -79,6 +92,7 @@ func (s *StoreService) StartStepRun(ctx context.Context, req *connect.Request[mi
 	if err != nil {
 		return nil, connectError(err)
 	}
+	s.observer.Signal(stepRun.GetRunId())
 	return connect.NewResponse(&millv1.StartStepRunResponse{StepRun: stepRun}), nil
 }
 
@@ -118,6 +132,7 @@ func (s *StoreService) CloseStepRun(ctx context.Context, req *connect.Request[mi
 	if err != nil {
 		return nil, connectError(err)
 	}
+	s.observer.Signal(stepRun.GetRunId())
 	return connect.NewResponse(&millv1.CloseStepRunResponse{StepRun: stepRun, Evidence: evidence}), nil
 }
 
@@ -127,6 +142,7 @@ func (s *StoreService) FailStepRun(ctx context.Context, req *connect.Request[mil
 	if err != nil {
 		return nil, connectError(err)
 	}
+	s.observer.Signal(stepRun.GetRunId())
 	return connect.NewResponse(&millv1.FailStepRunResponse{StepRun: stepRun}), nil
 }
 
@@ -154,6 +170,7 @@ func (s *StoreService) MarkWaiting(ctx context.Context, req *connect.Request[mil
 	if err != nil {
 		return nil, connectError(err)
 	}
+	s.observer.Signal(run.GetId())
 	return connect.NewResponse(&millv1.MarkWaitingResponse{Run: run}), nil
 }
 
@@ -163,6 +180,7 @@ func (s *StoreService) Park(ctx context.Context, req *connect.Request[millv1.Par
 	if err != nil {
 		return nil, connectError(err)
 	}
+	s.observer.Signal(run.GetId())
 	return connect.NewResponse(&millv1.ParkResponse{Run: run}), nil
 }
 
@@ -261,6 +279,7 @@ func (s *StoreService) Done(ctx context.Context, req *connect.Request[millv1.Don
 	if err != nil {
 		return nil, connectError(err)
 	}
+	s.observer.Signal(run.GetId())
 	return connect.NewResponse(&millv1.DoneResponse{Run: run}), nil
 }
 
@@ -271,6 +290,7 @@ func (s *StoreService) Fail(ctx context.Context, req *connect.Request[millv1.Fai
 	if err != nil {
 		return nil, connectError(err)
 	}
+	s.observer.Signal(run.GetId())
 	return connect.NewResponse(&millv1.FailResponse{Run: run}), nil
 }
 

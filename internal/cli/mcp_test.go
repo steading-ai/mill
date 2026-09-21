@@ -19,6 +19,7 @@ import (
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/cli"
 	"github.com/ivy/mill/internal/domain"
+	"github.com/ivy/mill/internal/run"
 	"github.com/ivy/mill/internal/server"
 	"github.com/ivy/mill/internal/server/interceptor"
 	"github.com/ivy/mill/internal/testsupport"
@@ -190,6 +191,28 @@ var _ = Describe("mill mcp", Label(testsupport.DBLabel), func() {
 		Expect(r.reload(ctx).GetCancelRequested()).To(BeTrue())
 	})
 
+	It("reads logs over the RPC, tail and the step-the-run-is-on default both honored", func() {
+		logDir := GinkgoT().TempDir()
+		m := servingWithLogDir(ctx, logDir)
+		r := openRunOn(ctx, m, "millcli#35", nodeID(35))
+		r.closeGatherContext(ctx, "sha256:"+strings.Repeat("a", 64))
+		sr := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+		appendActivity(run.ActivityPath(logDir, r.run.GetId(), "implement", sr.GetAttempt()),
+			textActivity("line one"), textActivity("line two"), textActivity("line three"))
+
+		s := mcp(ctx, "--socket", m.socket)
+		s.call("initialize", nil)
+
+		answer := s.tool("logs", map[string]any{"run": "millcli#35", "tail": 2})
+		Expect(answer).To(HaveKeyWithValue("step", "implement"))
+		Expect(answer).To(HaveKeyWithValue("attempt", float64(1)))
+		lines, ok := answer["lines"].([]any)
+		Expect(ok).To(BeTrue(), "%v", answer)
+		Expect(lines).To(HaveLen(2))
+		Expect(lines[0]).To(ContainSubstring("line two"))
+		Expect(lines[1]).To(ContainSubstring("line three"))
+	})
+
 	It("reports a misspelt argument rather than ignoring it", func() {
 		r := openRun(ctx, "millcli#34", nodeID(34))
 		s := mcp(ctx, "--socket", r.mill.socket)
@@ -264,7 +287,7 @@ func readerSocket(ctx context.Context, m mill) mill {
 				ServiceUID: -1,
 				Roles:      map[int]interceptor.Role{os.Getuid(): interceptor.RoleReader},
 			}, server.Requirement())},
-	}, server.NewStoreService(svc), nil)
+	}, server.NewStoreService(svc, server.NewObserver(server.DefaultObserverFallback), GinkgoT().TempDir()), nil)
 	Expect(srv.Listen()).To(Succeed())
 
 	serveCtx, stop := context.WithCancel(ctx)

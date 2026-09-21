@@ -200,6 +200,12 @@ service StoreService {
   // something the store does not hold, so a reader is refused by the same
   // policy that refuses it Cancel.
   rpc WhoAmI(WhoAmIRequest) returns (WhoAmIResponse);
+  // Logs streams one run's activity, oldest first: every closed attempt of
+  // the step in start order, then the live attempt, then — with follow —
+  // whatever arrives next. With no run named it streams every run's
+  // activity instead, ordered for resume by a cursor. docs/activity.md
+  // §The RPC is the specification this call implements.
+  rpc Logs(LogsRequest) returns (stream LogsResponse);
 }
 
 // GetRunByNodeRequest asks for the live run on a node.
@@ -1025,4 +1031,75 @@ message WhoAmIResponse {
   int64 uid = 1;
   // The role the map gives it: service, operator, or reader.
   string role = 2;
+}
+
+// LogsRequest names what Logs streams: one run's activity, or every run's,
+// windowed and paged by a cursor. docs/activity.md §The RPC is the
+// specification.
+message LogsRequest {
+  // The run, as Inspect takes it. Both id and node_ref empty is every run.
+  string id = 1;
+  // The run, as Inspect takes it. Both id and node_ref empty is every run.
+  string node_ref = 2;
+  // Narrow to one step of the run.
+  string step = 3;
+  // Narrow to one attempt of step. 0 is every attempt.
+  int64 attempt = 4;
+  // Keep the stream open until the run ends, or, with no run, until the
+  // client goes.
+  bool follow = 5;
+  // Send only the last N records on record before going live. 0 is none.
+  int64 tail = 6;
+  // Resume after this record; what a client that reconnected last saw.
+  Cursor after = 7;
+  // Page backwards: the limit records immediately before this one, in seq
+  // order. Refused together with follow.
+  Cursor before = 8;
+  // At most this many records, then the stream ends. 0 is no limit. With
+  // after and limit 1 it is one record, whole: how a body a followed
+  // stream cut is fetched entire.
+  int64 limit = 9;
+  // With no run: records at or after this time.
+  google.protobuf.Timestamp since = 10;
+}
+
+// Cursor names one record: the attempt it belongs to and its position
+// within it.
+message Cursor {
+  // The step run the record belongs to.
+  string step_run_id = 1;
+  // The record's 1-based position within the attempt.
+  int64 seq = 2;
+}
+
+// LogsResponse is one frame of a Logs stream: an activity record, or the
+// run leaving the states a worker acts in.
+message LogsResponse {
+  // The frame: one activity record, or the run ending.
+  oneof frame {
+    // One activity record.
+    Activity activity = 1;
+    // The run left the states a worker acts in; the last frame of a
+    // followed stream over one run. gate is set for waiting and parked.
+    RunEnd run = 2;
+  }
+}
+
+// RunEnd is the last frame of a followed stream over one run: it stopped
+// being running, and why.
+message RunEnd {
+  // The run that ended.
+  string run_id = 1;
+  // The status it ended in: done, failed, abandoned, waiting, or parked.
+  RunStatus status = 2;
+  // Set for waiting and parked: the gate the run is blocked on.
+  GateRef gate = 3;
+}
+
+// GateRef names the gate node a waiting or parked run is blocked on.
+message GateRef {
+  // The gate node's id.
+  string node_id = 1;
+  // The gate node's reference.
+  string node_ref = 2;
 }

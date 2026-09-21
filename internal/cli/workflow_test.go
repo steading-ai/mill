@@ -59,12 +59,28 @@ func (m mill) try(ctx context.Context, args ...string) (string, error) {
 // serving starts `mill serve` on its own database and socket for one spec.
 func serving(ctx context.Context) mill {
 	GinkgoHelper()
+	return servingWith(ctx)
+}
+
+// servingWithLogDir is serving with a worker's --log-dir given explicitly,
+// for a spec that writes activity files straight to disk the way a worker
+// would rather than through the store's own write path.
+func servingWithLogDir(ctx context.Context, logDir string) mill {
+	GinkgoHelper()
+	return servingWith(ctx, "--log-dir", logDir)
+}
+
+// servingWith is serving with extra `mill serve` flags, for the one spec
+// shape (servingWithLogDir) that needs to pick a setting serving otherwise
+// defaults.
+func servingWith(ctx context.Context, extra ...string) mill {
+	GinkgoHelper()
 	databaseURL := pg.Database(ctx).Config().ConnString()
 	socket := filepath.Join(GinkgoT().TempDir(), "mill.sock")
 
 	var stdout, stderr bytes.Buffer
 	root := cli.NewRootCommand(&stdout, &stderr)
-	root.SetArgs([]string{"serve", "--socket", socket, "--database-url", databaseURL})
+	root.SetArgs(append([]string{"serve", "--socket", socket, "--database-url", databaseURL}, extra...))
 	serveCtx, stop := context.WithCancel(ctx)
 	served := make(chan error, 1)
 	go func() {

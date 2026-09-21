@@ -162,6 +162,8 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 		})
 	}
 
+	observer := server.NewObserver(server.DefaultObserverFallback)
+
 	srv := server.New(server.Config{
 		SocketPath:      opts.socket(),
 		ShutdownTimeout: opts.shutdownTimeout,
@@ -169,7 +171,7 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 		Interceptors: []connect.Interceptor{
 			interceptor.NewRoles(roles, server.Requirement()),
 		},
-	}, server.NewStoreService(svc), workerHandler)
+	}, server.NewStoreService(svc, observer, opts.worker.run.logDir), workerHandler)
 
 	log.Info("mill serve starting", "version", version.String(), "socket", opts.socket())
 	if err := srv.Listen(); err != nil {
@@ -188,7 +190,7 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 	worked := make(chan error, 1)
 	stopped := make(chan struct{})
 	if opts.work {
-		worker, err := newWorker(cmd, &opts.worker)
+		worker, err := newWorker(cmd, &opts.worker, observer.Signal)
 		if err != nil {
 			return fmt.Errorf("mill serve: %w", err)
 		}

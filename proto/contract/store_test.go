@@ -18,6 +18,7 @@ var readOnlyRPCs = map[string]bool{
 	"Cost":          true,
 	"Health":        true,
 	"WhoAmI":        true,
+	"Logs":          true,
 }
 
 // leaselessRPCs are the mutations no lease fences, because their caller
@@ -47,7 +48,7 @@ var wantedRPCs = []string{
 	"IssueStepToken", "RevokeStepToken",
 	"RecordUsage", "MarkUsagePosted",
 	"GetWorkflow", "ListWorkflows", "PutWorkflow", "PutSkill", "GetSkill",
-	"Status", "Inspect", "History", "Cost", "Health", "WhoAmI",
+	"Status", "Inspect", "History", "Cost", "Health", "WhoAmI", "Logs",
 }
 
 var _ = Describe("store.proto", func() {
