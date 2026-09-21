@@ -252,6 +252,37 @@ func (s *Service) Status(ctx context.Context, statuses []millv1.RunStatus, proje
 	return s.store.Status(ctx, statuses, project)
 }
 
+// ListRunsParams is the page ListRuns asks for.
+type ListRunsParams struct {
+	Statuses    []millv1.RunStatus
+	Project     string
+	NodeRef     string
+	WorkerRef   string
+	WorkflowID  string
+	EndedAfter  *time.Time
+	EndedBefore *time.Time
+	Limit       int32
+	Cursor      string
+	View        string
+}
+
+// ListRuns returns one page of ended (or, for a non-terminal statuses
+// filter, still-live) runs with what the ledger derives about each.
+func (s *Service) ListRuns(ctx context.Context, p ListRunsParams) (runs []*millv1.RunSummary, nextCursor string, clamped bool, findings []UndecodableWorkflow, err error) {
+	return s.store.ListRuns(ctx, store.ListRunsPageParams{
+		Statuses:    p.Statuses,
+		Project:     p.Project,
+		NodeRef:     p.NodeRef,
+		WorkerRef:   p.WorkerRef,
+		WorkflowID:  p.WorkflowID,
+		EndedAfter:  p.EndedAfter,
+		EndedBefore: p.EndedBefore,
+		Limit:       p.Limit,
+		Cursor:      p.Cursor,
+		View:        p.View,
+	})
+}
+
 // Inspect returns one run's every attempt in order with its evidence, exit,
 // session, and usage.
 func (s *Service) Inspect(ctx context.Context, p InspectParams) (*RunDetail, error) {

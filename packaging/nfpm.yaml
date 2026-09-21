@@ -48,22 +48,22 @@ contents:
     type: tree
   - src: contrib/systemd/mill.service
     dst: /usr/lib/systemd/system/mill.service
-  - src: contrib/rpm/sysusers.conf
+  - src: packaging/sysusers.d/mill.conf
     dst: /usr/lib/sysusers.d/mill.conf
-  - src: contrib/rpm/tmpfiles.conf
+  - src: packaging/tmpfiles.d/mill.conf
     dst: /usr/lib/tmpfiles.d/mill.conf
-  - src: contrib/rpm/config.yaml
+  - src: packaging/config.yaml
     dst: /etc/mill/config.yaml
     type: config|noreplace
-  - src: contrib/rpm/env
+  - src: packaging/env
     dst: /etc/mill/env
     type: config|noreplace
     file_info:
       mode: 0600
 scripts:
-  postinstall: contrib/rpm/postinstall.sh
-  preremove: contrib/rpm/preremove.sh
-  postremove: contrib/rpm/postremove.sh
+  postinstall: packaging/scripts/postinstall.sh
+  preremove: packaging/scripts/preremove.sh
+  postremove: packaging/scripts/postremove.sh
 rpm:
   summary: A workflow runner over dagger's work graph
   compression: zstd

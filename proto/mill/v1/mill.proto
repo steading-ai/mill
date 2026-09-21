@@ -928,6 +928,19 @@ message RunSummary {
   // its files still exist, and the machine behind it when there is one.
   // Unset for a run that has recorded none.
   Workspace workspace = 6;
+  // The step run with the latest started_at of any attempt in the run: what
+  // a failed or abandoned run stopped at. Derived, never stored, for the
+  // same reason current_step is not a column. Empty for a run that has
+  // started no step.
+  string last_step = 7;
+  // last_step's status.
+  StepRunStatus last_step_status = 8;
+  // One plus the count of step runs whose feedback_from is set: how many
+  // times work went back for revision, restating steading's console
+  // domain model's round derivation for a row so the two do not drift
+  // (docs/ledger.md §"Queries the CLI needs"). 1 for a run that has never
+  // been sent back.
+  int64 rounds = 9;
 }
 
 // StepRunDetail is one attempt with everything hanging off it, which is what

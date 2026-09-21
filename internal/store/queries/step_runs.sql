@@ -71,6 +71,13 @@ UPDATE step_runs SET auto_approved = true WHERE id = $1 RETURNING *;
 -- name: MarkStepRunSessionStarted :one
 UPDATE step_runs SET session_started = true WHERE id = $1 RETURNING *;
 
+-- How many attempts in the run were opened as the revise for a failure,
+-- counted from the rows rather than stored: RunSummary.rounds is one plus
+-- this, restating steading's console round derivation for a row
+-- (docs/ledger.md §"Queries the CLI needs").
+-- name: CountRunFeedback :one
+SELECT count(*) FROM step_runs WHERE run_id = $1 AND feedback_from IS NOT NULL;
+
 -- Every step run in a window, with its run's status, its workflow's name
 -- and version, and the step name its feedback_from attempt belongs to, so
 -- `mill cost` can fold the per-step funnel (reached, passed, died, retried,
