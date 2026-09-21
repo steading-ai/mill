@@ -167,6 +167,11 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 		if identity == "" {
 			identity = defaultIdentity()
 		}
+		// The projects Claims reports are the ones the worker actually
+		// claims from, resolved the same way newWorker resolves them for the
+		// worker itself (resolveProjects).
+		projects := resolveProjects(opts.worker.projects)
+		host, _ := os.Hostname()
 		workerHandler = server.NewWorkerService(server.WorkerServiceConfig{
 			SidecarEntrypoint: opts.worker.run.sidecar,
 			EnvMode:           opts.worker.run.envMode,
@@ -174,6 +179,9 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 			Name:              opts.worker.run.name,
 			Identity:          identity,
 			Forge:             workerForgeResolver(&opts.worker),
+			Host:              host,
+			Projects:          projects,
+			Labels:            opts.worker.labels,
 		})
 	}
 
@@ -292,12 +300,7 @@ func mcpServerNames(configured map[string]McpServerConfig) map[string]struct{} {
 // resolveForgeProject, the same resolution probeForge and
 // signingContentReader use — so a rotated credential is the one reported.
 func workerForgeResolver(opts *workOptions) func(context.Context) (forge.Forge, string, string, error) {
-	projects := opts.projects
-	if len(projects) == 0 {
-		if fallback := os.Getenv(daggerProjectEnv); fallback != "" {
-			projects = []string{fallback}
-		}
-	}
+	projects := resolveProjects(opts.projects)
 	return func(ctx context.Context) (forge.Forge, string, string, error) {
 		if len(projects) == 0 {
 			return nil, "", "", fmt.Errorf("no project to read a repository from: pass --project or set %s", daggerProjectEnv)

@@ -228,12 +228,7 @@ func stopSignals() (<-chan os.Signal, func()) {
 // its attempts' activity writers reach a same-process observer
 // (`serve --work`); nil is a worker with no co-located server to notify.
 func newWorker(cmd *cobra.Command, opts *workOptions, onActivity func(string)) (*run.Worker, error) {
-	projects := opts.projects
-	if len(projects) == 0 {
-		if fallback := os.Getenv(daggerProjectEnv); fallback != "" {
-			projects = []string{fallback}
-		}
-	}
+	projects := resolveProjects(opts.projects)
 	if opts.run.socket == "" {
 		opts.run.socket = defaultSocketPath()
 	}

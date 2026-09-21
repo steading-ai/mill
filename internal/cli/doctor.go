@@ -237,7 +237,8 @@ func runDoctor(cmd *cobra.Command, opts doctorOptions) error {
 	if err := applyEvictionConfig(config, &expiry, &opts.highWatermark, &opts.lowWatermark); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "claims from: %s\n", claimsFrom(config.Projects))
+	projects, labels := resolvedClaims(cmd.Context(), opts.socket, config)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "claims from: %s\n", claimsFrom(projects, labels))
 	probes := runProbes(cmd.Context(), opts)
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	healthy := true
@@ -389,6 +390,31 @@ func workerProbe(ctx context.Context, socket string) (*millv1.ProbeResponse, err
 		return nil, err
 	}
 	return res.Msg, nil
+}
+
+// workerClaims asks the worker behind socket what it claims from and which
+// host it runs on, returning nil on any problem — unlike workerProbe, which
+// distinguishes "no worker mounted" from "the worker answered and failed" —
+// because the local configuration file is a coherent fallback answer
+// regardless of why the real worker did not answer.
+func workerClaims(ctx context.Context, socket string) *millv1.ClaimsResponse {
+	ctx, cancel := context.WithTimeout(ctx, doctor.ProbeTimeout)
+	defer cancel()
+	res, err := workerClient(socket).Claims(ctx, connect.NewRequest(&millv1.ClaimsRequest{}))
+	if err != nil {
+		return nil
+	}
+	return res.Msg
+}
+
+// resolvedClaims is what `doctor` and `status` both print: the worker's own
+// answer to Claims when one is reachable, else the local configuration
+// file's projects and labels.
+func resolvedClaims(ctx context.Context, socket string, config Config) (projects, labels []string) {
+	if claims := workerClaims(ctx, socket); claims != nil {
+		return claims.GetProjects(), claims.GetLabels()
+	}
+	return config.Projects, config.Labels
 }
 
 // fromWorkerOr reports the worker's own verdict for name — its answer
