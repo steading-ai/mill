@@ -268,25 +268,25 @@ func renderStatus(cmd *cobra.Command, runs []*millv1.RunSummary, v view) error {
 			_, _ = fmt.Fprintf(w, "%s\t%s\n", summary.GetRun().GetNodeRef(), summary.GetRun().GetId())
 		}
 	case viewFull:
-		_, _ = fmt.Fprintln(w, "NODE\tRUN\tSTATUS\tSTEP\tATTEMPT\tELAPSED\tLEASES\tGATE\tWORKER\tTOKENS\tMACHINE\tIMAGE\tVETH\tCACHES\tLAST STEP\tROUNDS")
+		_, _ = fmt.Fprintln(w, "NODE\tRUN\tSTATUS\tSTEP\tATTEMPT\tELAPSED\tLEASES\tGATE\tWORKER\tTOKENS\tUSD\tMACHINE\tIMAGE\tVETH\tCACHES\tLAST STEP\tROUNDS")
 		for _, summary := range runs {
 			run := summary.GetRun()
 			sandbox := summary.GetWorkspace().GetSandbox()
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\n",
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\n",
 				run.GetNodeRef(), run.GetId(), runStatusName(run.GetStatus()),
 				summary.GetCurrentStep(), summary.GetCurrentAttempt(), elapsed(run),
 				summary.GetLeases(), dash(run.GetGateNodeId()), dash(run.GetWorkerRef()),
-				tokenText(summary.GetTotals()),
+				tokenText(summary.GetTotals()), usdText(summary.GetTotals()),
 				dash(sandbox.GetMachine()), dash(sandbox.GetImageDigest()), dash(sandbox.GetVeth()), dash(lineagesText(sandbox)),
 				lastStepText(summary), summary.GetRounds())
 		}
 	default:
-		_, _ = fmt.Fprintln(w, "NODE\tSTATUS\tSTEP\tATTEMPT\tELAPSED\tTOKENS\tGATE\tMACHINE\tLAST STEP\tROUNDS")
+		_, _ = fmt.Fprintln(w, "NODE\tSTATUS\tSTEP\tATTEMPT\tELAPSED\tTOKENS\tUSD\tGATE\tMACHINE\tLAST STEP\tROUNDS")
 		for _, summary := range runs {
 			run := summary.GetRun()
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%d\n",
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%d\n",
 				run.GetNodeRef(), runStatusName(run.GetStatus()), summary.GetCurrentStep(),
-				summary.GetCurrentAttempt(), elapsed(run), tokenText(summary.GetTotals()),
+				summary.GetCurrentAttempt(), elapsed(run), tokenText(summary.GetTotals()), usdText(summary.GetTotals()),
 				dash(run.GetGateNodeId()), dash(summary.GetWorkspace().GetSandbox().GetMachine()),
 				lastStepText(summary), summary.GetRounds())
 		}
@@ -411,7 +411,7 @@ func renderInspect(cmd *cobra.Command, detail *millv1.InspectResponse, v view) e
 
 	w := table(cmd)
 	if v == viewFull {
-		_, _ = fmt.Fprintln(w, "STEP\tATTEMPT\tKIND\tSTATUS\tEXIT\tEVIDENCE\tVALUE\tSESSION\tTOKENS")
+		_, _ = fmt.Fprintln(w, "STEP\tATTEMPT\tKIND\tSTATUS\tEXIT\tEVIDENCE\tVALUE\tSESSION\tTOKENS\tUSD")
 	} else {
 		_, _ = fmt.Fprintln(w, "STEP\tATTEMPT\tSTATUS\tEXIT\tEVIDENCE\tVALUE")
 	}
@@ -430,7 +430,7 @@ func renderInspect(cmd *cobra.Command, detail *millv1.InspectResponse, v view) e
 				sr.GetStepName(), fmt.Sprint(sr.GetAttempt()), stepKindName(sr.GetKind()),
 				stepRunStatusName(sr.GetStatus()), exitText(sr.GetExit()),
 				evidenceKindName(step.GetEvidence().GetKind()), stepValue(sr, step.GetEvidence()),
-				dash(sr.GetSessionId()), tokensCounted(step),
+				dash(sr.GetSessionId()), tokensCounted(step), usdText(step.GetTotals()),
 			}
 		}
 		_, _ = fmt.Fprintln(w, strings.Join(row, "\t"))
@@ -721,10 +721,11 @@ func newCostCommand() *cobra.Command {
 		Long: `Roll a window of usage up by run, by workflow version, by step name, and by
 model — and, with --bucket day, by UTC calendar day too.
 
-Counts, never currency. The ledger records tokens; a rate table is applied
-by whoever wants money. STEP rows also carry the funnel: how many runs
-reached the step, passed it, died there, needed more than one attempt, and
-how many revise rounds it answered.`,
+The ledger records tokens; the USD column is mill's own rate table applied
+at query time (docs/ledger.md §usage), dashed for a model the table names
+no rate for rather than shown as free. STEP rows also carry the funnel: how
+many runs reached the step, passed it, died there, needed more than one
+attempt, and how many revise rounds it answered.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runCost(cmd, opts)
@@ -790,19 +791,19 @@ func runCost(cmd *cobra.Command, opts readOptions) error {
 		// to each other's widest key.
 		w := table(cmd)
 		if section.counted {
-			_, _ = fmt.Fprintf(w, "%s\tSOURCE\tINPUT\tOUTPUT\tCACHE READ\tCACHE WRITE\tREACHED\tPASSED\tDIED\tRETRIED\tREVISES\tATTEMPTS\n", section.title)
+			_, _ = fmt.Fprintf(w, "%s\tSOURCE\tINPUT\tOUTPUT\tCACHE READ\tCACHE WRITE\tUSD\tREACHED\tPASSED\tDIED\tRETRIED\tREVISES\tATTEMPTS\n", section.title)
 		} else {
-			_, _ = fmt.Fprintf(w, "%s\tSOURCE\tINPUT\tOUTPUT\tCACHE READ\tCACHE WRITE\n", section.title)
+			_, _ = fmt.Fprintf(w, "%s\tSOURCE\tINPUT\tOUTPUT\tCACHE READ\tCACHE WRITE\tUSD\n", section.title)
 		}
 		for _, bucket := range section.buckets {
-			row := func(source string, in, outTokens, read, write int64) {
+			row := func(source string, in, outTokens, read, write int64, usd string) {
 				if !section.counted {
-					_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\n", bucket.GetKey(), source, in, outTokens, read, write)
+					_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\t%s\n", bucket.GetKey(), source, in, outTokens, read, write, usd)
 					return
 				}
 				c := bucket.GetCounts()
-				_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
-					bucket.GetKey(), source, in, outTokens, read, write,
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\t%s\t%d\t%d\t%d\t%d\t%d\t%d\n",
+					bucket.GetKey(), source, in, outTokens, read, write, usd,
 					c.GetReached(), c.GetPassed(), c.GetDied(), c.GetRetried(), c.GetRevises(), c.GetAttempts())
 			}
 			sources := sourcesOf(bucket.GetTotals())
@@ -813,7 +814,7 @@ func runCost(cmd *cobra.Command, opts readOptions) error {
 				// A step whose counts come from step runs the usage window
 				// never billed anything for — a check, a gate — still gets
 				// a row: the funnel is what this section is for.
-				row("-", 0, 0, 0, 0)
+				row("-", 0, 0, 0, 0, "-")
 				continue
 			}
 			// One row per who counted: the adapter's report and, where a
@@ -822,8 +823,9 @@ func runCost(cmd *cobra.Command, opts readOptions) error {
 			// not per source, so they repeat on every row of a bucket that
 			// has more than one.
 			for _, source := range sources {
-				in, outTokens, read, write := sum(bySource(bucket.GetTotals(), source))
-				row(sourceName(source), in, outTokens, read, write)
+				rows := bySource(bucket.GetTotals(), source)
+				in, outTokens, read, write := sum(rows)
+				row(sourceName(source), in, outTokens, read, write, usdText(rows))
 			}
 		}
 		if err := w.Flush(); err != nil {
@@ -908,6 +910,10 @@ func fillByModel(cost *millv1.CostResponse) *millv1.CostResponse {
 			running.OutputTokens += model.GetOutputTokens()
 			running.CacheReadTokens += model.GetCacheReadTokens()
 			running.CacheWriteTokens += model.GetCacheWriteTokens()
+			running.Usd += model.GetUsd()
+			if model.GetPriced() {
+				running.Priced = true
+			}
 		}
 	}
 	cost.ByModel = make([]*millv1.CostBucket, 0, len(totals))
@@ -1011,6 +1017,30 @@ func sum(totals []*millv1.ModelTotals) (in, out, read, write int64) {
 		write += total.GetCacheWriteTokens()
 	}
 	return in, out, read, write
+}
+
+// usdSum is a rollup's dollar cost: the sum of whichever entries the rate
+// table priced, and whether any did. A rollup with no priced entry is
+// unpriced outright, not priced at zero, the same distinction price()
+// draws per model (docs/ledger.md §usage).
+func usdSum(totals []*millv1.ModelTotals) (usd float64, priced bool) {
+	for _, total := range totals {
+		if total.GetPriced() {
+			usd += total.GetUsd()
+			priced = true
+		}
+	}
+	return usd, priced
+}
+
+// usdText is a rollup's dollar cost as one cell: dashed when no entry in it
+// carries a price, never shown as a free $0.00.
+func usdText(totals []*millv1.ModelTotals) string {
+	usd, priced := usdSum(totals)
+	if !priced {
+		return "-"
+	}
+	return fmt.Sprintf("$%.2f", usd)
 }
 
 // stepValue is an attempt's evidence as inspect prints it. A commit is shown

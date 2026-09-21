@@ -7,6 +7,7 @@
 #   /usr/lib/mill/sidecar/              the harness sidecar: dist/main.js and
 #                                       its production node_modules
 #   /usr/share/mill/workflows/          the workflow definitions and skills
+#   /usr/share/mill/rates.yaml          the default rate table `mill cost` prices usage with
 #   /usr/lib/systemd/system/mill.service
 #   /usr/lib/sysusers.d/mill.conf       the `mill` system user and group
 #   /usr/lib/tmpfiles.d/mill.conf       its runtime directory
@@ -46,6 +47,8 @@ contents:
   - src: workflows
     dst: /usr/share/mill/workflows
     type: tree
+  - src: packaging/rates.yaml
+    dst: /usr/share/mill/rates.yaml
   - src: contrib/systemd/mill.service
     dst: /usr/lib/systemd/system/mill.service
   - src: packaging/sysusers.d/mill.conf

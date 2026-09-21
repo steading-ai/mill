@@ -1,0 +1,42 @@
+# The default rate table `mill serve` loads when its own configuration
+# names no `rates:` of its own (docs/ledger.md §usage). Dollars per million
+# tokens, by resolved model id — the string a session's adapter reports, not
+# a workflow-level alias like `sonnet` or `opus`. Covers the models the
+# packaged workflows' aliases resolve to and internal/gateway/probe.go
+# names; a model absent here yields no USD figure, never zero.
+
+claude-opus-5:
+  input: 15
+  output: 75
+  cache_read: 1.5
+  cache_write: 18.75
+
+claude-opus-4-1:
+  input: 15
+  output: 75
+  cache_read: 1.5
+  cache_write: 18.75
+
+claude-sonnet-4-5:
+  input: 3
+  output: 15
+  cache_read: 0.3
+  cache_write: 3.75
+
+claude-sonnet-4-5-20250929:
+  input: 3
+  output: 15
+  cache_read: 0.3
+  cache_write: 3.75
+
+claude-haiku-4-5:
+  input: 1
+  output: 5
+  cache_read: 0.1
+  cache_write: 1.25
+
+claude-haiku-4-5-20251001:
+  input: 1
+  output: 5
+  cache_read: 0.1
+  cache_write: 1.25

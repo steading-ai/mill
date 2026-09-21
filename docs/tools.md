@@ -91,12 +91,13 @@ which rows this listing shows, not what a worker claims.
 ```
 $ mill status
 worker claims from: every project
-NODE       STATUS   STEP       ATTEMPT  ELAPSED  TOKENS       GATE
-millcli#1  running  implement  1        0s       184213/9820  -
+NODE       STATUS   STEP       ATTEMPT  ELAPSED  TOKENS       USD    GATE
+millcli#1  running  implement  1        0s       184213/9820  $1.06  -
 ```
 
-`TOKENS` is input/output, summed over models. Counts, never currency: the
-ledger records tokens and a rate table is applied by whoever wants money.
+`TOKENS` is input/output, summed over models. `USD` is the rate table `cost`
+prices with (§cost, `docs/ledger.md` §usage) applied to the same totals —
+`-` for a model the table names no rate for.
 
 `MACHINE` is the machine a run on the `machine` backend runs in, as the
 ledger's workspace row names it (`ledger.md` §workspaces); `-` for a local
@@ -132,8 +133,8 @@ the last, a line below the table names the cursor that continues it:
 ```
 $ mill status --ended --since 24h --limit 1
 worker claims from: every project
-NODE       STATUS  STEP       ATTEMPT  ELAPSED  TOKENS  GATE  MACHINE  LAST STEP           ROUNDS
-millcli#1  failed  implement  1        3m       -       -     -        implement (failed)  1
+NODE       STATUS  STEP       ATTEMPT  ELAPSED  TOKENS  USD  GATE  MACHINE  LAST STEP           ROUNDS
+millcli#1  failed  implement  1        3m       -       -    -     -        implement (failed)  1
 next: --cursor MjAyNi0wOS0yMVQxNToxNToxMS4xMjc3NzRafDAxTTMyOEozNEExVzNaUUNHTjQ2TkpIUEo3
 ```
 
@@ -183,7 +184,8 @@ of which workflow was chosen and why; no workflow declares it.
 `--view full` adds each attempt's kind, session and `TOKENS`: the adapter's report
 as `status` shows it, and, for an attempt whose session ran behind the
 credential gateway, the gateway's own count beside it as `gateway:in/out`
-(§cost, `docs/sandbox.md` §Credentials).
+(§cost, `docs/sandbox.md` §Credentials). It adds `USD` beside `TOKENS` too,
+priced the same way as `status` and `cost`.
 
 A step that closed on a verdict shows the decision, and any blocking finding
 inline as `criterion: summary` — a blocking finding is what the reviewer held
@@ -348,26 +350,26 @@ glance.
 
 ```
 $ mill cost --since 7d --bucket day
-RUN        SOURCE   INPUT   OUTPUT  CACHE READ  CACHE WRITE
-millcli#1  sdk      184213  9820    1204331     0
-millcli#1  gateway  184301  9820    1204331     0
+RUN        SOURCE   INPUT   OUTPUT  CACHE READ  CACHE WRITE  USD
+millcli#1  sdk      184213  9820    1204331     0            $1.06
+millcli#1  gateway  184301  9820    1204331     0            $1.06
 
-WORKFLOW                SOURCE   INPUT   OUTPUT  CACHE READ  CACHE WRITE
-quick-fix@fb2764fd70fd  sdk      184213  9820    1204331     0
-quick-fix@fb2764fd70fd  gateway  184301  9820    1204331     0
+WORKFLOW                SOURCE   INPUT   OUTPUT  CACHE READ  CACHE WRITE  USD
+quick-fix@fb2764fd70fd  sdk      184213  9820    1204331     0            $1.06
+quick-fix@fb2764fd70fd  gateway  184301  9820    1204331     0            $1.06
 
-STEP                             SOURCE   INPUT   OUTPUT  CACHE READ  CACHE WRITE  REACHED  PASSED  DIED  RETRIED  REVISES  ATTEMPTS
-quick-fix@fb2764fd70fd/implement sdk      184213  9820    1204331     0            12       11      1     3        2        15
-quick-fix@fb2764fd70fd/implement gateway  184301  9820    1204331     0            12       11      1     3        2        15
-quick-fix@fb2764fd70fd/lint      -        0       0       0           0            12       12      0     0        0        12
+STEP                             SOURCE   INPUT   OUTPUT  CACHE READ  CACHE WRITE  USD    REACHED  PASSED  DIED  RETRIED  REVISES  ATTEMPTS
+quick-fix@fb2764fd70fd/implement sdk      184213  9820    1204331     0            $1.06  12       11      1     3        2        15
+quick-fix@fb2764fd70fd/implement gateway  184301  9820    1204331     0            $1.06  12       11      1     3        2        15
+quick-fix@fb2764fd70fd/lint      -        0       0       0           0            -      12       12      0     0        0        12
 
-MODEL                       SOURCE   INPUT   OUTPUT  CACHE READ  CACHE WRITE
-claude-sonnet-4-5           sdk      184213  9820    1204331     0
-claude-sonnet-4-5-20250929  gateway  184301  9820    1204331     0
+MODEL                       SOURCE   INPUT   OUTPUT  CACHE READ  CACHE WRITE  USD
+claude-sonnet-4-5           sdk      184213  9820    1204331     0            $1.06
+claude-sonnet-4-5-20250929  gateway  184301  9820    1204331     0            $1.06
 
-DAY         SOURCE   INPUT   OUTPUT  CACHE READ  CACHE WRITE
-2026-09-20  sdk      90112   4210    602165      0
-2026-09-21  sdk      94101   5610    602166      0
+DAY         SOURCE   INPUT   OUTPUT  CACHE READ  CACHE WRITE  USD
+2026-09-20  sdk      90112   4210    602165      0            $0.51
+2026-09-21  sdk      94101   5610    602166      0            $0.55
 ```
 
 SOURCE is who counted: `sdk` is the adapter's report of what the harness
@@ -379,6 +381,13 @@ one: the adapter's rows are what `status` and `inspect` call the cost and
 what is posted to dagger, and the gateway's are the check on them — the
 gateway sees the CLI's side requests the SDK does not report, and names the
 model by its resolved id.
+
+USD is the rate table applied at query time (`docs/ledger.md` §usage):
+dollars per million tokens by model, from the worker's `rates` config or the
+packaged default at `/usr/share/mill/rates.yaml` when it names none. It
+reads `-` for a source with no usage row in the window, and for a model the
+table names no rate for — never `$0.00`, since the two mean different
+things.
 
 The MODEL table is summed from the rows the STEP table renders — every step's
 bucket carries its own totals per model and per source — so the two tables
@@ -1072,6 +1081,7 @@ flag added or removed without this table changing is a failing spec.
 | `gateway-upstream` | | yes | yes |
 | `model-credential-file` | | yes | yes |
 | `mcp-servers` | | yes | yes |
+| `rates` | | yes | yes |
 | `work` | | | |
 | `model_credential_minted` | | | |
 
@@ -1110,6 +1120,15 @@ the same shape without `global` and is refused at `mill workflow push` if a
 name collides with the host's; `mill run` reads none of it, since it runs no
 worker to mount servers from. `mill doctor`'s `mcp` probe (above) reads the
 same map to prove each configured server actually answers.
+
+`rates` is a map of model id to `{input, output, cache_read, cache_write}`,
+dollars per million tokens: the table `status`, `inspect` and `cost` price
+usage totals with at query time (`docs/ledger.md` §usage). A model the map
+does not name gets no `USD` figure, never `$0.00`. An empty or absent
+`rates` falls back to the packaged default at `/usr/share/mill/rates.yaml`;
+naming even one model in the file turns the fallback off entirely, so a
+deployment overriding one rate must repeat every model it still wants
+priced.
 
 
 ## Forges

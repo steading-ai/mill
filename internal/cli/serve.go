@@ -194,6 +194,27 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 	if opts.work {
 		storeOpts = append(storeOpts, server.WithMcpServers(hostMcpServers))
 	}
+	// Rates are loaded whether or not a worker runs here: Status, Cost, and
+	// Inspect price usage the same way from a bare `serve` as from `--work`
+	// (docs/ledger.md §usage). Read directly rather than through
+	// applyConfig, which only runs under --work and merges much more than
+	// this one key.
+	if err := checkNamedConfig(cmd, opts.worker.config); err != nil {
+		return err
+	}
+	fileConfig, err := LoadConfig(opts.worker.config)
+	if err != nil {
+		return err
+	}
+	rateConfigs, err := loadRates(fileConfig.Rates, defaultRatesPath)
+	if err != nil {
+		return fmt.Errorf("mill serve: %w", err)
+	}
+	rates := make(server.Rates, len(rateConfigs))
+	for model, rate := range rateConfigs {
+		rates[model] = server.Rate{Input: rate.Input, Output: rate.Output, CacheRead: rate.CacheRead, CacheWrite: rate.CacheWrite}
+	}
+	storeOpts = append(storeOpts, server.WithRates(rates))
 
 	srv := server.New(server.Config{
 		SocketPath:      opts.socket(),
