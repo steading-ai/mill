@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"text/tabwriter"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/ivy/mill/internal/gateway"
 	"github.com/ivy/mill/internal/harness/claude"
 	"github.com/ivy/mill/internal/notify"
+	"github.com/ivy/mill/internal/workflow"
 	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/machine"
 	"github.com/ivy/mill/internal/workspace/machine/cache"
@@ -40,7 +42,7 @@ import (
 // spec holds both to this list.
 var ProbeNames = []string{
 	"socket", "schema", "dagger", "sidecar", "signing",
-	"forge", "notify", "workspace", "isolation", "space", "gateway", "mcp",
+	"forge", "notify", "workspace", "isolation", "space", "gateway", "mcp", "workflows",
 }
 
 // probe is one check and what it found.
@@ -79,6 +81,7 @@ type doctorOptions struct {
 	forge         string
 	config        string
 	notifyCommand string
+	workflowsRoot string
 	gateway       gatewayOptions
 	// credentialMinted is the configuration file's model_credential_minted,
 	// which has no flag: it is a fact about a deployment's credential.
@@ -124,6 +127,9 @@ func newDoctorCommand() *cobra.Command {
   mcp       each configured mcp-servers entry starts, answers initialize
             and tools/list, and is stopped: one line per server, naming
             the tool count or what kept it from answering
+  workflows each workflow directory under --workflows-root against what
+            the store holds: one line per workflow, naming the two
+            versions when they disagree
 
 Every probe is reported. The command exits non-zero when any of them
 failed; a warning does not fail it.`,
@@ -146,6 +152,7 @@ failed; a warning does not fail it.`,
 	f.StringVar(&opts.forge, "forge", "", forgeUsage)
 	f.StringVar(&opts.config, "config", defaultConfigPath(), "path of the configuration file the notify command, the workspace kind and directory, the sidecar, the environment mode and the forge are read from when no flag names them")
 	f.StringVar(&opts.notifyCommand, "notify-command", "", notifyCommandUsage)
+	f.StringVar(&opts.workflowsRoot, "workflows-root", "", "directory of workflow subdirectories to check against the store (default: none, meaning nothing is checked)")
 	bindGatewayFlags(cmd, &opts.gateway)
 	return cmd
 }
@@ -187,6 +194,9 @@ func runDoctor(cmd *cobra.Command, opts doctorOptions) error {
 	}
 	if config.Forge != "" && unset(cmd, "forge") {
 		opts.forge = config.Forge
+	}
+	if config.WorkflowsRoot != "" && unset(cmd, "workflows-root") {
+		opts.workflowsRoot = config.WorkflowsRoot
 	}
 	if err := resolveSandboxRoot(cmd, &opts.sandboxRoot, config.SandboxRoot); err != nil {
 		return err
@@ -240,7 +250,63 @@ func runProbes(ctx context.Context, opts doctorOptions) []probe {
 		probeSpace(opts, driver.NewSystemd(workspace.Spawner{}, driver.Commands{})),
 		probeGateway(ctx, opts, time.Now()),
 	}
-	return append(probes, probeMcp(ctx, opts)...)
+	probes = append(probes, probeMcp(ctx, opts)...)
+	return append(probes, probeWorkflows(ctx, opts)...)
+}
+
+// probeWorkflows checks every workflow directory under --workflows-root
+// against what the store holds: read-only, so a diagnostic never mutates
+// what it is reporting on and never hides drift by fixing it first. A host
+// with none configured passes, the way a host with no mcp-servers does.
+func probeWorkflows(ctx context.Context, opts doctorOptions) []probe {
+	if opts.workflowsRoot == "" {
+		return []probe{pass("workflows", "no workflows-root is configured")}
+	}
+	entries, err := os.ReadDir(opts.workflowsRoot)
+	if err != nil {
+		return []probe{fail("workflows", "%s: %v", opts.workflowsRoot, err)}
+	}
+	var probes []probe
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(opts.workflowsRoot, entry.Name())
+		if _, err := os.Stat(filepath.Join(dir, workflow.DefinitionFile)); err != nil {
+			continue
+		}
+		probes = append(probes, probeWorkflowDir(ctx, opts, dir))
+	}
+	if len(probes) == 0 {
+		return []probe{pass("workflows", "%s: no workflow directories found", opts.workflowsRoot)}
+	}
+	return probes
+}
+
+// probeWorkflowDir loads one workflow directory — the version Load computes
+// is the same hash `mill workflow push` would store, since the store
+// computes it the same way (internal/workflow's own doc comment) — and
+// compares it against the newest version the store holds for that name.
+func probeWorkflowDir(ctx context.Context, opts doctorOptions, dir string) probe {
+	definition, _, err := workflow.Load(dir)
+	if err != nil {
+		return fail("workflows", "%s: %v", dir, err)
+	}
+	found, err := storeClient(opts.socket).GetWorkflow(ctx, connect.NewRequest(&millv1.GetWorkflowRequest{
+		Name: definition.GetName(), Scope: definition.GetScope(), Project: definition.GetProject(),
+	}))
+	if connect.CodeOf(err) == connect.CodeNotFound {
+		return fail("workflows", "%s: disk is %s, not stored", definition.GetName(), short(definition.GetVersion()))
+	}
+	if err != nil {
+		return fail("workflows", "%s: %v", definition.GetName(), err)
+	}
+	stored := found.Msg.GetWorkflow()
+	if stored.GetVersion() != definition.GetVersion() {
+		return fail("workflows", "%s: store has %s, disk is %s — push required",
+			definition.GetName(), short(stored.GetVersion()), short(definition.GetVersion()))
+	}
+	return pass("workflows", "%s: store matches disk at %s", definition.GetName(), short(definition.GetVersion()))
 }
 
 // probeMcp starts every configured mcp-servers entry, in name order so two

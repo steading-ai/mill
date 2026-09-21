@@ -11,10 +11,13 @@ label: []
 
 # The harness sidecar and the workflows the package installed. A check step
 # names its script relative to the workflow it was loaded with; quick-fix
-# and feature carry the same scripts, so either serves. Push the workflows
-# a project runs with `mill workflow push /usr/share/mill/workflows/<name>`.
+# and feature carry the same scripts, so either serves. `serve` pushes
+# every directory under workflows-root to the store at every start, so a
+# package upgrade or a change to the tree reaches a run with no manual
+# `mill workflow push`.
 sidecar: /usr/lib/mill/sidecar/dist/main.js
 workflow-dir: /usr/share/mill/workflows/quick-fix
+workflows-root: /usr/share/mill/workflows
 
 # Where runs work: clones under the service's account, in its state
 # directory. The machine backend needs the sandbox's host half, which this

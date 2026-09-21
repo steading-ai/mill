@@ -47,9 +47,14 @@ type Config struct {
 	Workflow    string `yaml:"workflow"`
 	Tier        string `yaml:"tier"`
 	WorkflowDir string `yaml:"workflow-dir"`
-	Sidecar     string `yaml:"sidecar"`
-	Origin      string `yaml:"origin"`
-	Ref         string `yaml:"ref"`
+	// WorkflowsRoot is the directory of workflow subdirectories `mill serve`
+	// pushes to the store at every start, and again whenever one's content
+	// changes — see docs/architecture.md §"Deployment". Empty pushes nothing,
+	// the way a missing config file changes nothing.
+	WorkflowsRoot string `yaml:"workflows-root"`
+	Sidecar       string `yaml:"sidecar"`
+	Origin        string `yaml:"origin"`
+	Ref           string `yaml:"ref"`
 	// Forge names the adapter every project's repository is delivered
 	// through, `github` or `gitlab`; empty leaves it to the repository's
 	// host. A value that names no adapter stops the worker at startup.
@@ -304,6 +309,7 @@ var configKeys = []configKey{
 	{"workflow", "workflow"},
 	{"tier", "tier"},
 	{"workflow-dir", "workflow-dir"},
+	{"workflows-root", "workflows-root"},
 	{"sidecar", "sidecar"},
 	{"origin", "origin"},
 	{"ref", "ref"},

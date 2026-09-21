@@ -20,6 +20,7 @@ import (
 	"github.com/ivy/mill/internal/cli"
 	"github.com/ivy/mill/internal/sdnotify"
 	"github.com/ivy/mill/internal/testsupport"
+	"github.com/ivy/mill/internal/workflow"
 	"github.com/ivy/mill/internal/workspace/socket"
 )
 
@@ -191,5 +192,87 @@ var _ = Describe("mill serve", Label(testsupport.DBLabel), func() {
 			_, err = client.Probe(ctx, connect.NewRequest(&millv1.ProbeRequest{}))
 			return err
 		}, time.Minute, 100*time.Millisecond).Should(Succeed(), stderr.String())
+	})
+})
+
+var _ = Describe("mill serve --workflows-root", Label(testsupport.DBLabel), func() {
+	It("pushes every workflow directory under the root on start", func(ctx SpecContext) {
+		m := servingWith(ctx, "--workflows-root", workflowsRoot)
+
+		listed := m.run(ctx, "workflow", "list")
+		// mill-feature and mill-quick-fix are the mill project's own scoped
+		// versions of feature and quick-fix (AGENTS.md's repo map), not
+		// separate names, so what a distinct push from each of the five
+		// directories shows up as is these three names across both scopes.
+		for _, name := range []string{"quick-fix", "feature", "build-workflow"} {
+			Expect(listed).To(ContainSubstring(name), "%s was pushed from the root with no manual push", name)
+		}
+		Expect(listed).To(ContainSubstring("project:mill"), "mill-feature and mill-quick-fix pushed their project-scoped versions")
+
+		definition, _, err := workflow.Load(quickFix)
+		Expect(err).NotTo(HaveOccurred())
+		// workflow list prints the version's first 12 hex characters.
+		Expect(rowFor(listed, "quick-fix")).To(ContainSubstring(definition.GetVersion()[:12]),
+			"the version listed is the one Load computes from the directory on disk")
+	})
+
+	It("starting again against the same directories stores nothing new", func(ctx SpecContext) {
+		databaseURL := pg.Database(ctx).Config().ConnString()
+
+		start := func() mill {
+			sock := filepath.Join(GinkgoT().TempDir(), "mill.sock")
+			var stdout, stderr bytes.Buffer
+			root := cli.NewRootCommand(&stdout, &stderr)
+			root.SetArgs([]string{"serve", "--socket", sock, "--database-url", databaseURL, "--workflows-root", workflowsRoot})
+			serveCtx, stop := context.WithCancel(ctx)
+			served := make(chan error, 1)
+			go func() {
+				defer GinkgoRecover()
+				served <- root.ExecuteContext(serveCtx)
+			}()
+			DeferCleanup(func() {
+				stop()
+				Eventually(served).Should(Receive(BeNil()), stderr.String())
+			})
+			Eventually(func() error {
+				_, err := os.Stat(sock)
+				return err
+			}, 60*time.Second, 50*time.Millisecond).Should(Succeed(), stderr.String())
+			return mill{socket: sock, databaseURL: databaseURL}
+		}
+
+		first := start()
+		beforeListed := first.run(ctx, "workflow", "list", "--all-versions")
+
+		second := start()
+		afterListed := second.run(ctx, "workflow", "list", "--all-versions")
+
+		Expect(strings.Count(afterListed, "quick-fix")).To(Equal(strings.Count(beforeListed, "quick-fix")),
+			"the restart pushed the same content, so no new version was stored")
+		Expect(rowFor(afterListed, "quick-fix")).To(Equal(rowFor(beforeListed, "quick-fix")))
+	})
+
+	It("refuses to start, naming the directory, when one workflow under the root fails to load", func(ctx SpecContext) {
+		root := GinkgoT().TempDir()
+
+		definition, skills, err := workflow.Load(quickFix)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(workflow.Write(filepath.Join(root, "good"), definition, skills)).To(Succeed())
+
+		bad := filepath.Join(root, "bad")
+		Expect(os.MkdirAll(bad, 0o755)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(bad, workflow.DefinitionFile), []byte("not: [valid"), 0o600)).To(Succeed())
+
+		databaseURL := pg.Database(ctx).Config().ConnString()
+		sock := filepath.Join(GinkgoT().TempDir(), "mill.sock")
+		var stdout, stderr bytes.Buffer
+		cmd := cli.NewRootCommand(&stdout, &stderr)
+		cmd.SetArgs([]string{"serve", "--socket", sock, "--database-url", databaseURL, "--workflows-root", root})
+
+		err = cmd.ExecuteContext(ctx)
+		Expect(err).To(MatchError(ContainSubstring(bad)))
+
+		_, statErr := os.Stat(sock)
+		Expect(statErr).To(HaveOccurred(), "a definition the loader refuses fails the start before the socket binds")
 	})
 })

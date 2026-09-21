@@ -14,6 +14,7 @@ import (
 
 	"github.com/ivy/mill/internal/cli"
 	"github.com/ivy/mill/internal/testsupport"
+	"github.com/ivy/mill/internal/workflow"
 )
 
 var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
@@ -35,6 +36,18 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 			}
 		}
 		return "", ""
+	}
+
+	// linesFor is every line reported under name — workflows and mcp can
+	// report more than one.
+	linesFor := func(output, name string) []string {
+		var reported []string
+		for _, line := range lines(output) {
+			if fields := strings.Fields(line); len(fields) > 1 && fields[1] == name {
+				reported = append(reported, line)
+			}
+		}
+		return reported
 	}
 
 	It("reports every probe as pass or fail with one line of reason", func() {
@@ -366,6 +379,82 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 		schema, reason := probe(out, "schema")
 		Expect(schema).To(Equal("fail"))
 		Expect(reason).To(ContainSubstring("the service did not answer"))
+	})
+
+	Describe("the workflows probe", func() {
+		It("passes and says so when no workflows-root is configured", func() {
+			m := serving(ctx)
+			out, _ := runCLI(ctx, m.socket, "doctor",
+				"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
+				"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
+				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
+				"--config", filepath.Join(GinkgoT().TempDir(), "no-config.yaml"),
+				"--project", "")
+
+			verdict, reason := probe(out, "workflows")
+			Expect(verdict).To(Equal("pass"))
+			Expect(reason).To(ContainSubstring("no workflows-root is configured"))
+		})
+
+		It("passes each workflow whose directory matches what the store holds", func() {
+			m := serving(ctx)
+			m.run(ctx, "workflow", "push", quickFix)
+
+			// A root carrying only quick-fix, so every reported line is one
+			// this spec pushed and can expect to match.
+			root := GinkgoT().TempDir()
+			definition, skills, err := workflow.Load(quickFix)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(workflow.Write(filepath.Join(root, "quick-fix"), definition, skills)).To(Succeed())
+
+			out, _ := runCLI(ctx, m.socket, "doctor",
+				"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
+				"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
+				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
+				"--config", filepath.Join(GinkgoT().TempDir(), "no-config.yaml"),
+				"--project", "", "--workflows-root", root)
+
+			reported := linesFor(out, "workflows")
+			Expect(reported).NotTo(BeEmpty())
+			for _, line := range reported {
+				Expect(line).To(HavePrefix("pass"), line)
+			}
+			Expect(strings.Join(reported, "\n")).To(ContainSubstring("quick-fix: store matches disk"))
+		})
+
+		It("fails naming a directory the store holds nothing for, and one the store disagrees with", func() {
+			m := serving(ctx)
+			m.run(ctx, "workflow", "push", quickFix)
+
+			root := GinkgoT().TempDir()
+
+			// A copy of quick-fix with one byte changed, so the store's
+			// version and the disk's disagree.
+			definition, skills, err := workflow.Load(quickFix)
+			Expect(err).NotTo(HaveOccurred())
+			for _, skill := range skills {
+				if skill.GetName() == "implement" {
+					skill.Body += "!"
+				}
+			}
+			Expect(workflow.Write(filepath.Join(root, "quick-fix"), definition, skills)).To(Succeed())
+
+			// build-workflow, unpushed: the store holds nothing for it.
+			definition, skills, err = workflow.Load(buildWorkflow)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(workflow.Write(filepath.Join(root, "build-workflow"), definition, skills)).To(Succeed())
+
+			out, _ := runCLI(ctx, m.socket, "doctor",
+				"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
+				"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
+				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
+				"--config", filepath.Join(GinkgoT().TempDir(), "no-config.yaml"),
+				"--project", "", "--workflows-root", root)
+
+			joined := strings.Join(linesFor(out, "workflows"), "\n")
+			Expect(joined).To(ContainSubstring("push required"), "quick-fix: %s", joined)
+			Expect(joined).To(ContainSubstring("not stored"), "build-workflow: %s", joined)
+		})
 	})
 
 	It("reports dagger as reachable when it answers this account", func() {

@@ -471,6 +471,13 @@ The versions the store holds, newest of each name unless `--all-versions`;
 `--name`, `--project` and `--scope` narrow it. A row the store cannot decode
 is left out and named on standard error, as `status` names it.
 
+A run selects from what is stored here, never from a directory on disk: the
+newest version this command prints for a name is the one a run without an
+explicit `--workflow` version pin follows. `mill serve` pushes every
+directory under `workflows-root` (§Configuration) at its own start, so what
+this prints follows a merged change to a workflow directory once the
+service holding it has restarted, with no `mill workflow push` in between.
+
 ```
 $ mill workflow list
 NAME       SCOPE  VERSION       STEPS  CREATED
@@ -499,8 +506,9 @@ their bytes.
 
 ## doctor
 
-Twelve probes, one line of reason each — `mcp` reports one line per
-configured server, so a host with several has more than eleven lines. Every
+Thirteen probes, one line of reason each — `mcp` and `workflows` report one
+line per configured server or checked workflow, so a host with several of
+either has more than twelve lines. Every
 probe is reported; the command exits non-zero when any of them failed. A
 probe that passed with something still worth looking at is marked `warn`
 and does not fail the command.
@@ -525,6 +533,7 @@ pass  isolation  DG_SOCKET and MILL_SOCKET are dead paths, neither /run/dagger/d
 pass  space      local: no sandbox volume to watch
 warn  gateway    https://api.anthropic.com answers a token count through the gateway with credential:774fdbe2; the credential was minted 2025-09-30, more than 11 months ago; a setup-token lasts a year — mint a new one
 pass  mcp        playwright: 23 tools
+pass  workflows  feature: store matches disk at 6415ee6fe810
 ```
 
 | Probe | What it checks |
@@ -541,6 +550,7 @@ pass  mcp        playwright: 23 tools
 | `space` | For `machine`, free space on the sandbox volume against the eviction watermarks (`cache-high-watermark`, `cache-low-watermark`): pass above the low one, warn between, fail below the high one — eviction runs at every promotion and the host is short of space |
 | `gateway` | The credential gateway's upstream answers one token count through it with the configured credential, and the credential's age against `model_credential_minted` |
 | `mcp` | Each `mcp-servers` entry (§Configuration) is started, sent `initialize` and `tools/list`, and stopped: one line per server, naming its tool count or what kept it from answering — a missing binary, a non-zero exit, or no response before the probe's own timeout. A host with none configured reports one line saying so |
+| `workflows` | Each workflow directory under `--workflows-root` (§Configuration) against the newest version the store holds for its name: one line per workflow, naming the two versions when they disagree. A host with no `workflows-root` configured reports one line saying so |
 
 `sidecar`, `signing` and `forge` ask the worker behind `--socket` to run
 themselves, over the same `WorkerService` a run's own store connects
@@ -1014,6 +1024,7 @@ flag added or removed without this table changing is a failing spec.
 | `workflow` | | yes | yes |
 | `tier` | | yes | yes |
 | `workflow-dir` | | yes | yes |
+| `workflows-root` | | yes | yes |
 | `sidecar` | | yes | yes |
 | `origin` | | yes | yes |
 | `ref` | | yes | yes |
@@ -1062,6 +1073,24 @@ turned on by `--work` and only by it. `model_credential_minted` is read by
 read the file for their own keys — `doctor`, `cache` and `image` for the
 sandbox and cache settings, `mcp` for the credential's age — and are outside
 this table.
+
+`workflows-root` is a directory of workflow subdirectories — each a
+`workflow.yaml` beside a `skills/` directory, the same shape `mill workflow
+push` accepts — that `mill serve`, bare or `--work`, pushes at every start,
+the same load-validate-store `mill workflow push` runs by hand, so a
+deployed change reaches a run once the process holding it restarts and
+never needs a person to push it (§"workflow list"). It is declared on
+`work` too, the way every worker flag is declared on both commands, but
+only `serve` acts on it at startup: a standalone worker pushes nothing.
+Re-running it at every start
+is what covers a directory that changed since the last one: pushing
+unchanged files stores nothing new, the way `mill workflow push` always
+has. A directory under the root with no `workflow.yaml` is skipped rather
+than refused; one the loader refuses fails the start, naming the workflow
+and the step, before the socket is bound, rather than leaving the version
+already stored silently in service. `mill doctor`'s `workflows` probe
+(above) reads the same setting to compare disk against store without
+pushing.
 
 `mcp-servers` is a map of name to `{command, args, env, global}`: an MCP
 server this host starts as a stdio child for a skill step's session. A
