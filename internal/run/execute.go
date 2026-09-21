@@ -5,6 +5,7 @@ import (
 	"crypto/sha1" //nolint:gosec // UUIDv5 is defined over SHA-1; this is a name, not a signature
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -192,6 +193,15 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 		// second signal inside its grace window — is the one thing that
 		// cuts the wait short.
 		_ = adapter.Cancel(s.processContext(), session)
+		if errors.Is(err, context.DeadlineExceeded) {
+			// The step's wall clock ended the wait before the adapter's
+			// own timer could write a terminal record, so the exit is the
+			// mill's to state: the session ran and was stopped at its
+			// budget, which is not a refusal.
+			return result{exit: &harnessv1.ProcessExit{
+				Status: -1, Reason: harnessv1.ExitReason_EXIT_REASON_TIMEOUT,
+			}}, err
+		}
 		return result{}, err
 	}
 

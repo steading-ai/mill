@@ -160,23 +160,34 @@ var _ = Describe("The local workspace", Label("unit"), func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(strings.TrimSpace(where.Stdout)).To(Equal(resolved(handle.Root)))
 
-			// And the environment it ran with contains nothing of the host's:
-			// the step's two credentials, and the git identity the workspace
-			// decided for the run
+			// And the environment it ran with is the floor and the grant:
+			// the mill's PATH, locale and account, the step's two
+			// credentials, and the git identity the workspace decided for
+			// the run.
 			environment, err := session.Exec(ctx, socket.ExecRequest{Path: "/usr/bin/env"})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(lines(environment.Stdout)).To(ConsistOf(grant(ws, handle.Socket, theBearer)))
+			Expect(lines(environment.Stdout)).To(ConsistOf(floorAndGrant(ws, handle.Socket, theBearer)))
 		})
 
-		It("gives a child nothing the mill's own process carries", func(ctx context.Context) {
+		It("gives a child the mill's PATH and nothing else the mill's own process carries", func(ctx context.Context) {
 			GinkgoT().Setenv("MILL_A_SECRET_THE_MILL_HOLDS", "not for a session")
+			GinkgoT().Setenv("DATABASE_URL", "postgres:///not-for-a-session")
 			session := step(ctx, workspace.Exec)
 
-			environment, err := session.Exec(ctx, socket.ExecRequest{Path: "/usr/bin/env"})
+			environment, err := session.Exec(ctx, socket.ExecRequest{Path: "/bin/sh", Args: []string{"-c", "env; echo PATH_SEEN=$PATH"}})
 
 			Expect(err).NotTo(HaveOccurred())
 			Expect(environment.Stdout).NotTo(ContainSubstring("MILL_A_SECRET_THE_MILL_HOLDS"))
-			Expect(lines(environment.Stdout)).To(ConsistOf(grant(ws, handle.Socket, theBearer)))
+			Expect(environment.Stdout).NotTo(ContainSubstring("DATABASE_URL"))
+			Expect(lines(environment.Stdout)).To(ContainElement("PATH_SEEN="+os.Getenv("PATH")),
+				"a check's shell resolves the toolchain on the PATH the mill was started with, not a shell's built-in default")
+			// The shell adds PWD, SHLVL and _ of its own; everything else is
+			// the floor and the grant.
+			Expect(lines(environment.Stdout)).To(ContainElements(toInterfaces(floorAndGrant(ws, handle.Socket, theBearer))...))
+			for _, line := range lines(environment.Stdout) {
+				name, _, _ := strings.Cut(line, "=")
+				Expect(name).To(BeElementOf(append(names(floorAndGrant(ws, handle.Socket, theBearer)), "PATH_SEEN", "PWD", "SHLVL", "_")))
+			}
 		})
 
 		It("Rotate to a new token makes the previous token fail on the next request", func(ctx context.Context) {

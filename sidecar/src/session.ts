@@ -52,7 +52,7 @@ export const TOOL_RESULT_LIMIT = 4096;
 // the model is reached on the account's login where there is one and through
 // the workspace's gateway where there is not.
 //
-// It is the same list as `envFloor` in internal/harness/claude/environment.go,
+// It is the same list as `FloorNames` in internal/workspace/exec.go,
 // which answers the same question one hop earlier: what the sidecar itself is
 // spawned with under `--env-mode strict`. The two are stated separately
 // because they are two boundaries; change one and look at the other. The

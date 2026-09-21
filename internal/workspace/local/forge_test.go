@@ -305,7 +305,7 @@ var _ = Describe("A workspace on a private origin", Label("unit"), func() {
 		env, err := session.Exec(ctx, socket.ExecRequest{Path: "/usr/bin/env"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(env.Stdout).NotTo(ContainSubstring(theForgeKey))
-		Expect(lines(env.Stdout)).To(ConsistOf(grant(ws, handle.Socket, theBearer)))
+		Expect(lines(env.Stdout)).To(ConsistOf(floorAndGrant(ws, handle.Socket, theBearer)))
 
 		// Nor did it reach the checkout, or a log the mill wrote.
 		Expect(grepTree(filepath.Dir(handle.Root), theForgeKey)).To(BeEmpty())

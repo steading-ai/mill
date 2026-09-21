@@ -9,6 +9,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/ivy/mill/internal/workspace"
 	"github.com/ivy/mill/internal/workspace/local"
 )
 
@@ -61,6 +62,29 @@ func origin() string {
 // the session's two credentials, and the run's git identity — which is the
 // workspace's answer and not the host's (docs/architecture.md §"The
 // workspace").
+// floorAndGrant is what a child under the local backend sees: the mill's
+// own environment cut to the floor, and then the grant.
+func floorAndGrant(ws *local.Workspace, socketPath, bearer string) []string {
+	return append(workspace.Floor(os.Environ()), grant(ws, socketPath, bearer)...)
+}
+
+func names(entries []string) []string {
+	out := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		name, _, _ := strings.Cut(entry, "=")
+		out = append(out, name)
+	}
+	return out
+}
+
+func toInterfaces(entries []string) []any {
+	out := make([]any, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, entry)
+	}
+	return out
+}
+
 func grant(ws *local.Workspace, socketPath, bearer string) []string {
 	entries := []string{"STEP_TOKEN=" + bearer, "WORKSPACE_SOCKET=" + socketPath}
 	for name, value := range ws.GitEnvironment() {
