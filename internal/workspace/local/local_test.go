@@ -293,6 +293,34 @@ var _ = Describe("The local workspace", Label("unit"), func() {
 
 			Expect(err).To(MatchError(ContainSubstring("not the run's branch")))
 		})
+
+		// mill#33: a catch-up leaves a merge staged for `commit` to finish. A
+		// session names only the paths it touched itself (as the commit
+		// skill does), which is fewer than everything the staged merge
+		// touched — git refuses a `commit -- <paths>` naming less than that
+		// outright ("cannot do a partial commit during a merge"), so the
+		// paths must be dropped rather than honored while a merge is staged.
+		It("finishes a staged merge even when the session names only its own paths", func(ctx context.Context) {
+			git(handle.Root, "checkout", "--quiet", "-b", "elsewhere")
+			Expect(os.WriteFile(filepath.Join(handle.Root, "elsewhere.md"), []byte("from elsewhere\n"), 0o600)).To(Succeed())
+			git(handle.Root, "add", "elsewhere.md")
+			git(handle.Root, "commit", "--quiet", "--no-gpg-sign", "--message", "elsewhere")
+			git(handle.Root, "checkout", "--quiet", "mill/mill-12")
+			git(handle.Root, "merge", "--no-commit", "--no-ff", "elsewhere")
+
+			session := step(ctx, workspace.Read, workspace.Write)
+			Expect(session.Write(ctx, "notes.md", []byte("what I did\n"))).To(Succeed())
+
+			commit, err := session.GitCommit(ctx, workspace.CommitRequest{
+				Message: "mill#12: catch up",
+				Paths:   []string{"notes.md"},
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(git(handle.Root, "rev-parse", "--verify", commit.SHA+"^2")).NotTo(BeEmpty(),
+				"the commit has the merge's second parent, so it finished the staged merge")
+			Expect(filepath.Join(handle.Root, "elsewhere.md")).To(BeAnExistingFile())
+		})
 	})
 
 	Describe("resuming", func() {

@@ -356,7 +356,7 @@ func (v Verbs) CatchUp(ctx context.Context, request workspace.CatchUpRequest) (w
 
 	if len(overlap) > 0 {
 		if _, err := v.Host.Run(ctx, checkout.Dir, nil, "merge", "--no-commit", "--no-ff", target); err != nil {
-			if _, verifyErr := v.Host.Run(ctx, checkout.Dir, nil, "rev-parse", "--verify", "-q", "MERGE_HEAD"); verifyErr != nil {
+			if !mergeInProgress(ctx, v.Host, checkout.Dir) {
 				return workspace.CatchUpResult{}, err
 			}
 		}
@@ -401,6 +401,14 @@ func changedFiles(ctx context.Context, host Host, dir, base, ref string) ([]stri
 		return nil, nil
 	}
 	return strings.Split(out, "\n"), nil
+}
+
+// mergeInProgress is whether the checkout has a merge staged: `git merge
+// --no-commit` (or one left conflicted) sets MERGE_HEAD until a commit
+// finishes or aborts it.
+func mergeInProgress(ctx context.Context, host Host, dir string) bool {
+	_, err := host.Run(ctx, dir, nil, "rev-parse", "--verify", "-q", "MERGE_HEAD")
+	return err == nil
 }
 
 // overlapping is the files present in both lists, sorted for a stable finding.
@@ -574,7 +582,11 @@ func (g gitVerbs) Commit(ctx context.Context, request workspace.CommitRequest) (
 	if request.AllowEmpty {
 		commit = append(commit, "--allow-empty")
 	}
-	if len(request.Paths) > 0 {
+	// A pathspec on `commit` is a partial commit, which git refuses outright
+	// while a merge is staged (CatchUp leaves one, conflicted or not, for
+	// this commit to finish) — everything relevant is already staged by the
+	// `add` above, so the commit is left unrestricted instead.
+	if len(request.Paths) > 0 && !mergeInProgress(ctx, g.v.Host, checkout.Dir) {
 		commit = append(commit, pathspec(request.Paths)...)
 	}
 	if _, err := g.v.Host.Run(ctx, checkout.Dir, nil, commit...); err != nil {
