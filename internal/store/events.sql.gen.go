@@ -7,6 +7,7 @@ package store
 
 import (
 	"context"
+	"time"
 )
 
 const countHeartbeats = `-- name: CountHeartbeats :many
@@ -84,6 +85,28 @@ func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) (Event
 	return i, err
 }
 
+const latestEventCursor = `-- name: LatestEventCursor :one
+SELECT occurred_at, id FROM events ORDER BY occurred_at DESC, id DESC LIMIT 1
+`
+
+type LatestEventCursorRow struct {
+	OccurredAt time.Time
+	ID         string
+}
+
+// LatestEventCursor is the position a fresh WatchRuns subscription opens
+// at: the newest event already on record, read from the database's own
+// clock rather than the caller's, so a fresh subscription's opening cursor
+// never races app-server/database clock skew. No rows yet is a valid
+// answer — an empty table's opening cursor is the zero time, before which
+// anything is new.
+func (q *Queries) LatestEventCursor(ctx context.Context) (LatestEventCursorRow, error) {
+	row := q.db.QueryRow(ctx, latestEventCursor)
+	var i LatestEventCursorRow
+	err := row.Scan(&i.OccurredAt, &i.ID)
+	return i, err
+}
+
 const listEvents = `-- name: ListEvents :many
 SELECT id, run_id, step_run_id, op, before, after, worker_ref, occurred_at FROM events WHERE run_id = $1 ORDER BY occurred_at, id
 `
@@ -106,6 +129,62 @@ func (q *Queries) ListEvents(ctx context.Context, runID string) ([]Event, error)
 			&i.After,
 			&i.WorkerRef,
 			&i.OccurredAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const watchableEvents = `-- name: WatchableEvents :many
+SELECT events.id, events.run_id, events.step_run_id, events.op, events.occurred_at, runs.node_ref
+FROM events
+JOIN runs ON runs.id = events.run_id
+WHERE (events.occurred_at, events.id) > ($1::timestamptz, $2::text)
+  AND ($3::text IS NULL OR runs.node_ref LIKE $3::text || '#%')
+ORDER BY events.occurred_at, events.id
+`
+
+type WatchableEventsParams struct {
+	AfterOccurredAt time.Time
+	AfterID         string
+	Project         *string
+}
+
+type WatchableEventsRow struct {
+	ID         string
+	RunID      string
+	StepRunID  *string
+	Op         string
+	OccurredAt time.Time
+	NodeRef    string
+}
+
+// WatchableEvents reads events across every run, joined to runs for
+// node_ref since WatchRuns' response carries no other run content. The
+// (occurred_at, id) row comparison is the cursor: it resumes after exactly
+// the position named, with no gap and no re-delivery, using the same pair
+// events_occurred_at_id_idx (00023_events_watch_index.sql) orders by.
+func (q *Queries) WatchableEvents(ctx context.Context, arg WatchableEventsParams) ([]WatchableEventsRow, error) {
+	rows, err := q.db.Query(ctx, watchableEvents, arg.AfterOccurredAt, arg.AfterID, arg.Project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WatchableEventsRow{}
+	for rows.Next() {
+		var i WatchableEventsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunID,
+			&i.StepRunID,
+			&i.Op,
+			&i.OccurredAt,
+			&i.NodeRef,
 		); err != nil {
 			return nil, err
 		}

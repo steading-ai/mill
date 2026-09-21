@@ -24,6 +24,7 @@ var _ = Describe("What a procedure needs", Label("unit"), func() {
 		Entry("Inspect", millv1connect.StoreServiceInspectProcedure),
 		Entry("WhoAmI", millv1connect.StoreServiceWhoAmIProcedure),
 		Entry("Logs", millv1connect.StoreServiceLogsProcedure),
+		Entry("WatchRuns", millv1connect.StoreServiceWatchRunsProcedure),
 		Entry("WorkerService.Probe", millv1connect.WorkerServiceProbeProcedure),
 	)
 

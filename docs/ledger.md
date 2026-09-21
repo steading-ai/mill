@@ -189,9 +189,9 @@ One row per pass a worker ran: the host's, at start before its first claim (`doc
 
 ### `events`
 
-Append-only. Every change to `runs.status`, every step run start and close, every token issue and revoke, every gate filed and every auto-approval, every attempt to carry a filed gate to a person (`notified`: the kind, the gate, the notify command's exit status and its diagnostic), and every package a session installed into its machine with the `dnf` shim (`installed`: the packages and the line "installed `<packages>`, not declared in `mill.toml`", against the attempt whose session made it — the run's provenance of an undeclared install, `docs/sandbox.md` §"The dnf shim"). Fields: `id` (ULID), `run_id`, `step_run_id` (nullable), `op`, `before`, `after`, `worker_ref`, `occurred_at`. This is the audit trail and what `mill status --history` reads. It is not a change stream for consumers; nothing subscribes to it.
+Append-only. Every change to `runs.status`, every step run start and close, every token issue and revoke, every gate filed and every auto-approval, every attempt to carry a filed gate to a person (`notified`: the kind, the gate, the notify command's exit status and its diagnostic), and every package a session installed into its machine with the `dnf` shim (`installed`: the packages and the line "installed `<packages>`, not declared in `mill.toml`", against the attempt whose session made it — the run's provenance of an undeclared install, `docs/sandbox.md` §"The dnf shim"). Fields: `id` (ULID), `run_id`, `step_run_id` (nullable), `op`, `before`, `after`, `worker_ref`, `occurred_at`. This is the audit trail and what `mill status --history` reads. `WatchRuns` reads it too, as a change stream from a cursor of `(occurred_at, id)` (`events_occurred_at_id_idx`) — the stream `mill status --follow` follows (`docs/tools.md` §status).
 
-Not time-partitioned, unlike dagger's events. Dagger's are partitioned from the start because they are a change stream many consumers resume from; these are neither, and one operator running tens of runs a day does not justify the machinery. Partitioning is a migration away if volume ever asks for it.
+Not time-partitioned, unlike dagger's events. Dagger's are partitioned from the start because they are a change stream many consumers resume from at volume; this table is a change stream now too, but for one operator running tens of runs a day, not at a volume the machinery earns yet. Partitioning is a migration away if that changes.
 
 ## Invariants
 
@@ -382,4 +382,3 @@ Every artifact's metadata carries `run_id`. Every `ApplyPatch` mill sends uses `
 ## Open questions
 
 - Whether `skills.files` bytes belong in this database or in dagger's blob store by digest. Leaning here: a workflow must be loadable without dagger.
-- Whether the store should expose a `WatchRuns` stream for a future thicket bridge to render live status, or whether polling `status` is enough for a long time. Leaning polling.

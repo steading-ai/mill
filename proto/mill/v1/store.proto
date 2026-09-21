@@ -211,6 +211,13 @@ service StoreService {
   // (same step_run_id, seq) is a no-op, so a seal retried after a lost
   // response never double-counts. docs/activity.md §Lifecycle's Seal step.
   rpc SealAttempt(SealAttemptRequest) returns (SealAttemptResponse);
+  // WatchRuns streams the ledger's events table from a cursor: every run,
+  // not one. The first message on a fresh subscription carries only the
+  // opening position, so a caller that reads it before doing anything else
+  // never misses an event that lands between opening the stream and acting
+  // on what it saw. A cursor older than the replay window is refused with
+  // FailedPrecondition naming the window. docs/ledger.md §events.
+  rpc WatchRuns(WatchRunsRequest) returns (stream WatchRunsResponse);
 }
 
 // GetRunByNodeRequest asks for the live run on a node.
@@ -1135,4 +1142,39 @@ message SealAttemptRequest {
 message SealAttemptResponse {
   // The rows this call inserted, in the order given.
   repeated ActivityIndexRow records = 1;
+}
+
+// WatchRunsRequest opens (or resumes) the ledger's change stream.
+message WatchRunsRequest {
+  // Resume after this position; opaque, as returned in a prior
+  // WatchRunsResponse.cursor. Empty starts from the moment the call is
+  // received.
+  string cursor = 1;
+  // Only events for runs on nodes in this dagger project.
+  string project = 2;
+}
+
+// WatchRunsResponse is one frame of a WatchRuns stream: an event, or, on
+// the first message of a fresh subscription, the opening position alone.
+message WatchRunsResponse {
+  // Where this message leaves the stream; a later call resumes after it.
+  string cursor = 1;
+  // The event, unset on the first message of a fresh subscription and on a
+  // keepalive sent when nothing has happened.
+  RunEvent event = 2;
+}
+
+// RunEvent is one row of the events table, named for a subscriber that has
+// not read the run: no before/after, no other run content.
+message RunEvent {
+  // The run the event belongs to.
+  string run_id = 1;
+  // The run's node, for a subscriber that filters or routes by node.
+  string node_ref = 2;
+  // The attempt the event belongs to, when it belongs to one.
+  string step_run_id = 3;
+  // What happened, matching events.op in docs/ledger.md §events.
+  string op = 4;
+  // When the event was written.
+  google.protobuf.Timestamp occurred_at = 5;
 }

@@ -419,6 +419,19 @@ func eventProto(row Event) (*millv1.Event, error) {
 	}, nil
 }
 
+// runEventProto builds a WatchableEventsRow's wire form: the narrow
+// RunEvent WatchRuns sends, carrying no before/after and no other run
+// content (docs/ledger.md §events).
+func runEventProto(row WatchableEventsRow) *millv1.RunEvent {
+	return &millv1.RunEvent{
+		RunId:      row.RunID,
+		NodeRef:    row.NodeRef,
+		StepRunId:  text(row.StepRunID),
+		Op:         row.Op,
+		OccurredAt: timestamppb.New(row.OccurredAt),
+	}
+}
+
 // structFrom decodes a nullable jsonb column into a struct, treating NULL and
 // the empty column as no value at all.
 func structFrom(raw []byte) (*structpb.Struct, error) {

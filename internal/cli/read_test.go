@@ -1,11 +1,13 @@
 package cli_test
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -14,6 +16,7 @@ import (
 
 	harnessv1 "github.com/ivy/mill/gen/harness/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
+	"github.com/ivy/mill/internal/cli"
 	"github.com/ivy/mill/internal/testsupport"
 	"github.com/ivy/mill/internal/workflow"
 )
@@ -102,6 +105,65 @@ var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 			out, err = runCLI(ctx, m.socket, "status", "--config", config)
 			Expect(err).NotTo(HaveOccurred(), out)
 			Expect(lines(out)[0]).To(Equal("worker claims from: mill"))
+		})
+
+		It("--follow prints a line per event as it happens and exits cleanly on ctrl-C", func() {
+			m := serving(ctx)
+			r := openRunOn(ctx, m, "millcli#60", nodeID(60))
+
+			followCtx, stopFollow := context.WithCancel(ctx)
+			out, stderr, done := runStatusFollow(followCtx, m)
+			waitForFollowOpen(out)
+
+			sr := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+			r.close(ctx, sr, artifactEvidence("sha256:"+strings.Repeat("a", 64)))
+
+			Eventually(out.String, 10*time.Second, 50*time.Millisecond).Should(ContainSubstring("start_step_run"))
+			Eventually(out.String, 10*time.Second, 50*time.Millisecond).Should(ContainSubstring("close_step_run"))
+			Expect(out.String()).To(ContainSubstring("millcli#60"))
+
+			stopFollow()
+			var followErr error
+			Eventually(done, 10*time.Second).Should(Receive(&followErr), stderr.String())
+			Expect(followErr).NotTo(HaveOccurred())
+		})
+
+		// startServing (unlike serving/servingWith) hands back its own stop,
+		// so this spec can bring the service down and back up on the same
+		// socket and database while the follow stays open.
+		It("--follow resumes with no gap and no duplicate after mill serve restarts", func() {
+			databaseURL := pg.Database(ctx).Config().ConnString()
+			socket := filepath.Join(GinkgoT().TempDir(), "mill.sock")
+			stop := startServing(ctx, socket, databaseURL)
+			m := mill{socket: socket, databaseURL: databaseURL}
+			r := openRunOn(ctx, m, "millcli#61", nodeID(61))
+
+			followCtx, stopFollow := context.WithCancel(ctx)
+			out, stderr, done := runStatusFollow(followCtx, m)
+			waitForFollowOpen(out)
+
+			first := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+			r.close(ctx, first, artifactEvidence("sha256:"+strings.Repeat("a", 64)))
+			Eventually(out.String, 10*time.Second, 50*time.Millisecond).Should(ContainSubstring("close_step_run"))
+
+			stop()
+			stop = startServing(ctx, socket, databaseURL)
+			DeferCleanup(func() { stop() })
+			// The old connection died with the process that held it; a fresh
+			// client dials the socket the restarted service re-bound.
+			r.store = ledger(m)
+
+			second := r.start(ctx, "commit", millv1.StepKind_STEP_KIND_SKILL)
+			r.close(ctx, second, commitEvidence(strings.Repeat("b", 40)))
+
+			Eventually(out.String, 10*time.Second, 50*time.Millisecond).Should(ContainSubstring(second.GetId()))
+			Expect(strings.Count(out.String(), first.GetId())).To(Equal(2),
+				"one line each for the first step's start and close, not repeated after the reconnect: "+out.String())
+
+			stopFollow()
+			var followErr error
+			Eventually(done, 10*time.Second).Should(Receive(&followErr), stderr.String())
+			Expect(followErr).NotTo(HaveOccurred())
 		})
 	})
 
@@ -605,6 +667,18 @@ func artifactEvidence(digest string) *millv1.CloseStepRunRequest {
 	}
 }
 
+// commitEvidence closes quick-fix's commit step, the way artifactEvidence
+// closes a step whose evidence is an artifact.
+func commitEvidence(sha string) *millv1.CloseStepRunRequest {
+	return &millv1.CloseStepRunRequest{
+		Evidence: &millv1.Evidence{
+			Kind:       millv1.EvidenceKind_EVIDENCE_KIND_COMMIT,
+			Value:      &millv1.Evidence_Commit{Commit: sha},
+			VerifiedBy: "spec",
+		},
+	}
+}
+
 // approveEvidence closes a review step clean.
 func approveEvidence() *millv1.CloseStepRunRequest {
 	return &millv1.CloseStepRunRequest{
@@ -674,4 +748,77 @@ func inputTotal(rows string) int64 {
 		total += count
 	}
 	return total
+}
+
+// runStatusFollow starts `mill status --follow` against m in the background
+// and returns its stdout and stderr buffers, live as the command writes to
+// them, and the channel its exit error lands on — mirroring logs_test.go's
+// runLogsEveryRun, the same every-run follow shape over WatchRuns instead of
+// Logs.
+func runStatusFollow(ctx context.Context, m mill) (*bytes.Buffer, *bytes.Buffer, chan error) {
+	GinkgoHelper()
+	var stdout, stderr bytes.Buffer
+	root := cli.NewRootCommand(&stdout, &stderr)
+	root.SetArgs([]string{"status", "--follow", "--socket", m.socket})
+	done := make(chan error, 1)
+	go func() {
+		defer GinkgoRecover()
+		done <- root.ExecuteContext(ctx)
+	}()
+	return &stdout, &stderr, done
+}
+
+// waitForFollowOpen waits for `mill status --follow`'s one-shot listing to
+// print, then gives it a moment more: everything before followStatus dials
+// WatchRuns for its opening cursor (cobra parsing, config load, the Status
+// RPC, rendering) is already done once the listing shows, so what remains is
+// one more RPC round trip. A fresh subscription opens at the ledger's
+// current tail (docs/ledger.md §events), so a write this helper's caller
+// makes before that dial completes would land before the opening cursor and
+// never arrive as a followed event — this is what stands between the write
+// below and that race.
+func waitForFollowOpen(out *bytes.Buffer) {
+	GinkgoHelper()
+	Eventually(out.String, 10*time.Second, 20*time.Millisecond).Should(ContainSubstring("worker claims from"))
+	time.Sleep(200 * time.Millisecond)
+}
+
+// startServing starts `mill serve` on socket against databaseURL and
+// returns once its socket exists, handing the caller its own stop function
+// rather than registering a DeferCleanup — unlike serving/servingWith, so a
+// spec that brings the service down and back up on the same socket (a
+// restart) controls both instances' lifetimes itself.
+func startServing(ctx context.Context, socket, databaseURL string) func() {
+	GinkgoHelper()
+	var stdout, stderr bytes.Buffer
+	root := cli.NewRootCommand(&stdout, &stderr)
+	root.SetArgs([]string{
+		"serve", "--socket", socket, "--database-url", databaseURL,
+		// Short enough that stopping a server a follow is still attached to
+		// — the restart scenario this helper exists for — costs the test
+		// seconds, not the default 30s: a WatchRuns stream never goes idle
+		// on its own, so Shutdown always runs out its budget and force-
+		// closes it, which followStatus's own reconnect loop is what
+		// papers over.
+		"--shutdown-timeout", "2s",
+	})
+	serveCtx, cancel := context.WithCancel(ctx)
+	served := make(chan error, 1)
+	go func() {
+		defer GinkgoRecover()
+		served <- root.ExecuteContext(serveCtx)
+	}()
+	Eventually(func() error {
+		_, err := os.Stat(socket)
+		return err
+	}, 60*time.Second, 50*time.Millisecond).Should(Succeed(), stderr.String())
+	return func() {
+		cancel()
+		var err error
+		Eventually(served, 10*time.Second).Should(Receive(&err), stderr.String())
+		if err != nil {
+			Expect(err.Error()).To(ContainSubstring("drain"),
+				"a client still attached (an open follow) force-closes after the shutdown timeout rather than blocking the restart; anything else is a real failure: "+stderr.String())
+		}
+	}
 }

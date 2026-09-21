@@ -267,6 +267,22 @@ func (s *Service) History(ctx context.Context, p InspectParams) ([]*millv1.Event
 	return s.store.History(ctx, store.InspectParams{ID: p.ID, NodeRef: p.NodeRef})
 }
 
+// LatestEventCursor is the position a fresh WatchRuns subscription opens
+// at: the newest event already on record. The zero time and an empty id
+// when the table holds no event yet.
+func (s *Service) LatestEventCursor(ctx context.Context) (time.Time, string, error) {
+	return s.store.LatestEventCursor(ctx)
+}
+
+// WatchableEvent is one events-table row as WatchRuns reads it.
+type WatchableEvent = store.WatchableEvent
+
+// WatchableEvents reads events across every run, from after (exclusive) in
+// (occurred_at, id) order, optionally narrowed to one dagger project.
+func (s *Service) WatchableEvents(ctx context.Context, after time.Time, afterID, project string) ([]WatchableEvent, error) {
+	return s.store.WatchableEvents(ctx, after, afterID, project)
+}
+
 // CostParams is the window `mill cost` asks about.
 type CostParams struct {
 	// Since bounds the window below. Zero means every row ever recorded.
