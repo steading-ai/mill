@@ -266,7 +266,7 @@ func (r *Runner) file(ctx context.Context, s *state, step *millv1.Step, sr *mill
 			return err
 		}
 		gate, err = s.dagger.CreateGate(ctx,
-			dagger.RequestID(s.run.GetId(), step.GetName(), sr.GetAttempt()), s.lease,
+			dagger.RequestID(s.run.GetId(), step.GetName(), sr.GetAttempt()), s.leaseID(),
 			dagger.Gate{
 				Title:  ask.title,
 				Body:   ask.body,
@@ -307,14 +307,14 @@ func (r *Runner) file(ctx context.Context, s *state, step *millv1.Step, sr *mill
 	// run, because a revocation is a store write like any other.
 	if s.token != "" {
 		if _, err := call(ctx, r.options.Store.RevokeStepToken, &millv1.RevokeStepTokenRequest{
-			LeaseId:     s.lease,
+			LeaseId:     s.leaseID(),
 			StepTokenId: s.token,
 		}); err != nil {
 			return err
 		}
 	}
 	if _, err := call(ctx, r.options.Store.MarkWaiting, &millv1.MarkWaitingRequest{
-		LeaseId:    s.lease,
+		LeaseId:    s.leaseID(),
 		RunId:      s.run.GetId(),
 		GateNodeId: gate.GetId(),
 		StepRunId:  sr.GetId(),
@@ -328,7 +328,7 @@ func (r *Runner) file(ctx context.Context, s *state, step *millv1.Step, sr *mill
 	if r.options.Answers != nil {
 		return r.askNow(ctx, s, gate)
 	}
-	if err := r.options.Dagger.Release(ctx, s.lease, daggerv1.ReleaseReason_RELEASE_REASON_GATE, "gate "+gate.GetReference()); err != nil {
+	if err := r.options.Dagger.Release(ctx, s.leaseID(), daggerv1.ReleaseReason_RELEASE_REASON_GATE, "gate "+gate.GetReference()); err != nil {
 		return err
 	}
 	r.printf("  gate %s filed as %s; waiting on a human\n", step.GetName(), gate.GetReference())
@@ -374,7 +374,7 @@ func (r *Runner) askNow(ctx context.Context, s *state, gate *daggerv1.Node) erro
 	// dagger still holds, goes back on so that the writes which follow are
 	// fenced by it again.
 	leased, err := call(ctx, r.options.Store.SetLease, &millv1.SetLeaseRequest{
-		LeaseId:   s.lease,
+		LeaseId:   s.leaseID(),
 		RunId:     s.run.GetId(),
 		WorkerRef: r.options.WorkerRef,
 	})
@@ -462,7 +462,7 @@ func (r *Runner) resumeGate(ctx context.Context, s *state, step *millv1.Step, de
 		// Nobody has answered yet. A node blocked by an open gate is not in
 		// the ready set, so this is a `mill run` aimed at it by hand; give
 		// the lease back and leave the run exactly as it was.
-		if err := r.options.Dagger.Release(ctx, s.lease,
+		if err := r.options.Dagger.Release(ctx, s.leaseID(),
 			daggerv1.ReleaseReason_RELEASE_REASON_GATE, "gate "+gate.GetReference()); err != nil {
 			return err
 		}
@@ -512,7 +512,7 @@ func (r *Runner) denyGate(ctx context.Context, s *state, step *millv1.Step, sr *
 		body = fmt.Sprintf("The %s gate was not approved.", step.GetName())
 	}
 	if err := s.dagger.Complete(ctx,
-		dagger.RequestID(s.run.GetId(), step.GetName(), denialAttempt), s.lease,
+		dagger.RequestID(s.run.GetId(), step.GetName(), denialAttempt), s.leaseID(),
 		s.node.GetReference(), &daggerv1.Result{Body: body}); err != nil {
 		return err
 	}
@@ -520,7 +520,7 @@ func (r *Runner) denyGate(ctx context.Context, s *state, step *millv1.Step, sr *
 		return err
 	}
 	if _, err := call(ctx, r.options.Store.Fail, &millv1.FailRequest{
-		LeaseId: s.lease,
+		LeaseId: s.leaseID(),
 		RunId:   s.run.GetId(),
 		Reason:  fmt.Sprintf("gate %s was denied at step %s", gate.GetReference(), step.GetName()),
 	}); err != nil {

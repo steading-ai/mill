@@ -31,12 +31,12 @@ func (r *Runner) park(ctx context.Context, s *state, step *millv1.Step, sr *mill
 	}
 	findings := roundsOf(step.GetName(), rounds)
 	if err := s.dagger.Comment(ctx,
-		dagger.RequestID(s.run.GetId(), step.GetName()+"-findings", sr.GetAttempt()), s.lease,
+		dagger.RequestID(s.run.GetId(), step.GetName()+"-findings", sr.GetAttempt()), s.leaseID(),
 		s.node.GetReference(), findings); err != nil {
 		return err
 	}
 	gate, err := s.dagger.CreateGate(ctx,
-		dagger.RequestID(s.run.GetId(), step.GetName()+"-park", sr.GetAttempt()), s.lease,
+		dagger.RequestID(s.run.GetId(), step.GetName()+"-park", sr.GetAttempt()), s.leaseID(),
 		dagger.Gate{
 			Title:  fmt.Sprintf("%s: %s stopped after %d attempts", s.node.GetReference(), step.GetName(), sr.GetAttempt()),
 			Body:   parkBody(s, step, findings),
@@ -53,14 +53,14 @@ func (r *Runner) park(ctx context.Context, s *state, step *millv1.Step, sr *mill
 		Body:  gate.GetBody(),
 	})
 	if _, err := call(ctx, r.options.Store.Park, &millv1.ParkRequest{
-		LeaseId:    s.lease,
+		LeaseId:    s.leaseID(),
 		RunId:      s.run.GetId(),
 		GateNodeId: gate.GetId(),
 		Reason:     millv1.ParkedReason_PARKED_REASON_RETRIES,
 	}); err != nil {
 		return err
 	}
-	if err := r.options.Dagger.Release(ctx, s.lease, daggerv1.ReleaseReason_RELEASE_REASON_BUDGET, "retries exhausted on "+step.GetName()); err != nil {
+	if err := r.options.Dagger.Release(ctx, s.leaseID(), daggerv1.ReleaseReason_RELEASE_REASON_BUDGET, "retries exhausted on "+step.GetName()); err != nil {
 		return err
 	}
 
@@ -241,7 +241,7 @@ func (r *Runner) resumePark(ctx context.Context, s *state) error {
 		return err
 	}
 	if gate.GetStatus() != daggerv1.Status_STATUS_DONE {
-		if err := r.options.Dagger.Release(ctx, s.lease,
+		if err := r.options.Dagger.Release(ctx, s.leaseID(),
 			daggerv1.ReleaseReason_RELEASE_REASON_GATE, "park gate "+gate.GetReference()); err != nil {
 			return err
 		}
@@ -262,7 +262,7 @@ func (r *Runner) resumePark(ctx context.Context, s *state) error {
 	}
 	s.span = nil
 	if _, err := call(ctx, r.options.Store.Resume, &millv1.ResumeRequest{
-		LeaseId: s.lease,
+		LeaseId: s.leaseID(),
 		RunId:   s.run.GetId(),
 	}); err != nil {
 		return err

@@ -43,13 +43,13 @@ var errCancelled = errors.New("run: cancelled")
 // are the point of the cancellation and must land.
 func (r *Runner) cancelStep(ctx context.Context, s *state) error {
 	if _, err := call(ctx, r.options.Store.AbortOpenStepRuns, &millv1.AbortOpenStepRunsRequest{
-		LeaseId: s.lease,
+		LeaseId: s.leaseID(),
 		RunId:   s.run.GetId(),
 		Reason:  "cancelled",
 	}); err != nil {
 		return err
 	}
-	if err := r.options.Dagger.Release(ctx, s.lease, daggerv1.ReleaseReason_RELEASE_REASON_PREEMPTED, "cancel"); err != nil {
+	if err := r.options.Dagger.Release(ctx, s.leaseID(), daggerv1.ReleaseReason_RELEASE_REASON_PREEMPTED, "cancel"); err != nil {
 		return err
 	}
 	r.printf("cancelled; run %s stays resumable\n", s.run.GetId())

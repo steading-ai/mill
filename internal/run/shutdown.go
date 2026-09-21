@@ -36,13 +36,13 @@ var errShutdown = errors.New("run: shutting down")
 // two writes are the point of the shutdown and must land.
 func (r *Runner) shutdownStep(ctx context.Context, s *state) error {
 	if _, err := call(ctx, r.options.Store.AbortOpenStepRuns, &millv1.AbortOpenStepRunsRequest{
-		LeaseId: s.lease,
+		LeaseId: s.leaseID(),
 		RunId:   s.run.GetId(),
 		Reason:  "shutdown",
 	}); err != nil {
 		return err
 	}
-	if err := r.options.Dagger.Release(ctx, s.lease,
+	if err := r.options.Dagger.Release(ctx, s.leaseID(),
 		daggerv1.ReleaseReason_RELEASE_REASON_PREEMPTED, "shutdown"); err != nil {
 		return err
 	}

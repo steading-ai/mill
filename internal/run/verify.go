@@ -93,7 +93,7 @@ func (r *Runner) attachArtifact(ctx context.Context, s *state, step *millv1.Step
 	// its own, which is the record of what the run actually did.
 	name := fmt.Sprintf("%s-%s-%d", s.run.GetId(), step.GetName(), sr.GetAttempt())
 	if err := s.dagger.AttachText(ctx,
-		dagger.RequestID(s.run.GetId(), attachStep(step.GetName()), sr.GetAttempt()), s.lease,
+		dagger.RequestID(s.run.GetId(), attachStep(step.GetName()), sr.GetAttempt()), s.leaseID(),
 		s.node.GetReference(), name, step.GetName(), body, map[string]any{
 			"run_id": s.run.GetId(),
 			"step":   step.GetName(),
@@ -158,7 +158,7 @@ func (r *Runner) attachVerdict(ctx context.Context, s *state, step *millv1.Step,
 	name := fmt.Sprintf("%s-%d.%d.md", step.GetName(), s.run.GetGeneration(), sr.GetAttempt())
 	body := verdictDocument(s, step, sr, verdict)
 	return s.dagger.AttachText(ctx,
-		dagger.RequestID(s.run.GetId(), name, sr.GetAttempt()), s.lease,
+		dagger.RequestID(s.run.GetId(), name, sr.GetAttempt()), s.leaseID(),
 		s.node.GetReference(), name, "the "+step.GetName()+" step's verdict", body,
 		map[string]any{
 			"run_id":     s.run.GetId(),

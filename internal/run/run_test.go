@@ -152,6 +152,47 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 			Expect(closedSteps(f.inspect(ctx))).NotTo(HaveKey("gather-context"))
 		})
 
+		It("A fenced heartbeat that can win the node back keeps the step running", func() {
+			f.node(ctx, "a paused host", "This one's lease expires while the step is still alive, but nobody else takes the node.")
+			f.script(fake.Script{Hold: true, Cancelled: fake.Terminal("stopped", nil, nil)})
+
+			runner := f.runner(func(o *run.Options) {
+				o.TTL = 12 * time.Second
+				o.Interval = 200 * time.Millisecond
+			})
+			done := make(chan error, 1)
+			go func() { done <- runner.Execute(ctx, f.nodeRef) }()
+
+			// Wait until a step is in flight under lease L1.
+			Eventually(func() int { return len(f.harness.Calls()) }, 30*time.Second, 100*time.Millisecond).
+				Should(BeNumerically(">", 0))
+			first := f.leaseOf(ctx).GetId()
+			Expect(first).NotTo(BeEmpty())
+
+			// Force the expiry but let nobody else claim the node: the next
+			// heartbeat should win it back rather than fence the step.
+			f.expire(ctx, first)
+
+			Eventually(func() string {
+				return f.leaseOf(ctx).GetId()
+			}, 30*time.Second, 200*time.Millisecond).ShouldNot(Or(BeEmpty(), Equal(first)))
+
+			// The step kept running under the new lease rather than being
+			// aborted.
+			Consistently(func() int { return len(f.harness.Calls()) }, 3*time.Second, 200*time.Millisecond).
+				Should(Equal(1))
+
+			ops := f.eventOps(ctx)
+			Expect(ops).To(ContainElement("set_lease"))
+			Expect(ops).NotTo(ContainElement("abort_step_run"))
+			Expect(ops).NotTo(ContainElement("fail_step_run"))
+
+			// Let the still-running step finish, the way an ordinary
+			// cancellation does, so the run completes rather than the spec
+			// leaking a held session.
+			Expect(f.cancelRun(ctx)).To(Succeed())
+			Eventually(done, 20*time.Second).Should(Receive(BeNil()))
+		})
 	})
 
 	Describe("Resuming after a crash", func() {

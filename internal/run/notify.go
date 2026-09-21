@@ -47,7 +47,7 @@ func (r *Runner) notified(ctx context.Context, s *state, stepRunID string, notic
 		r.printf("  the notify command failed for %s: %s\n", notice.Gate, result)
 	}
 	if _, err := call(ctx, r.options.Store.RecordNotice, &millv1.RecordNoticeRequest{
-		LeaseId:   s.lease,
+		LeaseId:   s.leaseID(),
 		RunId:     s.run.GetId(),
 		StepRunId: stepRunID,
 		Kind:      string(notice.Kind),

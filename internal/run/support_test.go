@@ -1464,6 +1464,20 @@ func (f *fixture) abortReason(ctx context.Context, stepRunID string) string {
 	return ""
 }
 
+// eventOps is the op name of every event the ledger recorded for the node's
+// run, oldest first, so a spec can assert what was and was not written
+// without knowing the store's own schema.
+func (f *fixture) eventOps(ctx context.Context) []string {
+	GinkgoHelper()
+	res, err := f.store.History(ctx, connect.NewRequest(&millv1.HistoryRequest{NodeRef: f.nodeRef}))
+	Expect(err).NotTo(HaveOccurred())
+	ops := make([]string, 0, len(res.Msg.GetEvents()))
+	for _, event := range res.Msg.GetEvents() {
+		ops = append(ops, event.GetOp())
+	}
+	return ops
+}
+
 // releasedLease is why the last lease on the node ended. Dagger returns the
 // live lease on a node and nothing about the one before it, so its own
 // record is read directly: the release reason is on the lease row and the
