@@ -369,5 +369,41 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_DONE))
 			Expect(f.forge.mergeCalls()).To(Equal(1), "never asked while the conflict stood, asked once it was resolved")
 		})
+
+		// mill#52: mill#2 and mill#26 each added a migration file with no
+		// filename in common, so catch-up saw no overlap and merged clean —
+		// and the merged tree still would not start. Nothing ran the
+		// workflow's own checks against what catch-up actually produced
+		// before the forge was asked to merge it.
+		It("a clean catch-up merge whose tree fails a check is a finding, never a merge attempt", func() {
+			const marker = "from-elsewhere.txt"
+			workflow := f.variant(ctx, "checked-fix", func(definition *millv1.Workflow) {
+				stepOf(definition, "clean-tree").GetCheck().Command = []string{
+					"sh", "-c",
+					`if grep -q leaked-secret ` + marker + ` 2>/dev/null; then ` +
+						`echo "` + marker + ` carries a leaked secret" >&2; exit 1; fi`,
+				}
+			})
+			duringImplement(marker, "leaked-secret\n")
+
+			Expect(f.runner(func(o *run.Options) { o.Workflow = workflow }).
+				Execute(ctx, f.nodeRef)).To(Succeed())
+
+			By("the merge gate's catch-up merged with no overlap, but the caught-up tree failed clean-tree")
+			detail := f.inspect(ctx)
+			Expect(stepRuns(detail, "merge")).To(HaveLen(1), "the finding is the merge attempt's own, not a second one")
+			Expect(stepRuns(detail, "merge")[0].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_SUPERSEDED))
+			Expect(after(detail, "merge")).To(Equal("implement"))
+
+			By("the forge was never asked, and the finding names the check and what it found")
+			Expect(f.forge.mergeCalls()).To(Equal(0), "the check failed before the forge was ever asked to merge")
+			calls := f.harness.Calls()
+			Expect(len(calls)).To(BeNumerically(">=", 5), "gather-context, implement, commit, pr, then implement again")
+			revised := calls[4].Prompt.Text
+			Expect(revised).To(ContainSubstring("Catching up with the target branch merged cleanly"))
+			Expect(revised).To(ContainSubstring("clean-tree failed against the merged tree"))
+			Expect(revised).To(ContainSubstring(marker + " carries a leaked secret"))
+			Expect(revised).To(ContainSubstring("The merge is already staged on the branch"))
+		})
 	})
 })

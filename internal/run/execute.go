@@ -328,7 +328,8 @@ func (r *Runner) recordActivity(s *state, sr *millv1.StepRun, a *millv1.Activity
 // activity record on the attempt's writer, source check, turn 0 — a check
 // has no session and no turns of its own (docs/activity.md §Turns). It is
 // used for both a check step (execute.go) and a preparatory step's own
-// command (preparatory.go), the two callers of check.Run.
+// command (preparatory.go) — the two callers of check.Run whose command runs
+// as part of an attempt with its own activity record to write to.
 //
 // A dropped record here is not a failure of the check: losing a mid-stream
 // record is not a failure of the work it describes, the same tolerance

@@ -28,7 +28,7 @@ SELECT occurred_at, id FROM events ORDER BY occurred_at DESC, id DESC LIMIT 1;
 -- node_ref since WatchRuns' response carries no other run content. The
 -- (occurred_at, id) row comparison is the cursor: it resumes after exactly
 -- the position named, with no gap and no re-delivery, using the same pair
--- events_occurred_at_id_idx (00023_events_watch_index.sql) orders by.
+-- events_occurred_at_id_idx (00024_events_watch_index.sql) orders by.
 -- name: WatchableEvents :many
 SELECT events.id, events.run_id, events.step_run_id, events.op, events.occurred_at, runs.node_ref
 FROM events

@@ -3884,7 +3884,14 @@ type ModelTotals struct {
 	// Tokens written to the model's prompt cache.
 	CacheWriteTokens int64 `protobuf:"varint,5,opt,name=cache_write_tokens,json=cacheWriteTokens,proto3" json:"cache_write_tokens,omitempty"`
 	// Who counted the rows summed here. Unset reads as the adapter's report.
-	Source        UsageSource `protobuf:"varint,6,opt,name=source,proto3,enum=mill.v1.UsageSource" json:"source,omitempty"`
+	Source UsageSource `protobuf:"varint,6,opt,name=source,proto3,enum=mill.v1.UsageSource" json:"source,omitempty"`
+	// The dollar cost of the tokens above, from the rate table mill applies at
+	// query time (docs/ledger.md §usage). Meaningless unless priced is true.
+	Usd float64 `protobuf:"fixed64,7,opt,name=usd,proto3" json:"usd,omitempty"`
+	// Whether usd was computed: false when the model had no rate, so a model
+	// mill cannot price is never mistaken for one that legitimately cost
+	// nothing.
+	Priced        bool `protobuf:"varint,8,opt,name=priced,proto3" json:"priced,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3959,6 +3966,20 @@ func (x *ModelTotals) GetSource() UsageSource {
 		return x.Source
 	}
 	return UsageSource_USAGE_SOURCE_UNSPECIFIED
+}
+
+func (x *ModelTotals) GetUsd() float64 {
+	if x != nil {
+		return x.Usd
+	}
+	return 0
+}
+
+func (x *ModelTotals) GetPriced() bool {
+	if x != nil {
+		return x.Priced
+	}
+	return false
 }
 
 // RunSummary is a run with the things the ledger derives rather than stores,
@@ -6319,14 +6340,16 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1a\n" +
 	"\brestored\x18\x03 \x01(\x03R\brestored\x12\x1f\n" +
 	"\bpromoted\x18\x04 \x01(\x03H\x00R\bpromoted\x88\x01\x01B\v\n" +
-	"\t_promoted\"\xf3\x01\n" +
+	"\t_promoted\"\x9d\x02\n" +
 	"\vModelTotals\x12\x14\n" +
 	"\x05model\x18\x01 \x01(\tR\x05model\x12!\n" +
 	"\finput_tokens\x18\x02 \x01(\x03R\vinputTokens\x12#\n" +
 	"\routput_tokens\x18\x03 \x01(\x03R\foutputTokens\x12*\n" +
 	"\x11cache_read_tokens\x18\x04 \x01(\x03R\x0fcacheReadTokens\x12,\n" +
 	"\x12cache_write_tokens\x18\x05 \x01(\x03R\x10cacheWriteTokens\x12,\n" +
-	"\x06source\x18\x06 \x01(\x0e2\x14.mill.v1.UsageSourceR\x06source\"\xe7\x02\n" +
+	"\x06source\x18\x06 \x01(\x0e2\x14.mill.v1.UsageSourceR\x06source\x12\x10\n" +
+	"\x03usd\x18\a \x01(\x01R\x03usd\x12\x16\n" +
+	"\x06priced\x18\b \x01(\bR\x06priced\"\xe7\x02\n" +
 	"\n" +
 	"RunSummary\x12\x1e\n" +
 	"\x03run\x18\x01 \x01(\v2\f.mill.v1.RunR\x03run\x12!\n" +

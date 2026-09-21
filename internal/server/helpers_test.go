@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -300,4 +301,18 @@ func structuredEvidence() *millv1.Evidence {
 		Value:      &millv1.Evidence_Structured{Structured: document},
 		VerifiedBy: "assessment",
 	}
+}
+
+// modelTotal finds totals's entry for model, or fails the spec: every
+// assertion that wants one model's ModelTotals names the model it expects to
+// find, so a missing entry is a spec bug, not a nil to check for.
+func modelTotal(totals []*millv1.ModelTotals, model string) *millv1.ModelTotals {
+	GinkgoHelper()
+	for _, t := range totals {
+		if t.GetModel() == model {
+			return t
+		}
+	}
+	Fail(fmt.Sprintf("no ModelTotals for model %q among %d entries", model, len(totals)))
+	return nil
 }

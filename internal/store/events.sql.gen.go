@@ -168,7 +168,7 @@ type WatchableEventsRow struct {
 // node_ref since WatchRuns' response carries no other run content. The
 // (occurred_at, id) row comparison is the cursor: it resumes after exactly
 // the position named, with no gap and no re-delivery, using the same pair
-// events_occurred_at_id_idx (00023_events_watch_index.sql) orders by.
+// events_occurred_at_id_idx (00024_events_watch_index.sql) orders by.
 func (q *Queries) WatchableEvents(ctx context.Context, arg WatchableEventsParams) ([]WatchableEventsRow, error) {
 	rows, err := q.db.Query(ctx, watchableEvents, arg.AfterOccurredAt, arg.AfterID, arg.Project)
 	if err != nil {

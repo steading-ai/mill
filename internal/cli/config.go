@@ -151,6 +151,11 @@ type Config struct {
 	// options ask for; the rest are mounted only when a step's `mcp` option
 	// names them. File-only: a map has no flag spelling.
 	McpServers map[string]McpServerConfig `yaml:"mcp-servers"`
+	// Rates is the rate table mill applies at query time to price a usage
+	// total (docs/ledger.md §usage), by resolved model id. Empty falls back
+	// to the packaged default at defaultRatesPath. File-only: a map has no
+	// flag spelling.
+	Rates map[string]RateConfig `yaml:"rates"`
 }
 
 // McpServerConfig is one host-configured MCP server: what to spawn, and
@@ -163,9 +168,23 @@ type McpServerConfig struct {
 	Global  bool              `yaml:"global"`
 }
 
+// RateConfig is one model's cost, in dollars per million tokens, split by
+// how a token was spent.
+type RateConfig struct {
+	Input      float64 `yaml:"input"`
+	Output     float64 `yaml:"output"`
+	CacheRead  float64 `yaml:"cache_read"`
+	CacheWrite float64 `yaml:"cache_write"`
+}
+
 // systemConfigPath is where the package installs the file (packaging/nfpm.yaml), for
 // a host that runs mill from a system unit rather than an account.
 const systemConfigPath = "/etc/mill/config.yaml"
+
+// defaultRatesPath is where the package installs the default rate table
+// (packaging/nfpm.yaml), loaded by loadRates when the config names no
+// `rates` of its own.
+const defaultRatesPath = "/usr/share/mill/rates.yaml"
 
 // defaultConfigPath is where the file lives when nothing names one:
 // $MILL_CONFIG; else the account's own, under $XDG_CONFIG_HOME or
@@ -227,6 +246,31 @@ func LoadConfig(path string) (Config, error) {
 		return config, fmt.Errorf("mill: %s: %w", path, err)
 	}
 	return config, nil
+}
+
+// loadRates is the rate table a worker prices usage with: configured's own
+// `rates:` key when it names one, else packagedPath's — a file dedicated to
+// rates alone, keyed by model at its top level with no wrapping key
+// (defaultRatesPath in production; parametrized here so a fixture can stand
+// in for it). A packagedPath that does not exist yields an empty table and
+// no error, the same "absent is not malformed" rule LoadConfig follows for
+// the main file; a packagedPath that exists and does not parse is an error.
+func loadRates(configured map[string]RateConfig, packagedPath string) (map[string]RateConfig, error) {
+	if len(configured) > 0 {
+		return configured, nil
+	}
+	body, err := os.ReadFile(packagedPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("mill: read %s: %w", packagedPath, err)
+	}
+	var packaged map[string]RateConfig
+	if err := yaml.Unmarshal(body, &packaged); err != nil {
+		return nil, fmt.Errorf("mill: %s: %w", packagedPath, err)
+	}
+	return packaged, nil
 }
 
 // claimsFrom is a worker's claim filter in words, the way `doctor` and
@@ -364,6 +408,7 @@ var configKeys = []configKey{
 	{"gateway-upstream", "gateway-upstream"},
 	{"model-credential-file", "model-credential-file"},
 	{"mcp-servers", ""},
+	{"rates", ""},
 }
 
 // unreadKeys are the file's keys no worker reads: `work` is parsed and

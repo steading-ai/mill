@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"connectrpc.com/connect"
@@ -24,6 +25,7 @@ type StoreService struct {
 	observer   *Observer
 	logDir     string
 	mcpServers map[string]struct{}
+	rates      Rates
 	// watchRunsWindow and watchRunsKeepalive configure WatchRuns; see
 	// WithWatchRunsWindow and WithWatchRunsKeepalive.
 	watchRunsWindow    time.Duration
@@ -40,6 +42,13 @@ type StoreServiceOption func(*StoreService)
 // (internal/cli/serve.go); a bare `serve` checks against none.
 func WithMcpServers(names map[string]struct{}) StoreServiceOption {
 	return func(s *StoreService) { s.mcpServers = names }
+}
+
+// WithRates gives Status, ListRuns, Inspect and Cost the rate table to price
+// their totals with (docs/ledger.md §usage). A model the table names nothing
+// for is reported unpriced, never at zero.
+func WithRates(rates Rates) StoreServiceOption {
+	return func(s *StoreService) { s.rates = rates }
 }
 
 // WithWatchRunsWindow bounds how old a WatchRuns cursor may be before it is
@@ -499,6 +508,9 @@ func (s *StoreService) Status(ctx context.Context, req *connect.Request[millv1.S
 	if err != nil {
 		return nil, connectError(err)
 	}
+	for _, run := range runs {
+		price(run.GetTotals(), s.rates)
+	}
 	return connect.NewResponse(&millv1.StatusResponse{Runs: runs, Findings: undecodableProtos(findings)}), nil
 }
 
@@ -529,6 +541,9 @@ func (s *StoreService) ListRuns(ctx context.Context, req *connect.Request[millv1
 	if err != nil {
 		return nil, connectError(err)
 	}
+	for _, run := range runs {
+		price(run.GetTotals(), s.rates)
+	}
 	return connect.NewResponse(&millv1.ListRunsResponse{
 		Runs:         runs,
 		NextCursor:   nextCursor,
@@ -545,6 +560,11 @@ func (s *StoreService) Inspect(ctx context.Context, req *connect.Request[millv1.
 	detail, err := s.svc.Inspect(ctx, domain.InspectParams{ID: req.Msg.GetId(), NodeRef: req.Msg.GetNodeRef()})
 	if err != nil {
 		return nil, connectError(err)
+	}
+	price(detail.Summary.GetTotals(), s.rates)
+	for _, step := range detail.Steps {
+		price(step.GetTotals(), s.rates)
+		price(step.GetGatewayTotals(), s.rates)
 	}
 	return connect.NewResponse(&millv1.InspectResponse{
 		Summary:  detail.Summary,
@@ -580,6 +600,9 @@ func (s *StoreService) Cost(ctx context.Context, req *connect.Request[millv1.Cos
 	})
 	if err != nil {
 		return nil, connectError(err)
+	}
+	for _, bucket := range slices.Concat(cost.ByRun, cost.ByWorkflow, cost.ByStep, cost.ByModel, cost.ByDay) {
+		price(bucket.GetTotals(), s.rates)
 	}
 	return connect.NewResponse(&millv1.CostResponse{
 		ByRun:      cost.ByRun,

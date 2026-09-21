@@ -9,6 +9,7 @@ import (
 
 	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
+	"github.com/ivy/mill/internal/check"
 	"github.com/ivy/mill/internal/dagger"
 	"github.com/ivy/mill/internal/evidence"
 	"github.com/ivy/mill/internal/notify"
@@ -54,10 +55,10 @@ func (r *Runner) runGate(ctx context.Context, s *state, step *millv1.Step, sr *m
 	out := result{autoApproved: true}
 	claim, err := r.approve(ctx, s, step)
 	if err != nil {
-		var overlap *catchUpOverlapError
-		if errors.As(err, &overlap) {
+		var mf mergeFinding
+		if errors.As(err, &mf) {
 			out.judgment = true
-			out.feedback = overlap.finding()
+			out.feedback = mf.finding()
 		}
 		return out, err
 	}
@@ -96,6 +97,15 @@ func (r *Runner) approve(ctx context.Context, s *state, step *millv1.Step) (stri
 			if pr, err = f.PR(ctx, s.run.GetBranch()); err != nil {
 				return "", err
 			}
+			// Nothing else ran on this tree: the merge just landed
+			// unreviewed, so the checks a step would have run had one run
+			// after catch-up run now, against what catch-up actually
+			// produced, before the forge is asked to merge it (mill#52 —
+			// two changes with no file in common still combined into a
+			// tree that would not start).
+			if err := r.checkCaughtUp(ctx, s); err != nil {
+				return "", err
+			}
 		}
 		if pr, err = f.Merge(ctx, pr); err != nil {
 			return "", err
@@ -108,6 +118,16 @@ func (r *Runner) approve(ctx context.Context, s *state, step *millv1.Step) (stri
 	s.mergeCommit = sha
 	r.printf("  merged as %s\n", short(sha))
 	return pr.HeadSHA, nil
+}
+
+// mergeFinding is an error from approve that is not the mill's own plumbing
+// failing but a fact about the tree the merge gate found: something a
+// session should read and act on, not a step that failed on its own terms.
+// runGate turns one of these into a judgment, the same way a reviewer's
+// revise verdict is (docs/domain-model.md §Verdict).
+type mergeFinding interface {
+	error
+	finding() string
 }
 
 // catchUpOverlapError is a merge gate's catch-up that found the target had
@@ -133,6 +153,77 @@ func (e *catchUpOverlapError) finding() string {
 	}
 	b.WriteString("\nIf `git status` shows conflict markers in the working tree, resolve them by editing the files, the same way you would any other change. If it does not, the two sides merged cleanly and there is nothing to resolve. Either way, do not run `git merge` or commit yourself: the merge is already staged, and `commit` finishes it.\n")
 	return b.String()
+}
+
+// catchUpCheckError is a merge gate's catch-up that merged cleanly — no file
+// in common with the target, so no review was needed — but left a tree that
+// fails a check the workflow would have run had a step run after catch-up.
+// Two changes with no file in common can still combine into something
+// broken (mill#52), and nothing else tests that combination before the
+// forge is asked to merge it.
+type catchUpCheckError struct {
+	step, reason, stderr string
+}
+
+func (e *catchUpCheckError) Error() string {
+	return fmt.Sprintf("catching up merged cleanly, but %s failed against the merged tree: %s", e.step, e.reason)
+}
+
+// finding is the judgment feedback that sends the run back through
+// `implement` to fix what the check found.
+func (e *catchUpCheckError) finding() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Catching up with the target branch merged cleanly, but %s failed against the merged tree: %s\n", e.step, e.reason)
+	if e.stderr != "" {
+		b.WriteString("\n")
+		b.WriteString(e.stderr)
+		b.WriteString("\n")
+	}
+	b.WriteString("\nThe merge is already staged on the branch: fix what the check found and commit it, the same way you would any other change.\n")
+	return b.String()
+}
+
+// checksBetween is the check-kind steps a workflow runs strictly between two
+// named steps, in the order the workflow defines them.
+func checksBetween(workflow *millv1.Workflow, after, before string) []*millv1.Step {
+	var steps []*millv1.Step
+	inSpan := false
+	for _, step := range workflow.GetSteps() {
+		if step.GetName() == before {
+			break
+		}
+		if inSpan && step.GetKind() == millv1.StepKind_STEP_KIND_CHECK {
+			steps = append(steps, step)
+		}
+		if step.GetName() == after {
+			inSpan = true
+		}
+	}
+	return steps
+}
+
+// checkCaughtUp runs the workflow's own pre-merge checks — every
+// `check`-kind step between `commit` and `merge` — against the tree a clean
+// catch-up merge just produced. Nothing else runs on that tree otherwise:
+// catch-up merged, signed and pushed it directly, with no step and no
+// review in between.
+func (r *Runner) checkCaughtUp(ctx context.Context, s *state) error {
+	for _, step := range checksBetween(s.workflow, "commit", "merge") {
+		checkCtx, cancel := stepContext(ctx, step)
+		res, err := check.Run(checkCtx, s.workspace, check.Request{
+			Name:        step.GetName(),
+			Check:       step.GetCheck(),
+			WorkflowDir: r.options.WorkflowDir,
+		})
+		cancel()
+		if err != nil {
+			return err
+		}
+		if !res.Passed {
+			return &catchUpCheckError{step: step.GetName(), reason: res.Reason, stderr: strings.TrimRight(res.Stderr, "\n")}
+		}
+	}
+	return nil
 }
 
 // fileGate is the three writes, in the one order that survives a crash at

@@ -14,6 +14,7 @@ import (
 	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/gen/mill/v1/millv1connect"
@@ -108,6 +109,107 @@ var _ = Describe("mill serve", Label(testsupport.DBLabel), func() {
 		listed, err := client.Status(ctx, connect.NewRequest(&millv1.StatusRequest{}))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(listed.Msg.GetRuns()).To(BeEmpty(), "an empty ledger has no runs to report")
+	})
+
+	// This is the proof that `mill serve` itself, not just the handlers it
+	// wraps, prices usage: a `--config` naming a rates file is what
+	// internal/cli/serve.go reads before it ever calls server.New, and a
+	// prior version of this change built the whole pricing path in
+	// internal/server without ever wiring it in here, so mill serve
+	// answered Cost with every USD unpriced.
+	It("prices Cost's totals by the --config file's rates, unconditionally, without --work", func(ctx SpecContext) {
+		db := pg.Database(ctx)
+		databaseURL := db.Config().ConnString()
+
+		dir := GinkgoT().TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		Expect(os.WriteFile(configPath, []byte(`rates:
+  claude-sonnet-4-5:
+    input: 3
+    output: 15
+    cache_read: 0.3
+    cache_write: 3.75
+`), 0o644)).To(Succeed())
+
+		sock := filepath.Join(dir, "o.sock")
+		var stdout, stderr bytes.Buffer
+		root := cli.NewRootCommand(&stdout, &stderr)
+		root.SetArgs([]string{"serve", "--socket", sock, "--database-url", databaseURL, "--config", configPath})
+
+		serveCtx, stop := context.WithCancel(ctx)
+		served := make(chan error, 1)
+		go func() {
+			defer GinkgoRecover()
+			served <- root.ExecuteContext(serveCtx)
+		}()
+		DeferCleanup(func() {
+			stop()
+			Eventually(served).Should(Receive(BeNil()), stderr.String())
+		})
+		Eventually(func() error { _, err := os.Stat(sock); return err }).Should(Succeed(), stderr.String())
+
+		client := millv1connect.NewStoreServiceClient(unixClient(sock), "http://mill")
+
+		stored, err := client.PutWorkflow(ctx, connect.NewRequest(&millv1.PutWorkflowRequest{
+			Workflow: &millv1.Workflow{Name: "feature", Scope: millv1.Scope_SCOPE_ORG, Steps: []*millv1.Step{
+				{Name: "implement", Kind: millv1.StepKind_STEP_KIND_SKILL, Evidence: millv1.EvidenceKind_EVIDENCE_KIND_COMMIT},
+			}},
+		}))
+		Expect(err).NotTo(HaveOccurred())
+
+		created, err := client.CreateRun(ctx, connect.NewRequest(&millv1.CreateRunRequest{
+			LeaseId: "lease-1", NodeId: "node-mill#900", NodeRef: "mill#900",
+			ContextId: "ctx-mill#900", WorkerRef: "worker-1", Branch: "mill/mill#900",
+		}))
+		Expect(err).NotTo(HaveOccurred())
+
+		assess, err := client.StartStepRun(ctx, connect.NewRequest(&millv1.StartStepRunRequest{
+			LeaseId: "lease-1", RunId: created.Msg.GetRun().GetId(), StepName: "assess",
+			Kind: millv1.StepKind_STEP_KIND_SKILL, WorkerRef: "worker-1",
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		document, err := structpb.NewStruct(map[string]any{"workflow": "feature", "tier": "feature"})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = client.CloseStepRun(ctx, connect.NewRequest(&millv1.CloseStepRunRequest{
+			LeaseId: "lease-1", StepRunId: assess.Msg.GetStepRun().GetId(),
+			Evidence: &millv1.Evidence{
+				Kind:       millv1.EvidenceKind_EVIDENCE_KIND_STRUCTURED,
+				Value:      &millv1.Evidence_Structured{Structured: document},
+				VerifiedBy: "assessment",
+			},
+			WorkflowId: stored.Msg.GetWorkflow().GetId(),
+			Tier:       millv1.Tier_TIER_FEATURE,
+		}))
+		Expect(err).NotTo(HaveOccurred())
+
+		implement, err := client.StartStepRun(ctx, connect.NewRequest(&millv1.StartStepRunRequest{
+			LeaseId: "lease-1", RunId: created.Msg.GetRun().GetId(), StepName: "implement",
+			Kind: millv1.StepKind_STEP_KIND_SKILL, WorkerRef: "worker-1",
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = client.RecordUsage(ctx, connect.NewRequest(&millv1.RecordUsageRequest{
+			LeaseId: "lease-1", StepRunId: implement.Msg.GetStepRun().GetId(),
+			Usage: []*millv1.Usage{{Model: "claude-sonnet-4-5", InputTokens: 1_000_000, OutputTokens: 200_000}},
+		}))
+		Expect(err).NotTo(HaveOccurred())
+
+		// 1,000,000 input tokens at $3/million plus 200,000 output tokens at
+		// $15/million, hand-computed against the --config file above: $3 + $3.
+		cost, err := client.Cost(ctx, connect.NewRequest(&millv1.CostRequest{}))
+		Expect(err).NotTo(HaveOccurred())
+		var got *millv1.ModelTotals
+		for _, bucket := range cost.Msg.GetByModel() {
+			if bucket.GetKey() == "claude-sonnet-4-5" {
+				for _, t := range bucket.GetTotals() {
+					if t.GetModel() == "claude-sonnet-4-5" {
+						got = t
+					}
+				}
+			}
+		}
+		Expect(got).NotTo(BeNil())
+		Expect(got.GetPriced()).To(BeTrue())
+		Expect(got.GetUsd()).To(BeNumerically("~", 6.0, 0.0001))
 	})
 
 	// A socket path over the kernel's limit fails on the bind as "invalid
