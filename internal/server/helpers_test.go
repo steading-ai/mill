@@ -70,6 +70,21 @@ func newService(ctx context.Context) *service {
 // spec does not sit through the default 5s if that proof is ever wrong.
 func newServiceFallback(ctx context.Context, fallback time.Duration) *service {
 	GinkgoHelper()
+	return newServiceWith(ctx, fallback)
+}
+
+// newServiceWithStore is newService over a StoreService built with opts, for
+// the specs that need PutWorkflow's collision check configured with a
+// worker's own mcp-servers names.
+func newServiceWithStore(ctx context.Context, opts ...server.StoreServiceOption) *service {
+	GinkgoHelper()
+	return newServiceWith(ctx, server.DefaultObserverFallback, opts...)
+}
+
+// newServiceWith builds the service every other constructor here narrows:
+// the observer's fallback and the store's options both given.
+func newServiceWith(ctx context.Context, fallback time.Duration, opts ...server.StoreServiceOption) *service {
+	GinkgoHelper()
 	pool := pg.Database(ctx)
 	roles := interceptor.RoleMap{
 		ServiceUID: serviceUID,
@@ -82,7 +97,7 @@ func newServiceFallback(ctx context.Context, fallback time.Duration) *service {
 	srv := server.New(server.Config{
 		Logger:       specLogger(),
 		Interceptors: []connect.Interceptor{interceptor.NewRoles(roles, server.Requirement())},
-	}, server.NewStoreService(domain.New(pool), server.NewObserver(fallback), logDir), nil)
+	}, server.NewStoreService(domain.New(pool), server.NewObserver(fallback), logDir, opts...), nil)
 	return &service{pool: pool, handler: srv.Handler(), clients: map[int]millv1connect.StoreServiceClient{}, logDir: logDir}
 }
 

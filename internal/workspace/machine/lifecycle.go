@@ -22,6 +22,10 @@ import (
 const (
 	// WorkspaceDir holds the checkout, bound at /work.
 	WorkspaceDir = "workspace"
+	// BrowserDir is a mounted MCP server's working directory, bound at
+	// [config.BrowserPath]: beside the checkout, never in it, so a
+	// Playwright screenshot never lands in the tree a check step diffs.
+	BrowserDir = "browser"
 	// EnvironmentDir holds what is bound into the machine's
 	// /etc/environment.d: the proxy file.
 	EnvironmentDir = "environment.d"
@@ -187,6 +191,10 @@ func (w *Workspace) create(ctx context.Context, spec workspace.Spec, record *Rec
 	}
 	if err := os.MkdirAll(w.config.socketDir(id), 0o700); err != nil {
 		return nil, fmt.Errorf("machine: create %s: %w", w.config.socketDir(id), err)
+	}
+	browser := filepath.Join(runDir, BrowserDir)
+	if err := os.MkdirAll(browser, 0o700); err != nil {
+		return nil, fmt.Errorf("machine: create %s: %w", browser, err)
 	}
 	if nested {
 		// The helper refuses a bind whose source is not there, in the

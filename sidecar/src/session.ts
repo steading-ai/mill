@@ -20,6 +20,7 @@ import {
   ToolResultSchema,
   type Attachment,
   type Event,
+  type McpServer,
   type Request,
   type Settings,
   type Terminal,
@@ -140,6 +141,15 @@ export interface Turn {
   // harness's own system prompt. Empty appends nothing.
   systemPrompt: string;
   resume: boolean;
+  // mcpServers is the run's whole MCP catalog: the worker's own global
+  // servers and the workflow's own, already merged by mill
+  // (internal/run/execute.go). Which of them this step actually mounts is
+  // this file's decision, from the step's own `mcp` option.
+  mcpServers: Record<string, McpServer>;
+  // mcpDir is where a mounted server's process runs and what a literal
+  // ${MCP_DIR} in its configured args or env resolves to. Empty when the
+  // workspace has no such directory (buildOptions mounts nothing then).
+  mcpDir: string;
 }
 
 // turnOf reduces a request to the turn it asks for. A Cancel is refused:
@@ -173,6 +183,8 @@ export function turnOf(request: Request): Turn {
         timeoutMs: value.timeoutMs,
         systemPrompt: value.systemPrompt,
         resume: body.case === "resume",
+        mcpServers: value.mcpServers,
+        mcpDir: value.mcpDir,
       };
     }
     case "cancel":
@@ -347,12 +359,16 @@ function outputFormat(schema: string): Options["outputFormat"] {
 // its host is wired, which is what an agent debugging a connection that hangs
 // needs to have been told (docs/sandbox.md §Network).
 //
-// No MCP server is registered. The workspace's socket reaches the session as
-// two environment variables and not yet as a tool server, because whether
-// the socket can be one is the question the `spike-mcp` node asks and it has
-// not been answered. Until it is, `Read`, `Write` and `Bash` are the SDK's
-// own, bounded by the tool policy — which docs/architecture.md names as
-// MVP's only enforcement.
+// The mounted MCP set is every server the turn's catalog marks `global`, plus
+// every name the step's own `mcp` option lists — a name in neither is a
+// PolicyError, the same refusal an unknown key gets. `tools.deny` reaches a
+// mounted server exactly as it reaches a built-in tool: `mcp__<name>__*`
+// lands in `disallowedTools` and the server's tools leave the model's
+// context, but the process is still spawned — not un-mounting it keeps one
+// code path instead of two. This is a convenience mount, not a capability
+// boundary — the workspace's socket and the process boundary remain the
+// enforcement, exactly as for `Read`, `Write` and `Bash`
+// (docs/architecture.md §"Skill steps: the harness adapter").
 export function buildOptions(
   turn: Turn,
   hostEnv: Record<string, string | undefined>,
@@ -360,9 +376,10 @@ export function buildOptions(
 ): Options {
   const declared = parseOptions(turn.settings?.options);
   const denied = [...(declared.tools?.deny ?? [])];
+  const env = sessionEnv(turn.workspace, hostEnv, turn.timeoutMs, declared.env);
   const options: Options = {
     abortController,
-    env: sessionEnv(turn.workspace, hostEnv, turn.timeoutMs, declared.env),
+    env,
     permissionMode: declared.permissionMode ?? DEFAULT_PERMISSION_MODE,
     settingSources: [],
     // Streamed content blocks, and a subagent's own text and thinking, not
@@ -383,7 +400,17 @@ export function buildOptions(
   if (declared.effort !== undefined) {
     options.effort = declared.effort;
   }
-  const allowed = [...(declared.tools?.allow ?? []), ...TASK_TOOLS.filter((tool) => !denied.includes(tool))];
+  const mounted = mountedServers(turn.mcpServers, declared.mcp ?? [], turn.mcpDir);
+  if (mounted.size > 0) {
+    options.mcpServers = Object.fromEntries(
+      [...mounted].map(([name, server]) => [name, stdioServerOf(server, turn.mcpDir, env)]),
+    );
+  }
+  const allowed = [
+    ...(declared.tools?.allow ?? []),
+    ...TASK_TOOLS.filter((tool) => !denied.includes(tool)),
+    ...[...mounted.keys()].map((name) => `mcp__${name}__*`).filter((wildcard) => !denied.includes(wildcard)),
+  ];
   if (allowed.length > 0) {
     options.allowedTools = [...new Set(allowed)];
   }
@@ -401,6 +428,83 @@ export function buildOptions(
     options.sessionId = turn.sessionId;
   }
   return options;
+}
+
+// mountedServers resolves a turn's catalog and its step's own `mcp` option
+// into the servers this session actually spawns: every `global` entry, plus
+// every name `declared` lists. A name `declared` lists that the catalog does
+// not have is a mistake in the workflow that named it, not something the
+// session can start under, so it is a PolicyError naming it — the catalog's
+// own global entries need no such check, since mill only ever puts a server
+// mill itself resolved there.
+//
+// An empty mcpDir mounts nothing: there is no directory to point a server's
+// `cwd` or its `${MCP_DIR}` at, which today only happens where step 5/6 of
+// the plan's wiring has not reached (docs/architecture.md §"Skill steps: the
+// harness adapter"), not a state a step's own options can ask for.
+function mountedServers(
+  catalog: Record<string, McpServer>,
+  declared: string[],
+  mcpDir: string,
+): Map<string, McpServer> {
+  const mounted = new Map<string, McpServer>();
+  if (mcpDir === "") {
+    return mounted;
+  }
+  for (const [name, server] of Object.entries(catalog)) {
+    if (server.global) {
+      mounted.set(name, server);
+    }
+  }
+  for (const name of declared) {
+    const server = catalog[name];
+    if (server === undefined) {
+      throw new PolicyError(`mcp names ${name}, which is not a server this run's worker or workflow declares`);
+    }
+    mounted.set(name, server);
+  }
+  return mounted;
+}
+
+// MCP_DIR_TOKEN is the literal placeholder a host's or workflow's own
+// `args`/`env` may carry, substituted with the run's browser directory
+// before the server is spawned — the mechanism a `--output-dir` flag or
+// similar is built from, kept generic rather than mill hardcoding one flag.
+const MCP_DIR_TOKEN = "${MCP_DIR}";
+
+function substituteMcpDir(value: string, mcpDir: string): string {
+  return value.split(MCP_DIR_TOKEN).join(mcpDir);
+}
+
+// CWD_WRAPPER cds into the directory passed as its first argument before
+// exec-ing the rest, so a spawned MCP server's process runs with that
+// working directory. The SDK's `McpStdioServerConfig` has no `cwd` of its
+// own (Decisions), and using positional parameters rather than
+// interpolating into the script string means no argument needs shell
+// quoting: `exec "$@"` reruns the command with no further parsing.
+const CWD_WRAPPER = 'cd "$1" && shift && exec "$@"';
+
+// stdioServerOf compiles one mounted server into the SDK's own shape: the
+// session's environment (the same carve-out its other tools get) as the
+// floor, the server's own `env` over it, both with `${MCP_DIR}` resolved,
+// and `command` wrapped so the child's working directory is `mcpDir`.
+function stdioServerOf(
+  server: McpServer,
+  mcpDir: string,
+  carriedEnv: Record<string, string>,
+): NonNullable<Options["mcpServers"]>[string] {
+  const env = { ...carriedEnv };
+  for (const [name, value] of Object.entries(server.env)) {
+    env[name] = substituteMcpDir(value, mcpDir);
+  }
+  const command = substituteMcpDir(server.command, mcpDir);
+  const args = server.args.map((arg) => substituteMcpDir(arg, mcpDir));
+  return {
+    type: "stdio",
+    command: "/bin/sh",
+    args: ["-c", CWD_WRAPPER, "sh", mcpDir, command, ...args],
+    env,
+  };
 }
 
 function textOf(content: unknown): string {

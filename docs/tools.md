@@ -450,9 +450,11 @@ their bytes.
 
 ## doctor
 
-Ten probes, one line of reason each. Every probe is reported; the command
-exits non-zero when any of them failed. A probe that passed with something
-still worth looking at is marked `warn` and does not fail the command.
+Eleven probes, one line of reason each — `mcp` reports one line per
+configured server, so a host with several has more than eleven lines. Every
+probe is reported; the command exits non-zero when any of them failed. A
+probe that passed with something still worth looking at is marked `warn`
+and does not fail the command.
 
 ```
 $ mill doctor
@@ -466,6 +468,7 @@ pass  notify     contrib/notify/thicket-send.sh accepts a probe notice
 pass  workspace  local: a clone under the mill's account
 pass  space      local: no sandbox volume to watch
 warn  gateway    https://api.anthropic.com answers a token count through the gateway with credential:774fdbe2; the credential was minted 2025-09-30, more than 11 months ago; a setup-token lasts a year — mint a new one
+pass  mcp        playwright: 23 tools
 ```
 
 | Probe | What it checks |
@@ -480,6 +483,7 @@ warn  gateway    https://api.anthropic.com answers a token count through the gat
 | `workspace` | Which workspace backend a run works in, and for `machine` whether the sandbox root is btrfs |
 | `space` | For `machine`, free space on the sandbox volume against the eviction watermarks (`cache-high-watermark`, `cache-low-watermark`): pass above the low one, warn between, fail below the high one — eviction runs at every promotion and the host is short of space |
 | `gateway` | The credential gateway's upstream answers one token count through it with the configured credential, and the credential's age against `model_credential_minted` |
+| `mcp` | Each `mcp-servers` entry (§Configuration) is started, sent `initialize` and `tools/list`, and stopped: one line per server, naming its tool count or what kept it from answering — a missing binary, a non-zero exit, or no response before the probe's own timeout. A host with none configured reports one line saying so |
 
 `sidecar`, `signing` and `forge` ask the worker behind `--socket` to run
 themselves, over the same `WorkerService` a run's own store connects
@@ -991,6 +995,7 @@ flag added or removed without this table changing is a failing spec.
 | `gateway-listen` | | yes | yes |
 | `gateway-upstream` | | yes | yes |
 | `model-credential-file` | | yes | yes |
+| `mcp-servers` | | yes | yes |
 | `work` | | | |
 | `model_credential_minted` | | | |
 
@@ -1000,6 +1005,17 @@ turned on by `--work` and only by it. `model_credential_minted` is read by
 read the file for their own keys — `doctor`, `cache` and `image` for the
 sandbox and cache settings, `mcp` for the credential's age — and are outside
 this table.
+
+`mcp-servers` is a map of name to `{command, args, env, global}`: an MCP
+server this host starts as a stdio child for a skill step's session. A
+server with `global: true` is mounted on every step; the rest are mounted
+only on a step whose `harness.claude.mcp` option names them
+(`docs/domain-model.md` §Step). `work` and `serve --work` read it and fold
+it into the run's catalog beside a workflow's own `mcp-servers`, which has
+the same shape without `global` and is refused at `mill workflow push` if a
+name collides with the host's; `mill run` reads none of it, since it runs no
+worker to mount servers from. `mill doctor`'s `mcp` probe (above) reads the
+same map to prove each configured server actually answers.
 
 
 ## Forges

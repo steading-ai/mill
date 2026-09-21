@@ -19,18 +19,35 @@ import (
 // rule of its own, and it never reaches the store, which depguard enforces.
 // Who the caller is comes from the connection, never from a request body.
 type StoreService struct {
-	svc      *domain.Service
-	observer *Observer
-	logDir   string
+	svc        *domain.Service
+	observer   *Observer
+	logDir     string
+	mcpServers map[string]struct{}
+}
+
+// StoreServiceOption configures a collaborator of the store's handlers
+// beyond the ledger itself.
+type StoreServiceOption func(*StoreService)
+
+// WithMcpServers gives PutWorkflow the names of the mcp-servers configured
+// on the worker colocated with this service, so it can refuse a workflow
+// that collides with one of them. Passed only by `serve --work`
+// (internal/cli/serve.go); a bare `serve` checks against none.
+func WithMcpServers(names map[string]struct{}) StoreServiceOption {
+	return func(s *StoreService) { s.mcpServers = names }
 }
 
 // NewStoreService mounts svc as the store's handlers. observer is signalled
 // on every write that changes what a followed Logs stream waits on
 // (docs/activity.md §Observer). logDir is where Logs reads an attempt's
 // activity record from — the same directory the worker's --log-dir writes
-// it under.
-func NewStoreService(svc *domain.Service, observer *Observer, logDir string) *StoreService {
-	return &StoreService{svc: svc, observer: observer, logDir: logDir}
+// it under. opts configure collaborators beyond those.
+func NewStoreService(svc *domain.Service, observer *Observer, logDir string, opts ...StoreServiceOption) *StoreService {
+	s := &StoreService{svc: svc, observer: observer, logDir: logDir}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 var _ millv1connect.StoreServiceHandler = (*StoreService)(nil)
@@ -429,7 +446,7 @@ func undecodableProtos(findings []domain.UndecodableWorkflow) []*millv1.Undecoda
 
 // PutWorkflow stores a workflow version, idempotent by content hash.
 func (s *StoreService) PutWorkflow(ctx context.Context, req *connect.Request[millv1.PutWorkflowRequest]) (*connect.Response[millv1.PutWorkflowResponse], error) {
-	workflow, created, err := s.svc.PutWorkflow(ctx, req.Msg.GetWorkflow())
+	workflow, created, err := s.svc.PutWorkflow(ctx, req.Msg.GetWorkflow(), s.mcpServers)
 	if err != nil {
 		return nil, connectError(err)
 	}

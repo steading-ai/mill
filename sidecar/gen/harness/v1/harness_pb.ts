@@ -27,7 +27,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file harness/v1/harness.proto.
  */
 export const file_harness_v1_harness: GenFile = /*@__PURE__*/
-  fileDesc("ChhoYXJuZXNzL3YxL2hhcm5lc3MucHJvdG8SCmhhcm5lc3MudjEiVQoLUHJvY2Vzc0V4aXQSDgoGc3RhdHVzGAEgASgFEg4KBnNpZ25hbBgCIAEoBRImCgZyZWFzb24YAyABKA4yFi5oYXJuZXNzLnYxLkV4aXRSZWFzb24iVQoLVG9rZW5Db3VudHMSDQoFaW5wdXQYASABKAMSDgoGb3V0cHV0GAIgASgDEhIKCmNhY2hlX3JlYWQYAyABKAMSEwoLY2FjaGVfd3JpdGUYBCABKAMiggEKBVVzYWdlEjAKCGJ5X21vZGVsGAEgAygLMh4uaGFybmVzcy52MS5Vc2FnZS5CeU1vZGVsRW50cnkaRwoMQnlNb2RlbEVudHJ5EgsKA2tleRgBIAEoCRImCgV2YWx1ZRgCIAEoCzIXLmhhcm5lc3MudjEuVG9rZW5Db3VudHM6AjgBIjQKCFNldHRpbmdzEigKB29wdGlvbnMYASABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0IioKCVdvcmtzcGFjZRIOCgZzb2NrZXQYASABKAkSDQoFdG9rZW4YAiABKAkiTwoKQXR0YWNobWVudBIMCgRuYW1lGAEgASgJEg4KBnNvdXJjZRgCIAEoCRISCgptZWRpYV90eXBlGAMgASgJEg8KB2NvbnRlbnQYBCABKAki+QEKBVN0YXJ0EhIKCnNlc3Npb25faWQYASABKAkSDgoGcHJvbXB0GAIgASgJEisKC2F0dGFjaG1lbnRzGAMgAygLMhYuaGFybmVzcy52MS5BdHRhY2htZW50EiYKCHNldHRpbmdzGAQgASgLMhQuaGFybmVzcy52MS5TZXR0aW5ncxIoCgl3b3Jrc3BhY2UYBSABKAsyFS5oYXJuZXNzLnYxLldvcmtzcGFjZRIVCg1vdXRwdXRfc2NoZW1hGAYgASgJEgsKA2N3ZBgHIAEoCRISCgp0aW1lb3V0X21zGAggASgFEhUKDXN5c3RlbV9wcm9tcHQYCSABKAki+gEKBlJlc3VtZRISCgpzZXNzaW9uX2lkGAEgASgJEg4KBnByb21wdBgCIAEoCRIrCgthdHRhY2htZW50cxgDIAMoCzIWLmhhcm5lc3MudjEuQXR0YWNobWVudBImCghzZXR0aW5ncxgEIAEoCzIULmhhcm5lc3MudjEuU2V0dGluZ3MSKAoJd29ya3NwYWNlGAUgASgLMhUuaGFybmVzcy52MS5Xb3Jrc3BhY2USFQoNb3V0cHV0X3NjaGVtYRgGIAEoCRILCgNjd2QYByABKAkSEgoKdGltZW91dF9tcxgIIAEoBRIVCg1zeXN0ZW1fcHJvbXB0GAkgASgJIi4KBkNhbmNlbBISCgpzZXNzaW9uX2lkGAEgASgJEhAKCGdyYWNlX21zGAIgASgFIo0BCgdSZXF1ZXN0EgoKAmlkGAEgASgJEiIKBXN0YXJ0GAIgASgLMhEuaGFybmVzcy52MS5TdGFydEgAEiQKBnJlc3VtZRgDIAEoCzISLmhhcm5lc3MudjEuUmVzdW1lSAASJAoGY2FuY2VsGAQgASgLMhIuaGFybmVzcy52MS5DYW5jZWxIAEIGCgRib2R5IkQKBFRleHQSDAoEdGV4dBgBIAEoCRIQCghibG9ja19pZBgCIAEoCRINCgVkZWx0YRgDIAEoCBINCgVmaW5hbBgEIAEoCCJICghUaGlua2luZxIMCgR0ZXh0GAEgASgJEhAKCGJsb2NrX2lkGAIgASgJEg0KBWRlbHRhGAMgASgIEg0KBWZpbmFsGAQgASgIIlUKCFRvb2xDYWxsEg8KB2NhbGxfaWQYASABKAkSDAoEbmFtZRgCIAEoCRIqCglhcmd1bWVudHMYAyABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0IkAKClRvb2xSZXN1bHQSDwoHY2FsbF9pZBgBIAEoCRIPCgdjb250ZW50GAIgASgJEhAKCGlzX2Vycm9yGAMgASgIIlQKCUhlYXJ0YmVhdBIOCgZzdHJpa2UYASABKAUSDwoHc3RyaWtlcxgCIAEoBRIXCg93YWl0aW5nX3NlY29uZHMYAyABKAMSDQoFdGFza3MYBCADKAkisQIKBUV2ZW50EhIKCnJlcXVlc3RfaWQYASABKAkSIAoEdGV4dBgCIAEoCzIQLmhhcm5lc3MudjEuVGV4dEgAEikKCXRvb2xfY2FsbBgDIAEoCzIULmhhcm5lc3MudjEuVG9vbENhbGxIABItCgt0b29sX3Jlc3VsdBgEIAEoCzIWLmhhcm5lc3MudjEuVG9vbFJlc3VsdEgAEiIKBXVzYWdlGAUgASgLMhEuaGFybmVzcy52MS5Vc2FnZUgAEioKCWhlYXJ0YmVhdBgGIAEoCzIVLmhhcm5lc3MudjEuSGVhcnRiZWF0SAASKAoIdGhpbmtpbmcYByABKAsyFC5oYXJuZXNzLnYxLlRoaW5raW5nSAASFgoOcGFyZW50X2NhbGxfaWQYCCABKAlCBgoEYm9keSKyAQoIVGVybWluYWwSEgoKcmVxdWVzdF9pZBgBIAEoCRIVCg1maW5hbF9tZXNzYWdlGAIgASgJEjIKEXN0cnVjdHVyZWRfb3V0cHV0GAMgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdBIgCgV1c2FnZRgEIAEoCzIRLmhhcm5lc3MudjEuVXNhZ2USJQoEZXhpdBgFIAEoCzIXLmhhcm5lc3MudjEuUHJvY2Vzc0V4aXQiLgoHRmFpbHVyZRISCgpyZXF1ZXN0X2lkGAEgASgJEg8KB21lc3NhZ2UYAiABKAkiiAEKCFJlc3BvbnNlEiIKBWV2ZW50GAEgASgLMhEuaGFybmVzcy52MS5FdmVudEgAEigKCHRlcm1pbmFsGAIgASgLMhQuaGFybmVzcy52MS5UZXJtaW5hbEgAEiYKB2ZhaWx1cmUYAyABKAsyEy5oYXJuZXNzLnYxLkZhaWx1cmVIAEIGCgRib2R5KqcBCgpFeGl0UmVhc29uEhsKF0VYSVRfUkVBU09OX1VOU1BFQ0lGSUVEEAASFwoTRVhJVF9SRUFTT05fUkVGVVNFRBABEhYKEkVYSVRfUkVBU09OX1BPTElDWRACEhcKE0VYSVRfUkVBU09OX1RJTUVPVVQQAxIZChVFWElUX1JFQVNPTl9DQU5DRUxMRUQQBBIXChNFWElUX1JFQVNPTl9TVEFMTEVEEAVCLlosZ2l0aHViLmNvbS9pdnkvbWlsbC9nZW4vaGFybmVzcy92MTtoYXJuZXNzdjFiBnByb3RvMw", [file_google_protobuf_struct]);
+  fileDesc("ChhoYXJuZXNzL3YxL2hhcm5lc3MucHJvdG8SCmhhcm5lc3MudjEiVQoLUHJvY2Vzc0V4aXQSDgoGc3RhdHVzGAEgASgFEg4KBnNpZ25hbBgCIAEoBRImCgZyZWFzb24YAyABKA4yFi5oYXJuZXNzLnYxLkV4aXRSZWFzb24iVQoLVG9rZW5Db3VudHMSDQoFaW5wdXQYASABKAMSDgoGb3V0cHV0GAIgASgDEhIKCmNhY2hlX3JlYWQYAyABKAMSEwoLY2FjaGVfd3JpdGUYBCABKAMiggEKBVVzYWdlEjAKCGJ5X21vZGVsGAEgAygLMh4uaGFybmVzcy52MS5Vc2FnZS5CeU1vZGVsRW50cnkaRwoMQnlNb2RlbEVudHJ5EgsKA2tleRgBIAEoCRImCgV2YWx1ZRgCIAEoCzIXLmhhcm5lc3MudjEuVG9rZW5Db3VudHM6AjgBIjQKCFNldHRpbmdzEigKB29wdGlvbnMYASABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0IioKCVdvcmtzcGFjZRIOCgZzb2NrZXQYASABKAkSDQoFdG9rZW4YAiABKAkikwEKCU1jcFNlcnZlchIPCgdjb21tYW5kGAEgASgJEgwKBGFyZ3MYAiADKAkSKwoDZW52GAMgAygLMh4uaGFybmVzcy52MS5NY3BTZXJ2ZXIuRW52RW50cnkSDgoGZ2xvYmFsGAQgASgIGioKCEVudkVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEiTwoKQXR0YWNobWVudBIMCgRuYW1lGAEgASgJEg4KBnNvdXJjZRgCIAEoCRISCgptZWRpYV90eXBlGAMgASgJEg8KB2NvbnRlbnQYBCABKAkijAMKBVN0YXJ0EhIKCnNlc3Npb25faWQYASABKAkSDgoGcHJvbXB0GAIgASgJEisKC2F0dGFjaG1lbnRzGAMgAygLMhYuaGFybmVzcy52MS5BdHRhY2htZW50EiYKCHNldHRpbmdzGAQgASgLMhQuaGFybmVzcy52MS5TZXR0aW5ncxIoCgl3b3Jrc3BhY2UYBSABKAsyFS5oYXJuZXNzLnYxLldvcmtzcGFjZRIVCg1vdXRwdXRfc2NoZW1hGAYgASgJEgsKA2N3ZBgHIAEoCRISCgp0aW1lb3V0X21zGAggASgFEhUKDXN5c3RlbV9wcm9tcHQYCSABKAkSNgoLbWNwX3NlcnZlcnMYCiADKAsyIS5oYXJuZXNzLnYxLlN0YXJ0Lk1jcFNlcnZlcnNFbnRyeRIPCgdtY3BfZGlyGAsgASgJGkgKD01jcFNlcnZlcnNFbnRyeRILCgNrZXkYASABKAkSJAoFdmFsdWUYAiABKAsyFS5oYXJuZXNzLnYxLk1jcFNlcnZlcjoCOAEijgMKBlJlc3VtZRISCgpzZXNzaW9uX2lkGAEgASgJEg4KBnByb21wdBgCIAEoCRIrCgthdHRhY2htZW50cxgDIAMoCzIWLmhhcm5lc3MudjEuQXR0YWNobWVudBImCghzZXR0aW5ncxgEIAEoCzIULmhhcm5lc3MudjEuU2V0dGluZ3MSKAoJd29ya3NwYWNlGAUgASgLMhUuaGFybmVzcy52MS5Xb3Jrc3BhY2USFQoNb3V0cHV0X3NjaGVtYRgGIAEoCRILCgNjd2QYByABKAkSEgoKdGltZW91dF9tcxgIIAEoBRIVCg1zeXN0ZW1fcHJvbXB0GAkgASgJEjcKC21jcF9zZXJ2ZXJzGAogAygLMiIuaGFybmVzcy52MS5SZXN1bWUuTWNwU2VydmVyc0VudHJ5Eg8KB21jcF9kaXIYCyABKAkaSAoPTWNwU2VydmVyc0VudHJ5EgsKA2tleRgBIAEoCRIkCgV2YWx1ZRgCIAEoCzIVLmhhcm5lc3MudjEuTWNwU2VydmVyOgI4ASIuCgZDYW5jZWwSEgoKc2Vzc2lvbl9pZBgBIAEoCRIQCghncmFjZV9tcxgCIAEoBSKNAQoHUmVxdWVzdBIKCgJpZBgBIAEoCRIiCgVzdGFydBgCIAEoCzIRLmhhcm5lc3MudjEuU3RhcnRIABIkCgZyZXN1bWUYAyABKAsyEi5oYXJuZXNzLnYxLlJlc3VtZUgAEiQKBmNhbmNlbBgEIAEoCzISLmhhcm5lc3MudjEuQ2FuY2VsSABCBgoEYm9keSJECgRUZXh0EgwKBHRleHQYASABKAkSEAoIYmxvY2tfaWQYAiABKAkSDQoFZGVsdGEYAyABKAgSDQoFZmluYWwYBCABKAgiSAoIVGhpbmtpbmcSDAoEdGV4dBgBIAEoCRIQCghibG9ja19pZBgCIAEoCRINCgVkZWx0YRgDIAEoCBINCgVmaW5hbBgEIAEoCCJVCghUb29sQ2FsbBIPCgdjYWxsX2lkGAEgASgJEgwKBG5hbWUYAiABKAkSKgoJYXJndW1lbnRzGAMgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdCJACgpUb29sUmVzdWx0Eg8KB2NhbGxfaWQYASABKAkSDwoHY29udGVudBgCIAEoCRIQCghpc19lcnJvchgDIAEoCCJUCglIZWFydGJlYXQSDgoGc3RyaWtlGAEgASgFEg8KB3N0cmlrZXMYAiABKAUSFwoPd2FpdGluZ19zZWNvbmRzGAMgASgDEg0KBXRhc2tzGAQgAygJIrECCgVFdmVudBISCgpyZXF1ZXN0X2lkGAEgASgJEiAKBHRleHQYAiABKAsyEC5oYXJuZXNzLnYxLlRleHRIABIpCgl0b29sX2NhbGwYAyABKAsyFC5oYXJuZXNzLnYxLlRvb2xDYWxsSAASLQoLdG9vbF9yZXN1bHQYBCABKAsyFi5oYXJuZXNzLnYxLlRvb2xSZXN1bHRIABIiCgV1c2FnZRgFIAEoCzIRLmhhcm5lc3MudjEuVXNhZ2VIABIqCgloZWFydGJlYXQYBiABKAsyFS5oYXJuZXNzLnYxLkhlYXJ0YmVhdEgAEigKCHRoaW5raW5nGAcgASgLMhQuaGFybmVzcy52MS5UaGlua2luZ0gAEhYKDnBhcmVudF9jYWxsX2lkGAggASgJQgYKBGJvZHkisgEKCFRlcm1pbmFsEhIKCnJlcXVlc3RfaWQYASABKAkSFQoNZmluYWxfbWVzc2FnZRgCIAEoCRIyChFzdHJ1Y3R1cmVkX291dHB1dBgDIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSIAoFdXNhZ2UYBCABKAsyES5oYXJuZXNzLnYxLlVzYWdlEiUKBGV4aXQYBSABKAsyFy5oYXJuZXNzLnYxLlByb2Nlc3NFeGl0Ii4KB0ZhaWx1cmUSEgoKcmVxdWVzdF9pZBgBIAEoCRIPCgdtZXNzYWdlGAIgASgJIogBCghSZXNwb25zZRIiCgVldmVudBgBIAEoCzIRLmhhcm5lc3MudjEuRXZlbnRIABIoCgh0ZXJtaW5hbBgCIAEoCzIULmhhcm5lc3MudjEuVGVybWluYWxIABImCgdmYWlsdXJlGAMgASgLMhMuaGFybmVzcy52MS5GYWlsdXJlSABCBgoEYm9keSqnAQoKRXhpdFJlYXNvbhIbChdFWElUX1JFQVNPTl9VTlNQRUNJRklFRBAAEhcKE0VYSVRfUkVBU09OX1JFRlVTRUQQARIWChJFWElUX1JFQVNPTl9QT0xJQ1kQAhIXChNFWElUX1JFQVNPTl9USU1FT1VUEAMSGQoVRVhJVF9SRUFTT05fQ0FOQ0VMTEVEEAQSFwoTRVhJVF9SRUFTT05fU1RBTExFRBAFQi5aLGdpdGh1Yi5jb20vaXZ5L21pbGwvZ2VuL2hhcm5lc3MvdjE7aGFybmVzc3YxYgZwcm90bzM", [file_google_protobuf_struct]);
 
 /**
  * ProcessExit is how a spawned thing ended. Borrowed wholesale from
@@ -212,6 +212,58 @@ export const WorkspaceSchema: GenMessage<Workspace> = /*@__PURE__*/
   messageDesc(file_harness_v1_harness, 4);
 
 /**
+ * McpServer is one MCP server the sidecar may mount into the session, merged
+ * by the mill from the host's own `mcp-servers` and the run's workflow
+ * before it reaches the wire (docs/tools.md §Configuration). The sidecar
+ * spawns it as a child of its own process, over stdio, with the session's
+ * environment; it interprets nothing else about it beyond what mounting and
+ * allow-by-mount need.
+ *
+ * @generated from message harness.v1.McpServer
+ */
+export type McpServer = Message<"harness.v1.McpServer"> & {
+  /**
+   * The command to spawn.
+   *
+   * @generated from field: string command = 1;
+   */
+  command: string;
+
+  /**
+   * Arguments to the command. A literal ${MCP_DIR} in an argument is
+   * replaced with the session's per-run browser directory before the
+   * sidecar spawns it.
+   *
+   * @generated from field: repeated string args = 2;
+   */
+  args: string[];
+
+  /**
+   * Environment variables added for the spawned process, on top of the
+   * session's own. The same ${MCP_DIR} substitution applies to values here.
+   *
+   * @generated from field: map<string, string> env = 3;
+   */
+  env: { [key: string]: string };
+
+  /**
+   * Whether this server is mounted on every step regardless of what the
+   * step's options ask for. Set by the host's own configuration; a
+   * workflow's own servers are never global.
+   *
+   * @generated from field: bool global = 4;
+   */
+  global: boolean;
+};
+
+/**
+ * Describes the message harness.v1.McpServer.
+ * Use `create(McpServerSchema)` to create a new message.
+ */
+export const McpServerSchema: GenMessage<McpServer> = /*@__PURE__*/
+  messageDesc(file_harness_v1_harness, 5);
+
+/**
  * Attachment is one piece of context handed to the session alongside the
  * prompt: a prior step's artifact, or a predecessor node's result.
  *
@@ -255,7 +307,7 @@ export type Attachment = Message<"harness.v1.Attachment"> & {
  * Use `create(AttachmentSchema)` to create a new message.
  */
 export const AttachmentSchema: GenMessage<Attachment> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 5);
+  messageDesc(file_harness_v1_harness, 6);
 
 /**
  * Start begins a session that has never run. The session id is deterministic
@@ -341,6 +393,26 @@ export type Start = Message<"harness.v1.Start"> & {
    * @generated from field: string system_prompt = 9;
    */
   systemPrompt: string;
+
+  /**
+   * The MCP servers mounted for this session, by name, merged from the
+   * host's `mcp-servers` and the run's workflow. Mounting and allow-by-mount
+   * are the sidecar's to resolve from the step's `mcp` option; the mill
+   * interprets nothing here beyond passing the catalog through.
+   *
+   * @generated from field: map<string, harness.v1.McpServer> mcp_servers = 10;
+   */
+  mcpServers: { [key: string]: McpServer };
+
+  /**
+   * The per-run directory a mounted server's working directory and
+   * ${MCP_DIR} substitutions resolve to: <workspace-dir>/<run>/browser,
+   * beside the checkout, never in it. Empty when the run has none, which
+   * mounts nothing.
+   *
+   * @generated from field: string mcp_dir = 11;
+   */
+  mcpDir: string;
 };
 
 /**
@@ -348,7 +420,7 @@ export type Start = Message<"harness.v1.Start"> & {
  * Use `create(StartSchema)` to create a new message.
  */
 export const StartSchema: GenMessage<Start> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 6);
+  messageDesc(file_harness_v1_harness, 7);
 
 /**
  * Resume continues an existing session with a new prompt, so a `revise`
@@ -439,6 +511,26 @@ export type Resume = Message<"harness.v1.Resume"> & {
    * @generated from field: string system_prompt = 9;
    */
   systemPrompt: string;
+
+  /**
+   * The MCP servers mounted for this session, by name, merged from the
+   * host's `mcp-servers` and the run's workflow. Mounting and allow-by-mount
+   * are the sidecar's to resolve from the step's `mcp` option; the mill
+   * interprets nothing here beyond passing the catalog through.
+   *
+   * @generated from field: map<string, harness.v1.McpServer> mcp_servers = 10;
+   */
+  mcpServers: { [key: string]: McpServer };
+
+  /**
+   * The per-run directory a mounted server's working directory and
+   * ${MCP_DIR} substitutions resolve to: <workspace-dir>/<run>/browser,
+   * beside the checkout, never in it. Empty when the run has none, which
+   * mounts nothing.
+   *
+   * @generated from field: string mcp_dir = 11;
+   */
+  mcpDir: string;
 };
 
 /**
@@ -446,7 +538,7 @@ export type Resume = Message<"harness.v1.Resume"> & {
  * Use `create(ResumeSchema)` to create a new message.
  */
 export const ResumeSchema: GenMessage<Resume> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 7);
+  messageDesc(file_harness_v1_harness, 8);
 
 /**
  * Cancel stops a running session: SIGTERM, a grace window, SIGKILL. The
@@ -476,7 +568,7 @@ export type Cancel = Message<"harness.v1.Cancel"> & {
  * Use `create(CancelSchema)` to create a new message.
  */
 export const CancelSchema: GenMessage<Cancel> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 8);
+  messageDesc(file_harness_v1_harness, 9);
 
 /**
  * Request is one line from the worker to the sidecar.
@@ -529,7 +621,7 @@ export type Request = Message<"harness.v1.Request"> & {
  * Use `create(RequestSchema)` to create a new message.
  */
 export const RequestSchema: GenMessage<Request> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 9);
+  messageDesc(file_harness_v1_harness, 10);
 
 /**
  * Text is something the assistant said, streamed as it is produced.
@@ -578,7 +670,7 @@ export type Text = Message<"harness.v1.Text"> & {
  * Use `create(TextSchema)` to create a new message.
  */
 export const TextSchema: GenMessage<Text> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 10);
+  messageDesc(file_harness_v1_harness, 11);
 
 /**
  * Thinking is the assistant's reasoning, streamed the same way Text is. Kept
@@ -629,7 +721,7 @@ export type Thinking = Message<"harness.v1.Thinking"> & {
  * Use `create(ThinkingSchema)` to create a new message.
  */
 export const ThinkingSchema: GenMessage<Thinking> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 11);
+  messageDesc(file_harness_v1_harness, 12);
 
 /**
  * ToolCall is the session asking to use a tool.
@@ -664,7 +756,7 @@ export type ToolCall = Message<"harness.v1.ToolCall"> & {
  * Use `create(ToolCallSchema)` to create a new message.
  */
 export const ToolCallSchema: GenMessage<ToolCall> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 12);
+  messageDesc(file_harness_v1_harness, 13);
 
 /**
  * ToolResult is what a tool returned, forwarded whole: the sidecar imposes
@@ -701,7 +793,7 @@ export type ToolResult = Message<"harness.v1.ToolResult"> & {
  * Use `create(ToolResultSchema)` to create a new message.
  */
 export const ToolResultSchema: GenMessage<ToolResult> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 13);
+  messageDesc(file_harness_v1_harness, 14);
 
 /**
  * Heartbeat is the sidecar asking a session that ended its turn with a
@@ -747,7 +839,7 @@ export type Heartbeat = Message<"harness.v1.Heartbeat"> & {
  * Use `create(HeartbeatSchema)` to create a new message.
  */
 export const HeartbeatSchema: GenMessage<Heartbeat> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 14);
+  messageDesc(file_harness_v1_harness, 15);
 
 /**
  * Event is one thing that happened during a turn, streamed to the worker as
@@ -835,7 +927,7 @@ export type Event = Message<"harness.v1.Event"> & {
  * Use `create(EventSchema)` to create a new message.
  */
 export const EventSchema: GenMessage<Event> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 15);
+  messageDesc(file_harness_v1_harness, 16);
 
 /**
  * Terminal is the last line of a request: how the session ended and what it
@@ -892,7 +984,7 @@ export type Terminal = Message<"harness.v1.Terminal"> & {
  * Use `create(TerminalSchema)` to create a new message.
  */
 export const TerminalSchema: GenMessage<Terminal> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 16);
+  messageDesc(file_harness_v1_harness, 17);
 
 /**
  * Failure is the sidecar reporting that it could not handle a request at
@@ -923,7 +1015,7 @@ export type Failure = Message<"harness.v1.Failure"> & {
  * Use `create(FailureSchema)` to create a new message.
  */
 export const FailureSchema: GenMessage<Failure> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 17);
+  messageDesc(file_harness_v1_harness, 18);
 
 /**
  * Response is one line from the sidecar to the worker.
@@ -968,7 +1060,7 @@ export type Response = Message<"harness.v1.Response"> & {
  * Use `create(ResponseSchema)` to create a new message.
  */
 export const ResponseSchema: GenMessage<Response> = /*@__PURE__*/
-  messageDesc(file_harness_v1_harness, 18);
+  messageDesc(file_harness_v1_harness, 19);
 
 /**
  * ExitReason says why a session ended when the exit status alone does not.

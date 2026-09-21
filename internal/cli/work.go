@@ -145,6 +145,9 @@ func applyConfig(cmd *cobra.Command, opts *workOptions) error {
 	if config.Gateway && unset(cmd, "gateway") {
 		opts.run.gateway.enabled = true
 	}
+	if len(config.McpServers) > 0 {
+		opts.run.mcpServers = config.McpServers
+	}
 	if err := resolveSandboxRoot(cmd, &opts.run.sandboxRoot, config.SandboxRoot); err != nil {
 		return err
 	}

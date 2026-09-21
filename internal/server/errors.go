@@ -38,6 +38,7 @@ func codeOf(err error) connect.Code {
 		stepTransition *domain.StepRunTransitionError
 		ended          *domain.RunEndedError
 		evidence       *domain.EvidenceError
+		mcpCollision   *domain.McpCollisionError
 	)
 	switch {
 	case errors.Is(err, context.Canceled):
@@ -46,8 +47,9 @@ func codeOf(err error) connect.Code {
 		return connect.CodeDeadlineExceeded
 
 	// The request itself does not hold together: evidence whose value is
-	// not the shape its kind defines, or a call with nothing to act on.
-	case errors.As(err, &evidence), errors.Is(err, errNoTarget):
+	// not the shape its kind defines, a workflow whose mcp-servers collides
+	// with the host's own, or a call with nothing to act on.
+	case errors.As(err, &evidence), errors.As(err, &mcpCollision), errors.Is(err, errNoTarget):
 		return connect.CodeInvalidArgument
 
 	// A row the request named does not exist.

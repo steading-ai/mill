@@ -170,6 +170,8 @@ func (a *Adapter) Start(ctx context.Context, session harness.Session, prompt har
 		Cwd:          session.Cwd,
 		TimeoutMs:    timeout,
 		SystemPrompt: systemPrompt(session),
+		McpServers:   wireMcpServers(session),
+		McpDir:       session.McpDir,
 	}}})
 }
 
@@ -193,6 +195,8 @@ func (a *Adapter) Resume(ctx context.Context, session harness.Session, prompt ha
 		Cwd:          session.Cwd,
 		TimeoutMs:    timeout,
 		SystemPrompt: systemPrompt(session),
+		McpServers:   wireMcpServers(session),
+		McpDir:       session.McpDir,
 	}}})
 }
 
@@ -583,6 +587,26 @@ func (s *flight) kill() {
 
 func wireWorkspace(session harness.Session) *harnessv1.Workspace {
 	return &harnessv1.Workspace{Socket: session.Workspace.Socket, Token: session.Workspace.Token}
+}
+
+// wireMcpServers carries the run's per-run MCP catalog to the sidecar.
+// Mounting which of them, and applying the step's `mcp` option and
+// `tools.deny`, is the sidecar's to resolve; the adapter passes the catalog
+// through unread, the same way it passes the options document through.
+func wireMcpServers(session harness.Session) map[string]*harnessv1.McpServer {
+	if len(session.McpServers) == 0 {
+		return nil
+	}
+	wire := make(map[string]*harnessv1.McpServer, len(session.McpServers))
+	for name, server := range session.McpServers {
+		wire[name] = &harnessv1.McpServer{
+			Command: server.Command,
+			Args:    server.Args,
+			Env:     server.Env,
+			Global:  server.Global,
+		}
+	}
+	return wire
 }
 
 // wireSettings carries the step's options document to the sidecar as it

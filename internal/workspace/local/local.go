@@ -39,6 +39,11 @@ const (
 	checkoutDir = "checkout"
 	socketName  = "ws.sock"
 	signingDir  = "signing"
+	// browserDir is a mounted MCP server's working directory: per run, like
+	// checkoutDir and unlike signingDir, so it is swept away with the rest
+	// of the run's directory rather than shared across every run the way
+	// the account's signing key is.
+	browserDir = "browser"
 	// gitConfigFile is the git configuration every process the workspace
 	// spawns runs under, the session's own git included. It carries the
 	// run's identity and the mill's signing key, so who a commit is by is
@@ -271,6 +276,10 @@ func (w *Workspace) open(ctx context.Context, dir string, spec workspace.Spec) (
 	if err != nil {
 		return nil, err
 	}
+	browser := filepath.Join(dir, browserDir)
+	if err := os.MkdirAll(browser, 0o700); err != nil {
+		return nil, fmt.Errorf("workspace: create %s: %w", browser, err)
+	}
 
 	handle := &workspace.Handle{
 		RunID:  spec.RunID,
@@ -279,6 +288,7 @@ func (w *Workspace) open(ctx context.Context, dir string, spec workspace.Spec) (
 		Ref:    ref,
 		Branch: current,
 		Socket: filepath.Join(dir, socketName),
+		McpDir: browser,
 	}
 	w.mu.Lock()
 	w.handle = handle

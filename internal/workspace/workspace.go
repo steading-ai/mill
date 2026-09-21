@@ -336,6 +336,11 @@ type Handle struct {
 	// Socket is the unix socket a step's session reaches the workspace
 	// through. With the step token, this is the session's entire world.
 	Socket string
+	// McpDir is a mounted MCP server's working directory and the value a
+	// literal ${MCP_DIR} in its configured args or env resolves to: beside
+	// the checkout, never in it, so a playwright screenshot never lands in
+	// the tree a check step diffs. Removed when the workspace is.
+	McpDir string
 	// Capabilities is the effective set, from the current step's token.
 	Capabilities []Capability
 	// Sandbox is the machine behind a `machine` workspace, as

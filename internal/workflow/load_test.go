@@ -324,6 +324,38 @@ steps:
 		Expect(err).To(MatchError(ContainSubstring("status: interval")))
 	})
 
+	It("reads the workflow's own mcp-servers, never global, and round-trips them", func() {
+		loaded, skills, err := workflow.Load(dir(`
+name: tiny
+mcp-servers:
+  docs:
+    command: docs-mcp
+    args: ["--stdio"]
+    env:
+      TOKEN: abc
+steps:
+  - name: implement
+    timeout: 10m
+    kind: skill
+    session: implement
+    skill: implement
+    evidence: artifact
+`, map[string]string{"implement": "Make the change."}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(loaded.GetMcpServers()).To(HaveKey("docs"))
+		docs := loaded.GetMcpServers()["docs"]
+		Expect(docs.GetCommand()).To(Equal("docs-mcp"))
+		Expect(docs.GetArgs()).To(Equal([]string{"--stdio"}))
+		Expect(docs.GetEnv()).To(Equal(map[string]string{"TOKEN": "abc"}))
+
+		out := GinkgoT().TempDir()
+		Expect(workflow.Write(out, loaded, skills)).To(Succeed())
+		again, _, err := workflow.Load(out)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(again.GetVersion()).To(Equal(loaded.GetVersion()), "a pulled definition re-loads to the version it was pulled at")
+		Expect(again.GetMcpServers()).To(Equal(loaded.GetMcpServers()))
+	})
+
 	It("refuses a step whose skill directory is not there", func() {
 		_, _, err := workflow.Load(dir(`
 name: tiny

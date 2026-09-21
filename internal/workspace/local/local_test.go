@@ -92,6 +92,21 @@ var _ = Describe("The local workspace", Label("unit"), func() {
 			Expect(status.Clean).To(BeTrue(), "the workspace's own furniture shows up as a change: %v", status.Files)
 		})
 
+		It("makes a browser directory beside the checkout, for a mounted MCP server, gone after Destroy", func(ctx context.Context) {
+			Expect(handle.McpDir).To(Equal(filepath.Join(filepath.Dir(handle.Root), "browser")))
+			info, err := os.Stat(handle.McpDir)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(info.IsDir()).To(BeTrue())
+			status, err := ws.Git().Status(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(status.Clean).To(BeTrue(), "the browser directory shows up as a change: %v", status.Files)
+
+			Expect(ws.Destroy(ctx)).To(Succeed())
+
+			_, err = os.Stat(handle.McpDir)
+			Expect(err).To(MatchError(os.ErrNotExist))
+		})
+
 		It("refuses a second workspace for the same run", func(ctx context.Context) {
 			second := local.New(local.Options{Root: root, Origin: from})
 

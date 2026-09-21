@@ -163,6 +163,14 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 	}
 
 	observer := server.NewObserver(server.DefaultObserverFallback)
+	// PutWorkflow refuses a workflow whose mcp-servers collides with a name
+	// this same process's worker already reserves — only meaningful when
+	// --work colocates one (docs/architecture.md §"One binary, two faces");
+	// a bare `serve` checks against nothing.
+	var storeOpts []server.StoreServiceOption
+	if opts.work {
+		storeOpts = append(storeOpts, server.WithMcpServers(mcpServerNames(opts.worker.run.mcpServers)))
+	}
 
 	srv := server.New(server.Config{
 		SocketPath:      opts.socket(),
@@ -171,7 +179,7 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 		Interceptors: []connect.Interceptor{
 			interceptor.NewRoles(roles, server.Requirement()),
 		},
-	}, server.NewStoreService(svc, observer, opts.worker.run.logDir), workerHandler)
+	}, server.NewStoreService(svc, observer, opts.worker.run.logDir, storeOpts...), workerHandler)
 
 	log.Info("mill serve starting", "version", version.String(), "socket", opts.socket())
 	if err := srv.Listen(); err != nil {
@@ -246,6 +254,20 @@ func notifySystemd(log *slog.Logger, states ...string) {
 	if _, err := sdnotify.Send(states...); err != nil {
 		log.Warn("notify systemd", "err", err)
 	}
+}
+
+// mcpServerNames is the set of a worker's configured mcp-servers, for
+// PutWorkflow's collision check, which cares which names are taken and
+// nothing else about them.
+func mcpServerNames(configured map[string]McpServerConfig) map[string]struct{} {
+	if len(configured) == 0 {
+		return nil
+	}
+	names := make(map[string]struct{}, len(configured))
+	for name := range configured {
+		names[name] = struct{}{}
+	}
+	return names
 }
 
 // workerForgeResolver is WorkerServiceConfig's Forge, over --work's own

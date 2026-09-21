@@ -133,6 +133,22 @@ type Config struct {
 	// credential was minted, which `mill doctor` warns from at eleven
 	// months. Spelled the way env_mode is: a deployment writes it.
 	ModelCredentialMinted string `yaml:"model_credential_minted"`
+	// McpServers are the MCP servers this host mounts into a skill step's
+	// session, by name (docs/tools.md §Configuration). A server with
+	// `global: true` is mounted on every step regardless of what the step's
+	// options ask for; the rest are mounted only when a step's `mcp` option
+	// names them. File-only: a map has no flag spelling.
+	McpServers map[string]McpServerConfig `yaml:"mcp-servers"`
+}
+
+// McpServerConfig is one host-configured MCP server: what to spawn, and
+// whether it is mounted on every step or only the ones that ask for it by
+// name.
+type McpServerConfig struct {
+	Command string            `yaml:"command"`
+	Args    []string          `yaml:"args"`
+	Env     map[string]string `yaml:"env"`
+	Global  bool              `yaml:"global"`
 }
 
 // systemConfigPath is where the package installs the file (nfpm.yaml), for
@@ -316,6 +332,7 @@ var configKeys = []configKey{
 	{"gateway-listen", "gateway-listen"},
 	{"gateway-upstream", "gateway-upstream"},
 	{"model-credential-file", "model-credential-file"},
+	{"mcp-servers", ""},
 }
 
 // unreadKeys are the file's keys no worker reads: `work` is parsed and

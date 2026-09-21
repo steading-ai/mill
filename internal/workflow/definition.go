@@ -20,11 +20,23 @@ import (
 // refused, so a misspelled key is an error at push rather than a setting
 // silently dropped from a run.
 type document struct {
-	Name    string      `yaml:"name"`
-	Scope   string      `yaml:"scope,omitempty"`
-	Project string      `yaml:"project,omitempty"`
-	Status  *statusYAML `yaml:"status,omitempty"`
-	Steps   []stepYAML  `yaml:"steps"`
+	Name       string                   `yaml:"name"`
+	Scope      string                   `yaml:"scope,omitempty"`
+	Project    string                   `yaml:"project,omitempty"`
+	Status     *statusYAML              `yaml:"status,omitempty"`
+	McpServers map[string]mcpServerYAML `yaml:"mcp-servers,omitempty"`
+	Steps      []stepYAML               `yaml:"steps"`
+}
+
+// mcpServerYAML is one MCP server this workflow's steps may mount, in the
+// same shape as the host's own `mcp-servers` (docs/tools.md §Configuration)
+// but never global: a workflow cannot mount a server on every step of every
+// project that runs it. A name that collides with one the host defines is
+// refused at `mill workflow push`, not at load.
+type mcpServerYAML struct {
+	Command string            `yaml:"command"`
+	Args    []string          `yaml:"args,omitempty"`
+	Env     map[string]string `yaml:"env,omitempty"`
 }
 
 // statusYAML is how a `status` step watches the forge's checks. It is
@@ -196,6 +208,16 @@ func (d document) toProto() (*millv1.Workflow, error) {
 		return nil, err
 	}
 	w.Status = status
+	if len(d.McpServers) > 0 {
+		w.McpServers = map[string]*millv1.WorkflowMcpServer{}
+		for name, server := range d.McpServers {
+			w.McpServers[name] = &millv1.WorkflowMcpServer{
+				Command: server.Command,
+				Args:    server.Args,
+				Env:     server.Env,
+			}
+		}
+	}
 	for _, s := range d.Steps {
 		step, err := s.toProto()
 		if err != nil {
@@ -374,6 +396,16 @@ func toDocument(w *millv1.Workflow) document {
 		doc.Status = &statusYAML{
 			Interval: status.GetInterval().AsDuration().String(),
 			Timeout:  status.GetTimeout().AsDuration().String(),
+		}
+	}
+	if len(w.GetMcpServers()) > 0 {
+		doc.McpServers = map[string]mcpServerYAML{}
+		for name, server := range w.GetMcpServers() {
+			doc.McpServers[name] = mcpServerYAML{
+				Command: server.GetCommand(),
+				Args:    server.GetArgs(),
+				Env:     server.GetEnv(),
+			}
 		}
 	}
 	for _, step := range w.GetSteps() {

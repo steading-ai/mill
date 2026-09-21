@@ -557,6 +557,7 @@ func (w *Workspace) open(ctx context.Context, record *Record, spec workspace.Spe
 		Ref:     record.Ref,
 		Branch:  record.Branch,
 		Socket:  filepath.Join(w.config.socketDir(record.ID), SocketName),
+		McpDir:  filepath.Join(w.config.runDir(record.ID), BrowserDir),
 		Sandbox: record.Sandbox(),
 	}
 	egress := spec.Egress
@@ -605,6 +606,12 @@ func (w *Workspace) SessionSocket() string { return filepath.Join(config.RunDir,
 // (docs/sandbox.md §"Session identity"). The run loop hands it to a
 // session's sidecar, which runs inside the machine.
 func (w *Workspace) SessionCwd() string { return config.Work }
+
+// SessionMcpDir is a mounted MCP server's working directory inside the
+// machine: [config.BrowserPath], not the host path the worker keeps the
+// run's browser directory at. The run loop hands it to a session's sidecar,
+// which runs inside the machine.
+func (w *Workspace) SessionMcpDir() string { return config.BrowserPath }
 
 // Record is the run's record as it stands, or nil before Create or Attach.
 func (w *Workspace) Record() *Record {

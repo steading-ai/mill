@@ -8,6 +8,7 @@ import (
 
 	harnessv1 "github.com/ivy/mill/gen/harness/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
+	"github.com/ivy/mill/internal/server"
 	"github.com/ivy/mill/internal/testsupport"
 )
 
@@ -270,6 +271,36 @@ var _ = Describe("The store's handlers", Label(testsupport.DBLabel), func() {
 		got, err := f.client().GetWorkflow(ctx, connect.NewRequest(&millv1.GetWorkflowRequest{Id: f.workflow.GetId()}))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got.Msg.GetWorkflow().GetVersion()).To(Equal(f.workflow.GetVersion()))
+	})
+
+	It("PutWorkflow refuses a workflow whose mcp-servers collides with the worker's own", func(ctx SpecContext) {
+		s := newServiceWithStore(ctx, server.WithMcpServers(map[string]struct{}{"playwright": {}}))
+		_, err := s.client().PutWorkflow(ctx, connect.NewRequest(&millv1.PutWorkflowRequest{
+			Workflow: &millv1.Workflow{
+				Name: "feature", Scope: millv1.Scope_SCOPE_ORG, Steps: steps,
+				McpServers: map[string]*millv1.WorkflowMcpServer{"playwright": {Command: "npx"}},
+			},
+		}))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+		Expect(err).To(MatchError(ContainSubstring("playwright")))
+
+		listed, listErr := s.client().ListWorkflows(ctx, connect.NewRequest(&millv1.ListWorkflowsRequest{
+			Scope: millv1.Scope_SCOPE_ORG,
+		}))
+		Expect(listErr).NotTo(HaveOccurred())
+		Expect(listed.Msg.GetWorkflows()).To(BeEmpty(), "the refused push stored nothing")
+	})
+
+	It("PutWorkflow stores a workflow whose mcp-servers names nothing the worker configures", func(ctx SpecContext) {
+		s := newServiceWithStore(ctx, server.WithMcpServers(map[string]struct{}{"playwright": {}}))
+		stored, err := s.client().PutWorkflow(ctx, connect.NewRequest(&millv1.PutWorkflowRequest{
+			Workflow: &millv1.Workflow{
+				Name: "feature", Scope: millv1.Scope_SCOPE_ORG, Steps: steps,
+				McpServers: map[string]*millv1.WorkflowMcpServer{"docs": {Command: "npx"}},
+			},
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stored.Msg.GetCreated()).To(BeTrue())
 	})
 
 	It("ListWorkflows lists the versions in a scope", func(ctx SpecContext) {

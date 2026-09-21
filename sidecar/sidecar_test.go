@@ -634,3 +634,129 @@ var _ = Describe("The sidecar", Label("unit"), func() {
 		Expect(strings.ToUpper(s.terminal().GetFinalMessage())).To(ContainSubstring("SIGTERM"))
 	})
 })
+
+// fixturePath is the fake stdio MCP server every mcp-catalog spec below
+// mounts, absolute so it resolves the same regardless of the cwd a mounted
+// server's process is wrapped to run under (session.ts's cwd-wrap).
+func fixturePath() string {
+	GinkgoHelper()
+
+	path, err := filepath.Abs(filepath.Join("spec", "fixtures", "fake-mcp-server.mjs"))
+	Expect(err).NotTo(HaveOccurred())
+	return path
+}
+
+var _ = Describe("A session's mounted MCP servers", Label("unit"), func() {
+	It("mounts a server the step names, resolving ${MCP_DIR} in its args and env, and allows its tools", func() {
+		By("given a host catalog with one server, a browser directory, and a step naming it")
+		options := filepath.Join(GinkgoT().TempDir(), "options.json")
+		mcpDir := GinkgoT().TempDir()
+		line := startRequest("mcp-1", func(start *harnessv1.Start) {
+			start.McpServers = map[string]*harnessv1.McpServer{
+				"fake": {
+					Command: "node",
+					Args:    []string{fixturePath(), "${MCP_DIR}/arg"},
+					Env:     map[string]string{"OUTPUT_DIR": "${MCP_DIR}/shots"},
+				},
+			}
+			start.McpDir = mcpDir
+			start.Settings = settings(map[string]any{"mcp": []any{"fake"}})
+		})
+
+		By("when the sidecar starts the session")
+		run(fakeEntrypoint, map[string]string{
+			"MILL_FAKE_SCENARIO": "trivial",
+			"MILL_FAKE_OPTIONS":  options,
+		}, line)
+
+		By("then the harness was given a stdio server wrapped to run in the browser directory, with the token resolved")
+		applied := applied(options)
+		mounted, ok := applied["mcpServers"].(map[string]any)
+		Expect(ok).To(BeTrue(), "the harness was given no mcpServers")
+		fake, ok := mounted["fake"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		args, ok := fake["args"].([]any)
+		Expect(ok).To(BeTrue())
+		Expect(args).To(ContainElement(mcpDir))
+		Expect(args).To(ContainElement(mcpDir + "/arg"))
+		env, ok := fake["env"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		Expect(env).To(HaveKeyWithValue("OUTPUT_DIR", mcpDir+"/shots"))
+
+		By("and mcp__fake__* joined the allow list")
+		Expect(applied["allowedTools"]).To(ContainElement("mcp__fake__*"))
+	})
+
+	It("still mounts a server tools.deny names, but removes its tools from the allow list", func() {
+		By("given a server marked global, and a step that denies its tools")
+		options := filepath.Join(GinkgoT().TempDir(), "options.json")
+		mcpDir := GinkgoT().TempDir()
+		line := startRequest("mcp-2", func(start *harnessv1.Start) {
+			start.McpServers = map[string]*harnessv1.McpServer{
+				"fake": {Command: "node", Args: []string{fixturePath()}, Global: true},
+			}
+			start.McpDir = mcpDir
+			start.Settings = settings(map[string]any{"tools": map[string]any{"deny": []any{"mcp__fake__*"}}})
+		})
+
+		By("when the sidecar starts the session")
+		run(fakeEntrypoint, map[string]string{
+			"MILL_FAKE_SCENARIO": "trivial",
+			"MILL_FAKE_OPTIONS":  options,
+		}, line)
+
+		By("then the server is still in the mounted set, but its tools are out of the allow list and into the deny list")
+		applied := applied(options)
+		mounted, ok := applied["mcpServers"].(map[string]any)
+		Expect(ok).To(BeTrue(), "the harness was given no mcpServers")
+		Expect(mounted).To(HaveKey("fake"))
+		Expect(applied["disallowedTools"]).To(ContainElement("mcp__fake__*"))
+		Expect(applied["allowedTools"]).NotTo(ContainElement("mcp__fake__*"))
+	})
+
+	It("refuses a step whose mcp names a server neither the worker nor the workflow declares", func() {
+		By("given a step naming a server absent from the catalog")
+		mcpDir := GinkgoT().TempDir()
+		line := startRequest("mcp-3", func(start *harnessv1.Start) {
+			start.McpDir = mcpDir
+			start.Settings = settings(map[string]any{"mcp": []any{"nope"}})
+		})
+
+		By("when the sidecar runs")
+		s := run(fakeEntrypoint, map[string]string{"MILL_FAKE_SCENARIO": "trivial"}, line)
+
+		By("then the session never ran, and the reason names the server")
+		Expect(s.terminal().GetExit().GetStatus()).To(BeNumerically("==", -1))
+		Expect(s.terminal().GetExit().GetReason()).To(Equal(harnessv1.ExitReason_EXIT_REASON_POLICY))
+		Expect(s.terminal().GetFinalMessage()).To(ContainSubstring("nope"))
+		Expect(s.events()).To(BeEmpty())
+	})
+
+	It("spawns the mounted server for real, forwards a tool call to it, and leaves no process behind", func() {
+		By("given a host catalog with one real fixture server, mounted globally")
+		pidFile := filepath.Join(GinkgoT().TempDir(), "mcp.pid")
+		mcpDir := GinkgoT().TempDir()
+		line := startRequest("mcp-4", func(start *harnessv1.Start) {
+			start.McpServers = map[string]*harnessv1.McpServer{
+				"fake": {Command: "node", Args: []string{fixturePath()}, Global: true},
+			}
+			start.McpDir = mcpDir
+		})
+
+		By("when the session runs, mounting and calling the fixture for real")
+		s := run(fakeEntrypoint, map[string]string{
+			"MILL_FAKE_SCENARIO": "mcp-mount",
+			pidVar:               pidFile,
+		}, line)
+
+		By("then the forwarded call appears on the wire as an ordinary tool call and result")
+		Expect(s.events()).To(ContainElement(HaveField("GetToolCall().GetName()", "mcp__fake__fake_tool")))
+		checked := results(s)
+		Expect(checked).To(HaveKey("toolu_mcp"))
+		Expect(checked["toolu_mcp"]).To(ContainSubstring("ping"))
+
+		By("and the server's process is gone once the step ends")
+		pid := spawnedPid(pidFile)
+		Eventually(func() bool { return alive(pid) }, 10*time.Second).Should(BeFalse())
+	})
+})
