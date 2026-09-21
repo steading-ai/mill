@@ -1,6 +1,8 @@
 package server_test
 
 import (
+	"strings"
+
 	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -375,6 +377,108 @@ var _ = Describe("The store's handlers", Label(testsupport.DBLabel), func() {
 
 		Expect([]string{page1.Msg.GetRuns()[0].GetRun().GetId(), page2.Msg.GetRuns()[0].GetRun().GetId()}).To(
 			ConsistOf(f.run.GetId(), other.run.GetId()))
+	})
+
+	It("prices a run's usage totals by the configured rate table, to the cent, and leaves an unrated model unpriced", func(ctx SpecContext) {
+		rates := server.Rates{
+			"claude-sonnet-4-5": {Input: 3, Output: 15, CacheRead: 0.3, CacheWrite: 3.75},
+		}
+		f := newFixtureOn(ctx, newServiceWithStore(ctx, server.WithRates(rates)), "mill#23")
+		stepRun := f.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+		_, err := f.client().RecordUsage(ctx, connect.NewRequest(&millv1.RecordUsageRequest{
+			LeaseId:   lease,
+			StepRunId: stepRun.GetId(),
+			Usage: []*millv1.Usage{
+				{Model: "claude-sonnet-4-5", InputTokens: 1_000_000, OutputTokens: 200_000, CacheReadTokens: 100_000, CacheWriteTokens: 40_000},
+				{Model: "claude-opus-5", InputTokens: 500, OutputTokens: 500},
+			},
+		}))
+		Expect(err).NotTo(HaveOccurred())
+
+		// 1,000,000*$3 + 200,000*$15 + 100,000*$0.3 + 40,000*$3.75, each per
+		// million tokens: $3 + $3 + $0.03 + $0.15.
+		const wantUsd = 6.18
+
+		listed, err := f.client().Status(ctx, connect.NewRequest(&millv1.StatusRequest{}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(listed.Msg.GetRuns()).To(HaveLen(1))
+		rated, unrated := modelTotal(listed.Msg.GetRuns()[0].GetTotals(), "claude-sonnet-4-5"), modelTotal(listed.Msg.GetRuns()[0].GetTotals(), "claude-opus-5")
+		Expect(rated.GetPriced()).To(BeTrue())
+		Expect(rated.GetUsd()).To(BeNumerically("~", wantUsd, 0.0001))
+		Expect(unrated.GetPriced()).To(BeFalse(), "a model absent from the table is unpriced, not free")
+		Expect(unrated.GetUsd()).To(BeZero())
+
+		detail, err := f.client().Inspect(ctx, connect.NewRequest(&millv1.InspectRequest{Id: f.run.GetId()}))
+		Expect(err).NotTo(HaveOccurred())
+		implementStep := detail.Msg.GetSteps()[1]
+		Expect(modelTotal(implementStep.GetTotals(), "claude-sonnet-4-5").GetUsd()).To(BeNumerically("~", wantUsd, 0.0001))
+
+		cost, err := f.client().Cost(ctx, connect.NewRequest(&millv1.CostRequest{}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cost.Msg.GetByModel()).NotTo(BeEmpty())
+		for _, bucket := range cost.Msg.GetByModel() {
+			if bucket.GetKey() == "claude-sonnet-4-5" {
+				Expect(modelTotal(bucket.GetTotals(), "claude-sonnet-4-5").GetUsd()).To(BeNumerically("~", wantUsd, 0.0001))
+			}
+		}
+	})
+
+	It("Cost's MODEL total for a model is the sum of its STEP totals, priced the same way both places", func(ctx SpecContext) {
+		rates := server.Rates{
+			"claude-sonnet-4-5": {Input: 3, Output: 15, CacheRead: 0.3, CacheWrite: 3.75},
+		}
+		f := newFixtureOn(ctx, newServiceWithStore(ctx, server.WithRates(rates)), "mill#24")
+		implement := f.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+		_, err := f.client().RecordUsage(ctx, connect.NewRequest(&millv1.RecordUsageRequest{
+			LeaseId:   lease,
+			StepRunId: implement.GetId(),
+			Usage: []*millv1.Usage{
+				{Model: "claude-sonnet-4-5", InputTokens: 1_000_000, OutputTokens: 0},
+			},
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = f.client().CloseStepRun(ctx, connect.NewRequest(&millv1.CloseStepRunRequest{
+			LeaseId: lease, StepRunId: implement.GetId(), Evidence: commitEvidence(),
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		review := f.start(ctx, "review", millv1.StepKind_STEP_KIND_SKILL)
+		_, err = f.client().RecordUsage(ctx, connect.NewRequest(&millv1.RecordUsageRequest{
+			LeaseId:   lease,
+			StepRunId: review.GetId(),
+			Usage: []*millv1.Usage{
+				{Model: "claude-sonnet-4-5", InputTokens: 500_000, OutputTokens: 0},
+			},
+		}))
+		Expect(err).NotTo(HaveOccurred())
+
+		// 1,500,000 input tokens total at $3/million, split 1,000,000 /
+		// 500,000 across the two steps.
+		const wantImplementUsd, wantReviewUsd, wantModelUsd = 3.0, 1.5, 4.5
+
+		cost, err := f.client().Cost(ctx, connect.NewRequest(&millv1.CostRequest{}))
+		Expect(err).NotTo(HaveOccurred())
+
+		var implementUsd, reviewUsd float64
+		for _, bucket := range cost.Msg.GetByStep() {
+			switch {
+			case strings.HasSuffix(bucket.GetKey(), "/implement"):
+				implementUsd = modelTotal(bucket.GetTotals(), "claude-sonnet-4-5").GetUsd()
+			case strings.HasSuffix(bucket.GetKey(), "/review"):
+				reviewUsd = modelTotal(bucket.GetTotals(), "claude-sonnet-4-5").GetUsd()
+			}
+		}
+		Expect(implementUsd).To(BeNumerically("~", wantImplementUsd, 0.0001))
+		Expect(reviewUsd).To(BeNumerically("~", wantReviewUsd, 0.0001))
+
+		var modelUsd float64
+		for _, bucket := range cost.Msg.GetByModel() {
+			if bucket.GetKey() == "claude-sonnet-4-5" {
+				modelUsd = modelTotal(bucket.GetTotals(), "claude-sonnet-4-5").GetUsd()
+			}
+		}
+		Expect(modelUsd).To(BeNumerically("~", wantModelUsd, 0.0001))
+		Expect(modelUsd).To(BeNumerically("~", implementUsd+reviewUsd, 0.0001),
+			"MODEL's total for a model must equal the sum of its STEP entries")
 	})
 
 	It("Inspect with neither a run id nor a node ref is refused as invalid", func(ctx SpecContext) {

@@ -907,6 +907,13 @@ message ModelTotals {
   int64 cache_write_tokens = 5;
   // Who counted the rows summed here. Unset reads as the adapter's report.
   UsageSource source = 6;
+  // The dollar cost of the tokens above, from the rate table mill applies at
+  // query time (docs/ledger.md §usage). Meaningless unless priced is true.
+  double usd = 7;
+  // Whether usd was computed: false when the model had no rate, so a model
+  // mill cannot price is never mistaken for one that legitimately cost
+  // nothing.
+  bool priced = 8;
 }
 
 // RunSummary is a run with the things the ledger derives rather than stores,

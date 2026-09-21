@@ -587,11 +587,11 @@ var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 			step := section(out, "STEP")
 
 			Expect(strings.Fields(rowForStep(step, "gather-context"))[1:]).To(Equal(
-				[]string{"-", "0", "0", "0", "0", "1", "1", "0", "0", "0", "1"}))
+				[]string{"-", "0", "0", "0", "0", "-", "1", "1", "0", "0", "0", "1"}))
 			Expect(strings.Fields(rowForStep(step, "implement"))[1:]).To(Equal(
-				[]string{"-", "0", "0", "0", "0", "1", "1", "0", "1", "0", "2"}))
+				[]string{"-", "0", "0", "0", "0", "-", "1", "1", "0", "1", "0", "2"}))
 			Expect(strings.Fields(rowForStep(step, "review"))[1:]).To(Equal(
-				[]string{"-", "0", "0", "0", "0", "1", "0", "1", "1", "1", "2"}))
+				[]string{"-", "0", "0", "0", "0", "-", "1", "0", "1", "1", "1", "2"}))
 		})
 
 		// Four runs of feature@v1, three of them failing at review-plan
@@ -646,14 +646,14 @@ var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 			v2Key := func(name string) string { return "feature@" + shortVersion(v2Version) + "/" + name }
 
 			Expect(strings.Fields(rowFor(step, v1Key("gather-context")))[1:]).To(Equal(
-				[]string{"-", "0", "0", "0", "0", "4", "4", "0", "0", "0", "4"}))
+				[]string{"-", "0", "0", "0", "0", "-", "4", "4", "0", "0", "0", "4"}))
 			Expect(strings.Fields(rowFor(step, v1Key("implement")))[1:]).To(Equal(
-				[]string{"-", "0", "0", "0", "0", "4", "4", "0", "0", "0", "4"}))
+				[]string{"-", "0", "0", "0", "0", "-", "4", "4", "0", "0", "0", "4"}))
 			Expect(strings.Fields(rowFor(step, v1Key("review-plan")))[1:]).To(Equal(
-				[]string{"-", "0", "0", "0", "0", "4", "1", "3", "3", "0", "7"}))
+				[]string{"-", "0", "0", "0", "0", "-", "4", "1", "3", "3", "0", "7"}))
 
 			Expect(strings.Fields(rowFor(step, v2Key("review-plan")))[1:]).To(Equal(
-				[]string{"-", "0", "0", "0", "0", "1", "1", "0", "0", "0", "1"}))
+				[]string{"-", "0", "0", "0", "0", "-", "1", "1", "0", "0", "0", "1"}))
 		})
 	})
 
