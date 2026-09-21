@@ -1,8 +1,13 @@
 package testsupport
 
 import (
+	"context"
 	"os"
 	"strings"
+
+	"github.com/onsi/ginkgo/v2"
+
+	"github.com/ivy/mill/internal/workspace/machine/driver"
 )
 
 // containerFile is where systemd, as a machine's PID 1, records the manager
@@ -31,4 +36,17 @@ func InsideMachine() bool {
 // the spec needs of the host and why a machine has none of it.
 func HostOnlySkip(needs string) string {
 	return "inside a machine: this spec needs " + needs + ", which a machine has none of (docs/sandbox.md §Self-hosting); it runs on the host"
+}
+
+// SkipUnlessSandboxReady skips the running spec, naming the first thing
+// host.SandboxReady reports missing (or the error it hit checking).
+func SkipUnlessSandboxReady(ctx context.Context, host driver.Driver, root, machines string) {
+	ginkgo.GinkgoHelper()
+	reason, err := host.SandboxReady(ctx, root, machines)
+	if err != nil {
+		reason = err.Error()
+	}
+	if reason != "" {
+		ginkgo.Skip(reason)
+	}
 }

@@ -27,6 +27,7 @@ const (
 	DiskUsage         = "DiskUsage"
 	Statfs            = "Statfs"
 	Container         = "Container"
+	SandboxReady      = "SandboxReady"
 
 	Exists           = "Exists"
 	CreateSubvolume  = "CreateSubvolume"
@@ -416,6 +417,12 @@ func (f *FakeDriver) Statfs(path string) (Filesystem, error) {
 // or none: the fake is a host unless told otherwise.
 func (f *FakeDriver) Container(_ context.Context) (string, error) {
 	return asString(Container, f.record(Container))
+}
+
+// SandboxReady defaults to ready: the fake is a sandbox-capable host unless
+// told otherwise.
+func (f *FakeDriver) SandboxReady(_ context.Context, root, machines string) (string, error) {
+	return asString(SandboxReady, f.record(SandboxReady, root, machines))
 }
 
 // asError is a scripted result for a method that returns only an error.

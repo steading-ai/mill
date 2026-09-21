@@ -92,10 +92,11 @@ var _ = Describe("A nested machine on a real host", Label("live"), Serial, Order
 			// inside a nested machine could drive itself; none does yet.
 			Skip(testsupport.HostOnlySkip("the host's template unit and helper to boot the outer machine"))
 		}
+		real = driver.NewSystemd(workspace.Spawner{}, driver.Commands{Sudo: "sudo"})
+		testsupport.SkipUnlessSandboxReady(ctx, real, liveRoot, liveMachines)
 		if _, _, status := host("sudo", "-n", "true"); status != 0 {
 			Skip("sudo -n is refused; the helper and the image export need it")
 		}
-		real = driver.NewSystemd(workspace.Spawner{}, driver.Commands{Sudo: "sudo"})
 		info, err := os.Stat(machine.DefaultDaggerCheckout)
 		Expect(err).NotTo(HaveOccurred(), "the dagger checkout the helper's policy names as a nested read-only source is not there: homestead's mill_storage puts it at %s", machine.DefaultDaggerCheckout)
 		Expect(info.IsDir()).To(BeTrue())

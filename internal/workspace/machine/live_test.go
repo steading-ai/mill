@@ -151,10 +151,11 @@ var _ = Describe("A machine on a real host", Label("live"), Serial, Ordered, fun
 		if testsupport.InsideMachine() {
 			Skip(testsupport.HostOnlySkip("the host's template unit, helper and image volume to boot a machine"))
 		}
+		real = driver.NewSystemd(workspace.Spawner{}, driver.Commands{Sudo: "sudo"})
+		testsupport.SkipUnlessSandboxReady(ctx, real, liveRoot, liveMachines)
 		if _, _, status := host("sudo", "-n", "true"); status != 0 {
 			Skip("sudo -n is refused; the helper and the image export need it")
 		}
-		real = driver.NewSystemd(workspace.Spawner{}, driver.Commands{Sudo: "sudo"})
 
 		By("the host's prerequisites: the skill directory the helper's policy admits, and the run-state directory")
 		// The skill is the one the worker writes at its preflight, from

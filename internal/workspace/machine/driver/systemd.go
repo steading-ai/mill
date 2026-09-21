@@ -46,6 +46,10 @@ type Commands struct {
 	// DetectVirt says whether the worker is inside a machine;
 	// `systemd-detect-virt`.
 	DetectVirt string
+	// Nspawn is systemd-nspawn; `systemd-nspawn`. SandboxReady's presence
+	// probe only — nothing in this driver ever spawns a machine with it,
+	// machinectl and the template unit do that.
+	Nspawn string
 	// Sudo runs the verbs that write the image directory as root, because
 	// that directory is root's on the host (docs/sandbox.md §Storage): the
 	// subvolume create, rename and delete, the extraction, setcap, and the
@@ -112,6 +116,9 @@ func (c Commands) withDefaults() Commands {
 	}
 	if c.DetectVirt == "" {
 		c.DetectVirt = "systemd-detect-virt"
+	}
+	if c.Nspawn == "" {
+		c.Nspawn = "systemd-nspawn"
 	}
 	return c
 }
@@ -575,6 +582,78 @@ func (d *systemdDriver) Container(ctx context.Context) (string, error) {
 		return "", nil
 	}
 	return name, nil
+}
+
+// SandboxReady checks, in the order docs/sandbox.md §Self-hosting names
+// them, systemd-nspawn and machinectl on PATH, the mill-machine@ template
+// unit, the helper file, and root on btrfs with a machines subvolume.
+// reason names the first of these missing; empty means ready.
+func (d *systemdDriver) SandboxReady(ctx context.Context, root, machines string) (string, error) {
+	if err := d.onPath(ctx, d.commands.Nspawn, "--version"); err != nil {
+		return "systemd-nspawn is not on PATH (docs/sandbox.md §Self-hosting)", nil
+	}
+	if err := d.onPath(ctx, d.commands.Machinectl, "--version"); err != nil {
+		return "machinectl is not on PATH (docs/sandbox.md §Self-hosting)", nil
+	}
+	installed, err := d.unitInstalled(ctx, "mill-machine@.service")
+	if err != nil {
+		return "", err
+	}
+	if !installed {
+		return "the mill-machine@ template unit is not installed (docs/sandbox.md §Self-hosting)", nil
+	}
+	if _, err := os.Stat(d.commands.Helper); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Sprintf("the helper %s is not installed (docs/sandbox.md §Self-hosting)", d.commands.Helper), nil
+		}
+		return "", fmt.Errorf("machine: stat %s: %w", d.commands.Helper, err)
+	}
+	filesystem, err := d.Statfs(root)
+	if err != nil {
+		return "", err
+	}
+	if !filesystem.Btrfs() {
+		return fmt.Sprintf("sandbox root %s is %s, not %s (docs/sandbox.md §Storage)", root, filesystem.Type, TypeBtrfs), nil
+	}
+	if _, err := os.Stat(machines); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Sprintf("the machines subvolume %s is not there (docs/sandbox.md §Storage)", machines), nil
+		}
+		return "", fmt.Errorf("machine: stat %s: %w", machines, err)
+	}
+	return "", nil
+}
+
+// onPath runs path only to see whether it starts: a presence probe, never
+// a real invocation — SandboxReady does not boot a machine.
+func (d *systemdDriver) onPath(ctx context.Context, path string, args ...string) error {
+	process, err := d.spawner.Exec(ctx, workspace.Command{Path: path, Args: args})
+	if err != nil {
+		return err
+	}
+	_ = process.Stdin.Close()
+	_, _, _ = drain(process)
+	return nil
+}
+
+// unitInstalled is `systemctl list-unit-files <unit> --no-legend`, its exit
+// status the answer — 0 installed, 1 not, anything else a real failure —
+// the same shape Exists reads test -e's status in.
+func (d *systemdDriver) unitInstalled(ctx context.Context, unit string) (bool, error) {
+	process, err := d.spawner.Exec(ctx, workspace.Command{Path: d.commands.Systemctl, Args: []string{"list-unit-files", unit, "--no-legend"}})
+	if err != nil {
+		return false, fmt.Errorf("machine: %s list-unit-files %s: %w", d.commands.Systemctl, unit, err)
+	}
+	_ = process.Stdin.Close()
+	_, stderr, result := drain(process)
+	switch result.Status {
+	case 0:
+		return true, nil
+	case 1:
+		return false, nil
+	default:
+		return false, fmt.Errorf("machine: %s list-unit-files %s exited %d: %s", d.commands.Systemctl, unit, result.Status, strings.TrimSpace(stderr))
+	}
 }
 
 func (d *systemdDriver) Statfs(path string) (Filesystem, error) {
