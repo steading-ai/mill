@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"connectrpc.com/connect"
 
@@ -379,6 +380,70 @@ var _ = Describe("mill run", func() {
 
 			Expect(exit).NotTo(BeZero())
 			Expect(stdout.String()).To(ContainSubstring("delivers to https://gitlab.example.test/group/thing.git"))
+		})
+
+		It("still runs when the socket's own worker shares this host, rather than refusing itself", func(ctx SpecContext) {
+			g := daggerNodeWith(ctx, "https://gitlab.example.test/group/thing.git")
+			databaseURL := pg.Database(ctx).Config().ConnString()
+			workSocket := filepath.Join(GinkgoT().TempDir(), "mill.sock")
+			workerConfig := filepath.Join(GinkgoT().TempDir(), "empty.yaml")
+			Expect(os.WriteFile(workerConfig, []byte("{}\n"), 0o600)).To(Succeed())
+
+			var svcStdout, svcStderr bytes.Buffer
+			root := cli.NewRootCommand(&svcStdout, &svcStderr)
+			root.SetArgs([]string{
+				"serve", "--work",
+				"--socket", workSocket,
+				"--database-url", databaseURL,
+				"--config", workerConfig,
+				"--project", daggerProject,
+				// A label no node carries, so the co-located worker never
+				// claims the node this spec drives through `mill run`
+				// directly: what is under test is that a same-host worker
+				// does not make `mill run` refuse itself.
+				"--label", "nothing-carries-this",
+				"--dagger-socket", g.service.Socket,
+				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
+				"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
+			})
+
+			serveCtx, stop := context.WithCancel(ctx)
+			served := make(chan error, 1)
+			go func() {
+				defer GinkgoRecover()
+				served <- root.ExecuteContext(serveCtx)
+			}()
+			DeferCleanup(func() {
+				stop()
+				Eventually(served, time.Minute).Should(Receive(BeNil()), svcStderr.String())
+			})
+			Eventually(func() error {
+				_, err := os.Stat(workSocket)
+				return err
+			}, time.Minute, 50*time.Millisecond).Should(Succeed(), svcStderr.String())
+
+			m := mill{socket: workSocket}
+			m.run(ctx, "workflow", "push", quickFix)
+
+			var stdout, stderr bytes.Buffer
+			var exit int
+			Eventually(func() int {
+				exit = cli.Run([]string{
+					"run", g.nodeRef,
+					"--project", daggerProject, "--workflow", "quick-fix",
+					"--socket", workSocket, "--dagger-socket", g.service.Socket,
+					"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
+					"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
+				}, strings.NewReader(""), &stdout, &stderr)
+				return exit
+			}, time.Minute, 100*time.Millisecond).ShouldNot(BeZero(), stderr.String())
+
+			// The host in the fixture's repository URL does not exist, so
+			// the run fails at the clone; what is under test is that it
+			// reached the clone at all rather than refusing because the
+			// co-located worker's own host claim.
+			Expect(stdout.String()).To(ContainSubstring("delivers to https://gitlab.example.test/group/thing.git"))
+			Expect(stderr.String()).NotTo(ContainSubstring("the worker behind this socket runs on"))
 		})
 
 		It("refuses a project that names no repository before anything is cloned, and holds the node", func(ctx SpecContext) {

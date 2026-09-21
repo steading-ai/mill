@@ -70,6 +70,19 @@ const (
 // defaultDaggerSocket is where dagger listens when DG_SOCKET says nothing.
 const defaultDaggerSocket = "/run/dagger/dg.sock"
 
+// resolveProjects is --project's fallback to $DG_PROJECT, shared by every
+// caller that needs the same list a worker actually claims from: an empty
+// --project falls back to the environment variable rather than reporting
+// "every project" when a deployment set only the latter.
+func resolveProjects(projects []string) []string {
+	if len(projects) == 0 {
+		if fallback := os.Getenv(daggerProjectEnv); fallback != "" {
+			return []string{fallback}
+		}
+	}
+	return projects
+}
+
 // The forge credential the mill holds for the repositories it delivers to.
 // It is never a flag, so it reaches no process listing. It is read from the
 // credential store first — $CREDENTIALS_DIRECTORY/forge-token, delivered to
@@ -396,6 +409,15 @@ func execute(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 		return fmt.Errorf("mill run: a dagger project is required; pass --project or set %s", daggerProjectEnv)
 	}
 	if err := resolveSandboxRoot(cmd, &opts.sandboxRoot, ""); err != nil {
+		return err
+	}
+	// A worker behind opts.socket that is not this host would run the node
+	// on the wrong files and the wrong login: refuse before claiming
+	// anything, naming where it should run instead (docs/tools.md, "`run`
+	// is not among them"). No worker answering (a bare `serve`, or none at
+	// all) is not a mismatch: `run` needs no worker mounted to execute.
+	localHost, _ := os.Hostname()
+	if err := refusalForHost(workerClaims(cmd.Context(), opts.socket), localHost); err != nil {
 		return err
 	}
 
@@ -1067,6 +1089,22 @@ func repositories(opts runOptions) run.Repositories {
 	return func(_ context.Context, project *daggerv1.Project) (run.Repository, error) {
 		return repositoryFor(project, opts)
 	}
+}
+
+// refusalForHost is nil when `mill run` may proceed: no worker answered
+// (claims is nil), the worker did not say which host it is on (an empty
+// host — can't tell, don't refuse), or its host is this one. Otherwise it
+// names both hosts, because a run driven here would work on this host's
+// files and login while dagger thinks the other worker holds it — the
+// opposite of what a client host asking for this node wanted (docs/tools.md,
+// "`run` is not among them").
+func refusalForHost(claims *millv1.ClaimsResponse, localHost string) error {
+	host := claims.GetHost()
+	if host == "" || host == localHost {
+		return nil
+	}
+	return fmt.Errorf("mill run: the worker behind this socket runs on %s, not %s; "+
+		"run `mill run` there, or drive it through `mill work` on %s", host, localHost, host)
 }
 
 // workerRef names this worker on the run and on every lease: the account and

@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -129,6 +130,60 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 			"--config", config,
 			"--project", "")
 		Expect(lines(out)[0]).To(Equal("claims from: mill"))
+	})
+
+	It("when a worker shares this process, its own claim is what's printed, not a client's local --config", func(ctx SpecContext) {
+		g := daggerNodeWith(ctx, "https://forge.test/mill/mill.git")
+		databaseURL := pg.Database(ctx).Config().ConnString()
+		socket := filepath.Join(GinkgoT().TempDir(), "mill.sock")
+		workerConfig := filepath.Join(GinkgoT().TempDir(), "empty.yaml")
+		Expect(os.WriteFile(workerConfig, []byte("{}\n"), 0o600)).To(Succeed())
+
+		var stdout, stderr bytes.Buffer
+		root := cli.NewRootCommand(&stdout, &stderr)
+		root.SetArgs([]string{
+			"serve", "--work",
+			"--socket", socket,
+			"--database-url", databaseURL,
+			"--config", workerConfig,
+			"--project", daggerProject,
+			"--label", "worker-only-label",
+			"--dagger-socket", g.service.Socket,
+			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
+			"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
+		})
+
+		serveCtx, stop := context.WithCancel(ctx)
+		served := make(chan error, 1)
+		go func() {
+			defer GinkgoRecover()
+			served <- root.ExecuteContext(serveCtx)
+		}()
+		DeferCleanup(func() {
+			stop()
+			Eventually(served, time.Minute).Should(Receive(BeNil()), stderr.String())
+		})
+		Eventually(func() error {
+			_, err := os.Stat(socket)
+			return err
+		}, time.Minute, 50*time.Millisecond).Should(Succeed(), stderr.String())
+
+		// A client dials the same socket with a --config naming a project
+		// the worker never heard of: what it reads back has to be the
+		// worker's own claim, not this file.
+		localConfig := filepath.Join(GinkgoT().TempDir(), "local.yaml")
+		Expect(os.WriteFile(localConfig, []byte("project: [not-the-workers-project]\n"), 0o600)).To(Succeed())
+
+		var out string
+		Eventually(func() string {
+			out, _ = runCLI(ctx, socket, "doctor",
+				"--dagger-socket", g.service.Socket,
+				"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
+				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
+				"--config", localConfig)
+			return out
+		}, time.Minute, 100*time.Millisecond).Should(ContainSubstring("claims from:"), out)
+		Expect(lines(out)[0]).To(Equal("claims from: " + daggerProject + ", label worker-only-label"))
 	})
 
 	It("the forge probe reads the repository from the project", func() {
