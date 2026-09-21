@@ -87,7 +87,7 @@ func runLogs(cmd *cobra.Command, opts logsOptions, reference string) error {
 	if err != nil {
 		return err
 	}
-	known := newStepAttempts(detail.GetSteps())
+	lines := newLogsRenderer(detail.GetSteps(), opts.follow)
 
 	req := &millv1.LogsRequest{
 		Id:      detail.GetSummary().GetRun().GetId(),
@@ -105,13 +105,13 @@ func runLogs(cmd *cobra.Command, opts logsOptions, reference string) error {
 	}
 
 	if opts.follow {
-		if err := followLogs(cmd.OutOrStdout(), stream, opts, known); err != nil {
+		if err := followLogs(cmd.OutOrStdout(), stream, opts, lines); err != nil {
 			return fmt.Errorf("logs %s: %w", reference, err)
 		}
 		return nil
 	}
 
-	content, err := readLogs(stream, opts, known)
+	content, err := readLogs(stream, opts, lines)
 	if err != nil {
 		return fmt.Errorf("logs %s: %w", reference, err)
 	}
@@ -123,10 +123,10 @@ func runLogs(cmd *cobra.Command, opts logsOptions, reference string) error {
 
 // readLogs collects every record of an unfollowed stream, rendered, for
 // page to show at once.
-func readLogs(stream *connect.ServerStreamForClient[millv1.LogsResponse], opts logsOptions, known *stepAttempts) ([]byte, error) {
+func readLogs(stream *connect.ServerStreamForClient[millv1.LogsResponse], opts logsOptions, lines *logsRenderer) ([]byte, error) {
 	var buf bytes.Buffer
 	for stream.Receive() {
-		if err := writeFrame(&buf, stream.Msg(), opts, known); err != nil {
+		if err := writeFrame(&buf, stream.Msg(), opts, lines); err != nil {
 			return nil, err
 		}
 	}
@@ -139,13 +139,13 @@ func readLogs(stream *connect.ServerStreamForClient[millv1.LogsResponse], opts l
 // followLogs prints every record as it streams, then the line naming how
 // the run ended once a RunEnd frame arrives, or that the stream itself
 // broke when it ends without one.
-func followLogs(out io.Writer, stream *connect.ServerStreamForClient[millv1.LogsResponse], opts logsOptions, known *stepAttempts) error {
+func followLogs(out io.Writer, stream *connect.ServerStreamForClient[millv1.LogsResponse], opts logsOptions, lines *logsRenderer) error {
 	for stream.Receive() {
 		msg := stream.Msg()
 		if end := msg.GetRun(); end != nil {
 			return endLogs(out, end)
 		}
-		if err := writeFrame(out, msg, opts, known); err != nil {
+		if err := writeFrame(out, msg, opts, lines); err != nil {
 			return err
 		}
 	}
@@ -163,12 +163,12 @@ func followLogs(out io.Writer, stream *connect.ServerStreamForClient[millv1.Logs
 
 // writeFrame renders one LogsResponse frame's activity, when it carries
 // one, as --json wants it or as text.
-func writeFrame(out io.Writer, msg *millv1.LogsResponse, opts logsOptions, known *stepAttempts) error {
+func writeFrame(out io.Writer, msg *millv1.LogsResponse, opts logsOptions, lines *logsRenderer) error {
 	a := msg.GetActivity()
 	if a == nil {
 		return nil
 	}
-	known.observe(a)
+	lines.known.observe(a)
 	if opts.json {
 		line, err := jsonLine(a)
 		if err != nil {
@@ -177,7 +177,7 @@ func writeFrame(out io.Writer, msg *millv1.LogsResponse, opts logsOptions, known
 		_, err = io.WriteString(out, line)
 		return err
 	}
-	line := renderLine(a, known)
+	line := lines.render(a)
 	if line == "" {
 		return nil
 	}
@@ -232,20 +232,44 @@ func (s *stepAttempts) lookup(stepRunID string) stepAttempt {
 	return s.byID[stepRunID]
 }
 
-// renderLine is one activity record the way `mill logs` prints it:
+// logsRenderer is one activity record the way `mill logs` prints it:
 // attempt_started and attempt_ended become the open/close markers
 // run.RenderActivity has no text for, since it renders the session's own
-// events alone; everything else is RenderActivity's line.
-func renderLine(a *millv1.Activity, known *stepAttempts) string {
+// events alone; everything else is the ActivityRenderer's line, so a Text
+// or Thinking block that streamed as deltas renders as the one line it
+// would have if it had arrived whole. Under --follow a streamed block's
+// pieces — the records carrying its block id, delta or final — print raw
+// instead, with no summary line, so a tail shows words appearing as the
+// model writes them rather than waiting for the block to close
+// (docs/activity.md §"Streaming text"). A whole Text with no block id is
+// not a piece of anything and still renders as its line.
+type logsRenderer struct {
+	known  *stepAttempts
+	blocks *run.ActivityRenderer
+	follow bool
+}
+
+func newLogsRenderer(steps []*millv1.StepRunDetail, follow bool) *logsRenderer {
+	return &logsRenderer{known: newStepAttempts(steps), blocks: run.NewActivityRenderer(), follow: follow}
+}
+
+func (r *logsRenderer) render(a *millv1.Activity) string {
 	switch body := a.GetBody().(type) {
 	case *millv1.Activity_AttemptStarted:
 		return fmt.Sprintf("-- %s attempt %d started --\n", body.AttemptStarted.GetStep(), body.AttemptStarted.GetAttempt())
 	case *millv1.Activity_AttemptEnded:
-		sa := known.lookup(a.GetStepRunId())
+		sa := r.known.lookup(a.GetStepRunId())
 		return fmt.Sprintf("-- %s attempt %d ended: %s --\n", sa.step, sa.attempt, body.AttemptEnded.GetReason())
-	default:
-		return run.RenderActivity(a)
+	case *millv1.Activity_Text:
+		if r.follow && body.Text.GetBlockId() != "" {
+			return body.Text.GetText()
+		}
+	case *millv1.Activity_Thinking:
+		if r.follow && body.Thinking.GetBlockId() != "" {
+			return body.Thinking.GetText()
+		}
 	}
+	return r.blocks.Render(a)
 }
 
 // endLogs writes the line naming why a followed stream over one run ended

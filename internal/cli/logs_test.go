@@ -259,6 +259,60 @@ var _ = Describe("mill logs", Label(testsupport.DBLabel), func() {
 		Expect(out).To(Equal(expected))
 	})
 
+	// A text block that streamed as deltas reads two different ways: --follow
+	// shows the pieces raw, as they arrived; without it, `mill logs` shows the
+	// one line the block would have rendered as if it had arrived whole
+	// (docs/activity.md §"Streaming text").
+	It("shows a streamed block's pieces raw under --follow, and one accumulated line without it", func() {
+		logDir := GinkgoT().TempDir()
+		m := servingWithLogDir(ctx, logDir)
+		r := openRunOn(ctx, m, "millcli#28", nodeID(28))
+		sr := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+
+		appendActivity(run.ActivityPath(logDir, r.run.GetId(), "implement", sr.GetAttempt()),
+			&millv1.Activity{Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+				Body: &millv1.Activity_Text{Text: &millv1.Text{BlockId: "b1", Text: "Hello", Delta: true}}},
+			&millv1.Activity{Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+				Body: &millv1.Activity_Text{Text: &millv1.Text{BlockId: "b1", Text: ", world!", Final: true}}},
+		)
+		r.close(ctx, sr, &millv1.CloseStepRunRequest{
+			Evidence: &millv1.Evidence{
+				Kind:       millv1.EvidenceKind_EVIDENCE_KIND_ARTIFACT,
+				Value:      &millv1.Evidence_Artifact{Artifact: "sha256:" + strings.Repeat("e", 64)},
+				VerifiedBy: "spec",
+			},
+		})
+
+		// A step-scoped follow over an attempt that has already left running
+		// replays the file and ends with no RunEnd (docs/activity.md §The RPC).
+		followed := r.cli(ctx, "logs", "millcli#28", "--step", "implement", "--follow", "--no-pager")
+		Expect(followed).To(Equal("Hello, world!"), "the deltas print raw, with no summary line")
+
+		static := r.cli(ctx, "logs", "millcli#28", "--step", "implement", "--no-pager")
+		Expect(static).To(ContainSubstring("text Hello, world!\n"), "the whole block renders as one accumulated line")
+		Expect(static).NotTo(ContainSubstring("Hello\n"), "no line for the delta alone")
+	})
+
+	// A thinking block renders as a word count, the same shape a Text block
+	// gets, once its final record arrives (docs/activity.md §"Streaming
+	// text").
+	It("renders a thinking block's word count once its final record arrives", func() {
+		logDir := GinkgoT().TempDir()
+		m := servingWithLogDir(ctx, logDir)
+		r := openRunOn(ctx, m, "millcli#29", nodeID(29))
+		sr := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+
+		appendActivity(run.ActivityPath(logDir, r.run.GetId(), "implement", sr.GetAttempt()),
+			&millv1.Activity{Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+				Body: &millv1.Activity_Thinking{Thinking: &millv1.Thinking{BlockId: "b1", Text: "weighing the ", Delta: true}}},
+			&millv1.Activity{Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+				Body: &millv1.Activity_Thinking{Thinking: &millv1.Thinking{BlockId: "b1", Text: "options", Final: true}}},
+		)
+
+		out := r.cli(ctx, "logs", "millcli#29", "--step", "implement", "--no-pager")
+		Expect(out).To(ContainSubstring("thinking 3 words\n"))
+	})
+
 	It("emits one Activity JSON line per record with --json", func() {
 		logDir := GinkgoT().TempDir()
 		m := servingWithLogDir(ctx, logDir)

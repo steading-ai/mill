@@ -115,5 +115,15 @@ var _ = Describe("The redactor", Label("unit"), func() {
 
 			Expect(first + last).To(Equal("token=" + redact.Mask))
 		})
+
+		It("releases a delta immediately when nothing is registered to hold back for", func() {
+			holdback := redact.NewDeltaHoldback(redact.New())
+
+			first := holdback.Add("block-1", "Hello", false)
+			second := holdback.Add("block-1", ", world!", false)
+
+			Expect(first).To(Equal("Hello"), "no registered value means no boundary to protect, so the delta streams straight through")
+			Expect(second).To(Equal(", world!"))
+		})
 	})
 })

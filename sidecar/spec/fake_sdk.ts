@@ -55,9 +55,10 @@ export const MODEL_USAGE = {
   },
 };
 
-function assistantText(text: string): SDKMessage {
+function assistantText(text: string, parentToolUseId: string | null = null): SDKMessage {
   return {
     type: "assistant",
+    parent_tool_use_id: parentToolUseId,
     message: {
       model: "claude-opus-5",
       content: [{ type: "text", text }],
@@ -66,9 +67,15 @@ function assistantText(text: string): SDKMessage {
   } as unknown as SDKMessage;
 }
 
-function toolCall(id: string, name: string, input: Record<string, unknown>): SDKMessage {
+function toolCall(
+  id: string,
+  name: string,
+  input: Record<string, unknown>,
+  parentToolUseId: string | null = null,
+): SDKMessage {
   return {
     type: "assistant",
+    parent_tool_use_id: parentToolUseId,
     message: {
       model: "claude-opus-5",
       content: [{ type: "tool_use", id, name, input }],
@@ -77,11 +84,39 @@ function toolCall(id: string, name: string, input: Record<string, unknown>): SDK
   } as unknown as SDKMessage;
 }
 
-function toolResult(id: string, content: string, isError = false): SDKMessage {
+function toolResult(id: string, content: string, isError = false, parentToolUseId: string | null = null): SDKMessage {
   return {
     type: "user",
+    parent_tool_use_id: parentToolUseId,
     message: { content: [{ type: "tool_result", tool_use_id: id, content, is_error: isError }] },
   } as unknown as SDKMessage;
+}
+
+// streamEvent wraps one raw Anthropic streaming event as the SDK forwards it
+// under includePartialMessages, scoped to parentToolUseId exactly as
+// "assistant"/"user" messages are (session.ts's StreamBlocks).
+function streamEvent(event: Record<string, unknown>, parentToolUseId: string | null = null): SDKMessage {
+  return { type: "stream_event", parent_tool_use_id: parentToolUseId, event } as unknown as SDKMessage;
+}
+
+function messageStart(id: string): Record<string, unknown> {
+  return { type: "message_start", message: { id } };
+}
+
+function blockStart(index: number, kind: "text" | "thinking"): Record<string, unknown> {
+  return { type: "content_block_start", index, content_block: { type: kind } };
+}
+
+function textDelta(index: number, text: string): Record<string, unknown> {
+  return { type: "content_block_delta", index, delta: { type: "text_delta", text } };
+}
+
+function thinkingDelta(index: number, thinking: string): Record<string, unknown> {
+  return { type: "content_block_delta", index, delta: { type: "thinking_delta", thinking } };
+}
+
+function blockStop(index: number): Record<string, unknown> {
+  return { type: "content_block_stop", index };
 }
 
 function success(result: string, structured?: unknown): SDKMessage {
@@ -289,6 +324,57 @@ async function* play(
       yield taskNotification("stopped");
       yield assistantText("Done; I stopped the task.");
       yield success("Done; I stopped the task.");
+      return;
+    }
+    case "streamed-text": {
+      // A text block that arrives as deltas, the way includePartialMessages
+      // reports it, followed by the completed assistant message the SDK
+      // still sends for it (docs/activity.md §"Streaming text").
+      yield streamEvent(messageStart("msg_stream_text"));
+      yield streamEvent(blockStart(0, "text"));
+      yield streamEvent(textDelta(0, "Hello"));
+      yield streamEvent(textDelta(0, ", world!"));
+      yield streamEvent(blockStop(0));
+      yield assistantText("Hello, world!");
+      yield success("Hello, world!");
+      return;
+    }
+    case "streamed-thinking": {
+      yield streamEvent(messageStart("msg_stream_thinking"));
+      yield streamEvent(blockStart(0, "thinking"));
+      yield streamEvent(thinkingDelta(0, "weighing "));
+      yield streamEvent(thinkingDelta(0, "the options"));
+      yield streamEvent(blockStop(0));
+      yield assistantText("Decided.");
+      yield success("Decided.");
+      return;
+    }
+    case "subagent": {
+      // An Agent call whose own text, tool call and tool result stream under
+      // its call id as parent_tool_use_id, folding under the call that
+      // started it rather than the top-level turn (docs/activity.md
+      // §Subagents).
+      const agentCallId = "toolu_agent";
+      yield toolCall(agentCallId, "Agent", { description: "look something up" });
+      yield streamEvent(messageStart("msg_sub"), agentCallId);
+      yield streamEvent(blockStart(0, "text"), agentCallId);
+      yield streamEvent(textDelta(0, "Looking into it."), agentCallId);
+      yield streamEvent(blockStop(0), agentCallId);
+      yield toolCall("toolu_sub_read", "Read", { file_path: "/tmp/x" }, agentCallId);
+      yield toolResult("toolu_sub_read", "file contents", false, agentCallId);
+      yield assistantText("Looking into it.", agentCallId);
+      yield toolResult(agentCallId, "the subagent's answer");
+      yield assistantText("Done.");
+      yield success("Done.");
+      return;
+    }
+    case "large-result": {
+      // A tool result several hundred KB long: forwarded whole, with no
+      // limit of the sidecar's own (docs/activity.md §"What exists today").
+      const large = "x".repeat(300 * 1024);
+      yield toolCall("toolu_large", "Bash", { command: "cat big.txt" });
+      yield toolResult("toolu_large", large);
+      yield success("Read the big file.");
       return;
     }
     case "poll-loop": {

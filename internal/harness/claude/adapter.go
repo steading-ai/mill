@@ -57,8 +57,10 @@ const (
 	socketVar = "WORKSPACE_SOCKET"
 	tokenVar  = "STEP_TOKEN"
 
-	// maxLine bounds one wire frame. A tool result is truncated by the
-	// sidecar long before this.
+	// maxLine bounds one wire frame. A tool result crosses the wire whole
+	// (docs/architecture.md §"Skill steps: the harness adapter"), so this is
+	// the only bound on how large a single frame can grow before the
+	// adapter's read buffer would have to grow without limit.
 	maxLine = 8 << 20
 
 	// stderrLimit is how much of the sidecar's standard error is kept. A
