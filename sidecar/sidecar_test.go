@@ -385,6 +385,28 @@ var _ = Describe("The sidecar", Label("unit"), func() {
 		}
 	})
 
+	It("The workspace's dead sockets reach the session, not the production ones", func() {
+		By("given a sidecar spawned with the dead DG_SOCKET and MILL_SOCKET the workspace decided")
+		env := map[string]string{
+			"DG_SOCKET":   "/var/lib/mill/runs/01JB/no-dagger.sock",
+			"MILL_SOCKET": "/var/lib/mill/runs/01JB/no-mill.sock",
+		}
+		for name, value := range decided {
+			env[name] = value
+		}
+
+		By("when the session runs `env` through its exec tool")
+		printed := probed(env)
+
+		By("then DG_SOCKET and MILL_SOCKET are the workspace's dead paths")
+		Expect(printed).To(ContainSubstring("DG_SOCKET=/var/lib/mill/runs/01JB/no-dagger.sock\n"))
+		Expect(printed).To(ContainSubstring("MILL_SOCKET=/var/lib/mill/runs/01JB/no-mill.sock\n"))
+
+		By("and neither the host's dagger nor the host's mill socket ever appears")
+		Expect(printed).NotTo(ContainSubstring("/run/dagger/dg.sock"))
+		Expect(printed).NotTo(ContainSubstring("/run/mill/mill.sock"))
+	})
+
 	It("gives the session the workspace's git identity, which the step cannot set aside", func() {
 		By("given a step that names an identity of its own")
 		options := filepath.Join(GinkgoT().TempDir(), "options.json")

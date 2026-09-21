@@ -80,3 +80,16 @@ var _ = Describe("The signing probe", Label("unit"), func() {
 		Expect(result.Reason).NotTo(ContainSubstring("no project's allowed_signers names it"))
 	})
 })
+
+var _ = Describe("The isolation probe", Label("unit"), func() {
+	It("SessionSockets provisions a throwaway workspace, checks it, and cleans up after itself", func(ctx context.Context) {
+		workspaceDir := GinkgoT().TempDir()
+
+		result := doctor.SessionSockets(ctx, workspaceDir, "/run/mill/ws.sock", "/run/dagger/dg.sock")
+		Expect(result.OK).To(BeTrue(), result.Reason)
+
+		matches, err := filepath.Glob(filepath.Join(workspaceDir, "doctor-isolation-*"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(matches).To(BeEmpty(), "the throwaway workspace's own directory is gone")
+	})
+})

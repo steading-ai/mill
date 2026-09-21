@@ -255,6 +255,7 @@ var _ = Describe("mill run", func() {
 				"work",
 				"--config", path,
 				"--project", "millspec",
+				"--socket", "/nonexistent/mill.sock",
 				"--dagger-socket", "/nonexistent/dg.sock",
 			}, strings.NewReader(""), &stdout, &stderr)
 

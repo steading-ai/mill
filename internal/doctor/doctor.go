@@ -10,6 +10,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +19,8 @@ import (
 
 	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/harness/claude"
+	"github.com/ivy/mill/internal/workspace"
+	"github.com/ivy/mill/internal/workspace/local"
 	"github.com/ivy/mill/internal/workspace/signing"
 )
 
@@ -190,4 +194,98 @@ func Forge(ctx context.Context, f forge.Forge, tokenSource, repositoryURL string
 		return pass("%s accepts %s", repositoryURL, tokenSource)
 	}
 	return fail("%s refused %s: %v", repositoryURL, tokenSource, err)
+}
+
+// SessionSockets asks a throwaway local workspace for the environment a
+// session's tools would run under, and checks that DG_SOCKET and MILL_SOCKET
+// in it are dead: this is the wiring the mill#38 incident found missing,
+// where a session ran unsandboxed against the production dagger and mill
+// sockets because nothing had ever overwritten them (docs/sandbox.md
+// §Credentials).
+//
+// A workspace made with [local.Workspace.Create] cannot serve this probe: it
+// requires an origin to clone, which a `mill doctor` invocation has none of.
+// [local.Workspace.Attach] has no such precondition, so the probe provisions
+// just enough of a checkout for it to succeed — an empty repository, never
+// cloned from anywhere — under a fresh, real child of workspaceDir, so a
+// workspace directory this host cannot actually use for a run (wrong
+// filesystem, no exec permission) fails here too. The workspace is destroyed
+// before this returns either way.
+func SessionSockets(ctx context.Context, workspaceDir, socket, daggerSocket string) Result {
+	dir, err := os.MkdirTemp(workspaceDir, "doctor-isolation-*")
+	if err != nil {
+		return fail("workspace directory %s: %v", workspaceDir, err)
+	}
+	checkout := filepath.Join(dir, "checkout")
+	if err := os.MkdirAll(checkout, 0o700); err != nil {
+		_ = os.RemoveAll(dir)
+		return fail("workspace directory %s: %v", workspaceDir, err)
+	}
+	if err := gitInit(ctx, checkout); err != nil {
+		_ = os.RemoveAll(dir)
+		return fail("git init %s: %v", checkout, err)
+	}
+	ws := local.New(local.Options{Root: workspaceDir})
+	if _, err := ws.Attach(ctx, workspace.Spec{RunID: filepath.Base(dir), NodeRef: "doctor/isolation"}); err != nil {
+		_ = os.RemoveAll(dir)
+		return fail("attach a throwaway workspace under %s: %v", workspaceDir, err)
+	}
+	env := ws.Environment()
+	_ = ws.Destroy(ctx)
+	return checkSessionEnv(env, socket, daggerSocket)
+}
+
+// gitInit makes dir an empty git repository, spawned through
+// [workspace.Spawner] like every other process the mill runs (os/exec is
+// forbidden outside internal/workspace).
+func gitInit(ctx context.Context, dir string) error {
+	process, err := (workspace.Spawner{}).Exec(ctx, workspace.Command{
+		Path: "git", Args: []string{"init", "--quiet", dir},
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(io.Discard, process.Stdout); err != nil {
+		return err
+	}
+	stderr, err := io.ReadAll(process.Stderr)
+	if err != nil {
+		return err
+	}
+	if result := process.Wait(); result.Status != 0 {
+		return fmt.Errorf("exited %d: %s", result.Status, strings.TrimSpace(string(stderr)))
+	}
+	return nil
+}
+
+// checkSessionEnv is whether a session's environment keeps DG_SOCKET and
+// MILL_SOCKET away from the sockets this host actually serves: present,
+// distinct from socket and daggerSocket, and answering no dial. A dial
+// succeeding on the value handed back means the wiring leaked the real
+// address rather than a dead one — on a healthy host the real socket is
+// live, which is what the `socket` probe already establishes.
+func checkSessionEnv(env map[string]string, socket, daggerSocket string) Result {
+	for name, real := range map[string]string{"DG_SOCKET": daggerSocket, "MILL_SOCKET": socket} {
+		value := env[name]
+		if value == "" {
+			return fail("%s is missing from a session's own environment", name)
+		}
+		if value == real {
+			return fail("%s is %s, the socket this host actually serves", name, real)
+		}
+		if dialable(value) {
+			return fail("%s is %s, which answers a dial", name, value)
+		}
+	}
+	return pass("DG_SOCKET and MILL_SOCKET are dead paths, neither %s nor %s", daggerSocket, socket)
+}
+
+// dialable reports whether something is listening on a unix socket path.
+func dialable(path string) bool {
+	conn, err := net.DialTimeout("unix", path, 200*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }

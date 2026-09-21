@@ -450,7 +450,7 @@ their bytes.
 
 ## doctor
 
-Eleven probes, one line of reason each — `mcp` reports one line per
+Twelve probes, one line of reason each — `mcp` reports one line per
 configured server, so a host with several has more than eleven lines. Every
 probe is reported; the command exits non-zero when any of them failed. A
 probe that passed with something still worth looking at is marked `warn`
@@ -466,6 +466,7 @@ fail  signing    no signing key under ~/.local/state/mill/workspaces/signing
 pass  forge      https://github.com/octo-org/thing.git accepts the credential store's forge-token ($CREDENTIALS_DIRECTORY/forge-token) as octocat
 pass  notify     contrib/notify/thicket-send.sh accepts a probe notice
 pass  workspace  local: a clone under the mill's account
+pass  isolation  DG_SOCKET and MILL_SOCKET are dead paths, neither /run/dagger/dg.sock nor /run/user/1000/mill/mill.sock
 pass  space      local: no sandbox volume to watch
 warn  gateway    https://api.anthropic.com answers a token count through the gateway with credential:774fdbe2; the credential was minted 2025-09-30, more than 11 months ago; a setup-token lasts a year — mint a new one
 pass  mcp        playwright: 23 tools
@@ -481,6 +482,7 @@ pass  mcp        playwright: 23 tools
 | `forge` | The forge accepts the credential the mill holds — the credential store's `forge-token`, else `$MILL_FORGE_TOKEN` (§Forges) — through the adapter a run would deliver with. The line names where the credential came from. On GitHub it names the account the token authenticates as, and a token that has expired, or lacks one of the permissions §Forges lists, fails naming the credential and what it lacks. A `forge` setting that names no adapter fails here too |
 | `notify` | The configured notify command runs and accepts a probe notice |
 | `workspace` | Which workspace backend a run works in, and for `machine` whether the sandbox root is btrfs |
+| `isolation` | A session's own tools never see the production dagger or mill socket: a throwaway workspace is attached and its environment checked for `DG_SOCKET`/`MILL_SOCKET` naming a dead path, not the socket this host actually serves (docs/sandbox.md §Credentials) |
 | `space` | For `machine`, free space on the sandbox volume against the eviction watermarks (`cache-high-watermark`, `cache-low-watermark`): pass above the low one, warn between, fail below the high one — eviction runs at every promotion and the host is short of space |
 | `gateway` | The credential gateway's upstream answers one token count through it with the configured credential, and the credential's age against `model_credential_minted` |
 | `mcp` | Each `mcp-servers` entry (§Configuration) is started, sent `initialize` and `tools/list`, and stopped: one line per server, naming its tool count or what kept it from answering — a missing binary, a non-zero exit, or no response before the probe's own timeout. A host with none configured reports one line saying so |

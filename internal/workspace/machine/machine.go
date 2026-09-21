@@ -693,9 +693,15 @@ func (w *Workspace) SigningKey() *signing.Key {
 // attributed by — no host path reaches inside, so there is no
 // configuration file to point it at — and they carry no key: such a commit
 // is unsigned, and the push verb refuses it (docs/sandbox.md §Verbs).
+//
+// DG_SOCKET and MILL_SOCKET are dead paths under handle.Socket's own
+// directory, a host-side accounting path the machine's namespace never
+// mounts anywhere — so this is defense in depth, not the load-bearing
+// guarantee: the machine already binds nothing at /run/dagger and only
+// ws.sock at /run/mill (docs/sandbox.md §Credentials).
 func (w *Workspace) Environment() map[string]string {
 	w.mu.RLock()
-	token, egress := w.token, w.egress
+	token, egress, handle := w.token, w.egress, w.handle
 	w.mu.RUnlock()
 	identity := w.Committer()
 	env := map[string]string{
@@ -707,6 +713,7 @@ func (w *Workspace) Environment() map[string]string {
 	for name, value := range egress.Environment(token.Value) {
 		env[name] = value
 	}
+	workspace.MergeDeadSockets(env, handle)
 	return env
 }
 
