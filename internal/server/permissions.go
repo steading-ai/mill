@@ -32,6 +32,7 @@ var permissions = map[string]interceptor.Permission{
 	millv1connect.StoreServiceWhoAmIProcedure:        interceptor.PermissionRead,
 	millv1connect.StoreServiceLogsProcedure:          interceptor.PermissionRead,
 	millv1connect.WorkerServiceProbeProcedure:        interceptor.PermissionRead,
+	millv1connect.WorkerServiceClaimsProcedure:       interceptor.PermissionRead,
 
 	millv1connect.StoreServiceCancelProcedure:      interceptor.PermissionOperate,
 	millv1connect.StoreServiceRerunProcedure:       interceptor.PermissionOperate,

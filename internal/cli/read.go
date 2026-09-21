@@ -190,7 +190,8 @@ func runStatus(cmd *cobra.Command, opts readOptions) error {
 	if err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "worker claims from: %s\n", claimsFrom(config.Projects))
+	projects, labels := resolvedClaims(cmd.Context(), opts.socket, config)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "worker claims from: %s\n", claimsFrom(projects, labels))
 
 	if opts.ended {
 		return runStatusEnded(cmd, opts, statuses, v)

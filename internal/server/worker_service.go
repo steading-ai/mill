@@ -31,6 +31,13 @@ type WorkerServiceConfig struct {
 	// reported. Nil means no project is configured to probe against; the
 	// forge probe fails naming that, sidecar and signing still answer.
 	Forge func(ctx context.Context) (adapter forge.Forge, tokenSource, repositoryURL string, err error)
+	// Host, Projects and Labels are Claims's whole answer: the worker's OS
+	// hostname and its already-resolved claim filter, held in memory rather
+	// than probed, so a client can ask on every status/doctor/run invocation
+	// at no cost.
+	Host     string
+	Projects []string
+	Labels   []string
 }
 
 // WorkerService answers WorkerService.Probe from this process's own worker
@@ -93,4 +100,15 @@ func (s *WorkerService) Probe(ctx context.Context, _ *connect.Request[millv1.Pro
 
 func probeResultProto(r doctor.Result) *millv1.ProbeResult {
 	return &millv1.ProbeResult{Ok: r.OK, Reason: r.Reason}
+}
+
+// Claims answers the worker's own already-resolved claim filter and host:
+// no probe, no side effect, so a caller can afford this on every status,
+// doctor or run invocation.
+func (s *WorkerService) Claims(_ context.Context, _ *connect.Request[millv1.ClaimsRequest]) (*connect.Response[millv1.ClaimsResponse], error) {
+	return connect.NewResponse(&millv1.ClaimsResponse{
+		Host:     s.cfg.Host,
+		Projects: s.cfg.Projects,
+		Labels:   s.cfg.Labels,
+	}), nil
 }
