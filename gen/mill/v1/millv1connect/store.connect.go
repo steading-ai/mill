@@ -154,6 +154,8 @@ const (
 	// StoreServiceSealAttemptProcedure is the fully-qualified name of the StoreService's SealAttempt
 	// RPC.
 	StoreServiceSealAttemptProcedure = "/mill.v1.StoreService/SealAttempt"
+	// StoreServiceWatchRunsProcedure is the fully-qualified name of the StoreService's WatchRuns RPC.
+	StoreServiceWatchRunsProcedure = "/mill.v1.StoreService/WatchRuns"
 )
 
 // StoreServiceClient is a client for the mill.v1.StoreService service.
@@ -339,6 +341,13 @@ type StoreServiceClient interface {
 	// (same step_run_id, seq) is a no-op, so a seal retried after a lost
 	// response never double-counts. docs/activity.md §Lifecycle's Seal step.
 	SealAttempt(context.Context, *connect.Request[v1.SealAttemptRequest]) (*connect.Response[v1.SealAttemptResponse], error)
+	// WatchRuns streams the ledger's events table from a cursor: every run,
+	// not one. The first message on a fresh subscription carries only the
+	// opening position, so a caller that reads it before doing anything else
+	// never misses an event that lands between opening the stream and acting
+	// on what it saw. A cursor older than the replay window is refused with
+	// FailedPrecondition naming the window. docs/ledger.md §events.
+	WatchRuns(context.Context, *connect.Request[v1.WatchRunsRequest]) (*connect.ServerStreamForClient[v1.WatchRunsResponse], error)
 }
 
 // NewStoreServiceClient constructs a client for the mill.v1.StoreService service. By default, it
@@ -610,6 +619,12 @@ func NewStoreServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(storeServiceMethods.ByName("SealAttempt")),
 			connect.WithClientOptions(opts...),
 		),
+		watchRuns: connect.NewClient[v1.WatchRunsRequest, v1.WatchRunsResponse](
+			httpClient,
+			baseURL+StoreServiceWatchRunsProcedure,
+			connect.WithSchema(storeServiceMethods.ByName("WatchRuns")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -658,6 +673,7 @@ type storeServiceClient struct {
 	whoAmI                *connect.Client[v1.WhoAmIRequest, v1.WhoAmIResponse]
 	logs                  *connect.Client[v1.LogsRequest, v1.LogsResponse]
 	sealAttempt           *connect.Client[v1.SealAttemptRequest, v1.SealAttemptResponse]
+	watchRuns             *connect.Client[v1.WatchRunsRequest, v1.WatchRunsResponse]
 }
 
 // GetRunByNode calls mill.v1.StoreService.GetRunByNode.
@@ -875,6 +891,11 @@ func (c *storeServiceClient) SealAttempt(ctx context.Context, req *connect.Reque
 	return c.sealAttempt.CallUnary(ctx, req)
 }
 
+// WatchRuns calls mill.v1.StoreService.WatchRuns.
+func (c *storeServiceClient) WatchRuns(ctx context.Context, req *connect.Request[v1.WatchRunsRequest]) (*connect.ServerStreamForClient[v1.WatchRunsResponse], error) {
+	return c.watchRuns.CallServerStream(ctx, req)
+}
+
 // StoreServiceHandler is an implementation of the mill.v1.StoreService service.
 type StoreServiceHandler interface {
 	// GetRunByNode returns the live run for a dagger node, or nothing. The
@@ -1058,6 +1079,13 @@ type StoreServiceHandler interface {
 	// (same step_run_id, seq) is a no-op, so a seal retried after a lost
 	// response never double-counts. docs/activity.md §Lifecycle's Seal step.
 	SealAttempt(context.Context, *connect.Request[v1.SealAttemptRequest]) (*connect.Response[v1.SealAttemptResponse], error)
+	// WatchRuns streams the ledger's events table from a cursor: every run,
+	// not one. The first message on a fresh subscription carries only the
+	// opening position, so a caller that reads it before doing anything else
+	// never misses an event that lands between opening the stream and acting
+	// on what it saw. A cursor older than the replay window is refused with
+	// FailedPrecondition naming the window. docs/ledger.md §events.
+	WatchRuns(context.Context, *connect.Request[v1.WatchRunsRequest], *connect.ServerStream[v1.WatchRunsResponse]) error
 }
 
 // NewStoreServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -1325,6 +1353,12 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(storeServiceMethods.ByName("SealAttempt")),
 		connect.WithHandlerOptions(opts...),
 	)
+	storeServiceWatchRunsHandler := connect.NewServerStreamHandler(
+		StoreServiceWatchRunsProcedure,
+		svc.WatchRuns,
+		connect.WithSchema(storeServiceMethods.ByName("WatchRuns")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/mill.v1.StoreService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case StoreServiceGetRunByNodeProcedure:
@@ -1413,6 +1447,8 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 			storeServiceLogsHandler.ServeHTTP(w, r)
 		case StoreServiceSealAttemptProcedure:
 			storeServiceSealAttemptHandler.ServeHTTP(w, r)
+		case StoreServiceWatchRunsProcedure:
+			storeServiceWatchRunsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1592,4 +1628,8 @@ func (UnimplementedStoreServiceHandler) Logs(context.Context, *connect.Request[v
 
 func (UnimplementedStoreServiceHandler) SealAttempt(context.Context, *connect.Request[v1.SealAttemptRequest]) (*connect.Response[v1.SealAttemptResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.SealAttempt is not implemented"))
+}
+
+func (UnimplementedStoreServiceHandler) WatchRuns(context.Context, *connect.Request[v1.WatchRunsRequest], *connect.ServerStream[v1.WatchRunsResponse]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.WatchRuns is not implemented"))
 }

@@ -140,6 +140,28 @@ next: --cursor MjAyNi0wOS0yMVQxNToxNToxMS4xMjc3NzRafDAxTTMyOEozNEExVzNaUUNHTjQ2T
 Passing that line's `--cursor` back in continues to the next page; a page
 with nothing left to page prints no `next:` line.
 
+`--follow` (`-f`) prints the listing once, then keeps the ledger's change
+stream open (`WatchRuns`, `docs/ledger.md` §events) and prints a line per
+event as runs make them — a step starting, closing or failing — oldest
+first, across every run `--project` narrows to. Unlike `logs --follow` this
+has no end state to exit on: every run, not one, so it keeps going until
+ctrl-C, which exits 0. A broken stream, including `mill serve` restarting,
+reconnects from the last cursor seen, so a follow resumes with no gap and no
+duplicate.
+
+```
+$ mill status --follow
+worker claims from: every project
+NODE       STATUS   STEP       ATTEMPT  ELAPSED  TOKENS       GATE
+millcli#1  running  implement  1        0s       184213/9820  -
+2026-09-21T16:04:08Z  step_started  millcli#1  01M20W…/implement
+2026-09-21T16:05:52Z  step_closed   millcli#1  01M20W…/implement
+```
+
+Each line is when, what happened, the node, and the run (and step, once the
+event belongs to one) — the fields the stream carries, no before/after: use
+`inspect` for what an attempt actually did.
+
 ## inspect
 
 One run in full: the workflow version it follows and every attempt in order,

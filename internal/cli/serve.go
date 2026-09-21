@@ -63,6 +63,13 @@ type serveOptions struct {
 	// reaches the store at the path this process binds.
 	work   bool
 	worker workOptions
+
+	// watchRunsWindow and watchRunsKeepalive configure WatchRuns, the ledger's
+	// change stream `mill status --follow` reads: how far back a resumed
+	// cursor may be before it is refused, and how often an idle stream sends
+	// a cursor-only keepalive so a proxy does not close it.
+	watchRunsWindow    time.Duration
+	watchRunsKeepalive time.Duration
 }
 
 // socket is the path the service listens on.
@@ -99,6 +106,8 @@ drains after it, because the worker is one of the store's clients.`,
 	f.StringVar(&opts.roles, "roles", "", "path of the uid-to-role map (default: only the service's own uid)")
 	f.DurationVar(&opts.shutdownTimeout, "shutdown-timeout", server.DefaultShutdownTimeout, "how long to wait for in-flight requests on shutdown")
 	f.BoolVar(&opts.work, "work", false, "also run a worker in this process, claiming from the configured projects")
+	f.DurationVar(&opts.watchRunsWindow, "watch-runs-window", server.DefaultWatchRunsWindow, "how far back a WatchRuns cursor may be before it is refused")
+	f.DurationVar(&opts.watchRunsKeepalive, "watch-runs-keepalive", server.DefaultWatchRunsKeepalive, "how often an idle WatchRuns stream sends a keepalive")
 	bindWorkFlags(cmd, &opts.worker)
 	return cmd
 }
@@ -190,7 +199,10 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 	// this same process's worker already reserves — only meaningful when
 	// --work colocates one (docs/architecture.md §"One binary, two faces");
 	// a bare `serve` checks against nothing.
-	var storeOpts []server.StoreServiceOption
+	storeOpts := []server.StoreServiceOption{
+		server.WithWatchRunsWindow(opts.watchRunsWindow),
+		server.WithWatchRunsKeepalive(opts.watchRunsKeepalive),
+	}
 	if opts.work {
 		storeOpts = append(storeOpts, server.WithMcpServers(hostMcpServers))
 	}

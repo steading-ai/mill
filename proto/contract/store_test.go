@@ -20,6 +20,7 @@ var readOnlyRPCs = map[string]bool{
 	"Health":        true,
 	"WhoAmI":        true,
 	"Logs":          true,
+	"WatchRuns":     true,
 }
 
 // leaselessRPCs are the mutations no lease fences, because their caller
@@ -40,9 +41,10 @@ var leaselessRPCs = map[string]bool{
 }
 
 // wantedRPCs is exactly the surface docs/ledger.md's resume algorithm calls,
-// plus the reads the CLI needs: status, listing ended runs, inspect, and the
-// skill a workflow pull writes back out. An RPC with no caller there does
-// not belong on this service.
+// plus the reads the CLI needs: status, listing ended runs, inspect, the
+// skill a workflow pull writes back out, and the change stream mill status
+// --follow reads. An RPC with no caller there does not belong on this
+// service.
 var wantedRPCs = []string{
 	"GetRunByNode", "CreateRun", "SetLease",
 	"StartStepRun", "RecordStepEnvironment", "MarkSessionStarted", "CloseStepRun", "FailStepRun",
@@ -53,7 +55,7 @@ var wantedRPCs = []string{
 	"RecordUsage", "MarkUsagePosted",
 	"GetWorkflow", "ListWorkflows", "PutWorkflow", "PutSkill", "GetSkill",
 	"Status", "ListRuns", "Inspect", "History", "Cost", "Health", "WhoAmI", "Logs",
-	"SealAttempt",
+	"SealAttempt", "WatchRuns",
 }
 
 var _ = Describe("store.proto", func() {

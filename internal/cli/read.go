@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"os"
+	"os/signal"
 	"slices"
 	"sort"
 	"strconv"
@@ -160,7 +162,14 @@ With no --status filter this is the runs that have not ended: selecting,
 running, waiting and parked.
 
 --ended lists runs that have ended instead, newest-ended first, one page at a
-time; the printed cursor pages to the next.`,
+time; the printed cursor pages to the next.
+
+--follow (-f) prints the listing once, then keeps the ledger's change
+stream open and prints a line per event as runs make them: a step
+starting, closing or failing, oldest first, across every run --project
+narrows to. It never ends on its own — ctrl-C exits 0 — and reconnects
+from its last cursor on a broken stream, so a "mill serve" restart
+mid-follow resumes with no gap and no duplicate.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runStatus(cmd, opts)
@@ -174,6 +183,7 @@ time; the printed cursor pages to the next.`,
 	cmd.Flags().StringVar(&opts.since, "since", "", "with --ended, only runs that ended within this window, such as 24h or 7d")
 	cmd.Flags().StringVar(&opts.cursor, "cursor", "", "with --ended, resume the page named by the previous call's printed cursor")
 	cmd.Flags().Int32Var(&opts.limit, "limit", 0, "with --ended, runs per page, up to 200 (default: 50)")
+	cmd.Flags().BoolVarP(&opts.follow, "follow", "f", false, "after listing, keep the ledger's change stream open and print an event per line as runs make them")
 	return cmd
 }
 
@@ -197,7 +207,8 @@ func runStatus(cmd *cobra.Command, opts readOptions) error {
 		return runStatusEnded(cmd, opts, statuses, v)
 	}
 
-	res, err := storeClient(opts.socket).Status(cmd.Context(), connect.NewRequest(&millv1.StatusRequest{
+	store := storeClient(opts.socket)
+	res, err := store.Status(cmd.Context(), connect.NewRequest(&millv1.StatusRequest{
 		Statuses: statuses, Project: opts.project,
 	}))
 	if err != nil {
@@ -207,7 +218,100 @@ func runStatus(cmd *cobra.Command, opts readOptions) error {
 		return err
 	}
 	reportUndecodable(cmd, res.Msg.GetFindings())
+	if !opts.follow {
+		return nil
+	}
+
+	// --follow never ends on its own (WatchRuns' own contract, over every
+	// run), so ctrl-C is the only way this process is meant to stop it —
+	// mirroring runLogs's every-run follow in logs.go.
+	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+	defer stop()
+	if err := followStatus(ctx, cmd.OutOrStdout(), store, opts.project); err != nil {
+		return fmt.Errorf("status --follow: %w", err)
+	}
 	return nil
+}
+
+// watchRunsRetryDelay is how long followStatus waits before reopening
+// WatchRuns after a failed or broken connection — long enough not to spin
+// while `mill serve` is down for a restart, short enough that a follow
+// resumes soon after it comes back.
+const watchRunsRetryDelay = 500 * time.Millisecond
+
+// followStatus keeps the ledger's change stream open, printing one line per
+// event as it arrives, and reopens WatchRuns from its last cursor whenever
+// the connection fails or breaks — including the socket going away while
+// `mill serve` restarts — so a follow resumes with no gap and no duplicate
+// rather than ending. ctx ending, from ctrl-C, is the only clean exit.
+func followStatus(ctx context.Context, out io.Writer, store millv1connect.StoreServiceClient, project string) error {
+	// retry reports whether the loop should reopen WatchRuns after a failed
+	// or broken connection, waiting watchRunsRetryDelay first — false means
+	// ctx ended, so the caller should return rather than reconnect.
+	retry := func() bool {
+		if ctx.Err() != nil {
+			return false
+		}
+		return sleepOrDone(ctx, watchRunsRetryDelay)
+	}
+
+	var cursor string
+	for {
+		stream, err := store.WatchRuns(ctx, connect.NewRequest(&millv1.WatchRunsRequest{Project: project, Cursor: cursor}))
+		if err != nil {
+			if !retry() {
+				return nil
+			}
+			continue
+		}
+
+		for stream.Receive() {
+			msg := stream.Msg()
+			if c := msg.GetCursor(); c != "" {
+				cursor = c
+			}
+			if event := msg.GetEvent(); event != nil {
+				if _, err := io.WriteString(out, watchRunsLine(event)); err != nil {
+					return err
+				}
+			}
+		}
+		if err := stream.Err(); err != nil {
+			if !retry() {
+				return nil
+			}
+			continue
+		}
+		// WatchRuns' own contract is that a stream over every run never ends
+		// on its own — reaching here with no error means ctx did.
+		return nil
+	}
+}
+
+// sleepOrDone waits delay or ctx's own end, whichever comes first, and
+// reports whether it was the delay: how followStatus's retry loop avoids
+// busy-looping while `mill serve` is down without also waiting out the
+// delay after ctrl-C already ended ctx.
+func sleepOrDone(ctx context.Context, delay time.Duration) bool {
+	select {
+	case <-time.After(delay):
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// watchRunsLine renders one RunEvent as `mill status --follow` prints it:
+// when, what happened, which node, and the run (and step, when the event
+// belongs to one) — the fields WatchRuns sends, no more; RunEvent carries no
+// before/after by design (proto/mill/v1/store.proto).
+func watchRunsLine(event *millv1.RunEvent) string {
+	when := event.GetOccurredAt().AsTime().UTC().Format(time.RFC3339)
+	ref := event.GetRunId()
+	if step := event.GetStepRunId(); step != "" {
+		ref += "/" + step
+	}
+	return fmt.Sprintf("%s  %s  %s  %s\n", when, event.GetOp(), event.GetNodeRef(), ref)
 }
 
 // runStatusEnded is `mill status --ended`: one page of ended runs, windowed
