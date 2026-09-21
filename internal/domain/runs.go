@@ -271,13 +271,18 @@ func (s *Service) History(ctx context.Context, p InspectParams) ([]*millv1.Event
 type CostParams struct {
 	// Since bounds the window below. Zero means every row ever recorded.
 	Since time.Time
+	// Until bounds the window above. Zero means no upper bound.
+	Until time.Time
 	// Project narrows to one dagger project. Empty means every project.
 	Project string
+	// Bucket says whether, and how, to also group the window over time.
+	Bucket millv1.TimeBucket
 }
 
-// Cost rolls a window of usage up by run, workflow, step and model.
+// Cost rolls a window of usage up by run, workflow, step, model and,
+// optionally, day, and folds in the per-step funnel.
 func (s *Service) Cost(ctx context.Context, p CostParams) (*store.Cost, error) {
-	return s.store.Cost(ctx, store.CostParams{Since: p.Since, Project: p.Project})
+	return s.store.Cost(ctx, store.CostParams{Since: p.Since, Until: p.Until, Project: p.Project, Bucket: p.Bucket})
 }
 
 // Health is what the service can say about itself: whether the database

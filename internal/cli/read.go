@@ -73,6 +73,8 @@ type readOptions struct {
 	view         string
 	statuses     []string
 	since        string
+	until        string
+	bucket       string
 	step         string
 	follow       bool
 	workspaceDir string
@@ -662,11 +664,13 @@ func newCostCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cost",
 		Short: "Roll usage up by run, workflow, step and model",
-		Long: `Roll a window of usage up four ways: by run, by workflow version, by step
-name, and by model.
+		Long: `Roll a window of usage up by run, by workflow version, by step name, and by
+model — and, with --bucket day, by UTC calendar day too.
 
 Counts, never currency. The ledger records tokens; a rate table is applied
-by whoever wants money.`,
+by whoever wants money. STEP rows also carry the funnel: how many runs
+reached the step, passed it, died there, needed more than one attempt, and
+how many revise rounds it answered.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runCost(cmd, opts)
@@ -674,8 +678,18 @@ by whoever wants money.`,
 	}
 	addReadFlags(cmd, &opts)
 	cmd.Flags().StringVar(&opts.since, "since", "", "only usage recorded within this window, such as 24h or 7d")
+	cmd.Flags().StringVar(&opts.until, "until", "", "exclude usage within this window of now, such as 1h")
+	cmd.Flags().StringVar(&opts.bucket, "bucket", "", "also group the window over time: day")
 	cmd.Flags().StringVar(&opts.project, "project", "", "only runs on nodes in this dagger project")
 	return cmd
+}
+
+// costSection is one of `mill cost`'s tables: a title, the buckets it
+// renders, and whether its rows carry the step funnel's extra columns.
+type costSection struct {
+	title   string
+	buckets []*millv1.CostBucket
+	counted bool
 }
 
 func runCost(cmd *cobra.Command, opts readOptions) error {
@@ -687,35 +701,75 @@ func runCost(cmd *cobra.Command, opts readOptions) error {
 		}
 		request.Since = timestamp(time.Now().Add(-window))
 	}
+	if opts.until != "" {
+		window, err := parseWindow(opts.until)
+		if err != nil {
+			return err
+		}
+		request.Until = timestamp(time.Now().Add(-window))
+	}
+	bucket, err := parseBucket(opts.bucket)
+	if err != nil {
+		return err
+	}
+	request.Bucket = bucket
 	res, err := storeClient(opts.socket).Cost(cmd.Context(), connect.NewRequest(request))
 	if err != nil {
 		return fmt.Errorf("cost: %w", err)
 	}
 	out := cmd.OutOrStdout()
 	fillByModel(res.Msg)
-	for i, section := range []struct {
-		title   string
-		buckets []*millv1.CostBucket
-	}{
-		{"RUN", res.Msg.GetByRun()},
-		{"WORKFLOW", res.Msg.GetByWorkflow()},
-		{"STEP", res.Msg.GetByStep()},
-		{"MODEL", res.Msg.GetByModel()},
-	} {
+	sections := []costSection{
+		{"RUN", res.Msg.GetByRun(), false},
+		{"WORKFLOW", res.Msg.GetByWorkflow(), false},
+		{"STEP", res.Msg.GetByStep(), true},
+		{"MODEL", res.Msg.GetByModel(), false},
+	}
+	if bucket == millv1.TimeBucket_TIME_BUCKET_DAY {
+		sections = append(sections, costSection{"DAY", res.Msg.GetByDay(), false})
+	}
+	for i, section := range sections {
 		if i > 0 {
 			_, _ = fmt.Fprintln(out)
 		}
-		// One writer per section: a shared one would align four unrelated
-		// tables to each other's widest key.
+		// One writer per section: a shared one would align unrelated tables
+		// to each other's widest key.
 		w := table(cmd)
-		_, _ = fmt.Fprintf(w, "%s\tSOURCE\tINPUT\tOUTPUT\tCACHE READ\tCACHE WRITE\n", section.title)
+		if section.counted {
+			_, _ = fmt.Fprintf(w, "%s\tSOURCE\tINPUT\tOUTPUT\tCACHE READ\tCACHE WRITE\tREACHED\tPASSED\tDIED\tRETRIED\tREVISES\tATTEMPTS\n", section.title)
+		} else {
+			_, _ = fmt.Fprintf(w, "%s\tSOURCE\tINPUT\tOUTPUT\tCACHE READ\tCACHE WRITE\n", section.title)
+		}
 		for _, bucket := range section.buckets {
+			row := func(source string, in, outTokens, read, write int64) {
+				if !section.counted {
+					_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\n", bucket.GetKey(), source, in, outTokens, read, write)
+					return
+				}
+				c := bucket.GetCounts()
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
+					bucket.GetKey(), source, in, outTokens, read, write,
+					c.GetReached(), c.GetPassed(), c.GetDied(), c.GetRetried(), c.GetRevises(), c.GetAttempts())
+			}
+			sources := sourcesOf(bucket.GetTotals())
+			if len(sources) == 0 {
+				if !section.counted {
+					continue
+				}
+				// A step whose counts come from step runs the usage window
+				// never billed anything for — a check, a gate — still gets
+				// a row: the funnel is what this section is for.
+				row("-", 0, 0, 0, 0)
+				continue
+			}
 			// One row per who counted: the adapter's report and, where a
 			// gateway sat in front of the session, its own count beside
-			// it (docs/sandbox.md §Credentials).
-			for _, source := range sourcesOf(bucket.GetTotals()) {
+			// it (docs/sandbox.md §Credentials). The counts are per bucket,
+			// not per source, so they repeat on every row of a bucket that
+			// has more than one.
+			for _, source := range sources {
 				in, outTokens, read, write := sum(bySource(bucket.GetTotals(), source))
-				_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\n", bucket.GetKey(), sourceName(source), in, outTokens, read, write)
+				row(sourceName(source), in, outTokens, read, write)
 			}
 		}
 		if err := w.Flush(); err != nil {
@@ -723,6 +777,18 @@ func runCost(cmd *cobra.Command, opts readOptions) error {
 		}
 	}
 	return nil
+}
+
+// parseBucket reads a --bucket flag. Empty means no time grouping.
+func parseBucket(text string) (millv1.TimeBucket, error) {
+	switch text {
+	case "":
+		return millv1.TimeBucket_TIME_BUCKET_UNSPECIFIED, nil
+	case "day":
+		return millv1.TimeBucket_TIME_BUCKET_DAY, nil
+	default:
+		return millv1.TimeBucket_TIME_BUCKET_UNSPECIFIED, fmt.Errorf("--bucket: %q is not a supported bucket, want \"day\"", text)
+	}
 }
 
 // sourcesOf is who counted a bucket's rows, the adapter first.
