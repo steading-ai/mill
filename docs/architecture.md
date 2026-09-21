@@ -263,7 +263,7 @@ The mill never runs across zones; it is one more thing in the operator's account
 
 ## Observability
 
-- Every session's event stream is written to a log the operator can tail, one file per step run, through the redactor. Full tool output is never logged; a summary line per tool result is. The prompt the attempt was given heads the file, whole and unsummarised: it is what the mill decided to say, so a question like *did the reviewer's findings reach the implementer* is answered from the record rather than from the harness.
+- Every session's event stream, every verb the workspace runs, and every check is written to an activity record the operator can tail, one file per step run, through the redactor. `docs/activity.md` is the authority on its shape and guarantees; `mill logs` is a line renderer over it, not a separate log.
 - The ledger is the record. `mill status` reads it: runs by state, current step, elapsed, cost so far, gates waiting on humans.
 - Usage per step run is in the ledger; per lease it is posted to dagger. Cost is a rate table applied at query time, as in dagger.
 - A run's artifacts — plan, verdicts, PR, merge commit, usage — are dagger artifacts on the result, with `run_id` in their metadata. A Slack rendering of any of this is thicket's job.

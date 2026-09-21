@@ -5,7 +5,9 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"google.golang.org/protobuf/types/known/structpb"
 
+	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/workspace/redact"
 )
 
@@ -57,5 +59,61 @@ var _ = Describe("The redactor", Label("unit"), func() {
 		Expect(writer.Close()).To(Succeed())
 
 		Expect(log.String()).To(Equal("token=" + redact.Mask))
+	})
+
+	It("redacts a value nested inside a google.protobuf.Struct field", func() {
+		redactor := redact.New("struct-secret-value")
+		arguments, err := structpb.NewStruct(map[string]any{
+			"path":  "value=struct-secret-value",
+			"count": float64(3),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		call := &millv1.ToolCall{CallId: "1", Name: "read", Arguments: arguments}
+
+		redactor.Message(call)
+
+		Expect(call.GetArguments().GetFields()["path"].GetStringValue()).To(Equal("value=" + redact.Mask))
+		Expect(call.GetArguments().GetFields()["count"].GetNumberValue()).To(Equal(float64(3)))
+	})
+
+	Describe("Chunker", func() {
+		It("holds a value split across two writes back until the chunk that completes it", func() {
+			chunker := redact.NewChunker(redact.New("chunk-secret-value"))
+
+			Expect(chunker.Write([]byte("token=chunk-"))).To(BeNil())
+			Expect(chunker.Write([]byte("secret-value done\n"))).To(Equal([]byte("token=" + redact.Mask + " done\n")))
+		})
+
+		It("flushes a trailing chunk that never got its newline", func() {
+			chunker := redact.NewChunker(redact.New("chunk-secret-value"))
+
+			Expect(chunker.Write([]byte("token=chunk-secret-value"))).To(BeNil())
+			Expect(chunker.Close()).To(Equal([]byte("token=" + redact.Mask)))
+		})
+	})
+
+	Describe("DeltaHoldback", func() {
+		It("never shows a value split across two deltas in an intermediate release", func() {
+			holdback := redact.NewDeltaHoldback(redact.New("delta-secret-value"))
+
+			first := holdback.Add("block-1", "token=delta-", false)
+			Expect(first).To(BeEmpty(), "the partial secret is held back, not released early")
+
+			// Enough trailing text follows the secret to push it out of the
+			// hold window, so this call's release proves the redaction, not
+			// just the next one.
+			second := holdback.Add("block-1", "secret-value and then quite a bit more text after it", false)
+			Expect(first + second).NotTo(ContainSubstring("delta-secret-value"))
+			Expect(first + second).To(ContainSubstring(redact.Mask))
+		})
+
+		It("releases everything held on final", func() {
+			holdback := redact.NewDeltaHoldback(redact.New("delta-secret-value"))
+
+			first := holdback.Add("block-1", "token=delta-", false)
+			last := holdback.Add("block-1", "secret-value", true)
+
+			Expect(first + last).To(Equal("token=" + redact.Mask))
+		})
 	})
 })

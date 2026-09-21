@@ -967,3 +967,248 @@ message CostBucket {
   // The bucket's usage, one entry per model.
   repeated ModelTotals totals = 2;
 }
+
+// The activity record: what happened inside an attempt, kept whole.
+// docs/activity.md is its specification; this is the wire shape it defines.
+
+// ActivitySource says who produced one Activity record.
+enum ActivitySource {
+  // ACTIVITY_SOURCE_UNSPECIFIED is the zero value and carries no meaning.
+  ACTIVITY_SOURCE_UNSPECIFIED = 0;
+  // ACTIVITY_SOURCE_HARNESS means the record came from the sidecar's own
+  // event stream: the session's text, tool calls, usage.
+  ACTIVITY_SOURCE_HARNESS = 1;
+  // ACTIVITY_SOURCE_WORKSPACE means the record came from a verb the
+  // workspace ran on the step's behalf: a commit, a push, a PR.
+  ACTIVITY_SOURCE_WORKSPACE = 2;
+  // ACTIVITY_SOURCE_CHECK means the record came from a check step's command.
+  ACTIVITY_SOURCE_CHECK = 3;
+  // ACTIVITY_SOURCE_MILL means the mill wrote the record itself: the
+  // prompt, a gate filed, an attempt's boundary.
+  ACTIVITY_SOURCE_MILL = 4;
+}
+
+// Prompt is the rendered prompt handed to a session, whole.
+message Prompt {
+  // The prompt's full text.
+  string text = 1;
+}
+
+// Text is something the assistant said, whole or as a delta of one block.
+message Text {
+  // Identifies the content block a delta belongs to, so deltas of one
+  // block can be told apart and coalesced.
+  string block_id = 1;
+  // The text, or the delta's fragment when `delta` is set.
+  string text = 2;
+  // Whether this is a partial fragment of the block rather than the whole
+  // of it.
+  bool delta = 3;
+  // Whether this is the block's last delta.
+  bool final = 4;
+}
+
+// Thinking is the model's reasoning, shaped exactly as Text.
+message Thinking {
+  // Identifies the content block a delta belongs to, so deltas of one
+  // block can be told apart and coalesced.
+  string block_id = 1;
+  // The text, or the delta's fragment when `delta` is set.
+  string text = 2;
+  // Whether this is a partial fragment of the block rather than the whole
+  // of it.
+  bool delta = 3;
+  // Whether this is the block's last delta.
+  bool final = 4;
+}
+
+// ToolCall is the session asking to use a tool.
+message ToolCall {
+  // Matches the ToolResult that answers it.
+  string call_id = 1;
+  // The tool's name, as the harness names it.
+  string name = 2;
+  // The call's arguments, kept whole (docs/activity.md, unlike today's
+  // summary line).
+  google.protobuf.Struct arguments = 3;
+}
+
+// ToolResult is what a tool returned, kept whole.
+message ToolResult {
+  // The ToolCall this answers.
+  string call_id = 1;
+  // The result, rendered as text.
+  string content = 2;
+  // Whether the tool failed.
+  bool is_error = 3;
+}
+
+// VerbStarted marks the beginning of a workspace verb: a commit, a push, a
+// PR request.
+message VerbStarted {
+  // The verb's name, such as `git.commit` or `git.push`.
+  string name = 1;
+  // The verb's arguments, mill's own and never a session's free text.
+  map<string, string> arguments = 2;
+}
+
+// Output is one chunk of a stream, produced by a verb or a check as it ran.
+// Shared by `verb_output` and `check_output`.
+message Output {
+  // The stream's name: `stdout`, `stderr`, or a verb's own key.
+  string stream = 1;
+  // The chunk. Whole lines only; a trailing partial line is held back by
+  // the writer until it completes (docs/activity.md §Redaction).
+  bytes data = 2;
+}
+
+// Verb is the outcome of a workspace verb that has finished.
+message Verb {
+  // The verb's name, matching its VerbStarted.
+  string name = 1;
+  // What the verb returned, when it succeeded.
+  string result = 2;
+  // What the verb failed with, when it did not.
+  string error = 3;
+}
+
+// CheckStarted marks the beginning of a check step's command.
+message CheckStarted {
+  // The resolved command, as it was run.
+  repeated string command = 1;
+  // The check's contract: exit codes, stdout shape, feedback policy.
+  Check contract = 2;
+}
+
+// CheckResult is the outcome of a check step's command. Named apart from
+// the existing `Check` message, which is the step's contract rather than
+// one run's result.
+message CheckResult {
+  // How the command exited.
+  harness.v1.ProcessExit exit = 1;
+  // Why it failed, when it did.
+  string reason = 2;
+}
+
+// HarnessStderr is the sidecar's own standard error, kept on a refusal or a
+// crash: the only place the process's own diagnostics survive.
+message HarnessStderr {
+  // The sidecar process's standard error, whole.
+  string text = 1;
+}
+
+// GateFiled records a gate step's filing: the ledger's `gate_node_id`,
+// alongside the ask it was filed with.
+message GateFiled {
+  // What the gate decides: plan, merge, park, probe (internal/notify.Kind).
+  string kind = 1;
+  // The filed gate node's id.
+  string node_id = 2;
+  // The filed gate node's reference.
+  string node_ref = 3;
+  // The gate's rendered title.
+  string title = 4;
+}
+
+// AttemptStarted is always an attempt's first record, seq 1, so a frame
+// reads alone: it carries the fold's own label.
+message AttemptStarted {
+  // The step this attempt is of.
+  string step = 1;
+  // The attempt number.
+  int64 attempt = 2;
+  // skill, check, gate, or preparatory.
+  StepKind kind = 3;
+  // Skill steps only: the session this attempt ran in.
+  string session_id = 4;
+  // Skill steps only: the session's name, from the step definition.
+  string session_name = 5;
+  // Skill steps only: the skill this attempt ran.
+  string skill_name = 6;
+  // Skill steps only: the skill's content digest.
+  string skill_digest = 7;
+  // Skill steps only: the harness adapter this attempt ran under.
+  string harness = 8;
+  // Skill steps only: the harness options document the step carried.
+  google.protobuf.Struct options = 9;
+}
+
+// AttemptEnded is always an attempt's last record, so a frame's outcome is
+// never inferred from what came before it.
+message AttemptEnded {
+  // Closed, failed, or aborted.
+  StepRunStatus status = 1;
+  // What closed the attempt, when it closed.
+  EvidenceKind evidence_kind = 2;
+  // Written to read alone as the stream's last line: `verdict: revise, 2
+  // blocking`, `exit status 1`, `gate denied`.
+  string reason = 3;
+}
+
+// Activity is one event inside an attempt. The worker assigns seq, turn and
+// at as the event arrives; the body is the harness's, the workspace's, the
+// check's or the mill's own, redacted before it is written.
+// docs/activity.md is the specification this message implements.
+message Activity {
+  // The attempt this record belongs to.
+  string step_run_id = 1;
+  // 1-based within the attempt. The order of the record, the cursor a
+  // reader resumes from, and the tie-breaker when runs interleave.
+  int64 seq = 2;
+  // When the record was written.
+  google.protobuf.Timestamp at = 3;
+  // For a record that spans time — a coalesced text block, a check, a
+  // verb — when it ended. Unset for an instant.
+  google.protobuf.Timestamp ended_at = 4;
+  // Who produced it.
+  ActivitySource source = 5;
+  // 1-based within the attempt: the model turn the record belongs to
+  // (docs/activity.md §Turns). 0 on a check step's records and the mill's
+  // own.
+  int64 turn = 6;
+  // Set when the event happened inside a subagent: the tool call in the
+  // parent session that started it. Folds nest on this.
+  string parent_call_id = 7;
+  // The body's size before any cap, and whether the stored body is cut. A
+  // cap is visible, never silent.
+  int64 bytes = 8;
+  // Whether the body was cut down after crossing the attempt's ceiling.
+  bool truncated = 9;
+  // Exactly one of the kinds docs/activity.md's table names.
+  oneof body {
+    // The prompt handed to the session.
+    Prompt prompt = 10;
+    // Something the assistant said.
+    Text text = 11;
+    // The model's reasoning.
+    Thinking thinking = 12;
+    // The session asking to use a tool.
+    ToolCall tool_call = 13;
+    // A tool's answer.
+    ToolResult tool_result = 14;
+    // What a turn cost, per model.
+    harness.v1.Usage usage = 15;
+    // The sidecar asked a silent session whether its task is still needed.
+    harness.v1.Heartbeat heartbeat = 16;
+    // A workspace verb began.
+    VerbStarted verb_started = 17;
+    // One chunk of a verb's stream.
+    Output verb_output = 18;
+    // A workspace verb finished.
+    Verb verb = 19;
+    // A check step's command began.
+    CheckStarted check_started = 20;
+    // One chunk of a check's stream.
+    Output check_output = 21;
+    // A check step's command finished.
+    CheckResult check = 22;
+    // The sidecar's own standard error, on a refusal or a crash.
+    HarnessStderr harness_stderr = 23;
+    // A gate step filed its gate.
+    GateFiled gate_filed = 24;
+    // The attempt began.
+    AttemptStarted attempt_started = 25;
+    // The attempt ended.
+    AttemptEnded attempt_ended = 26;
+  }
+}

@@ -67,12 +67,20 @@ func (r *Runner) runPreparatory(ctx context.Context, s *state, step *millv1.Step
 			Command: step.GetCheck().GetCommand(),
 			Stdout:  millv1.StdoutShape_STDOUT_SHAPE_TEXT,
 		},
+		Sink: checkSink{activity: s.activity},
 	})
 	if err != nil {
 		return result{}, err
 	}
-	logCheck(r.options.LogDir, s.run.GetId(), step.GetName(), sr.GetAttempt(),
-		r.options.Redactor, r.options.Now, res)
+	_ = s.activity.EndCheckOutput("stdout")
+	_ = s.activity.EndCheckOutput("stderr")
+	r.recordActivity(s, sr, &millv1.Activity{
+		Source: millv1.ActivitySource_ACTIVITY_SOURCE_CHECK,
+		Body: &millv1.Activity_Check{Check: &millv1.CheckResult{
+			Exit:   res.Exit,
+			Reason: res.Reason,
+		}},
+	})
 	out := result{
 		exit:   res.Exit,
 		stderr: strings.TrimRight(res.Stderr, "\n"),

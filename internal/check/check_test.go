@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -371,5 +372,91 @@ var _ = Describe("Resolving a check's command", Label("unit"), func() {
 		_, err := check.Command(check.Request{Name: "empty", Check: &millv1.Check{}})
 
 		Expect(err).To(MatchError(ContainSubstring("names no command")))
+	})
+})
+
+// fakeSink is check.Sink for a spec that wants to see what Run sends it: the
+// resolved command and contract, and each output chunk in the order Run
+// produced it. Its own methods lock, since Run's two drain goroutines call
+// Output concurrently.
+type fakeSink struct {
+	mu       sync.Mutex
+	command  []string
+	contract *millv1.Check
+	chunks   []struct{ stream, data string }
+}
+
+func (s *fakeSink) Started(command []string, contract *millv1.Check) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.command, s.contract = command, contract
+}
+
+func (s *fakeSink) Output(stream string, data []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.chunks = append(s.chunks, struct{ stream, data string }{stream, string(data)})
+}
+
+// stream is all the data seen for stream so far, in the order it arrived.
+func (s *fakeSink) stream(name string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out strings.Builder
+	for _, c := range s.chunks {
+		if c.stream == name {
+			out.WriteString(c.data)
+		}
+	}
+	return out.String()
+}
+
+var _ = Describe("A check's Sink", Label("unit"), func() {
+	var tree *checkout
+
+	BeforeEach(func() { tree = newCheckout() })
+
+	It("records the resolved command and the contract before the process runs", func() {
+		sink := &fakeSink{}
+		contract := &millv1.Check{
+			Command: []string{"sh", "-c", "exit 0"},
+			Stdout:  millv1.StdoutShape_STDOUT_SHAPE_NONE,
+		}
+
+		_, err := check.Run(context.Background(), tree, check.Request{
+			Name: "probe", Check: contract, WorkflowDir: GinkgoT().TempDir(), Sink: sink,
+		})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(sink.command).To(Equal(contract.GetCommand()))
+		Expect(sink.contract).To(Equal(contract))
+	})
+
+	It("streams output to the sink while Run is still draining, not only after it returns", func() {
+		sink := &fakeSink{}
+		done := make(chan check.Result, 1)
+		go func() {
+			defer GinkgoRecover()
+			result, err := check.Run(context.Background(), tree, check.Request{
+				Name: "slow",
+				Check: &millv1.Check{
+					Command: []string{"sh", "-c", "echo one; sleep 0.2; echo two"},
+					Stdout:  millv1.StdoutShape_STDOUT_SHAPE_TEXT,
+				},
+				WorkflowDir: GinkgoT().TempDir(),
+				Sink:        sink,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			done <- result
+		}()
+
+		Eventually(func() string { return sink.stream("stdout") }).Should(Equal("one\n"))
+		Consistently(done, 100*time.Millisecond).ShouldNot(Receive(),
+			"the first line reached the sink before the command's sleep, so Run was still draining")
+
+		var result check.Result
+		Eventually(done, 2*time.Second).Should(Receive(&result))
+		Expect(result.Stdout).To(Equal("one\ntwo\n"))
+		Expect(sink.stream("stdout")).To(Equal("one\ntwo\n"))
 	})
 })

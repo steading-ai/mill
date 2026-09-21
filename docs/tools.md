@@ -211,11 +211,13 @@ printed and nothing else is lost.
 
 The per-step-run log: the session's events, one summary line each, as the
 worker wrote them through the redactor
-([architecture.md](architecture.md) §Observability). With no `--step` this is
-the step the run is on, or — for a run that has finished, and so is on
-none — the last step it attempted. `--follow` tails the file and returns when
-the attempt leaves `running`, so a session watching a step is told the step
-ended rather than guessing from silence.
+([architecture.md](architecture.md) §Observability). What is on disk is the
+activity record itself, not a rendering of it; this command is a line
+renderer over that record ([activity.md](activity.md)). With no `--step`
+this is the step the run is on, or — for a run that has finished, and so is
+on none — the last step it attempted. `--follow` tails the file and returns
+when the attempt leaves `running`, so a session watching a step is told the
+step ended rather than guessing from silence.
 
 ```
 $ mill logs mill#18 --step implement --follow

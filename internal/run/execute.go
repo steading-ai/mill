@@ -125,13 +125,6 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 	// session is handed it, so a bearer that finds its way into a tool's
 	// output cannot reach the log (docs/architecture.md §Observability).
 	s.workspace.Redact(token.GetToken())
-	logFile, err := openStepLog(r.options.LogDir, s.run.GetId(), step.GetName(), sr.GetAttempt())
-	if err != nil {
-		return result{}, err
-	}
-	if logFile != nil {
-		defer func() { _ = logFile.Close() }()
-	}
 
 	session := harness.Session{
 		ID: sr.GetSessionId(),
@@ -149,15 +142,20 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 		// The step's budget, which is also how long the session may wait
 		// in the foreground for anything it runs.
 		Timeout: step.GetTimeout().AsDuration(),
-		Events:  r.sessionEvents(ctx, s, sr, logSink(logFile, r.options.Redactor, r.options.Now)),
+		Events:  r.sessionEvents(ctx, s, sr),
 	}
 
-	// The prompt heads the attempt's log. What a session was asked is the
-	// first thing that happened to it, and reading it back off the ledger
-	// is how a revise is shown to have carried a reviewer's findings to the
-	// implementer without anyone reading the session
+	// The prompt heads the attempt's activity record. What a session was
+	// asked is the first thing that happened to it, and reading it back off
+	// the ledger is how a revise is shown to have carried a reviewer's
+	// findings to the implementer without anyone reading the session
 	// (docs/architecture.md §Observability).
-	logPrompt(logFile, r.options.Redactor, r.options.Now, prompt.Text)
+	if prompt.Text != "" {
+		r.recordActivity(s, sr, &millv1.Activity{
+			Source: millv1.ActivitySource_ACTIVITY_SOURCE_MILL,
+			Body:   &millv1.Activity_Prompt{Prompt: &millv1.Prompt{Text: prompt.Text}},
+		})
+	}
 
 	// Start or resume is the ledger's answer, not the attempt number's: a
 	// session is resumable once the harness has produced an event in it, and
@@ -208,7 +206,12 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 	// What the harness's own process had to say when it refused or crashed.
 	// A sidecar that died before writing a terminal record left its stack
 	// trace on its standard error, and this is the only place it is kept.
-	logDiagnostics(logFile, r.options.Redactor, r.options.Now, terminal.Diagnostics)
+	if strings.TrimSpace(terminal.Diagnostics) != "" {
+		r.recordActivity(s, sr, &millv1.Activity{
+			Source: millv1.ActivitySource_ACTIVITY_SOURCE_MILL,
+			Body:   &millv1.Activity_HarnessStderr{HarnessStderr: &millv1.HarnessStderr{Text: terminal.Diagnostics}},
+		})
+	}
 
 	out := result{
 		session: evidence.Session{
@@ -231,7 +234,7 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 
 // sessionEvents is the sink the harness reports a turn's events to: the
 // ledger's record that the session has started, written once when the first
-// event arrives, and then the step's log.
+// event arrives, and then the attempt's activity record.
 //
 // The write is at the first event rather than at the end of the turn because
 // that is when the fact becomes true. A worker killed mid-turn has left a
@@ -241,9 +244,10 @@ func (r *Runner) runSkill(ctx context.Context, s *state, step *millv1.Step, sr *
 // work. Which of the two happened is not derivable from the attempt number,
 // from the log directory, or from the harness's own transcript files: it is
 // a fact the ledger holds (Invariant 10).
-func (r *Runner) sessionEvents(ctx context.Context, s *state, sr *millv1.StepRun, log harness.Sink) harness.Sink {
+func (r *Runner) sessionEvents(ctx context.Context, s *state, sr *millv1.StepRun) harness.Sink {
+	record := func(event *harnessv1.Event) { r.recordActivity(s, sr, activityFromEvent(event)) }
 	if sr.GetSessionId() == "" {
-		return log
+		return record
 	}
 	var once sync.Once
 	return func(event *harnessv1.Event) {
@@ -262,8 +266,194 @@ func (r *Runner) sessionEvents(ctx context.Context, s *state, sr *millv1.StepRun
 					"run", s.run.GetId(), "step_run", sr.GetId(), "error", err)
 			}
 		})
-		log.Send(event)
+		record(event)
 	}
+}
+
+// activityFromEvent translates one harness event into the activity body it
+// carries. harness.v1.Event carries no block_id, delta or parent_call_id yet
+// (deferred to activity-fidelity), so a Text event always arrives as one
+// complete fragment: Final true, flushing at once rather than holding back.
+func activityFromEvent(event *harnessv1.Event) *millv1.Activity {
+	a := &millv1.Activity{Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS}
+	switch body := event.GetBody().(type) {
+	case *harnessv1.Event_Text:
+		a.Body = &millv1.Activity_Text{Text: &millv1.Text{Text: body.Text.GetText(), Final: true}}
+	case *harnessv1.Event_ToolCall:
+		a.Body = &millv1.Activity_ToolCall{ToolCall: &millv1.ToolCall{
+			CallId:    body.ToolCall.GetCallId(),
+			Name:      body.ToolCall.GetName(),
+			Arguments: body.ToolCall.GetArguments(),
+		}}
+	case *harnessv1.Event_ToolResult:
+		a.Body = &millv1.Activity_ToolResult{ToolResult: &millv1.ToolResult{
+			CallId:  body.ToolResult.GetCallId(),
+			Content: body.ToolResult.GetContent(),
+			IsError: body.ToolResult.GetIsError(),
+		}}
+	case *harnessv1.Event_Usage:
+		a.Body = &millv1.Activity_Usage{Usage: body.Usage}
+	case *harnessv1.Event_Heartbeat:
+		a.Body = &millv1.Activity_Heartbeat{Heartbeat: body.Heartbeat}
+	}
+	return a
+}
+
+// recordActivity writes one record to the attempt's activity. A dropped
+// record is not a failure of the step whose work it describes, so a write
+// error is logged and nothing more — the same tolerance checkSink and
+// verbSink below apply to their own records.
+func (r *Runner) recordActivity(s *state, sr *millv1.StepRun, a *millv1.Activity) {
+	if err := s.activity.Record(a); err != nil {
+		r.options.Log.Warn("recording activity", "run", s.run.GetId(), "step_run", sr.GetId(), "error", err)
+	}
+}
+
+// checkSink is the run package's [check.Sink]: every call becomes one
+// activity record on the attempt's writer, source check, turn 0 — a check
+// has no session and no turns of its own (docs/activity.md §Turns). It is
+// used for both a check step (execute.go) and a preparatory step's own
+// command (preparatory.go), the two callers of check.Run.
+//
+// A dropped record here is not a failure of the check: losing a mid-stream
+// record is not a failure of the work it describes, the same tolerance
+// recordActivity documents above.
+type checkSink struct {
+	activity *activityWriter
+}
+
+func (s checkSink) Started(command []string, contract *millv1.Check) {
+	_ = s.activity.Record(&millv1.Activity{
+		Source: millv1.ActivitySource_ACTIVITY_SOURCE_CHECK,
+		Body: &millv1.Activity_CheckStarted{CheckStarted: &millv1.CheckStarted{
+			Command:  command,
+			Contract: contract,
+		}},
+	})
+}
+
+func (s checkSink) Output(stream string, data []byte) {
+	_ = s.activity.Record(&millv1.Activity{
+		Source: millv1.ActivitySource_ACTIVITY_SOURCE_CHECK,
+		Body:   &millv1.Activity_CheckOutput{CheckOutput: &millv1.Output{Stream: stream, Data: data}},
+	})
+}
+
+// verbSink is the run package's [workspace.Sink]: every call becomes one
+// activity record on the attempt's writer, source workspace. It is set on
+// the workspace for the length of an attempt (attachActivitySink) so that a
+// verb the session or a checkout step reaches through the workspace — a git
+// command chief among them — lands on the same ledger a check's output does
+// (docs/activity.md §Verbs).
+//
+// A dropped record here is not a failure of the verb: losing a mid-stream
+// record is not a failure of the work it describes, the same tolerance
+// recordActivity documents above.
+type verbSink struct {
+	activity *activityWriter
+}
+
+func (s verbSink) Started(verb string, args map[string]string) {
+	_ = s.activity.Record(&millv1.Activity{
+		Source: millv1.ActivitySource_ACTIVITY_SOURCE_WORKSPACE,
+		Body:   &millv1.Activity_VerbStarted{VerbStarted: &millv1.VerbStarted{Name: verb, Arguments: args}},
+	})
+}
+
+func (s verbSink) Output(verb, stream string, data []byte) {
+	_ = s.activity.Record(&millv1.Activity{
+		Source: millv1.ActivitySource_ACTIVITY_SOURCE_WORKSPACE,
+		Body:   &millv1.Activity_VerbOutput{VerbOutput: &millv1.Output{Stream: stream, Data: data}},
+	})
+}
+
+// Ended flushes both streams' trailing partial lines before it records the
+// verb's own terminal result, the same order runCheck keeps by hand for a
+// check's output and result: the tail belongs to the record it completes,
+// not the one that follows it.
+func (s verbSink) Ended(verb string, err error) {
+	_ = s.activity.EndVerbOutput("stdout")
+	_ = s.activity.EndVerbOutput("stderr")
+	var errText string
+	if err != nil {
+		errText = err.Error()
+	}
+	_ = s.activity.Record(&millv1.Activity{
+		Source: millv1.ActivitySource_ACTIVITY_SOURCE_WORKSPACE,
+		Body:   &millv1.Activity_Verb{Verb: &millv1.Verb{Name: verb, Error: errText}},
+	})
+}
+
+var _ workspace.Sink = verbSink{}
+
+// attachActivitySink points a workspace that records verbs (workspace.
+// ActivitySink) at the attempt's own activity writer, so a verb the loop
+// reaches through s.workspace during this attempt — a git command chief
+// among them — lands on this attempt's ledger and not the next one's. A
+// workspace with no verbs to record, the local backend's sessions among
+// them, does not implement the interface and the call is a no-op.
+func attachActivitySink(s *state) {
+	if sink, ok := s.workspace.(workspace.ActivitySink); ok {
+		sink.SetActivitySink(verbSink{activity: s.activity})
+	}
+}
+
+// detachActivitySink clears the sink attachActivitySink installed, so a verb
+// reached after the attempt's activity writer has closed — through a
+// workspace the run loop keeps open across attempts — is never asked to
+// write to it.
+func detachActivitySink(s *state) {
+	if sink, ok := s.workspace.(workspace.ActivitySink); ok {
+		sink.SetActivitySink(nil)
+	}
+}
+
+// openActivity starts step's activity writer for the attempt sr just began,
+// attaches it as the workspace's verb sink, and records the attempt's
+// opening frame.
+func (r *Runner) openActivity(s *state, step *millv1.Step, sr *millv1.StepRun) error {
+	activity, err := newActivityWriter(r.options.LogDir, s.run.GetId(), step.GetName(), sr.GetAttempt(), r.options.Redactor, r.options.Now, r.options.ActivityCeiling)
+	if err != nil {
+		return err
+	}
+	s.activity = activity
+	attachActivitySink(s)
+	return s.activity.Record(attemptStartedActivity(step, sr))
+}
+
+// reopenActivity reattaches step's already-written activity record for sr's
+// attempt, for a run resuming a filed gate rather than starting a new
+// attempt.
+func (r *Runner) reopenActivity(s *state, step *millv1.Step, sr *millv1.StepRun) error {
+	activity, err := reopenActivityWriter(r.options.LogDir, s.run.GetId(), step.GetName(), sr.GetAttempt(), r.options.Redactor, r.options.Now, r.options.ActivityCeiling)
+	if err != nil {
+		return err
+	}
+	s.activity = activity
+	attachActivitySink(s)
+	return nil
+}
+
+// abortActivity closes the attempt's activity record without recording an
+// outcome — the attempt is being abandoned, not ended — ignoring a close
+// error the way every abort call site already did.
+func abortActivity(s *state) {
+	detachActivitySink(s)
+	_ = s.activity.Close()
+	s.activity = nil
+}
+
+// endActivity records the attempt's outcome and closes its activity record.
+// On error the attempt's sink stays attached and s.activity stays set,
+// matching every end call site's existing behavior of returning before
+// detaching.
+func endActivity(s *state, status millv1.StepRunStatus, kind millv1.EvidenceKind, reason string) error {
+	if err := s.activity.End(status, kind, reason); err != nil {
+		return err
+	}
+	detachActivitySink(s)
+	s.activity = nil
+	return nil
 }
 
 // recordHeartbeat writes one heartbeat to the run's history: the harness
@@ -432,7 +622,7 @@ func (r *Runner) commitAlreadyMade(ctx context.Context, s *state, step *millv1.S
 }
 
 // runCheck runs a check step through the workspace's chokepoint, and writes
-// what the command said to the attempt's log.
+// what the command said to the attempt's activity record.
 //
 // A check is a step run like any other, so `mill logs <run> --step
 // clean-tree` has to answer with something: what the command wrote is the
@@ -443,12 +633,20 @@ func (r *Runner) runCheck(ctx context.Context, s *state, step *millv1.Step, sr *
 		Name:        step.GetName(),
 		Check:       step.GetCheck(),
 		WorkflowDir: r.options.WorkflowDir,
+		Sink:        checkSink{activity: s.activity},
 	})
 	if err != nil {
 		return result{}, err
 	}
-	logCheck(r.options.LogDir, s.run.GetId(), step.GetName(), sr.GetAttempt(),
-		r.options.Redactor, r.options.Now, res)
+	_ = s.activity.EndCheckOutput("stdout")
+	_ = s.activity.EndCheckOutput("stderr")
+	r.recordActivity(s, sr, &millv1.Activity{
+		Source: millv1.ActivitySource_ACTIVITY_SOURCE_CHECK,
+		Body: &millv1.Activity_Check{Check: &millv1.CheckResult{
+			Exit:   res.Exit,
+			Reason: res.Reason,
+		}},
+	})
 	out := result{exit: res.Exit, stderr: strings.TrimRight(res.Stderr, "\n")}
 	if !res.Passed {
 		out.feedback = check.Feedback(step.GetCheck(), res)

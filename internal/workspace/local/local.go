@@ -110,6 +110,7 @@ type Workspace struct {
 	redactor *redact.Redactor
 	execer   workspace.Execer
 	verbs    verbs.Verbs
+	verbSink *verbs.SinkVar
 	server   *socket.Server
 
 	mu        sync.RWMutex
@@ -142,8 +143,9 @@ func New(options Options) *Workspace {
 	if w.options.Identity == "" {
 		w.options.Identity = "mill@localhost"
 	}
+	w.verbSink = &verbs.SinkVar{}
 	w.verbs = verbs.Verbs{
-		Host:     verbs.Host{Git: options.Git, Execer: w.execer, Redactor: w.redactor},
+		Host:     verbs.Host{Git: options.Git, Execer: w.execer, Redactor: w.redactor, Sink: w.verbSink},
 		Forge:    options.Forge,
 		Checkout: w.checkout,
 	}
@@ -604,6 +606,9 @@ func (w *Workspace) Committer() workspace.Committer {
 // from here on.
 func (w *Workspace) Redact(values ...string) { w.redactor.Add(values...) }
 
+// SetActivitySink installs sink, or clears it with nil (workspace.ActivitySink).
+func (w *Workspace) SetActivitySink(sink workspace.Sink) { w.verbSink.Set(sink) }
+
 // snapshot is the handle, copied, so a caller cannot edit the workspace's own.
 func (w *Workspace) snapshot() *workspace.Handle {
 	w.mu.RLock()
@@ -684,3 +689,5 @@ func (w *Workspace) git(ctx context.Context, dir string, args ...string) (string
 // Workspace is the interface this implements; a compile-time check, because
 // the worker holds the interface and never this type.
 var _ workspace.Workspace = (*Workspace)(nil)
+
+var _ workspace.ActivitySink = (*Workspace)(nil)

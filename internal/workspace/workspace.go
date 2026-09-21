@@ -599,6 +599,40 @@ type Workspace interface {
 	Redact(values ...string)
 }
 
+// Sink is where a verb's own activity comes from: it started, what it wrote
+// to each stream once the whole of it was in hand, and how it ended
+// (docs/activity.md's verb_started/verb_output/verb). Unlike a check's Sink
+// (internal/check.Sink), this is not incremental: a git command's output is
+// whole by the time [internal/workspace/verbs.Host.Run] has anything to
+// report.
+//
+// It lives here rather than in internal/workspace/verbs, which is where it
+// is called from, because [ActivitySink] — the capability a backend
+// implements with it — is part of the [Workspace] contract this package
+// owns, and verbs already imports this package: a Sink declared over there
+// and referenced from here would be an import cycle.
+type Sink interface {
+	// Started is called once, before the verb's command spawns.
+	Started(verb string, args map[string]string)
+	// Output is called once per non-empty stream, with the whole buffer.
+	Output(verb, stream string, data []byte)
+	// Ended is called once the command has exited or failed to run, with the
+	// error Run itself returns — nil on success.
+	Ended(verb string, err error)
+}
+
+// ActivitySink is a workspace whose verbs can record onto an attempt's
+// activity. The run loop calls SetActivitySink when it opens an attempt's
+// writer and clears it the same way when the attempt closes, so a verb
+// called between attempts — there shouldn't be one, but nothing enforces
+// that structurally — writes nothing rather than into a closed file. A
+// workspace with no verbs to record does not implement it, and the loop
+// asks nothing of it.
+type ActivitySink interface {
+	// SetActivitySink installs sink, or clears it with nil.
+	SetActivitySink(sink Sink)
+}
+
 // CacheCandidate is what a workspace that carries cache lineages implements
 // beside [Workspace]: the run loop calls Candidate each time a step closes
 // on evidence, before the step's slice is stopped, so the run's writable

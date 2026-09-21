@@ -3,21 +3,57 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"connectrpc.com/connect"
+
+	harnessv1 "github.com/ivy/mill/gen/harness/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/cli"
 	"github.com/ivy/mill/internal/run"
 	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/workspace/redact"
 )
+
+// appendActivity writes one or more activity records to path, length-prefixed
+// exactly as the writer does (internal/run/activity.go), so a spec can hand
+// `mill logs` a fixture attempt without driving a real one through the
+// worker.
+func appendActivity(path string, activities ...*millv1.Activity) {
+	GinkgoHelper()
+	Expect(os.MkdirAll(filepath.Dir(path), 0o750)).To(Succeed())
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640)
+	Expect(err).NotTo(HaveOccurred())
+	defer func() { Expect(file.Close()).To(Succeed()) }()
+	for _, a := range activities {
+		raw, err := proto.Marshal(a)
+		Expect(err).NotTo(HaveOccurred())
+		var header [4]byte
+		binary.BigEndian.PutUint32(header[:], uint32(len(raw)))
+		_, err = file.Write(header[:])
+		Expect(err).NotTo(HaveOccurred())
+		_, err = file.Write(raw)
+		Expect(err).NotTo(HaveOccurred())
+	}
+}
+
+// textActivity is a harness `text` record, the simplest kind that renders as
+// one line: "text <content>".
+func textActivity(text string) *millv1.Activity {
+	return &millv1.Activity{
+		Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+		Body:   &millv1.Activity_Text{Text: &millv1.Text{Text: text, Final: true}},
+	}
+}
 
 var _ = Describe("mill logs", Label(testsupport.DBLabel), func() {
 	var ctx context.Context
@@ -28,24 +64,16 @@ var _ = Describe("mill logs", Label(testsupport.DBLabel), func() {
 		DeferCleanup(cancel)
 	})
 
-	It("tails the running step's redacted log and exits when the step run leaves running", func() {
-		const secret = "s3cret-forge-token-value"
+	It("tails the running step's activity record and exits when the step run leaves running", func() {
 		r := openRun(ctx, "millcli#20", nodeID(20))
 		sr := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
 
-		// The log as the worker writes it: through the redactor, with the
-		// value the session registered with `redact` mid-step already
-		// masked. Nothing downstream re-reads the unmasked bytes, because
-		// there are none.
+		// The record as the worker writes it: length-prefixed, already
+		// redacted by the time it lands (the writer redacts before it ever
+		// marshals a record — there is no unredacted copy to re-read).
 		logDir := filepath.Join(GinkgoT().TempDir(), "logs")
-		path := run.StepLogPath(logDir, r.run.GetId(), "implement", sr.GetAttempt())
-		Expect(os.MkdirAll(filepath.Dir(path), 0o750)).To(Succeed())
-		file, err := os.Create(path)
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(file.Close)
-		redacted := redact.New(secret).Writer(file)
-		_, err = redacted.Write([]byte("text reaching the forge with " + secret + "\n"))
-		Expect(err).NotTo(HaveOccurred())
+		path := run.ActivityPath(logDir, r.run.GetId(), "implement", sr.GetAttempt())
+		appendActivity(path, textActivity("reaching the forge with a masked value"))
 
 		var stdout, stderr bytes.Buffer
 		root := cli.NewRootCommand(&stdout, &stderr)
@@ -57,16 +85,15 @@ var _ = Describe("mill logs", Label(testsupport.DBLabel), func() {
 			done <- root.ExecuteContext(ctx)
 		}()
 
-		// The first line is tailed while the attempt is still running, and
+		// The first record is tailed while the attempt is still running, and
 		// the command does not return.
 		Eventually(stdout.String, 10*time.Second, 50*time.Millisecond).
-			Should(ContainSubstring("reaching the forge with " + redact.Mask))
+			Should(ContainSubstring("reaching the forge with a masked value"))
 		Consistently(done, 500*time.Millisecond).ShouldNot(Receive())
 
-		// A line written after the tail started reaches it too, and closing
-		// the attempt ends the command.
-		_, err = redacted.Write([]byte("more output, still with " + secret + "\n"))
-		Expect(err).NotTo(HaveOccurred())
+		// A record written after the tail started reaches it too, and
+		// closing the attempt ends the command.
+		appendActivity(path, textActivity("more output, still masked"))
 		r.close(ctx, sr, &millv1.CloseStepRunRequest{
 			Evidence: &millv1.Evidence{
 				Kind:       millv1.EvidenceKind_EVIDENCE_KIND_ARTIFACT,
@@ -76,8 +103,7 @@ var _ = Describe("mill logs", Label(testsupport.DBLabel), func() {
 		})
 
 		Eventually(done, 10*time.Second).Should(Receive(BeNil()), stderr.String())
-		Expect(stdout.String()).To(ContainSubstring("more output, still with " + redact.Mask))
-		Expect(stdout.String()).NotTo(ContainSubstring(secret))
+		Expect(stdout.String()).To(ContainSubstring("more output, still masked"))
 	})
 
 	It("reads the step the run is on when no step is named", func() {
@@ -85,12 +111,86 @@ var _ = Describe("mill logs", Label(testsupport.DBLabel), func() {
 		sr := r.start(ctx, "gather-context", millv1.StepKind_STEP_KIND_SKILL)
 
 		logDir := filepath.Join(GinkgoT().TempDir(), "logs")
-		path := run.StepLogPath(logDir, r.run.GetId(), "gather-context", sr.GetAttempt())
-		Expect(os.MkdirAll(filepath.Dir(path), 0o750)).To(Succeed())
-		Expect(os.WriteFile(path, []byte("tool Read call=call-1\n"), 0o600)).To(Succeed())
+		path := run.ActivityPath(logDir, r.run.GetId(), "gather-context", sr.GetAttempt())
+		appendActivity(path, &millv1.Activity{
+			Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+			Body:   &millv1.Activity_ToolCall{ToolCall: &millv1.ToolCall{CallId: "call-1", Name: "Read"}},
+		})
 
 		out := r.cli(ctx, "logs", "millcli#21", "--log-dir", logDir)
 		Expect(out).To(ContainSubstring("tool Read call=call-1"))
+	})
+
+	// The acceptance criterion's own wording: `mill logs` reads byte-identical
+	// to the rendered text log it replaces (docs/activity.md's "Today"
+	// column), for every kind that column says produced a line. One fixture
+	// attempt carries one of each, and the expected text is built from the
+	// exact formats the deleted internal/run/logs.go used to write.
+	It("renders every activity kind byte-identical to the log format it replaces", func() {
+		r := openRun(ctx, "millcli#26", nodeID(26))
+		sr := r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+
+		logDir := filepath.Join(GinkgoT().TempDir(), "logs")
+		path := run.ActivityPath(logDir, r.run.GetId(), "implement", sr.GetAttempt())
+		at := timestamppb.New(time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC))
+		stamp := at.AsTime().UTC().Format(time.RFC3339)
+
+		appendActivity(path,
+			&millv1.Activity{At: at, Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+				Body: &millv1.Activity_Prompt{Prompt: &millv1.Prompt{Text: "do the thing\n"}}},
+			&millv1.Activity{At: at, Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+				Body: &millv1.Activity_Text{Text: &millv1.Text{Text: "thinking about it", Final: true}}},
+			&millv1.Activity{At: at, Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+				Body: &millv1.Activity_ToolCall{ToolCall: &millv1.ToolCall{CallId: "call-1", Name: "Read"}}},
+			&millv1.Activity{At: at, Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+				Body: &millv1.Activity_ToolResult{ToolResult: &millv1.ToolResult{CallId: "call-1", Content: "file contents"}}},
+			&millv1.Activity{At: at, Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+				Body: &millv1.Activity_Usage{Usage: &harnessv1.Usage{ByModel: map[string]*harnessv1.TokenCounts{
+					"claude": {Input: 100, Output: 20},
+				}}}},
+			&millv1.Activity{At: at, Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+				Body: &millv1.Activity_Heartbeat{Heartbeat: &harnessv1.Heartbeat{
+					Strike: 1, Strikes: 3, WaitingSeconds: 30, Tasks: []string{"task-a", "task-b"},
+				}}},
+			&millv1.Activity{At: at, Source: millv1.ActivitySource_ACTIVITY_SOURCE_MILL,
+				Body: &millv1.Activity_HarnessStderr{HarnessStderr: &millv1.HarnessStderr{Text: "warning: something\n"}}},
+			&millv1.Activity{At: at, Source: millv1.ActivitySource_ACTIVITY_SOURCE_CHECK,
+				Body: &millv1.Activity_CheckStarted{CheckStarted: &millv1.CheckStarted{Command: []string{"make", "lint"}}}},
+			&millv1.Activity{At: at, Source: millv1.ActivitySource_ACTIVITY_SOURCE_CHECK,
+				Body: &millv1.Activity_CheckOutput{CheckOutput: &millv1.Output{Stream: "stdout", Data: []byte("lint passed")}}},
+			&millv1.Activity{At: at, Source: millv1.ActivitySource_ACTIVITY_SOURCE_CHECK,
+				Body: &millv1.Activity_CheckOutput{CheckOutput: &millv1.Output{Stream: "stderr", Data: []byte("no problems")}}},
+			&millv1.Activity{At: at, Source: millv1.ActivitySource_ACTIVITY_SOURCE_CHECK,
+				Body: &millv1.Activity_Check{Check: &millv1.CheckResult{Exit: processExit(1), Reason: "lint failed"}}},
+		)
+
+		out := r.cli(ctx, "logs", "millcli#26", "--step", "implement", "--log-dir", logDir)
+
+		expected := strings.Join([]string{
+			fmt.Sprintf("%s prompt begin bytes=%d", stamp, len("do the thing\n")),
+			"do the thing",
+			fmt.Sprintf("%s prompt end", stamp),
+			fmt.Sprintf("%s text thinking about it", stamp),
+			fmt.Sprintf("%s tool Read call=call-1", stamp),
+			fmt.Sprintf("%s result call=call-1 ok out=file contents", stamp),
+			fmt.Sprintf("%s usage claude in=100 out=20", stamp),
+			fmt.Sprintf("%s heartbeat 1/3 waiting=30s tasks=task-a; task-b", stamp),
+			fmt.Sprintf("%s harness stderr begin bytes=%d", stamp, len("warning: something\n")),
+			"warning: something",
+			fmt.Sprintf("%s harness stderr end", stamp),
+			fmt.Sprintf("%s check make lint begin", stamp),
+			fmt.Sprintf("%s check stdout begin bytes=%d", stamp, len("lint passed")),
+			"lint passed",
+			fmt.Sprintf("%s check stdout end", stamp),
+			fmt.Sprintf("%s check stderr begin bytes=%d", stamp, len("no problems")),
+			"no problems",
+			fmt.Sprintf("%s check stderr end", stamp),
+			fmt.Sprintf("%s check exit status=1", stamp),
+			fmt.Sprintf("%s check failed: lint failed", stamp),
+			"",
+		}, "\n")
+
+		Expect(out).To(Equal(expected))
 	})
 
 	It("says which attempt has no log rather than printing nothing", func() {
@@ -121,15 +221,14 @@ var _ = Describe("mill logs", Label(testsupport.DBLabel), func() {
 		})
 
 		logDir := filepath.Join(GinkgoT().TempDir(), "logs")
-		path := run.StepLogPath(logDir, r.run.GetId(), "implement", sr.GetAttempt())
-		Expect(os.MkdirAll(filepath.Dir(path), 0o750)).To(Succeed())
-		Expect(os.WriteFile(path, []byte("text the implementer's last words\n"), 0o600)).To(Succeed())
+		path := run.ActivityPath(logDir, r.run.GetId(), "implement", sr.GetAttempt())
+		appendActivity(path, textActivity("the implementer's last words"))
 
 		// The rest of quick-fix, closed: the run is on no step now, which
 		// is the state every finished run is in.
 		last := finish(ctx, r)
-		lastPath := run.StepLogPath(logDir, r.run.GetId(), last, 1)
-		Expect(os.WriteFile(lastPath, []byte("status merged\n"), 0o600)).To(Succeed())
+		lastPath := run.ActivityPath(logDir, r.run.GetId(), last, 1)
+		appendActivity(lastPath, textActivity("status merged"))
 
 		out := r.cli(ctx, "logs", "millcli#24", "--log-dir", logDir)
 
