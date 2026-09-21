@@ -38,7 +38,7 @@ func (r *Runner) failStep(ctx context.Context, s *state, step *millv1.Step, sr *
 		exit = &harnessProcessExit
 	}
 	if _, err := call(ctx, r.options.Store.FailStepRun, &millv1.FailStepRunRequest{
-		LeaseId:   s.lease,
+		LeaseId:   s.leaseID(),
 		StepRunId: sr.GetId(),
 		Exit:      exit,
 	}); err != nil {
@@ -127,7 +127,7 @@ func lastWords(res result, findings string) string {
 // nothing is carried in the worker's head (Invariant 10).
 func (r *Runner) revise(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, target, findings string) (outcome, error) {
 	if _, err := call(ctx, r.options.Store.SupersedeSteps, &millv1.SupersedeStepsRequest{
-		LeaseId:     s.lease,
+		LeaseId:     s.leaseID(),
 		RunId:       s.run.GetId(),
 		FromStep:    target,
 		ThroughStep: step.GetName(),

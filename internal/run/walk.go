@@ -200,7 +200,7 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 		return outcome{}, err
 	}
 	started, err := call(ctx, r.options.Store.StartStepRun, &millv1.StartStepRunRequest{
-		LeaseId:      s.lease,
+		LeaseId:      s.leaseID(),
 		RunId:        s.run.GetId(),
 		StepName:     step.GetName(),
 		Kind:         step.GetKind(),
@@ -220,7 +220,7 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 	}
 
 	token, err := call(ctx, r.options.Store.IssueStepToken, &millv1.IssueStepTokenRequest{
-		LeaseId:      s.lease,
+		LeaseId:      s.leaseID(),
 		StepRunId:    sr.GetId(),
 		Capabilities: step.GetCapabilities(),
 	})
@@ -298,7 +298,7 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 		return outcome{}, err
 	}
 	if _, err := call(ctx, r.options.Store.RevokeStepToken, &millv1.RevokeStepTokenRequest{
-		LeaseId:     s.lease,
+		LeaseId:     s.leaseID(),
 		StepTokenId: token.GetStepToken().GetId(),
 	}); err != nil {
 		return outcome{}, err
@@ -339,7 +339,7 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 		case <-time.After(pending.RetryAfter):
 		}
 		if _, err := call(ctx, r.options.Store.AbortOpenStepRuns, &millv1.AbortOpenStepRunsRequest{
-			LeaseId: s.lease,
+			LeaseId: s.leaseID(),
 			RunId:   s.run.GetId(),
 			Reason:  pending.Error(),
 		}); err != nil {
@@ -365,7 +365,7 @@ func (r *Runner) rotateGateway(s *state, step *millv1.Step, sr *millv1.StepRun, 
 	}
 	// The recorder runs on the gateway's goroutines, so it carries the
 	// lease it was installed under rather than reading the run's state.
-	lease := s.lease
+	lease := s.leaseID()
 	r.options.Gateway.Rotate(s.run.GetId(), gateway.Step{
 		StepRunID: sr.GetId(),
 		StepName:  step.GetName(),
@@ -398,7 +398,7 @@ func (r *Runner) closeStep(ctx context.Context, s *state, sr *millv1.StepRun, st
 	// other kind has any (internal/run/preparatory.go).
 	value.Output = res.output
 	if _, err := call(ctx, r.options.Store.CloseStepRun, &millv1.CloseStepRunRequest{
-		LeaseId:      s.lease,
+		LeaseId:      s.leaseID(),
 		StepRunId:    sr.GetId(),
 		Evidence:     value,
 		AutoApproved: res.autoApproved,

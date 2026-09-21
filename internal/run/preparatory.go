@@ -203,7 +203,7 @@ func (r *Runner) recordInstalls(ctx context.Context, s *state, sr *millv1.StepRu
 	}
 	for _, install := range reporter.Installs() {
 		if _, err := call(ctx, r.options.Store.RecordInstall, &millv1.RecordInstallRequest{
-			LeaseId:   s.lease,
+			LeaseId:   s.leaseID(),
 			RunId:     s.run.GetId(),
 			StepRunId: sr.GetId(),
 			Packages:  install.Packages,

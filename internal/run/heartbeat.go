@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	millv1 "github.com/ivy/mill/gen/mill/v1"
 )
 
 // heartbeat holds the lease for the whole run, in a goroutine independent of
@@ -70,11 +72,15 @@ func (r *Runner) startHeartbeat(ctx context.Context, s *state) *heartbeat {
 
 // beat is one tick: renew the lease, then read the cancel flag.
 func (r *Runner) beat(ctx context.Context, s *state) error {
-	if _, err := r.options.Dagger.Heartbeat(ctx, s.lease, r.options.TTL); err != nil {
-		if isFenced(err) {
-			return errors.Join(ErrFenced, err)
+	if _, err := r.options.Dagger.Heartbeat(ctx, s.leaseID(), r.options.TTL); err != nil {
+		if !isFenced(err) {
+			return err
 		}
-		return err
+		// A fenced renewal does not necessarily mean this run lost the
+		// race for the node: try to win it back before giving up.
+		if reclaimErr := r.reclaim(ctx, s); reclaimErr != nil {
+			return errors.Join(ErrFenced, reclaimErr)
+		}
 	}
 	run, _, err := r.runByNode(ctx, s.node.GetId())
 	if err != nil {
@@ -86,6 +92,27 @@ func (r *Runner) beat(ctx context.Context, s *state) error {
 	if run.GetCancelRequested() {
 		return errCancelled
 	}
+	return nil
+}
+
+// reclaim tries to win the run's own node back after its lease expired, so a
+// step already in flight can keep running under a fresh lease instead of
+// being fenced. It succeeds only when nobody else holds the node: a claim
+// refused because another holder has it is left to the caller to fence on,
+// exactly as an unreclaimed fenced heartbeat does today.
+func (r *Runner) reclaim(ctx context.Context, s *state) error {
+	claimed, err := s.dagger.Claim(ctx, s.node.GetReference())
+	if err != nil {
+		return err
+	}
+	if _, err := call(ctx, r.options.Store.SetLease, &millv1.SetLeaseRequest{
+		LeaseId:   claimed.Lease.GetId(),
+		RunId:     s.run.GetId(),
+		WorkerRef: r.options.WorkerRef,
+	}); err != nil {
+		return err
+	}
+	s.setLease(claimed.Lease.GetId())
 	return nil
 }
 

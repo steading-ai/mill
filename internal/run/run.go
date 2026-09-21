@@ -28,6 +28,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"connectrpc.com/connect"
@@ -357,8 +358,12 @@ func (r *Runner) Dagger() *dagger.Client { return r.options.Dagger }
 
 // state is one run in flight: what the loop carries between its stages.
 type state struct {
-	node  *daggerv1.Node
-	lease string
+	node *daggerv1.Node
+	// lease is the fencing token every write this run makes presents. The
+	// run-loop goroutine reads it on every write; the heartbeat's own
+	// goroutine writes it when a fenced heartbeat wins the node back. Both
+	// happen concurrently, so this is atomic rather than a plain string.
+	lease atomic.Pointer[string]
 	// dagger is the run's own dagger client, scoped to the project the claim
 	// landed in — the worker's own client when the claim carried none (a
 	// dagger older than the project field). Every write and gate read this
@@ -433,6 +438,19 @@ type state struct {
 	// of its own, `mill-step-<ordinal>.slice`. It advances per attempt: a
 	// retry is a fresh slice, because the previous attempt's was reaped.
 	ordinal int
+}
+
+// leaseID is the lease every write this run makes presents right now.
+func (s *state) leaseID() string {
+	if id := s.lease.Load(); id != nil {
+		return *id
+	}
+	return ""
+}
+
+// setLease makes id the lease every later write presents.
+func (s *state) setLease(id string) {
+	s.lease.Store(&id)
 }
 
 // processContext is the context of the process the run is in.
@@ -529,16 +547,16 @@ func (r *Runner) ExecuteClaimed(ctx context.Context, claimed *dagger.Claimed, st
 func (r *Runner) drive(ctx context.Context, claimed *dagger.Claimed, stopping <-chan struct{}) error {
 	s := &state{
 		node:     claimed.Node,
-		lease:    claimed.Lease.GetId(),
 		dagger:   r.options.Dagger,
 		retried:  map[string]int64{},
 		stopping: stopping,
 		process:  ctx,
 	}
+	s.setLease(claimed.Lease.GetId())
 	if claimed.Project != nil {
 		s.dagger = r.options.Dagger.Scoped(claimed.Project.GetSlug())
 	}
-	r.printf("claimed %s under lease %s\n", s.node.GetReference(), s.lease)
+	r.printf("claimed %s under lease %s\n", s.node.GetReference(), s.leaseID())
 
 	if err := r.openRun(ctx, s); err != nil {
 		return couldNotOpen(r.stop(ctx, s, err))
@@ -692,7 +710,7 @@ func (r *Runner) openRun(ctx context.Context, s *state) error {
 		// stopped before creating the next. The store says which number
 		// is free; guessing 1 would collide with the abandoned row.
 		created, err := call(ctx, r.options.Store.CreateRun, &millv1.CreateRunRequest{
-			LeaseId:    s.lease,
+			LeaseId:    s.leaseID(),
 			NodeId:     s.node.GetId(),
 			NodeRef:    s.node.GetReference(),
 			ContextId:  s.node.GetContextId(),
@@ -770,7 +788,7 @@ func (r *Runner) openRun(ctx context.Context, s *state) error {
 	}
 
 	leased, err := call(ctx, r.options.Store.SetLease, &millv1.SetLeaseRequest{
-		LeaseId:   s.lease,
+		LeaseId:   s.leaseID(),
 		RunId:     run.GetId(),
 		WorkerRef: r.options.WorkerRef,
 	})
@@ -880,7 +898,7 @@ func (r *Runner) noRepository(ctx context.Context, s *state, missing *forge.NoVC
 // occurrence of the failure from the next.
 func (r *Runner) failRun(ctx context.Context, s *state, requestKey, reason string, cause error) error {
 	if _, err := call(ctx, r.options.Store.Fail, &millv1.FailRequest{
-		LeaseId: s.lease,
+		LeaseId: s.leaseID(),
 		RunId:   s.run.GetId(),
 		Reason:  reason,
 	}); err != nil {
@@ -897,7 +915,7 @@ func (r *Runner) failRun(ctx context.Context, s *state, requestKey, reason strin
 // is logged rather than failed on: a refusal this deterministic should not
 // stay claimable just because the hold write itself did not land.
 func (r *Runner) hold(ctx context.Context, s *state, requestKey, reason string) {
-	if err := s.dagger.Hold(ctx, requestKey, s.lease, s.node.GetReference(), reason); err != nil {
+	if err := s.dagger.Hold(ctx, requestKey, s.leaseID(), s.node.GetReference(), reason); err != nil {
 		r.options.Log.Warn("holding a refused node", "node", s.node.GetReference(), "reason", reason, "error", err)
 	}
 }
@@ -955,8 +973,8 @@ func (r *Runner) stop(ctx context.Context, s *state, err error) error {
 		}
 		return err
 	}
-	if s.lease != "" {
-		if releaseErr := r.options.Dagger.Release(ctx, s.lease, daggerv1.ReleaseReason_RELEASE_REASON_CRASH, err.Error()); releaseErr != nil {
+	if lease := s.leaseID(); lease != "" {
+		if releaseErr := r.options.Dagger.Release(ctx, lease, daggerv1.ReleaseReason_RELEASE_REASON_CRASH, err.Error()); releaseErr != nil {
 			r.options.Log.Warn("releasing the lease after a failure", "error", releaseErr)
 		}
 	}

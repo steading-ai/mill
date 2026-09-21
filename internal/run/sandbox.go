@@ -20,7 +20,7 @@ func (r *Runner) recordWorkspace(ctx context.Context, s *state) error {
 		return fmt.Errorf("run %s: the workspace is open but has no handle", s.run.GetId())
 	}
 	_, err := call(ctx, r.options.Store.RecordWorkspace, &millv1.RecordWorkspaceRequest{
-		LeaseId:   s.lease,
+		LeaseId:   s.leaseID(),
 		RunId:     s.run.GetId(),
 		Kind:      workspaceKindProto(handle.Kind),
 		WorkerRef: r.options.WorkerRef,
@@ -35,7 +35,7 @@ func (r *Runner) recordWorkspace(ctx context.Context, s *state) error {
 // what Destroy's promotion made of it. It is written after the run is done,
 // which the store admits for a run that has ended.
 func (r *Runner) finishWorkspace(ctx context.Context, s *state) error {
-	return r.finishWorkspaceOf(ctx, s.lease, s.run.GetId(), s.workspace)
+	return r.finishWorkspaceOf(ctx, s.leaseID(), s.run.GetId(), s.workspace)
 }
 
 // finishWorkspaceOf is finishWorkspace for a workspace the loop is not

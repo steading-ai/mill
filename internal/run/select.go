@@ -160,7 +160,7 @@ func (r *Runner) assess(ctx context.Context, s *state, step *millv1.Step, candid
 			return nil, err
 		}
 		started, err := call(ctx, r.options.Store.StartStepRun, &millv1.StartStepRunRequest{
-			LeaseId:      s.lease,
+			LeaseId:      s.leaseID(),
 			RunId:        s.run.GetId(),
 			StepName:     step.GetName(),
 			Kind:         step.GetKind(),
@@ -192,7 +192,7 @@ func (r *Runner) assess(ctx context.Context, s *state, step *millv1.Step, candid
 			defer abortActivity(s)
 
 			token, err := call(ctx, r.options.Store.IssueStepToken, &millv1.IssueStepTokenRequest{
-				LeaseId:      s.lease,
+				LeaseId:      s.leaseID(),
 				StepRunId:    sr.GetId(),
 				Capabilities: step.GetCapabilities(),
 			})
@@ -227,7 +227,7 @@ func (r *Runner) assess(ctx context.Context, s *state, step *millv1.Step, candid
 					return false, err
 				}
 				if _, err := call(ctx, r.options.Store.RevokeStepToken, &millv1.RevokeStepTokenRequest{
-					LeaseId:     s.lease,
+					LeaseId:     s.leaseID(),
 					StepTokenId: token.GetStepToken().GetId(),
 				}); err != nil {
 					return false, err
@@ -243,7 +243,7 @@ func (r *Runner) assess(ctx context.Context, s *state, step *millv1.Step, candid
 						exit = &harnessProcessExit
 					}
 					if _, err := call(ctx, r.options.Store.FailStepRun, &millv1.FailStepRunRequest{
-						LeaseId:   s.lease,
+						LeaseId:   s.leaseID(),
 						StepRunId: sr.GetId(),
 						Exit:      exit,
 					}); err != nil {
@@ -269,7 +269,7 @@ func (r *Runner) assess(ctx context.Context, s *state, step *millv1.Step, candid
 				value := verified.Value
 				value.StepRunId = sr.GetId()
 				if _, err := call(ctx, r.options.Store.CloseStepRun, &millv1.CloseStepRunRequest{
-					LeaseId:   s.lease,
+					LeaseId:   s.leaseID(),
 					StepRunId: sr.GetId(),
 					Evidence:  value,
 				}); err != nil {
@@ -426,7 +426,7 @@ func (r *Runner) startSelection(ctx context.Context, s *state) (*millv1.StepRun,
 		return nil, err
 	}
 	res, err := call(ctx, r.options.Store.StartStepRun, &millv1.StartStepRunRequest{
-		LeaseId:    s.lease,
+		LeaseId:    s.leaseID(),
 		RunId:      s.run.GetId(),
 		StepName:   selectionStep,
 		Kind:       millv1.StepKind_STEP_KIND_SKILL,
@@ -462,7 +462,7 @@ func (r *Runner) closeSelection(ctx context.Context, s *state, sr *millv1.StepRu
 		return err
 	}
 	if _, err := call(ctx, r.options.Store.CloseStepRun, &millv1.CloseStepRunRequest{
-		LeaseId:    s.lease,
+		LeaseId:    s.leaseID(),
 		StepRunId:  sr.GetId(),
 		WorkflowId: workflow.GetId(),
 		Tier:       tier,
@@ -492,7 +492,7 @@ func (r *Runner) selectFailedKey(s *state) string {
 // retries could be spent on trying again.
 func (r *Runner) failSelection(ctx context.Context, s *state, sr *millv1.StepRun, cause error) error {
 	if _, err := call(ctx, r.options.Store.FailStepRun, &millv1.FailStepRunRequest{
-		LeaseId:   s.lease,
+		LeaseId:   s.leaseID(),
 		StepRunId: sr.GetId(),
 		Exit:      &harnessProcessExit,
 	}); err != nil {

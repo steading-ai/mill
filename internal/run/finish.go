@@ -39,7 +39,7 @@ func (r *Runner) recordUsage(ctx context.Context, s *state, sr *millv1.StepRun, 
 		})
 	}
 	_, err := call(ctx, r.options.Store.RecordUsage, &millv1.RecordUsageRequest{
-		LeaseId:   s.lease,
+		LeaseId:   s.leaseID(),
 		StepRunId: sr.GetId(),
 		Usage:     rows,
 	})
@@ -88,7 +88,7 @@ func (r *Runner) postUsage(ctx context.Context, s *state, sr *millv1.StepRun) er
 			continue
 		}
 		for _, totals := range d.GetTotals() {
-			if err := s.dagger.ReportUsage(ctx, s.lease, s.node.GetReference(), totals.GetModel(), dagger.TokenCounts{
+			if err := s.dagger.ReportUsage(ctx, s.leaseID(), s.node.GetReference(), totals.GetModel(), dagger.TokenCounts{
 				InputTokens:      totals.GetInputTokens(),
 				OutputTokens:     totals.GetOutputTokens(),
 				CacheReadTokens:  totals.GetCacheReadTokens(),
@@ -99,7 +99,7 @@ func (r *Runner) postUsage(ctx context.Context, s *state, sr *millv1.StepRun) er
 		}
 	}
 	if _, err := call(ctx, r.options.Store.MarkUsagePosted, &millv1.MarkUsagePostedRequest{
-		LeaseId:   s.lease,
+		LeaseId:   s.leaseID(),
 		StepRunId: sr.GetId(),
 	}); err != nil {
 		return err
@@ -122,7 +122,7 @@ func (r *Runner) postUsage(ctx context.Context, s *state, sr *millv1.StepRun) er
 // the request id already stored (docs/architecture.md §"Write ordering").
 func (r *Runner) finish(ctx context.Context, s *state, detail *millv1.InspectResponse) error {
 	keyed, err := call(ctx, r.options.Store.SetCompleteRequestId, &millv1.SetCompleteRequestIdRequest{
-		LeaseId:   s.lease,
+		LeaseId:   s.leaseID(),
 		RunId:     s.run.GetId(),
 		RequestId: dagger.RequestID(s.run.GetId(), completeStep, s.run.GetGeneration()),
 	})
@@ -131,11 +131,11 @@ func (r *Runner) finish(ctx context.Context, s *state, detail *millv1.InspectRes
 	}
 	requestID := keyed.GetRun().GetCompleteRequestId()
 
-	if err := s.dagger.Complete(ctx, requestID, s.lease, s.node.GetReference(), r.result(s, detail)); err != nil {
+	if err := s.dagger.Complete(ctx, requestID, s.leaseID(), s.node.GetReference(), r.result(s, detail)); err != nil {
 		return err
 	}
 	if _, err := call(ctx, r.options.Store.Done, &millv1.DoneRequest{
-		LeaseId: s.lease,
+		LeaseId: s.leaseID(),
 		RunId:   s.run.GetId(),
 	}); err != nil {
 		return err

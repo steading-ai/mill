@@ -261,7 +261,7 @@ func (r *Runner) sessionEvents(ctx context.Context, s *state, sr *millv1.StepRun
 			// cancelled has still spoken, and the ledger has to say so
 			// before the next attempt asks how to begin.
 			if _, err := call(context.WithoutCancel(ctx), r.options.Store.MarkSessionStarted, &millv1.MarkSessionStartedRequest{
-				LeaseId:   s.lease,
+				LeaseId:   s.leaseID(),
 				StepRunId: sr.GetId(),
 			}); err != nil {
 				r.options.Log.Warn("recording that the session started",
@@ -510,7 +510,7 @@ func (r *Runner) recordHeartbeat(ctx context.Context, s *state, sr *millv1.StepR
 	// written while the step is being stopped, and it is the one that
 	// explains the exit.
 	if _, err := call(context.WithoutCancel(ctx), r.options.Store.RecordHeartbeat, &millv1.RecordHeartbeatRequest{
-		LeaseId:        s.lease,
+		LeaseId:        s.leaseID(),
 		RunId:          s.run.GetId(),
 		StepRunId:      sr.GetId(),
 		Strike:         beat.GetStrike(),
@@ -571,7 +571,7 @@ func (r *Runner) recordEnvironment(ctx context.Context, s *state, sr *millv1.Ste
 		return nil
 	}
 	_, err := call(ctx, r.options.Store.RecordStepEnvironment, &millv1.RecordStepEnvironmentRequest{
-		LeaseId:        s.lease,
+		LeaseId:        s.leaseID(),
 		StepRunId:      sr.GetId(),
 		EnvPassthrough: env.Passthrough,
 		EnvStripped:    env.Stripped,
