@@ -442,14 +442,16 @@ func usage(n int64) harness.Usage {
 // host, and what the loop needs of a forge is that a branch has a pull
 // request, that the pull request merges, and that the merge has a commit.
 type fixtureForge struct {
-	mu       sync.Mutex
-	pr       forge.PullRequest
-	merged   bool
-	merges   int
-	refuse   error
-	checksAt forge.Status
-	comments []string
-	deleted  []string
+	mu     sync.Mutex
+	pr     forge.PullRequest
+	merged bool
+	merges int
+	// refuseQueue is consumed one error per Merge call, in order; once it
+	// runs dry, Merge falls through to its ordinary success.
+	refuseQueue []error
+	checksAt    forge.Status
+	comments    []string
+	deleted     []string
 }
 
 // mergeCalls is how many times the forge was asked to merge the pull
@@ -499,8 +501,10 @@ func (f *fixtureForge) Merge(_ context.Context, pr forge.PullRequest) (forge.Pul
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.merges++
-	if f.refuse != nil {
-		return pr, f.refuse
+	if len(f.refuseQueue) > 0 {
+		err := f.refuseQueue[0]
+		f.refuseQueue = f.refuseQueue[1:]
+		return pr, err
 	}
 	f.merged = true
 	f.pr.State = "merged"

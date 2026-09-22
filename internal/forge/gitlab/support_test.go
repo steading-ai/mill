@@ -117,13 +117,13 @@ func (s *stub) on(method, path string, status int, fixture string) {
 // commit it merges, and it must be the branch's head. A merge with no `sha`
 // is `400 SHA must be provided when merging`; one naming anything but head
 // is a 409, which is the forge saying the branch moved under the mill.
-func (s *stub) onMerge(path, head, fixture string) {
+func (s *stub) onMerge(head string) {
 	GinkgoHelper()
-	merged, err := os.ReadFile(filepath.Join("testdata", fixture))
+	merged, err := os.ReadFile(filepath.Join("testdata", "merge_request_squash_merged.json"))
 	Expect(err).NotTo(HaveOccurred())
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.handlers[http.MethodPut+" "+path] = func(w http.ResponseWriter, body []byte) {
+	s.handlers[http.MethodPut+" "+escaped+"/merge_requests/7/merge"] = func(w http.ResponseWriter, body []byte) {
 		var request struct {
 			SHA string `json:"sha"`
 		}
@@ -177,6 +177,34 @@ func (s *stub) onPushedBranch(name, head string, hidden int, fixture string) {
 		}
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write(created)
+	}
+}
+
+// onMergeableStates answers repeated reads of one merge request with a
+// sequence of `detailed_merge_status` values, one per read, holding the
+// last value once the sequence runs out — the way GitLab settles on an
+// answer and keeps it. Everything else about the merge request comes from
+// a fixture, decoded and re-encoded with the status substituted in.
+func (s *stub) onMergeableStates(fixture string, states ...string) {
+	GinkgoHelper()
+	body, err := os.ReadFile(filepath.Join("testdata", fixture))
+	Expect(err).NotTo(HaveOccurred())
+	var decoded map[string]any
+	Expect(json.Unmarshal(body, &decoded)).To(Succeed())
+	var reads atomic.Int64
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.handlers[http.MethodGet+" "+escaped+"/merge_requests/7"] = func(w http.ResponseWriter, _ []byte) {
+		i := int(reads.Add(1)) - 1
+		if i >= len(states) {
+			i = len(states) - 1
+		}
+		decoded["detailed_merge_status"] = states[i]
+		encoded, err := json.Marshal(decoded)
+		Expect(err).NotTo(HaveOccurred())
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(encoded)
 	}
 }
 

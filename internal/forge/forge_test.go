@@ -132,6 +132,10 @@ var _ = Describe("What the mill retries", Label("unit"), func() {
 			Expect(forge.Retryable(err)).To(Equal(retryable))
 		},
 		Entry("a merge the forge refused", &forge.MergeRefusedError{PR: 7, Status: http.StatusMethodNotAllowed, Reason: "Branch cannot be merged"}, false),
+		Entry("a merge refused while mergeability is still being computed",
+			&forge.MergeRefusedError{PR: 7, Status: http.StatusMethodNotAllowed, Reason: "Pull Request is not mergeable", Pending: true}, true),
+		Entry("a merge refused for a conflict a catch-up did not see",
+			&forge.MergeRefusedError{PR: 7, Status: http.StatusMethodNotAllowed, Reason: "Pull Request is not mergeable", Conflict: true}, true),
 		Entry("a project with no repository", &forge.NoVCSURLError{Project: "mill"}, false),
 		Entry("a forge with no adapter", &forge.UnsupportedError{Kind: forge.KindGitHub, Project: "mill"}, false),
 		Entry("a branch with no pull request", forge.ErrNoPullRequest, false),

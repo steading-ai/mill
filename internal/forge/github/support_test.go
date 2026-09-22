@@ -181,6 +181,33 @@ func (s *stub) onPushedBranch(name, head string, hidden int, fixture string) {
 	}
 }
 
+// onMergeableStates answers repeated reads of one pull request with a
+// sequence of `mergeable_state` values, one per read, holding the last
+// value once the sequence runs out — the way GitHub settles on an answer
+// and keeps it. Everything else about the pull request comes from a
+// fixture, decoded and re-encoded with the state substituted in.
+func (s *stub) onMergeableStates(fixture string, states ...string) {
+	GinkgoHelper()
+	body, err := os.ReadFile(filepath.Join("testdata", fixture))
+	Expect(err).NotTo(HaveOccurred())
+	var decoded map[string]any
+	Expect(json.Unmarshal(body, &decoded)).To(Succeed())
+	var reads atomic.Int64
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.handlers[http.MethodGet+" "+repoAPI+"/pulls/7"] = func(w http.ResponseWriter, _ []byte) {
+		i := int(reads.Add(1)) - 1
+		if i >= len(states) {
+			i = len(states) - 1
+		}
+		decoded["mergeable_state"] = states[i]
+		encoded, err := json.Marshal(decoded)
+		Expect(err).NotTo(HaveOccurred())
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(encoded)
+	}
+}
+
 // calls is every request the stub received.
 func (s *stub) calls() []call {
 	s.mu.Lock()
