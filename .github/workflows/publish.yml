@@ -1,0 +1,86 @@
+# The repository's first workflow, and its only one: on every push to
+# main, build the staged tree `make stage-<arch>` (Makefile) produces for
+# each architecture, image it with packaging/Containerfile, and push a
+# multi-arch manifest to ghcr.io/steading-ai/mill so a consuming
+# repository's CI (steading#6's browser suite) can pull mill and its
+# sidecar with nothing but its own GITHUB_TOKEN. docs/publishing.md
+# records the image name, the tag scheme, and the one-time access grant a
+# person makes in the package's own settings.
+#
+# Not a check: it runs on push to main only, never on a pull request, and
+# authenticates with GITHUB_TOKEN alone — no other secret.
+name: publish
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # git describe needs the v* tags reachable, or Makefile's VERSION
+          # falls back to a placeholder instead of the series a local
+          # build would report for the same commit.
+          fetch-depth: 0
+
+      # Installs the same Go, Node and pnpm mise.toml pins everywhere else,
+      # and puts their shims on PATH for every step after this one.
+      - uses: jdx/mise-action@v2
+
+      - name: Cache Go modules and build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ hashFiles('go.sum') }}
+
+      - name: Cache the pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-${{ hashFiles('sidecar/pnpm-lock.yaml') }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Both architectures share one staging tree in turn, the same way
+      # `make package` builds both rpms — stage one, build and push its
+      # image under a per-architecture tag, then move to the next. Each
+      # image needs only `COPY`, so nothing here executes target-arch code
+      # and no QEMU setup is needed.
+      - name: Build and push each architecture
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            make stage-"$arch"
+            docker buildx build \
+              --platform linux/"$arch" \
+              --build-arg REVISION=${{ github.sha }} \
+              --file packaging/Containerfile \
+              --tag ghcr.io/steading-ai/mill:${{ github.sha }}-"$arch" \
+              --push \
+              .
+          done
+
+      # Combines the two per-architecture images above into the tags a
+      # consumer actually pulls: the full commit SHA, and main.
+      - name: Assemble and push the multi-arch manifest
+        run: |
+          docker buildx imagetools create \
+            --tag ghcr.io/steading-ai/mill:${{ github.sha }} \
+            --tag ghcr.io/steading-ai/mill:main \
+            ghcr.io/steading-ai/mill:${{ github.sha }}-amd64 \
+            ghcr.io/steading-ai/mill:${{ github.sha }}-arm64
