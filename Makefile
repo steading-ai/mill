@@ -176,10 +176,12 @@ sidecar-build: sidecar-deps
 package: sidecar-build
 	@for arch in $(PACKAGE_ARCHES); do $(MAKE) --no-print-directory package-$$arch || exit 1; done
 
-# One architecture's package, from the staging tree packaging/nfpm.yaml reads: the
-# binary cross-compiled, the sidecar's dependencies resolved for linux on
-# that CPU, and nfpm over the two. Both products are pure Go and plain
-# JavaScript, so this builds on any host.
+# One architecture's staged tree: the binary cross-compiled, and the
+# sidecar's dependencies resolved for linux on that CPU. Both products are
+# pure Go and plain JavaScript, so this builds on any host. What packages
+# this tree — nfpm below, or the published container image
+# (.github/workflows/publish.yml, packaging/Containerfile) — reads it from
+# here without rebuilding it.
 #
 # The Claude Agent SDK carries its command as one native package per
 # platform, chosen by pnpm from what the staging tree says it supports.
@@ -187,7 +189,7 @@ package: sidecar-build
 # the musl variant lands beside the glibc one and is removed: the package
 # is for Fedora, and the variant is two hundred megabytes of binary nothing
 # there loads.
-package-%: sidecar-build
+stage-%: sidecar-build
 	rm -rf $(STAGE)
 	mkdir -p $(STAGE)/sidecar
 	GOOS=linux GOARCH=$* CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(STAGE)/mill ./cmd/mill
@@ -195,6 +197,8 @@ package-%: sidecar-build
 	printf 'nodeLinker: hoisted\nsupportedArchitectures:\n  os: [linux]\n  cpu: [%s]\n' $(NODE_CPU_$*) > $(STAGE)/sidecar/pnpm-workspace.yaml
 	pnpm install --dir $(STAGE)/sidecar --prod --frozen-lockfile --prefer-offline --silent
 	rm -rf $(STAGE)/sidecar/node_modules/@anthropic-ai/claude-agent-sdk-linux-*-musl
+
+package-%: stage-%
 	mkdir -p $(DESTDIR)
 	MILL_VERSION=$(VERSION) MILL_ARCH=$* nfpm package --config packaging/nfpm.yaml --packager rpm --target $(DESTDIR)/
 

@@ -1,0 +1,33 @@
+# The image .github/workflows/publish.yml pushes to
+# ghcr.io/steading-ai/mill on every push to main: a distribution of files,
+# not a service definition. A consuming CI (steading#6's browser suite)
+# copies the binary and the sidecar out of it — `podman create` + `podman
+# cp`, or `oras` — or runs it directly, as it chooses. docs/publishing.md
+# records the image name, its tags, and the one-time access grant a
+# consumer needs.
+#
+# Built from this checkout, not from source inside the image: `make
+# stage-<arch>` (Makefile) must already have populated dist/stage/ with the
+# binary, cross-compiled with CGO_ENABLED=0 and stamped with this build's
+# VERSION, and the sidecar's production node_modules for the target
+# architecture. workflows/ is copied straight from the checkout, the same
+# tree packaging/nfpm.yaml installs into an rpm's own
+# /usr/share/mill/workflows.
+#
+# scratch: the binary carries no C dependency and the sidecar is only ever
+# read as files by a consumer's own node, never executed here, so nothing
+# in this image ever needs a libc, a shell, or coreutils.
+FROM scratch
+
+ARG REVISION
+LABEL org.opencontainers.image.source=https://github.com/steading-ai/mill
+LABEL org.opencontainers.image.revision=${REVISION}
+
+# No shell exists to put mill on a PATH at runtime, so the image sets one
+# in its config instead; podman run <image> mill version, as a consumer
+# would type it, resolves through this.
+ENV PATH=/usr/local/bin
+
+COPY dist/stage/mill /usr/local/bin/mill
+COPY dist/stage/sidecar /usr/local/libexec/mill/sidecar
+COPY workflows /usr/local/share/mill/workflows
