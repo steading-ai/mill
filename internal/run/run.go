@@ -55,6 +55,11 @@ const (
 	// DefaultGrace is how long a cancelled step has to stop before the
 	// adapter kills it.
 	DefaultGrace = 5 * time.Second
+	// defaultMergeRetryWait is how long the merge gate pauses between merge
+	// attempts it retries in place, for a refusal that names its own
+	// transience through [forge.MergeRefusedError.Pending] or
+	// [forge.MergeRefusedError.Conflict] (mill#42).
+	defaultMergeRetryWait = 2 * time.Second
 )
 
 // ErrFenced ends a run that lost its lease. It is returned rather than
@@ -220,6 +225,10 @@ type Options struct {
 	// keeps before later bodies are truncated (docs/activity.md §Caps).
 	// Zero takes [defaultActivityCeiling].
 	ActivityCeiling int64
+	// MergeRetryWait is how long the merge gate pauses between merge
+	// attempts it retries in place, for a refusal that names its own
+	// transience. Zero takes [defaultMergeRetryWait] (mill#42).
+	MergeRetryWait time.Duration
 	// Log is where diagnostics go. Nil discards them.
 	Log *slog.Logger
 	// Now is the clock. Nil means [time.Now].
@@ -351,6 +360,9 @@ func New(options Options) *Runner {
 	}
 	if options.ActivityCeiling <= 0 {
 		options.ActivityCeiling = defaultActivityCeiling
+	}
+	if options.MergeRetryWait <= 0 {
+		options.MergeRetryWait = defaultMergeRetryWait
 	}
 	return &Runner{options: options}
 }

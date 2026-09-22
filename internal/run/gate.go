@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"strings"
 	"text/template"
+	"time"
 
 	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/check"
 	"github.com/ivy/mill/internal/dagger"
 	"github.com/ivy/mill/internal/evidence"
+	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/notify"
 	"github.com/ivy/mill/internal/workspace"
 )
@@ -81,33 +83,10 @@ func (r *Runner) approve(ctx context.Context, s *state, step *millv1.Step) (stri
 		return "", err
 	}
 	if !pr.Merged() {
-		catchUp, err := s.workspace.CatchUp(ctx, workspace.CatchUpRequest{Target: pr.Target})
-		if err != nil {
+		if pr, err = r.catchUp(ctx, s, f, pr); err != nil {
 			return "", err
 		}
-		if len(catchUp.Overlap) > 0 {
-			return "", &catchUpOverlapError{target: pr.Target, files: catchUp.Overlap}
-		}
-		if catchUp.Merged {
-			r.printf("  caught up with %s at %s\n", pr.Target, short(catchUp.SHA))
-			// The self-merge just moved the branch's head on the forge, so
-			// the pr this loop read before catching up now names a stale
-			// head: merging it as-is would ask [forge.Forge.Merge] to merge
-			// a head that has since moved, which it refuses.
-			if pr, err = f.PR(ctx, s.run.GetBranch()); err != nil {
-				return "", err
-			}
-			// Nothing else ran on this tree: the merge just landed
-			// unreviewed, so the checks a step would have run had one run
-			// after catch-up run now, against what catch-up actually
-			// produced, before the forge is asked to merge it (mill#52 —
-			// two changes with no file in common still combined into a
-			// tree that would not start).
-			if err := r.checkCaughtUp(ctx, s); err != nil {
-				return "", err
-			}
-		}
-		if pr, err = f.Merge(ctx, pr); err != nil {
+		if pr, err = r.mergeRetrying(ctx, s, f, pr); err != nil {
 			return "", err
 		}
 	}
@@ -118,6 +97,79 @@ func (r *Runner) approve(ctx context.Context, s *state, step *millv1.Step) (stri
 	s.mergeCommit = sha
 	r.printf("  merged as %s\n", short(sha))
 	return pr.HeadSHA, nil
+}
+
+// catchUp runs the workspace's local git catch-up against the pull
+// request's target, merging it into the run's branch and pushing when the
+// target moved since the branch diverged. It returns the pull request
+// re-read after a catch-up that merged, since the self-merge just moved the
+// branch's head on the forge and the pr the caller holds now names a stale
+// one; it returns pr unchanged when catch-up found nothing to do.
+func (r *Runner) catchUp(ctx context.Context, s *state, f forge.Forge, pr forge.PullRequest) (forge.PullRequest, error) {
+	catchUp, err := s.workspace.CatchUp(ctx, workspace.CatchUpRequest{Target: pr.Target})
+	if err != nil {
+		return forge.PullRequest{}, err
+	}
+	if len(catchUp.Overlap) > 0 {
+		return forge.PullRequest{}, &catchUpOverlapError{target: pr.Target, files: catchUp.Overlap}
+	}
+	if !catchUp.Merged {
+		return pr, nil
+	}
+	r.printf("  caught up with %s at %s\n", pr.Target, short(catchUp.SHA))
+	if pr, err = f.PR(ctx, s.run.GetBranch()); err != nil {
+		return forge.PullRequest{}, err
+	}
+	// Nothing else ran on this tree: the merge just landed unreviewed, so
+	// the checks a step would have run had one run after catch-up run now,
+	// against what catch-up actually produced, before the forge is asked to
+	// merge it (mill#52 — two changes with no file in common still combined
+	// into a tree that would not start).
+	if err := r.checkCaughtUp(ctx, s); err != nil {
+		return forge.PullRequest{}, err
+	}
+	return pr, nil
+}
+
+// mergeRetryBudget bounds how many times mergeRetrying asks the forge to
+// merge inside one step attempt. A refusal still unresolved after this many
+// attempts is not the self-clearing transient this loop exists to absorb,
+// and surfaces as an ordinary step failure instead of retrying forever
+// (mill#42).
+const mergeRetryBudget = 5
+
+// mergeRetrying asks the forge to merge, absorbing — inside this one
+// attempt, without spending one of the step's own retries — a refusal that
+// names its own transience through [forge.MergeRefusedError.Pending] or
+// [forge.MergeRefusedError.Conflict], the signal [forge.Retryable] reports
+// on. A pending refusal is the forge still computing mergeability after a
+// push, which clears on its own, so this waits [Options.MergeRetryWait] and
+// asks again. A conflict is the target having moved again after catchUp
+// last ran, which a fresh catchUp resolves the same way the first one did.
+// Anything else, or the budget spent, propagates unchanged and fails the
+// step exactly as it did before this existed.
+func (r *Runner) mergeRetrying(ctx context.Context, s *state, f forge.Forge, pr forge.PullRequest) (forge.PullRequest, error) {
+	for attempt := 0; ; attempt++ {
+		merged, err := f.Merge(ctx, pr)
+		if err == nil {
+			return merged, nil
+		}
+		var refused *forge.MergeRefusedError
+		if attempt >= mergeRetryBudget-1 || !errors.As(err, &refused) || !forge.Retryable(refused) {
+			return forge.PullRequest{}, err
+		}
+		if refused.Conflict {
+			if pr, err = r.catchUp(ctx, s, f, pr); err != nil {
+				return forge.PullRequest{}, err
+			}
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return forge.PullRequest{}, ctx.Err()
+		case <-time.After(r.options.MergeRetryWait):
+		}
+	}
 }
 
 // mergeFinding is an error from approve that is not the mill's own plumbing

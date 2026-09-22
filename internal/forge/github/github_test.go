@@ -207,7 +207,7 @@ var _ = Describe("The GitHub forge adapter", Label("unit"), func() {
 			api.on(http.MethodGet, repoAPI, http.StatusOK, "repository.json")
 			api.on(http.MethodGet, repoAPI+"/pulls", http.StatusOK, "pulls_open.json")
 			api.onMerge(head)
-			api.on(http.MethodGet, repoAPI+"/pulls/7", http.StatusOK, "pull_merged.json")
+			api.onMergeableStates("pull_merged.json", "clean")
 
 			pr, err := client.PR(ctx, branch)
 			Expect(err).NotTo(HaveOccurred())
@@ -230,7 +230,7 @@ var _ = Describe("The GitHub forge adapter", Label("unit"), func() {
 			api.on(http.MethodGet, repoAPI, http.StatusOK, "repository_squash_only.json")
 			api.on(http.MethodGet, repoAPI+"/pulls", http.StatusOK, "pulls_open.json")
 			api.onMerge(head)
-			api.on(http.MethodGet, repoAPI+"/pulls/7", http.StatusOK, "pull_merged.json")
+			api.onMergeableStates("pull_merged.json", "clean")
 
 			pr, err := client.PR(ctx, branch)
 			Expect(err).NotTo(HaveOccurred())
@@ -250,6 +250,7 @@ var _ = Describe("The GitHub forge adapter", Label("unit"), func() {
 
 		It("A head that moved is not merged blind", func(ctx context.Context) {
 			api.on(http.MethodGet, repoAPI, http.StatusOK, "repository.json")
+			api.onMergeableStates("pull_opened.json", "clean")
 			api.onMerge("ffffffffffffffffffffffffffffffffffffffff")
 
 			_, err := client.Merge(ctx, forge.PullRequest{Number: 7, HeadSHA: head})
@@ -261,17 +262,65 @@ var _ = Describe("The GitHub forge adapter", Label("unit"), func() {
 			Expect(forge.Retryable(err)).To(BeTrue(), "the next attempt reads the head again")
 		})
 
-		It("returns a typed refusal naming GitHub's reason, which the mill does not retry", func(ctx context.Context) {
+		It("waits out GitHub's own mergeability recomputation before asking to merge", func(ctx context.Context) {
 			api.on(http.MethodGet, repoAPI, http.StatusOK, "repository.json")
+			api.onMergeableStates("pull_merged.json", "unknown", "clean")
+			api.onMerge(head)
+			quick := github.New(api.repo(), api.minter(),
+				github.WithHTTPClient(api.httpClient()), github.WithMergeableWait(2*time.Second, 10*time.Millisecond)).
+				ForStep(forge.Step{TokenID: "01J0STEP"})
+
+			merged, err := quick.Merge(ctx, forge.PullRequest{Number: 7, HeadSHA: head})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(merged.Merged()).To(BeTrue())
+			Expect(api.count(http.MethodGet, repoAPI+"/pulls/7")).To(Equal(3), "unknown, then clean, then the post-merge read")
+		})
+
+		It("classifies a refusal that still lands after the wait as mergeability still being computed", func(ctx context.Context) {
+			api.on(http.MethodGet, repoAPI, http.StatusOK, "repository.json")
+			api.onMergeableStates("pull_opened.json", "unknown")
+			api.on(http.MethodPut, repoAPI+"/pulls/7/merge", http.StatusMethodNotAllowed, "merge_refused.json")
+			quick := github.New(api.repo(), api.minter(),
+				github.WithHTTPClient(api.httpClient()), github.WithMergeableWait(30*time.Millisecond, 10*time.Millisecond)).
+				ForStep(forge.Step{TokenID: "01J0STEP"})
+
+			_, err := quick.Merge(ctx, forge.PullRequest{Number: 7, HeadSHA: head})
+
+			var refused *forge.MergeRefusedError
+			Expect(errors.As(err, &refused)).To(BeTrue(), "%v", err)
+			Expect(refused.Pending).To(BeTrue())
+			Expect(refused.Conflict).To(BeFalse())
+			Expect(forge.Retryable(err)).To(BeTrue(), "an unsettled mergeability clears on its own")
+		})
+
+		It("classifies a refusal for a real conflict a catch-up did not see", func(ctx context.Context) {
+			api.on(http.MethodGet, repoAPI, http.StatusOK, "repository.json")
+			api.onMergeableStates("pull_opened.json", "dirty")
 			api.on(http.MethodPut, repoAPI+"/pulls/7/merge", http.StatusMethodNotAllowed, "merge_refused.json")
 
-			_, err := client.Merge(ctx, forge.PullRequest{Number: 7, HeadSHA: head, Detail: "blocked"})
+			_, err := client.Merge(ctx, forge.PullRequest{Number: 7, HeadSHA: head})
+
+			var refused *forge.MergeRefusedError
+			Expect(errors.As(err, &refused)).To(BeTrue(), "%v", err)
+			Expect(refused.Conflict).To(BeTrue())
+			Expect(refused.Pending).To(BeFalse())
+			Expect(forge.Retryable(err)).To(BeTrue(), "another catch-up sees the target that moved")
+		})
+
+		It("returns a typed refusal naming GitHub's reason, which the mill does not retry", func(ctx context.Context) {
+			api.on(http.MethodGet, repoAPI, http.StatusOK, "repository.json")
+			api.onMergeableStates("pull_blocked.json", "blocked")
+			api.on(http.MethodPut, repoAPI+"/pulls/7/merge", http.StatusMethodNotAllowed, "merge_refused.json")
+
+			_, err := client.Merge(ctx, forge.PullRequest{Number: 7, HeadSHA: head})
 
 			var refused *forge.MergeRefusedError
 			Expect(errors.As(err, &refused)).To(BeTrue(), "%v", err)
 			Expect(refused.Status).To(Equal(http.StatusMethodNotAllowed))
 			Expect(refused.Reason).To(ContainSubstring(`Required status check "ci" is expected.`))
 			Expect(refused.Detail).To(Equal("blocked"))
+			Expect(refused.Pending).To(BeFalse())
+			Expect(refused.Conflict).To(BeFalse())
 			Expect(forge.Retryable(err)).To(BeFalse())
 		})
 

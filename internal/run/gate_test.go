@@ -2,12 +2,15 @@ package run_test
 
 import (
 	"context"
+	"net/http"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
+	"github.com/ivy/mill/internal/forge"
 	"github.com/ivy/mill/internal/harness"
 	"github.com/ivy/mill/internal/run"
 	"github.com/ivy/mill/internal/testsupport"
@@ -404,6 +407,77 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 			Expect(revised).To(ContainSubstring("clean-tree failed against the merged tree"))
 			Expect(revised).To(ContainSubstring(marker + " carries a leaked secret"))
 			Expect(revised).To(ContainSubstring("The merge is already staged on the branch"))
+		})
+	})
+
+	// mill#42: a push that just landed can leave the forge still computing
+	// mergeability, or racing a second target move the catch-up run before
+	// it did not see. Both clear on their own — the first with time, the
+	// second with another catch-up — so the merge gate absorbs them inside
+	// the same attempt rather than spending one of the step's own retries.
+	Describe("The merge gate absorbs the forge's own transients", func() {
+		It("absorbs a pending mergeability refusal and merges once it clears", func() {
+			f.forge.refuseQueue = []error{
+				&forge.MergeRefusedError{PR: 1, Status: http.StatusMethodNotAllowed, Pending: true},
+			}
+
+			Expect(f.runner(func(o *run.Options) { o.MergeRetryWait = 10 * time.Millisecond }).
+				Execute(ctx, f.nodeRef)).To(Succeed())
+
+			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_DONE))
+			Expect(f.forge.mergeCalls()).To(Equal(2), "the refusal was absorbed in place, not charged")
+			Expect(stepRuns(f.inspect(ctx), "merge")).To(HaveLen(1), "one step attempt, not two")
+		})
+
+		It("absorbs a conflict refusal by catching up again and merges once it clears", func() {
+			f.forge.refuseQueue = []error{
+				&forge.MergeRefusedError{PR: 1, Status: http.StatusMethodNotAllowed, Conflict: true},
+			}
+
+			Expect(f.runner(func(o *run.Options) { o.MergeRetryWait = 10 * time.Millisecond }).
+				Execute(ctx, f.nodeRef)).To(Succeed())
+
+			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_DONE))
+			Expect(f.forge.mergeCalls()).To(Equal(2), "the refusal was absorbed by a fresh catch-up, not charged")
+			Expect(stepRuns(f.inspect(ctx), "merge")).To(HaveLen(1), "one step attempt, not two")
+		})
+
+		It("gives up after the retry budget and surfaces the refusal as an ordinary step failure", func() {
+			// mergeRetryBudget (gate.go) is 5: enough pending refusals to
+			// spend the whole in-attempt budget without ever clearing.
+			for i := 0; i < 5; i++ {
+				f.forge.refuseQueue = append(f.forge.refuseQueue,
+					&forge.MergeRefusedError{PR: 1, Status: http.StatusMethodNotAllowed, Pending: true})
+			}
+
+			Expect(f.runner(func(o *run.Options) { o.MergeRetryWait = 10 * time.Millisecond }).
+				Execute(ctx, f.nodeRef)).To(Succeed())
+
+			detail := f.inspect(ctx)
+			Expect(stepRuns(detail, "merge")[0].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_FAILED),
+				"the budget bounds the in-place retries; a durably stuck merge still surfaces")
+			// The step's own retry, unrelated to mill#42, picks the run back
+			// up; the queue is spent by then, so the second attempt succeeds.
+			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_DONE))
+			Expect(f.forge.mergeCalls()).To(Equal(6), "five spent on the exhausted budget, one more on the step's own retry")
+		})
+
+		It("does not retry in place a refusal that names no transience of its own", func() {
+			workflow := f.variant(ctx, "merge-no-retry", func(definition *millv1.Workflow) {
+				merge := stepOf(definition, "merge")
+				merge.Retries = 0
+				merge.OnFailure = nil
+			})
+			f.forge.refuseQueue = []error{
+				&forge.MergeRefusedError{PR: 1, Status: http.StatusMethodNotAllowed, Detail: "blocked"},
+			}
+
+			Expect(f.runner(func(o *run.Options) { o.Workflow = workflow }).
+				Execute(ctx, f.nodeRef)).To(Succeed())
+
+			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_PARKED))
+			Expect(f.forge.mergeCalls()).To(Equal(1), "a refusal naming no transience of its own is not retried in place")
+			Expect(stepRuns(f.inspect(ctx), "merge")).To(HaveLen(1))
 		})
 	})
 })
