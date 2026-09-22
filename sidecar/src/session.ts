@@ -26,7 +26,7 @@ import {
   type Terminal,
   type Workspace,
 } from "../gen/harness/v1/harness_pb.js";
-import { describe, fromError, fromResult, ran, stalled } from "./exit.js";
+import { describe, fromError, fromResult, neverRan, ran, stalled } from "./exit.js";
 import { denyPollLoops } from "./hooks.js";
 import { DEFAULT_PERMISSION_MODE, PolicyError, TASK_TOOLS, parseOptions, type Env } from "./options.js";
 import type { Conversation, Options, QueryFn, SDKMessage, SDKUserMessage } from "./sdk.js";
@@ -662,6 +662,13 @@ export async function runSession(deps: SessionDeps): Promise<Terminal> {
   const { query, turn, options, emit, accumulated, cancelled, env, uid, pid } = deps;
   const terminal = create(TerminalSchema, { requestId: turn.requestId });
   let sawMessage = false;
+  // sawTurnActivity is whether the SDK ever sent a real conversation
+  // message — "assistant" or "user" — before its result. Its init sequence
+  // sends three "system" messages before the first of those
+  // (docs/spikes/sdk-sessions.md §Q5), so a result with neither means the
+  // session's first word was its last: a resume racing the predecessor
+  // session's own teardown, not a turn that ran and said nothing (mill#34).
+  let sawTurnActivity = false;
 
   const emitEvent = (body: Event["body"], parentCallId?: string): void => {
     emit(create(EventSchema, { requestId: turn.requestId, body, parentCallId: parentCallId ?? "" }));
@@ -672,6 +679,12 @@ export async function runSession(deps: SessionDeps): Promise<Terminal> {
   const tasks = new Tasks(uid, options.cwd ?? turn.cwd);
   const blocks = new StreamBlocks();
   const interval = heartbeatMs(env);
+  // openSubagents is the top-level Agent tool calls the session has not yet
+  // been given a result for. Nothing here waits on one past the turn that
+  // started it — the SDK gives no way to — but a call still open when the
+  // turn ends is the shape mill#19's `simplify` step left behind, and the
+  // terminal record says so instead of staying silent about it (mill#34).
+  const openSubagents = new Set<string>();
 
   // waitingSince is when the session first ended a turn with tasks still
   // running, and strikes how many consecutive looks have found every one of
@@ -754,12 +767,15 @@ export async function runSession(deps: SessionDeps): Promise<Terminal> {
         break;
       }
       sawMessage = true;
+      if (next.value.type === "assistant" || next.value.type === "user") {
+        sawTurnActivity = true;
+      }
       if (tasks.observe(next.value as unknown as { type?: string; subtype?: string })) {
         // A task's own bookkeeping is not the harness taking a turn: a task
         // that ends during the wait arrives here, and the wait goes on.
         continue;
       }
-      const result = handleMessage(next.value, accumulated, emitEvent, blocks);
+      const result = handleMessage(next.value, accumulated, emitEvent, blocks, openSubagents);
       if (result === undefined) {
         // The harness is talking, so a turn is in flight.
         inTurn = true;
@@ -770,8 +786,15 @@ export async function runSession(deps: SessionDeps): Promise<Terminal> {
       // result carries the whole session however many turns it took.
       terminal.usage = fromModelUsage(result.modelUsage);
       if (!answering) {
-        terminal.finalMessage = result.finalMessage;
-        terminal.exit = result.exit;
+        if (sawTurnActivity) {
+          terminal.finalMessage = result.finalMessage;
+          terminal.exit = result.exit;
+        } else {
+          // The result is the first thing the SDK said: nothing ran for
+          // this session to have an opinion about (mill#34).
+          terminal.exit = neverRan(ExitReason.REFUSED);
+          terminal.finalMessage = "the session's first message was its result, with no turn in between";
+        }
         terminal.structuredOutput = jsonObjectOf(result.structuredOutput);
       }
       answering = false;
@@ -809,6 +832,10 @@ export async function runSession(deps: SessionDeps): Promise<Terminal> {
     // ran and failed, not a parse the sidecar may paper over.
     terminal.exit = ran(1);
     terminal.finalMessage = `${terminal.finalMessage}\n\nthe session produced no output matching the step's output_schema`;
+  }
+
+  if (openSubagents.size > 0) {
+    terminal.finalMessage = `${terminal.finalMessage}\n\nended with ${openSubagents.size} subagent call(s) still open: ${[...openSubagents].join(", ")}`;
   }
 
   return terminal;
@@ -899,6 +926,7 @@ function handleMessage(
   accumulated: UsageAccumulator,
   emitEvent: (body: Event["body"], parentCallId?: string) => void,
   blocks: StreamBlocks,
+  openSubagents: Set<string>,
 ): ResultOfTurn | undefined {
   switch (message.type) {
     case "assistant": {
@@ -910,6 +938,9 @@ function handleMessage(
       const parentCallId = message.parent_tool_use_id ?? undefined;
       for (const block of message.message.content) {
         if (block.type === "tool_use") {
+          if (block.name === "Agent" && parentCallId === undefined) {
+            openSubagents.add(block.id);
+          }
           emitEvent(
             {
               case: "toolCall",
@@ -936,6 +967,9 @@ function handleMessage(
       if (Array.isArray(content)) {
         for (const block of content) {
           if (typeof block === "object" && block !== null && block.type === "tool_result") {
+            if (parentCallId === undefined) {
+              openSubagents.delete(block.tool_use_id);
+            }
             emitEvent(
               {
                 case: "toolResult",

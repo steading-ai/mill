@@ -351,7 +351,14 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 		return outcome{}, nil
 
 	default:
-		return r.failStep(ctx, s, step, sr, detail, result, errors.Join(execErr, verifyErr))
+		cause := errors.Join(execErr, verifyErr)
+		if execErr != nil && result.exit.GetStatus() < 0 {
+			// The harness itself already says this attempt never ran; an
+			// evidence verdict about work that never happened is not a
+			// second reason, it is noise (mill#34).
+			cause = execErr
+		}
+		return r.failStep(ctx, s, step, sr, detail, result, cause)
 	}
 }
 

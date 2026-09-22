@@ -114,6 +114,13 @@ var _ = Describe("Streaming", Label("unit"), func() {
 		Expect(topLevelEvents).NotTo(BeZero(), "the top-level session's own events carry no parent_call_id")
 	})
 
+	It("records a subagent still open when the turn that started it ends", func() {
+		s := run(fakeEntrypoint, map[string]string{"MILL_FAKE_SCENARIO": "subagent-open"}, startRequest("subagent-open-1", nil))
+
+		Expect(s.terminal().GetFinalMessage()).To(ContainSubstring("subagent call(s) still open"))
+		Expect(s.terminal().GetFinalMessage()).To(ContainSubstring("toolu_agent_open"))
+	})
+
 	It("forwards a several-hundred-KB tool result whole, with no limit of its own", func() {
 		s := run(fakeEntrypoint, map[string]string{"MILL_FAKE_SCENARIO": "large-result"}, startRequest("large-result-1", nil))
 
