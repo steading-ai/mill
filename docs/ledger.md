@@ -312,6 +312,8 @@ Three properties fall out:
 - **A stale worker cannot corrupt the record.** Its dagger writes are fenced out by dagger; its store writes are rejected by Invariant 9. Its heartbeat fails first, which is how it learns.
 - **`revise` actually revises.** Superseding every step from the target through the failure means the revised work is re-simplified, re-committed, re-pushed, and re-reviewed; the ledger never claims pass-one evidence closed pass-two work.
 
+A graceful stop (`docs/architecture.md` §"Failure and stop", "Stop.") leaves exactly the runs the `run.status in (running, selecting)` branch above resumes — this worker's own `worker_ref`, an aborted attempt — so a restarted worker does not have to wait for `ClaimNext` to hand them back one at a time. Before its first `ClaimNext`, it lists them itself (`Runner.Resumable`) and claims each by name (`Worker.reclaim`), oldest abort first, up to its concurrency; only the slots left over go to `ClaimNext` (mill#44). A run a crash left `running` is not among them — nothing yet tells a live crash apart from a dead one without the sweep's own TTL guard, so that case still waits for an ordinary claim.
+
 `Complete` is not an RPC. It is `ApplyPatch` with a `complete_node` operation, and dagger releases the lease inside that same patch — which is why `ReportUsage` for the final step must precede it, why there is no separate `Release` on the done path, and why `store.Done` comes last.
 
 ## Sweep

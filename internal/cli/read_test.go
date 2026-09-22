@@ -91,6 +91,31 @@ var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 			Expect(full).To(ContainSubstring("LEASES"))
 		})
 
+		// mill#44: LEASES counts a run's claims after its first (docs/store's
+		// CountRunLeases counts `set_lease` events, which SetLease writes and
+		// CreateRun's own first claim does not) — so a run a reclaim landed
+		// on reads LEASES > 0, a run no one has ever reclaimed reads 0, and
+		// that difference is what a resumed run being shown as resumed,
+		// rather than as a fresh claim, comes down to in this table.
+		It("counts a second claim's lease, telling a resumed run apart from one nothing has reclaimed", func() {
+			r := openRun(ctx, "millcli#95", nodeID(95))
+			sr := r.start(ctx, "review", millv1.StepKind_STEP_KIND_GATE)
+			r.wait(ctx, "gate#1", sr)
+
+			before := r.cli(ctx, "status", "--view", "full")
+			Expect(strings.Fields(rowFor(before, "millcli#95"))[6]).To(Equal("0"),
+				"no claim has landed on this run beyond its first: "+before)
+
+			_, err := r.store.SetLease(ctx, connect.NewRequest(&millv1.SetLeaseRequest{
+				LeaseId: "01HZZZZZZZZZZZZZZZZZZZZZZ8", RunId: r.run.GetId(), WorkerRef: "spec@host",
+			}))
+			Expect(err).NotTo(HaveOccurred())
+
+			after := r.cli(ctx, "status", "--view", "full")
+			Expect(strings.Fields(rowFor(after, "millcli#95"))[6]).To(Equal("1"),
+				"a second claim's lease landed on the same run: "+after)
+		})
+
 		It("prints what the worker claims from, reading the same configuration a worker would", func() {
 			m := serving(ctx)
 
