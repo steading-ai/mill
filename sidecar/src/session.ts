@@ -786,7 +786,11 @@ export async function runSession(deps: SessionDeps): Promise<Terminal> {
       // result carries the whole session however many turns it took.
       terminal.usage = fromModelUsage(result.modelUsage);
       if (!answering) {
-        if (sawTurnActivity) {
+        // An upstream refusal is kept even when it is the first thing the
+        // SDK said: unlike the bare-result case below, it carries its own
+        // reason for having nothing to show, so there is no ambiguity for
+        // mill#34's rule to resolve.
+        if (sawTurnActivity || result.exit.reason === ExitReason.UPSTREAM_REFUSED) {
           terminal.finalMessage = result.finalMessage;
           terminal.exit = result.exit;
         } else {

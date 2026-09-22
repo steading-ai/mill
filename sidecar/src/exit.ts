@@ -20,10 +20,12 @@ export function neverRan(reason: ExitReason): ProcessExit {
 }
 
 // ran is the exit for a session that produced a result. `status` is 0 when
-// the turn succeeded and non-zero when it failed, and `reason` stays unset:
-// a session that ran needs no reason beyond its status.
-export function ran(status: number, signal = 0): ProcessExit {
-  return create(ProcessExitSchema, { status, signal, reason: ExitReason.UNSPECIFIED });
+// the turn succeeded and non-zero when it failed. `reason` stays unspecified
+// for an ordinary failure — a session that ran needs no reason beyond its
+// status — except the one failure that does: every request the turn made
+// refused by the upstream, which fromResult passes explicitly.
+export function ran(status: number, signal = 0, reason: ExitReason = ExitReason.UNSPECIFIED): ProcessExit {
+  return create(ProcessExitSchema, { status, signal, reason });
 }
 
 // stalled is the exit for a session the breaker stopped: it ended a turn
@@ -40,18 +42,39 @@ export function stalled(): ProcessExit {
 // The SDK emits exactly one result message per turn; `subtype` is "success"
 // when the turn completed and names the failure otherwise, and `is_error`
 // marks a successful-shaped result that carries an API error instead of an
-// answer.
+// answer. `api_error_status` is set on that result whenever the error was
+// the upstream's own answer to a request rather than something the SDK
+// decided on its own — null for a request that got no response at all, or
+// the HTTP status the upstream returned.
 export interface SdkOutcome {
   subtype: string;
   is_error?: boolean;
+  api_error_status?: number | null;
+}
+
+// upstreamRefused reports whether an outcome's api_error_status names an
+// outage rather than a request the upstream actively rejected: no response
+// at all, or a 5xx. A 4xx — a rate limit, a bad key, a malformed request —
+// is the upstream answering, so it is left to the ordinary failed-turn path
+// rather than mill's retry-without-evidence one.
+function upstreamRefused(result: SdkOutcome): boolean {
+  if (result.is_error !== true || result.api_error_status === undefined) {
+    return false;
+  }
+  return result.api_error_status === null || result.api_error_status >= 500;
 }
 
 // fromResult maps the SDK's result message to an exit. Anything but a clean
 // success is a session that ran and failed, which is a different thing from
-// a session that never ran.
+// a session that never ran — except a turn every one of whose requests the
+// upstream refused, which is an outage rather than the session's own work,
+// and gets its own reason so retry policy can tell the two apart.
 export function fromResult(result: SdkOutcome): ProcessExit {
   if (result.subtype === "success" && result.is_error !== true) {
     return ran(0);
+  }
+  if (upstreamRefused(result)) {
+    return ran(1, 0, ExitReason.UPSTREAM_REFUSED);
   }
   return ran(1);
 }

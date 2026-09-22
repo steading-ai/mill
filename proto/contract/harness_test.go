@@ -64,7 +64,8 @@ var _ = Describe("harness.proto", func() {
 		}
 		Expect(names).To(ConsistOf(
 			"EXIT_REASON_UNSPECIFIED", "EXIT_REASON_REFUSED", "EXIT_REASON_POLICY",
-			"EXIT_REASON_TIMEOUT", "EXIT_REASON_CANCELLED", "EXIT_REASON_STALLED"))
+			"EXIT_REASON_TIMEOUT", "EXIT_REASON_CANCELLED", "EXIT_REASON_STALLED",
+			"EXIT_REASON_UPSTREAM_REFUSED"))
 	})
 
 	It("records that harness settings come from the step", func() {

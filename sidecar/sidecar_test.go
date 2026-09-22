@@ -647,6 +647,25 @@ var _ = Describe("The sidecar", Label("unit"), func() {
 		Expect(bare.terminal().GetFinalMessage()).NotTo(Equal("Looks like nothing to do here."))
 	})
 
+	It("marks a turn every request of which the upstream refused, apart from an ordinary failed turn", func() {
+		By("given a turn whose every request the upstream answered 529")
+		refused := run(fakeEntrypoint, map[string]string{"MILL_FAKE_SCENARIO": "upstream-refused"}, startRequest("upstream-1", nil))
+
+		By("then the session ran, and its exit reason says the upstream refused it")
+		Expect(refused.terminal().GetExit().GetStatus()).To(Equal(int32(1)))
+		Expect(refused.terminal().GetExit().GetReason()).To(Equal(harnessv1.ExitReason_EXIT_REASON_UPSTREAM_REFUSED))
+
+		By("and a request that got no response at all counts the same way")
+		unreachable := run(fakeEntrypoint, map[string]string{"MILL_FAKE_SCENARIO": "upstream-unreachable"}, startRequest("upstream-2", nil))
+		Expect(unreachable.terminal().GetExit().GetStatus()).To(Equal(int32(1)))
+		Expect(unreachable.terminal().GetExit().GetReason()).To(Equal(harnessv1.ExitReason_EXIT_REASON_UPSTREAM_REFUSED))
+
+		By("and an ordinary failed turn, carrying no api_error_status, is not reclassified")
+		failed := run(fakeEntrypoint, map[string]string{"MILL_FAKE_SCENARIO": "failed"}, startRequest("upstream-3", nil))
+		Expect(failed.terminal().GetExit().GetStatus()).To(Equal(int32(1)))
+		Expect(failed.terminal().GetExit().GetReason()).To(Equal(harnessv1.ExitReason_EXIT_REASON_UNSPECIFIED))
+	})
+
 	It("refuses a cancel on stdin, because cancellation is a signal", func() {
 		By("given a Cancel request on stdin")
 		line := request(&harnessv1.Request{

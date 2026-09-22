@@ -34,6 +34,7 @@ import (
 	"connectrpc.com/connect"
 
 	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
+	harnessv1 "github.com/ivy/mill/gen/harness/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/gen/mill/v1/millv1connect"
 	"github.com/ivy/mill/internal/dagger"
@@ -223,6 +224,12 @@ type Options struct {
 	Log *slog.Logger
 	// Now is the clock. Nil means [time.Now].
 	Now func() time.Time
+	// Sleep is how the run waits out an upstream outage between attempts
+	// (mill#57, [Runner.wait]). Nil waits for real, ending early if ctx
+	// ends first; a spec sets it to skip the wait without changing
+	// [UpstreamWait]'s own arithmetic, which is what a worker and `mill
+	// explain` both compute the escalating delay from.
+	Sleep func(ctx context.Context, d time.Duration)
 	// Notifier carries a filed gate to a person, through whatever command
 	// the deployment configured. Nil never notifies, which is a deployment
 	// that has not configured one: the gate is still filed, and whoever
@@ -474,10 +481,12 @@ func (s *state) record(step, findings string) {
 
 // attemptsAt is how many attempts at a step count against its retries: every
 // attempt since the last one a human paid for, less the ones a worker's stop
-// aborted. An aborted attempt is not the step failing — it was never
-// answered — and retries are "how many times this step may fail and be
-// tried again" (docs/domain-model.md §Step), so a restart under a running
-// step costs the run nothing but the time.
+// aborted and the ones the upstream refused outright. Neither is the step
+// failing — one was never answered, and the other was never given the
+// chance to be evidence about the step's own work (mill#57) — and retries
+// are "how many times this step may fail and be tried again"
+// (docs/domain-model.md §Step), so a restart under a running step, or an
+// outage the run waited out, costs the run nothing but the time.
 func (s *state) attemptsAt(detail *millv1.InspectResponse, step string, attempt int64) int64 {
 	counted := attempt - s.retried[step]
 	for _, d := range detail.GetSteps() {
@@ -485,7 +494,8 @@ func (s *state) attemptsAt(detail *millv1.InspectResponse, step string, attempt 
 		if sr.GetStepName() != step || sr.GetAttempt() <= s.retried[step] || sr.GetAttempt() >= attempt {
 			continue
 		}
-		if sr.GetStatus() == millv1.StepRunStatus_STEP_RUN_STATUS_ABORTED {
+		if sr.GetStatus() == millv1.StepRunStatus_STEP_RUN_STATUS_ABORTED ||
+			sr.GetExit().GetReason() == harnessv1.ExitReason_EXIT_REASON_UPSTREAM_REFUSED {
 			counted--
 		}
 	}

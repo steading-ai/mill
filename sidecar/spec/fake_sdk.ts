@@ -148,6 +148,21 @@ function failure(subtype: string, errors: string[]): SDKMessage {
   } as unknown as SDKMessage;
 }
 
+// apiError is a result shaped like a turn every one of whose requests the
+// upstream refused: `is_error` true and `api_error_status` naming the
+// upstream's own answer, `null` for a request that got no response at all.
+function apiError(status: number | null): SDKMessage {
+  return {
+    type: "result",
+    subtype: "error_during_execution",
+    is_error: true,
+    api_error_status: status,
+    errors: ["upstream overloaded"],
+    modelUsage: MODEL_USAGE,
+    permission_denials: [],
+  } as unknown as SDKMessage;
+}
+
 // probeEnvironment runs `env` under exactly the environment the sidecar
 // built for the session, which is what the real harness does with its CLI
 // child, and returns its output.
@@ -298,6 +313,16 @@ async function* play(
     case "failed":
       yield assistantText("Working on it.");
       yield failure("error_during_execution", ["the harness lost its connection"]);
+      return;
+    case "upstream-refused":
+      // Every request the turn made was answered 529, the incident this
+      // scenario stands in for.
+      yield apiError(529);
+      return;
+    case "upstream-unreachable":
+      // A request that got no response at all: api_error_status is null
+      // rather than a status code, and still counts as an outage.
+      yield apiError(null);
       return;
     case "bad-session-id":
       throw new Error(BAD_SESSION_ERROR);

@@ -163,6 +163,20 @@ func (r *runs) fail(ctx context.Context, step string, status int32) {
 	Expect(err).NotTo(HaveOccurred())
 }
 
+// refuse records an attempt every request of which the upstream turned
+// away: what a worker's FailStepRun call leaves on the ledger for mill#57's
+// give-and-wait path, before the worker asks again.
+func (r *runs) refuse(ctx context.Context, step string) *millv1.StepRun {
+	GinkgoHelper()
+	sr := r.start(ctx, step, millv1.StepKind_STEP_KIND_SKILL)
+	_, err := r.store.FailStepRun(ctx, connect.NewRequest(&millv1.FailStepRunRequest{
+		LeaseId: r.lease, StepRunId: sr.GetId(),
+		Exit: &harnessv1.ProcessExit{Status: 1, Reason: harnessv1.ExitReason_EXIT_REASON_UPSTREAM_REFUSED},
+	}))
+	Expect(err).NotTo(HaveOccurred())
+	return sr
+}
+
 // park trips the circuit breaker on the run, recording the gate a human is
 // being asked to answer.
 func (r *runs) park(ctx context.Context, gateNodeID string) {

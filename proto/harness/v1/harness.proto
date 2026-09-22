@@ -49,6 +49,11 @@ enum ExitReason {
   // turn's and this reason is what says the words were taken rather than
   // offered.
   EXIT_REASON_STALLED = 5;
+  // EXIT_REASON_UPSTREAM_REFUSED means every request the turn made to the
+  // model's own upstream was refused — an outage, not the session's own
+  // failure. It carries no verdict evidence to consult: an outage is a fact
+  // about the upstream, not about the step's work.
+  EXIT_REASON_UPSTREAM_REFUSED = 6;
 }
 
 // ProcessExit is how a spawned thing ended. Borrowed wholesale from
