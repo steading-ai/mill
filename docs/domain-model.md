@@ -313,7 +313,7 @@ A human decision, expressed the only way dagger allows: a node with `assignee_ki
 
 Filing a gate is two dagger calls — `ApplyPatch` creates the gate node and the edge that blocks this one; `Release` ends the lease with reason `gate` — with the store's record of the gate id written *between* them, so a crash at any point leaves either a lease that expires harmlessly or a gate the store already knows about, never a gate the store will file twice. The mill never claims the gate, never completes it, and never disposes of it — dagger's policy forbids all three for the filer, and the mill does not want the exception. It waits for the node to become ready again.
 
-A gate the `auto` policy closes files nothing and reaches dagger not at all, so there is no gate node to read: the fact that closes the step is the policy that fired, recorded as `gate` evidence reading `auto:<predicate>` and as `auto_approved` on the attempt. A gate declaring `status` evidence closes on the forge instead, because approving it is what performs the merge.
+A gate the `auto` policy closes files nothing and reaches dagger not at all, so there is no gate node to read: the fact that closes the step is the policy that fired, recorded as `gate` evidence reading `auto:<predicate>` and as `auto_approved` on the attempt. A gate declaring `status` evidence closes on the forge instead: approving it reads the forge's checks on the pull request's head, and merges only once they pass.
 
 On resume, a run whose current step is a gate step and whose `gate_node_id` is set reads the gate node: `done` closes the step with `gate` evidence carrying the gate's result; a denial fails the run with `deny_result`. A gate is filed once.
 

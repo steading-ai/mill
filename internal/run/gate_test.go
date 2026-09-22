@@ -3,10 +3,12 @@ package run_test
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"google.golang.org/protobuf/types/known/durationpb"
 
 	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
@@ -340,6 +342,9 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_DONE))
 			Expect(f.forge.mergeCalls()).To(Equal(1), "the forge is asked to merge once, after catching up locally")
 			Expect(stepRuns(f.inspect(ctx), "merge")).To(HaveLen(1), "nothing here was a finding")
+			// mill#62: the head that was actually merged was checked
+			// immediately before, and never again once merged.
+			Expect(f.forge.checksCalls()).To(Equal(1), "the merged head's checks were read once, before the merge")
 		})
 
 		It("a catch-up conflict is a finding for implement, not a merge attempt, and the run recovers", func() {
@@ -478,6 +483,106 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_PARKED))
 			Expect(f.forge.mergeCalls()).To(Equal(1), "a refusal naming no transience of its own is not retried in place")
 			Expect(stepRuns(f.inspect(ctx), "merge")).To(HaveLen(1))
+		})
+	})
+
+	// mill#62: the merge gate used to ask the forge to merge before it ever
+	// read the forge's checks on the head, so a red head still merged and the
+	// checks were only read afterwards — too late to stop it, and liable to
+	// send a revise at a branch whose pull request was already closed.
+	Describe("The merge gate reads the forge's checks before it merges", func() {
+		It("does not merge a head whose checks the forge reports as failed, and the run revises from implement", func() {
+			f.forge.checksAt = forge.Failed
+
+			Expect(f.runner().Execute(ctx, f.nodeRef)).To(Succeed())
+
+			Expect(f.forge.mergeCalls()).To(Equal(0), "the checks were read before anything was merged")
+			detail := f.inspect(ctx)
+			Expect(after(detail, "merge")).To(Equal("implement"))
+			// A revise supersedes the attempt it revised from (docs/ledger.md
+			// §step_runs); checksAt never clears, so the second attempt fails
+			// the same way and, past the step's one retry, parks rather than
+			// revising again.
+			merges := stepRuns(detail, "merge")
+			Expect(merges[len(merges)-1].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_FAILED))
+			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_PARKED))
+
+			// gather-context, implement, commit, pr, then implement again:
+			// the revise this finding sent the work back to.
+			calls := f.harness.Calls()
+			revised := calls[4].Prompt.Text
+			Expect(revised).To(ContainSubstring("the forge reports the checks on"))
+			Expect(revised).To(ContainSubstring("as failed"))
+			Expect(revised).To(ContainSubstring("Nothing was merged"))
+		})
+
+		It("waits on a head whose checks are still pending, bounded by the workflow's own timeout", func() {
+			workflow := f.variant(ctx, "short-status-timeout", func(definition *millv1.Workflow) {
+				definition.Status = &millv1.StatusPolicy{
+					Interval: durationpb.New(10 * time.Millisecond),
+					Timeout:  durationpb.New(30 * time.Millisecond),
+				}
+			})
+			f.forge.checksAt = forge.Pending
+
+			Expect(f.runner(func(o *run.Options) { o.Workflow = workflow }).
+				Execute(ctx, f.nodeRef)).To(Succeed())
+
+			Expect(f.forge.mergeCalls()).To(Equal(0), "a head still pending is never merged")
+			detail := f.inspect(ctx)
+			// The bounded wait aborts and reopens the same step, so more than
+			// one "merge" attempt precedes the judgment failure that revises;
+			// implement running a second time is what proves on_failure fired
+			// once the workflow's own timeout elapsed.
+			Expect(stepRuns(detail, "implement")).To(HaveLen(2))
+			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_PARKED),
+				"checks that never settle keep failing the step past its one retry")
+		})
+
+		It("re-checks the head a conflict's own catch-up produces before merging it", func() {
+			// The first check passes, so the first merge attempt is tried and
+			// a conflict refuses it; the second check — read again after the
+			// conflict's own catch-up — fails, and every check thereafter
+			// keeps failing, so nothing is ever merged.
+			f.forge.checksQueue = []forge.Status{forge.Success}
+			f.forge.checksAt = forge.Failed
+			f.forge.refuseQueue = []error{
+				&forge.MergeRefusedError{PR: 1, Status: http.StatusMethodNotAllowed, Conflict: true},
+			}
+
+			Expect(f.runner(func(o *run.Options) { o.MergeRetryWait = 10 * time.Millisecond }).
+				Execute(ctx, f.nodeRef)).To(Succeed())
+
+			detail := f.inspect(ctx)
+			merges := stepRuns(detail, "merge")
+			Expect(merges[len(merges)-1].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_FAILED))
+			Expect(after(detail, "merge")).To(Equal("implement"))
+			// One merge call ever: the attempt a conflict refused. The
+			// re-check after its own catch-up failed, so no second merge was
+			// ever tried; the step's own retry then fails the same way before
+			// even asking the forge to merge, one more check spent on it.
+			Expect(f.forge.mergeCalls()).To(Equal(1))
+			Expect(f.forge.checksCalls()).To(Equal(3), "before the first attempt, again after its own catch-up, and again on the step's own retry")
+		})
+
+		It("closes on a pull request already merged without asking about its checks, whatever they say now", func() {
+			f.forge.pr = forge.PullRequest{
+				Number: 1, URL: "https://forge.test/mill/merge_requests/1",
+				Target: "main", HeadSHA: strings.Repeat("a", 40),
+				State: "merged", MergeCommit: strings.Repeat("b", 40),
+			}
+			f.forge.merged = true
+			// A red verdict now must not undo a merge that already happened
+			// (AC2): if this were read at all, the run would revise instead
+			// of finishing.
+			f.forge.checksAt = forge.Failed
+
+			Expect(f.runner().Execute(ctx, f.nodeRef)).To(Succeed())
+
+			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_DONE))
+			Expect(f.forge.checksCalls()).To(Equal(0), "an already-merged head's checks are never read")
+			Expect(f.forge.mergeCalls()).To(Equal(0), "already merged: there is nothing left to ask the forge to do")
+			Expect(evidenceOf(f.inspect(ctx), "merge").GetStatus()).To(Equal(string(forge.Success)))
 		})
 	})
 })

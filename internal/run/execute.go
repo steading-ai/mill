@@ -53,6 +53,10 @@ type result struct {
 	// which its evidence carries whole: the record of the step's run is
 	// the fact the step closes on (docs/sandbox.md §"Preparatory steps").
 	output string
+	// verified is evidence the step already established for itself, which
+	// Runner.verify returns as-is instead of asking again. Only the merge
+	// gate sets it (internal/run/gate.go).
+	verified *evidence.Evidence
 }
 
 // execute runs one attempt by kind.

@@ -14,7 +14,16 @@ import (
 // verify asks the verifier for the step's declared evidence kind whether the
 // fact the mill observed holds. Every seam it can consult is wired here and
 // nowhere else, which is what keeps internal/evidence free of the run loop.
+//
+// A result that already carries verified evidence — the merge gate's
+// pre-merge read of the forge's checks, or the fact of an already-merged
+// pull request (internal/run/gate.go) — is not asked again: once a merge has
+// happened, nothing the forge says afterwards may turn it into a revise
+// (mill#62).
 func (r *Runner) verify(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, detail *millv1.InspectResponse, res result) (evidence.Evidence, error) {
+	if res.verified != nil {
+		return *res.verified, nil
+	}
 	asked := evidence.Step{
 		Name:         step.GetName(),
 		Definition:   step,
