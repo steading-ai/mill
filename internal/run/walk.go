@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	harnessv1 "github.com/ivy/mill/gen/harness/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/dagger"
 	"github.com/ivy/mill/internal/evidence"
@@ -305,6 +306,14 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 	}
 	if err := r.postUsage(ctx, s, sr); err != nil {
 		return outcome{}, err
+	}
+
+	// Every request this attempt made was refused by the upstream: an
+	// outage, not the step's own work, and not a verdict to ask about
+	// (mill#57). It is recognized here, before verify ever runs, so an
+	// outage never gets read as malformed evidence.
+	if result.exit.GetReason() == harnessv1.ExitReason_EXIT_REASON_UPSTREAM_REFUSED {
+		return r.upstreamRefusal(ctx, s, step, sr, result, execErr)
 	}
 	verified, verifyErr := r.verify(ctx, s, step, sr, detail, result)
 

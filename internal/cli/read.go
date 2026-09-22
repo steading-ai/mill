@@ -24,6 +24,7 @@ import (
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/gen/mill/v1/millv1connect"
 	"github.com/ivy/mill/internal/dagger"
+	runpkg "github.com/ivy/mill/internal/run"
 )
 
 // The read tools. Every one is a thin call on the Connect client and a
@@ -730,12 +731,12 @@ func explain(ctx context.Context, store millv1connect.StoreServiceClient, gate g
 			explanation.Gate, explanation.GateTitle = gate(ctx, run.GetNodeRef(), run.GetId(), run.GetGateNodeId())
 		}
 	}
-	explanation.Waiting = waitingOn(explanation, run)
+	explanation.Waiting = waitingOn(explanation, run, detail)
 	return explanation, nil
 }
 
 // waitingOn is the one sentence that says why nothing is moving.
-func waitingOn(e *Explanation, run *millv1.Run) string {
+func waitingOn(e *Explanation, run *millv1.Run, detail *millv1.InspectResponse) string {
 	switch run.GetStatus() {
 	case millv1.RunStatus_RUN_STATUS_WAITING:
 		return "a human to answer gate " + e.Gate
@@ -744,6 +745,9 @@ func waitingOn(e *Explanation, run *millv1.Run) string {
 	case millv1.RunStatus_RUN_STATUS_SELECTING:
 		return "a workflow to be selected"
 	case millv1.RunStatus_RUN_STATUS_RUNNING:
+		if outage := waitingOnUpstream(e, detail); outage != "" {
+			return outage
+		}
 		if e.StepStatus == "running" {
 			return fmt.Sprintf("step %s to produce %s evidence", e.Step, e.Evidence)
 		}
@@ -751,6 +755,22 @@ func waitingOn(e *Explanation, run *millv1.Run) string {
 	default:
 		return "nothing: the run has ended"
 	}
+}
+
+// waitingOnUpstream is mill#57's sentence: a step whose latest attempt the
+// upstream refused is not idle waiting for a worker to claim it — a worker
+// already has, and is waiting out the outage before it asks again. Empty
+// when the latest attempt was not a refusal, so waitingOn falls through to
+// what it already said.
+func waitingOnUpstream(e *Explanation, detail *millv1.InspectResponse) string {
+	latest := latestAttempt(detail.GetSteps(), e.Step)
+	if latest.GetStepRun().GetExit().GetReason() != harnessv1.ExitReason_EXIT_REASON_UPSTREAM_REFUSED {
+		return ""
+	}
+	count, since := runpkg.UpstreamStreak(detail, e.Step)
+	retryAt := latest.GetStepRun().GetEndedAt().AsTime().Add(runpkg.UpstreamWait(count))
+	return fmt.Sprintf("the upstream to recover; step %s retries at %s (refused %d times in a row since %s)",
+		e.Step, retryAt.UTC().Format(time.RFC3339), count, since.UTC().Format(time.RFC3339))
 }
 
 // latestAttempt is the newest attempt at a step. Attempts arrive in order,

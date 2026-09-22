@@ -196,17 +196,21 @@ const (
 	// never started, and the last working turn's words are its final
 	// message (docs/domain-model.md §Session).
 	ReasonStalled ExitReason = "stalled"
+	// ReasonUpstream means every request the turn made to the model's own
+	// upstream was refused — an outage, not the session's own failure.
+	ReasonUpstream ExitReason = "upstream"
 )
 
 // reasons is the mapping both ways between the wire's enum and the string the
 // ledger stores.
 var reasons = map[harnessv1.ExitReason]ExitReason{
-	harnessv1.ExitReason_EXIT_REASON_UNSPECIFIED: ReasonNone,
-	harnessv1.ExitReason_EXIT_REASON_REFUSED:     ReasonRefused,
-	harnessv1.ExitReason_EXIT_REASON_POLICY:      ReasonPolicy,
-	harnessv1.ExitReason_EXIT_REASON_TIMEOUT:     ReasonTimeout,
-	harnessv1.ExitReason_EXIT_REASON_CANCELLED:   ReasonCancelled,
-	harnessv1.ExitReason_EXIT_REASON_STALLED:     ReasonStalled,
+	harnessv1.ExitReason_EXIT_REASON_UNSPECIFIED:      ReasonNone,
+	harnessv1.ExitReason_EXIT_REASON_REFUSED:          ReasonRefused,
+	harnessv1.ExitReason_EXIT_REASON_POLICY:           ReasonPolicy,
+	harnessv1.ExitReason_EXIT_REASON_TIMEOUT:          ReasonTimeout,
+	harnessv1.ExitReason_EXIT_REASON_CANCELLED:        ReasonCancelled,
+	harnessv1.ExitReason_EXIT_REASON_STALLED:          ReasonStalled,
+	harnessv1.ExitReason_EXIT_REASON_UPSTREAM_REFUSED: ReasonUpstream,
 }
 
 // ReasonFrom translates the wire's enum into the reason the ledger stores.
