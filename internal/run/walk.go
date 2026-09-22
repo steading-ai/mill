@@ -330,6 +330,9 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 		result.judgment = true
 	}
 
+	// cause is why the step did not close, from either the execute or the
+	// verify side; both branches below read it.
+	cause := errors.Join(execErr, verifyErr)
 	switch {
 	case verifyErr == nil && execErr == nil:
 		if err := r.closeStep(ctx, s, sr, step, verified, result); err != nil {
@@ -337,11 +340,11 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 		}
 		return outcome{closed: true}, nil
 
-	case evidence.Pending(verifyErr):
+	case evidence.Pending(cause):
 		// "Not yet" is not a failure: the attempt stays open until the fact
 		// settles or the step's cap is reached, which the verifier decides.
 		var pending *evidence.PendingError
-		_ = errors.As(verifyErr, &pending)
+		_ = errors.As(cause, &pending)
 		select {
 		case <-ctx.Done():
 			return outcome{}, r.stopped(ctx, s)
@@ -360,7 +363,6 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 		return outcome{}, nil
 
 	default:
-		cause := errors.Join(execErr, verifyErr)
 		if execErr != nil && result.exit.GetStatus() < 0 {
 			// The harness itself already says this attempt never ran; an
 			// evidence verdict about work that never happened is not a

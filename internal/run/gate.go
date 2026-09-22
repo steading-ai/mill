@@ -55,7 +55,7 @@ func (r *Runner) runGate(ctx context.Context, s *state, step *millv1.Step, sr *m
 	}
 	r.printf("  gate %s auto-approved by %s\n", step.GetName(), predicate)
 	out := result{autoApproved: true}
-	claim, err := r.approve(ctx, s, step)
+	claim, verified, err := r.approve(ctx, s, step, sr, detail)
 	if err != nil {
 		var mf mergeFinding
 		if errors.As(err, &mf) {
@@ -65,6 +65,7 @@ func (r *Runner) runGate(ctx context.Context, s *state, step *millv1.Step, sr *m
 		return out, err
 	}
 	out.claim = claim
+	out.verified = verified
 	return out, nil
 }
 
@@ -73,30 +74,52 @@ func (r *Runner) runGate(ctx context.Context, s *state, step *millv1.Step, sr *m
 // `status` evidence, which is the forge's word on the branch it just agreed
 // to merge, so approving it merges. A gate declaring `gate` evidence is a
 // decision about nothing but itself and authorizes no act.
-func (r *Runner) approve(ctx context.Context, s *state, step *millv1.Step) (string, error) {
+//
+// The evidence it returns alongside the claim, when not nil, is what the
+// step closes on directly: a merge already read the forge's checks — or
+// found nothing left to read, the pull request already merged — and the
+// generic post-execute verification must not ask a second time (mill#62).
+func (r *Runner) approve(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, detail *millv1.InspectResponse) (string, *evidence.Evidence, error) {
 	if step.GetEvidence() != millv1.EvidenceKind_EVIDENCE_KIND_STATUS {
-		return "", nil
+		return "", nil, nil
 	}
 	f := s.repo.Forge
 	pr, err := f.PR(ctx, s.run.GetBranch())
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
+	var verified *evidence.Evidence
 	if !pr.Merged() {
 		if pr, err = r.catchUp(ctx, s, f, pr); err != nil {
-			return "", err
+			return "", nil, err
 		}
-		if pr, err = r.mergeRetrying(ctx, s, f, pr); err != nil {
-			return "", err
+		if pr, verified, err = r.mergeRetrying(ctx, s, f, pr, step, sr, detail); err != nil {
+			return "", nil, err
 		}
+	} else {
+		// The merge already happened; nothing the forge says about the
+		// checks now may undo it, so nothing is asked (mill#62).
+		verified = mergedStatus()
 	}
 	sha, err := f.MergeCommit(ctx, pr)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	s.mergeCommit = sha
 	r.printf("  merged as %s\n", short(sha))
-	return pr.HeadSHA, nil
+	return pr.HeadSHA, verified, nil
+}
+
+// mergedStatus is the status evidence a merge gate closes on when it finds
+// the pull request already merged, built from that fact directly rather
+// than read from the forge (see approve). VerifiedAt is a store-assigned
+// column (internal/store/convert.go), not read from here.
+func mergedStatus() *evidence.Evidence {
+	return &evidence.Evidence{Value: &millv1.Evidence{
+		Kind:       millv1.EvidenceKind_EVIDENCE_KIND_STATUS,
+		Value:      &millv1.Evidence_Status{Status: string(forge.Success)},
+		VerifiedBy: "evidence.status: the pull request was already merged",
+	}}
 }
 
 // catchUp runs the workspace's local git catch-up against the pull
@@ -148,28 +171,78 @@ const mergeRetryBudget = 5
 // last ran, which a fresh catchUp resolves the same way the first one did.
 // Anything else, or the budget spent, propagates unchanged and fails the
 // step exactly as it did before this existed.
-func (r *Runner) mergeRetrying(ctx context.Context, s *state, f forge.Forge, pr forge.PullRequest) (forge.PullRequest, error) {
+//
+// The forge's checks on the head are read, through [Runner.checkBeforeMerge],
+// immediately before the first merge attempt and again after any conflict's
+// own catchUp — the only place inside this loop a push can move the head —
+// so that whichever head is actually handed to f.Merge was checked right
+// before it was (mill#62). A bare pending-mergeability refusal does not
+// re-trigger a check: the head has not moved, so there is nothing new to ask
+// the forge about.
+func (r *Runner) mergeRetrying(ctx context.Context, s *state, f forge.Forge, pr forge.PullRequest, step *millv1.Step, sr *millv1.StepRun, detail *millv1.InspectResponse) (forge.PullRequest, *evidence.Evidence, error) {
+	verified, err := r.checkBeforeMerge(ctx, s, step, sr, detail, pr.HeadSHA)
+	if err != nil {
+		return forge.PullRequest{}, nil, err
+	}
 	for attempt := 0; ; attempt++ {
 		merged, err := f.Merge(ctx, pr)
 		if err == nil {
-			return merged, nil
+			return merged, &verified, nil
 		}
 		var refused *forge.MergeRefusedError
 		if attempt >= mergeRetryBudget-1 || !errors.As(err, &refused) || !forge.Retryable(refused) {
-			return forge.PullRequest{}, err
+			return forge.PullRequest{}, nil, err
 		}
 		if refused.Conflict {
 			if pr, err = r.catchUp(ctx, s, f, pr); err != nil {
-				return forge.PullRequest{}, err
+				return forge.PullRequest{}, nil, err
+			}
+			if verified, err = r.checkBeforeMerge(ctx, s, step, sr, detail, pr.HeadSHA); err != nil {
+				return forge.PullRequest{}, nil, err
 			}
 			continue
 		}
 		select {
 		case <-ctx.Done():
-			return forge.PullRequest{}, ctx.Err()
+			return forge.PullRequest{}, nil, ctx.Err()
 		case <-time.After(r.options.MergeRetryWait):
 		}
 	}
+}
+
+// checkBeforeMerge reads the forge's checks on sha, the head about to be
+// merged, through the same `status` verifier a merge gate's own evidence
+// declares — the one implementation of what `status` evidence means and how
+// long a pending one waits (evidence.Step.statusPolicy), rather than a
+// second one grown here. A pass is returned for the caller to close the step
+// on directly; a pending read propagates unchanged, for the run loop's own
+// bounded wait; anything else becomes a [mergeFinding], so nothing is merged
+// (mill#62).
+func (r *Runner) checkBeforeMerge(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, detail *millv1.InspectResponse, sha string) (evidence.Evidence, error) {
+	verified, err := r.verify(ctx, s, step, sr, detail, result{claim: sha})
+	if err != nil && !evidence.Pending(err) {
+		return evidence.Evidence{}, &checksFailedError{err: err}
+	}
+	return verified, err
+}
+
+// checksFailedError is a merge gate's pre-merge read of the forge's checks
+// on the head it was about to merge, refused: the forge reports them as
+// failed, or they never settled inside the workflow's status timeout.
+// Nothing is merged (mill#62).
+type checksFailedError struct {
+	err error
+}
+
+func (e *checksFailedError) Error() string { return e.err.Error() }
+
+func (e *checksFailedError) Unwrap() error { return e.err }
+
+// finding is the judgment feedback that sends the run back through
+// `implement` to fix what the forge reported.
+func (e *checksFailedError) finding() string {
+	return fmt.Sprintf("The merge gate read the forge's checks on the pull request's head before merging it, and %s. "+
+		"Nothing was merged: fix what the checks reported and commit it, the same way you would any other change.\n", e.err)
 }
 
 // mergeFinding is an error from approve that is not the mill's own plumbing

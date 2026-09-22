@@ -450,6 +450,13 @@ type fixtureForge struct {
 	// runs dry, Merge falls through to its ordinary success.
 	refuseQueue []error
 	checksAt    forge.Status
+	// checksQueue is consumed one status per Checks call, in order; once it
+	// runs dry, Checks falls through to checksAt (or forge.Success). A spec
+	// that needs to fail the checks on one head and not another — the head a
+	// conflict's own catch-up produces, say — uses this rather than checksAt,
+	// which cannot tell one call from the next.
+	checksQueue []forge.Status
+	checks      int
 	comments    []string
 	deleted     []string
 }
@@ -461,6 +468,15 @@ func (f *fixtureForge) mergeCalls() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.merges
+}
+
+// checksCalls is how many times the forge was asked about a head's checks,
+// so a spec can prove a head that was merged was checked exactly once, and
+// never again once it had been (mill#62).
+func (f *fixtureForge) checksCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.checks
 }
 
 // Authenticate is the credential the workspace hands a clone or a push. The
@@ -491,6 +507,14 @@ func (f *fixtureForge) PR(_ context.Context, branch string) (forge.PullRequest, 
 }
 
 func (f *fixtureForge) Checks(context.Context, string) (forge.Status, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.checks++
+	if len(f.checksQueue) > 0 {
+		status := f.checksQueue[0]
+		f.checksQueue = f.checksQueue[1:]
+		return status, nil
+	}
 	if f.checksAt == "" {
 		return forge.Success, nil
 	}
