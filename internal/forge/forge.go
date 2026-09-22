@@ -22,8 +22,10 @@
 // GitLab declines — a protected branch, a missing approval — is a
 // [MergeRefusedError] naming the forge's own reason and is not retried:
 // repository protections are the repository's job (docs/core-principles.md
-// §1). Only the transport's own failures and a head that moved under the
-// merge are worth another attempt, which is what [Retryable] reports.
+// §1). The transport's own failures, a head that moved under the merge, and
+// a refusal that names its own transience — mergeability still being
+// computed, or a conflict a catch-up run before it did not see — are worth
+// another attempt, which is what [Retryable] reports.
 //
 // A merge names the commit it merges. [Forge.Merge] is given the pull request
 // the caller read, and the head on it is the head that merges: a forge that
@@ -442,10 +444,12 @@ func (e *UnsupportedError) Error() string {
 }
 
 // MergeRefusedError is the forge declining to merge: a protected branch, a
-// required approval, a check that has to pass first. The mill does not retry
-// it and does not argue with it — the repository's protections are the
-// repository's job — so the error carries the forge's own words for a human
-// and for the run's record.
+// required approval, a check that has to pass first. The mill does not
+// retry it as a fresh attempt and does not argue with it — the repository's
+// protections are the repository's job — so the error carries the forge's
+// own words for a human and for the run's record. Two refusals name their
+// own transience instead of a protection: [MergeRefusedError.Pending] and
+// [MergeRefusedError.Conflict], which [Retryable] reports on (mill#42).
 type MergeRefusedError struct {
 	// PR is the pull request that would not merge.
 	PR int
@@ -456,6 +460,16 @@ type MergeRefusedError struct {
 	// Detail is the forge's machine-readable reason when it gave one:
 	// GitLab's `detailed_merge_status`, such as `not_approved`.
 	Detail string
+	// Pending is the forge saying, in Detail's own vocabulary, that it has
+	// not finished computing mergeability yet — GitHub's `unknown`, GitLab's
+	// `checking`/`unchecked`/`preparing`. Nothing is wrong with the pull
+	// request; the answer clears itself within seconds (mill#42).
+	Pending bool
+	// Conflict is the forge saying, in Detail's own vocabulary, that the
+	// pull request genuinely conflicts with its target — GitHub's `dirty`,
+	// GitLab's `conflict` — which a catch-up run before this refusal did not
+	// see because the target moved again after it ran (mill#42).
+	Conflict bool
 }
 
 // BranchMissingError is the forge not showing the run's branch at the head
@@ -533,17 +547,21 @@ func (e *MergeRefusedError) Error() string {
 }
 
 // Retryable reports whether trying err again could plausibly succeed. A
-// refusal to merge never is: nothing the mill can do changes the forge's
-// answer, and a retry loop against a protected branch is a way to look busy.
-// A [HeadMovedError] is the one merge failure that is: the next attempt reads
-// the pull request again and merges the head it finds.
+// refusal to merge is usually not: nothing the mill can do changes a
+// protected branch or a missing approval, and a retry loop against one is a
+// way to look busy. Two things are worth another attempt: a [HeadMovedError]
+// — the next attempt reads the pull request again and merges the head it
+// finds — and a [MergeRefusedError] that names its own transience through
+// [MergeRefusedError.Pending] or [MergeRefusedError.Conflict], which clears
+// on its own or with another catch-up rather than with a human's help
+// (mill#42).
 func Retryable(err error) bool {
 	if err == nil {
 		return false
 	}
 	var refused *MergeRefusedError
 	if errors.As(err, &refused) {
-		return false
+		return refused.Pending || refused.Conflict
 	}
 	var missing *NoVCSURLError
 	if errors.As(err, &missing) {

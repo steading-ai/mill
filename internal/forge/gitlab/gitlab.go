@@ -60,6 +60,12 @@ type Client struct {
 	// source branch to appear on the forge, and how often it looks.
 	branchWait time.Duration
 	branchPoll time.Duration
+
+	// mergeableWait and mergeablePoll are how long a merge waits for GitLab
+	// to finish computing mergeability before asking to merge, and how
+	// often it looks.
+	mergeableWait time.Duration
+	mergeablePoll time.Duration
 }
 
 // Option configures a client.
@@ -97,16 +103,56 @@ const (
 	defaultBranchPoll = time.Second
 )
 
+// WithMergeableWait sets how long a merge waits for GitLab to finish
+// computing `detailed_merge_status` before asking to merge, and how often
+// it asks. Zero or less leaves the default.
+func WithMergeableWait(wait, poll time.Duration) Option {
+	return func(c *Client) {
+		if wait > 0 {
+			c.mergeableWait = wait
+		}
+		if poll > 0 {
+			c.mergeablePoll = poll
+		}
+	}
+}
+
+// How long a merge waits for GitLab to finish computing
+// `detailed_merge_status`, and how often it is asked. A push that has just
+// landed leaves the status at `checking`, `unchecked` or `preparing` for a
+// few seconds while GitLab recomputes it; this wait is that recomputation's
+// budget, not a hard requirement — a status still unsettled past it is
+// passed on to [Client.Merge]'s caller to classify.
+const (
+	defaultMergeableWait = 15 * time.Second
+	defaultMergeablePoll = time.Second
+)
+
+// mergeablePending is GitLab's `detailed_merge_status` values that mean
+// mergeability is still being computed, not yet decided one way or the
+// other. https://docs.gitlab.com/ee/api/merge_requests.html lists the
+// values.
+func mergeablePending(status string) bool {
+	switch status {
+	case "checking", "unchecked", "preparing":
+		return true
+	default:
+		return false
+	}
+}
+
 // New returns a client for the repository, minting credentials through
 // minter.
 func New(repo forge.Repo, minter forge.Minter, options ...Option) *Client {
 	c := &Client{
-		repo:       repo,
-		minter:     minter,
-		http:       &http.Client{Timeout: 30 * time.Second},
-		mu:         &sync.Mutex{},
-		branchWait: defaultBranchWait,
-		branchPoll: defaultBranchPoll,
+		repo:          repo,
+		minter:        minter,
+		http:          &http.Client{Timeout: 30 * time.Second},
+		mu:            &sync.Mutex{},
+		branchWait:    defaultBranchWait,
+		branchPoll:    defaultBranchPoll,
+		mergeableWait: defaultMergeableWait,
+		mergeablePoll: defaultMergeablePoll,
 	}
 	for _, option := range options {
 		option(c)
@@ -369,9 +415,17 @@ func statusOf(status string) forge.Status {
 // merge safe rather than merely accepted.
 //
 // A GitLab that declines yields a [forge.MergeRefusedError] naming its
-// reason; the mill does not retry it. A head that has moved since it was read
-// is the one exception: GitLab answers 409, and that is a
-// [forge.HeadMovedError], which the step tries again with the head it finds.
+// reason; the mill does not retry it as a fresh attempt, though a refusal
+// that names its own transience through [forge.MergeRefusedError.Pending]
+// or [forge.MergeRefusedError.Conflict] is [forge.Retryable] in place
+// (mill#42). A head that has moved since it was read is the one exception:
+// GitLab answers 409, and that is a [forge.HeadMovedError], which the step
+// tries again with the head it finds.
+//
+// Before asking to merge, Merge waits out GitLab's own
+// `detailed_merge_status` recomputation — the same lag [Client.OpenPR]
+// waits out for a just-pushed branch — so a catch-up's push does not spend
+// an attempt on an answer that clears itself within seconds.
 func (c *Client) Merge(ctx context.Context, pr forge.PullRequest) (forge.PullRequest, error) {
 	if pr.Number == 0 {
 		return forge.PullRequest{}, errors.New("gitlab: merging needs a merge request number")
@@ -381,6 +435,10 @@ func (c *Client) Merge(ctx context.Context, pr forge.PullRequest) (forge.PullReq
 		return forge.PullRequest{}, err
 	}
 	project, err := c.projectInfo(ctx)
+	if err != nil {
+		return forge.PullRequest{}, err
+	}
+	status, err := c.awaitMergeable(ctx, pr.Number)
 	if err != nil {
 		return forge.PullRequest{}, err
 	}
@@ -402,15 +460,47 @@ func (c *Client) Merge(ctx context.Context, pr forge.PullRequest) (forge.PullReq
 		}
 		if errors.As(err, &failure) && refusal(failure.Status) {
 			return forge.PullRequest{}, &forge.MergeRefusedError{
-				PR:     pr.Number,
-				Status: failure.Status,
-				Reason: failure.Message,
-				Detail: pr.Detail,
+				PR:       pr.Number,
+				Status:   failure.Status,
+				Reason:   failure.Message,
+				Detail:   status,
+				Pending:  mergeablePending(status),
+				Conflict: status == "conflict",
 			}
 		}
 		return forge.PullRequest{}, err
 	}
 	return merged.pullRequest(), nil
+}
+
+// awaitMergeable polls the merge request's `detailed_merge_status` until
+// GitLab has finished computing it — anything other than `checking`,
+// `unchecked` or `preparing` — or the client's wait runs out, whichever
+// comes first. It returns the last status it saw either way: a status
+// still unsettled past the deadline is not this call's failure to report,
+// since [Client.Merge]'s caller decides what to do with an answer that has
+// not settled. The first read happens before any sleep, so a merge request
+// already settled costs one round trip and no delay.
+func (c *Client) awaitMergeable(ctx context.Context, iid int) (string, error) {
+	deadline := time.Now().Add(c.mergeableWait)
+	for {
+		var current mergeRequest
+		if err := c.call(ctx, http.MethodGet,
+			c.path("merge_requests", strconv.Itoa(iid)), nil, nil, &current); err != nil {
+			return "", err
+		}
+		if !mergeablePending(current.DetailedMergeStatus) {
+			return current.DetailedMergeStatus, nil
+		}
+		if !time.Now().Before(deadline) {
+			return current.DetailedMergeStatus, nil
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(c.mergeablePoll):
+		}
+	}
 }
 
 // head is the commit a merge names: the one on the pull request the caller

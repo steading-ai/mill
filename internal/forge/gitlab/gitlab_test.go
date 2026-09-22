@@ -263,6 +263,7 @@ var _ = Describe("The GitLab forge adapter", Label("unit"), func() {
 
 		It("does not squash when the project's setting says not to", func(ctx context.Context) {
 			api.on(http.MethodGet, escaped, http.StatusOK, "project_no_squash.json")
+			api.on(http.MethodGet, escaped+"/merge_requests/8", http.StatusOK, "merge_request_merged.json")
 			api.on(http.MethodPut, escaped+"/merge_requests/8/merge", http.StatusOK, "merge_request_merged.json")
 
 			merged, err := client.Merge(ctx, forge.PullRequest{
@@ -284,6 +285,7 @@ var _ = Describe("The GitLab forge adapter", Label("unit"), func() {
 		It("returns a typed refusal naming GitLab's reason, which the mill does not retry", func(ctx context.Context) {
 			api.on(http.MethodGet, escaped, http.StatusOK, "project.json")
 			api.on(http.MethodGet, escaped+"/merge_requests", http.StatusOK, "merge_request_not_approved.json")
+			api.on(http.MethodGet, escaped+"/merge_requests/9", http.StatusOK, "merge_request_not_approved_single.json")
 			api.on(http.MethodPut, escaped+"/merge_requests/9/merge", http.StatusMethodNotAllowed, "merge_refused.json")
 
 			pr, err := client.PR(ctx, branch)
@@ -296,6 +298,8 @@ var _ = Describe("The GitLab forge adapter", Label("unit"), func() {
 			Expect(refused.Status).To(Equal(http.StatusMethodNotAllowed))
 			Expect(refused.Reason).To(Equal("Branch cannot be merged"), "GitLab's own words")
 			Expect(refused.Detail).To(Equal("not_approved"))
+			Expect(refused.Pending).To(BeFalse())
+			Expect(refused.Conflict).To(BeFalse())
 			Expect(err.Error()).To(ContainSubstring("Branch cannot be merged"))
 			Expect(forge.Retryable(err)).To(BeFalse())
 
@@ -303,17 +307,61 @@ var _ = Describe("The GitLab forge adapter", Label("unit"), func() {
 			Expect(before).To(Equal(1), "one attempt, and no retry inside the adapter")
 		})
 
+		It("waits out GitLab's own mergeability recomputation before asking to merge", func(ctx context.Context) {
+			api.on(http.MethodGet, escaped, http.StatusOK, "project.json")
+			api.onMergeableStates("merge_request_opened.json", "checking", "mergeable")
+			api.onMerge("9a1f0c3f2b6d4e5a7c8b9d0e1f2a3b4c5d6e7f80")
+			quick := gitlab.New(api.repo(), api.minter(), gitlab.WithHTTPClient(api.server.Client()),
+				gitlab.WithMergeableWait(2*time.Second, 10*time.Millisecond)).
+				ForStep(forge.Step{TokenID: "01J0STEP"})
+
+			merged, err := quick.Merge(ctx, forge.PullRequest{Number: 7, HeadSHA: "9a1f0c3f2b6d4e5a7c8b9d0e1f2a3b4c5d6e7f80"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(merged.Merged()).To(BeTrue())
+			Expect(api.count(http.MethodGet, escaped+"/merge_requests/7")).To(Equal(2), "checking, then mergeable")
+		})
+
+		It("classifies a refusal that still lands after the wait as mergeability still being computed", func(ctx context.Context) {
+			api.on(http.MethodGet, escaped, http.StatusOK, "project.json")
+			api.onMergeableStates("merge_request_opened.json", "checking")
+			api.on(http.MethodPut, escaped+"/merge_requests/7/merge", http.StatusMethodNotAllowed, "merge_refused.json")
+			quick := gitlab.New(api.repo(), api.minter(), gitlab.WithHTTPClient(api.server.Client()),
+				gitlab.WithMergeableWait(30*time.Millisecond, 10*time.Millisecond)).
+				ForStep(forge.Step{TokenID: "01J0STEP"})
+
+			_, err := quick.Merge(ctx, forge.PullRequest{Number: 7, HeadSHA: "9a1f0c3f2b6d4e5a7c8b9d0e1f2a3b4c5d6e7f80"})
+
+			var refused *forge.MergeRefusedError
+			Expect(errors.As(err, &refused)).To(BeTrue(), "%v", err)
+			Expect(refused.Pending).To(BeTrue())
+			Expect(refused.Conflict).To(BeFalse())
+			Expect(forge.Retryable(err)).To(BeTrue(), "an unsettled mergeability clears on its own")
+		})
+
+		It("classifies a refusal for a real conflict a catch-up did not see", func(ctx context.Context) {
+			api.on(http.MethodGet, escaped, http.StatusOK, "project.json")
+			api.onMergeableStates("merge_request_opened.json", "conflict")
+			api.on(http.MethodPut, escaped+"/merge_requests/7/merge", http.StatusMethodNotAllowed, "merge_refused.json")
+
+			_, err := client.Merge(ctx, forge.PullRequest{Number: 7, HeadSHA: "9a1f0c3f2b6d4e5a7c8b9d0e1f2a3b4c5d6e7f80"})
+
+			var refused *forge.MergeRefusedError
+			Expect(errors.As(err, &refused)).To(BeTrue(), "%v", err)
+			Expect(refused.Conflict).To(BeTrue())
+			Expect(refused.Pending).To(BeFalse())
+			Expect(forge.Retryable(err)).To(BeTrue(), "another catch-up sees the target that moved")
+		})
+
 		It("reads the head itself when the caller carries none, rather than merging blind", func(ctx context.Context) {
 			api.on(http.MethodGet, escaped, http.StatusOK, "project.json")
 			api.on(http.MethodGet, escaped+"/merge_requests/7", http.StatusOK, "merge_request_opened.json")
-			api.onMerge(escaped+"/merge_requests/7/merge", "9a1f0c3f2b6d4e5a7c8b9d0e1f2a3b4c5d6e7f80",
-				"merge_request_squash_merged.json")
+			api.onMerge("9a1f0c3f2b6d4e5a7c8b9d0e1f2a3b4c5d6e7f80")
 
 			merged, err := client.Merge(ctx, forge.PullRequest{Number: 7})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(merged.Merged()).To(BeTrue())
-			Expect(api.count(http.MethodGet, escaped+"/merge_requests/7")).To(Equal(1),
-				"the head is read once, from the merge request")
+			Expect(api.count(http.MethodGet, escaped+"/merge_requests/7")).To(Equal(2),
+				"the head is read once, from the merge request, and mergeability once more before merging")
 		})
 
 		It("refuses to read a merge commit before the merge", func(ctx context.Context) {
@@ -330,7 +378,7 @@ var _ = Describe("The GitLab forge adapter", Label("unit"), func() {
 		api.on(http.MethodGet, escaped, http.StatusOK, "project.json")
 		api.on(http.MethodGet, escaped+"/merge_requests", http.StatusOK, "merge_requests_open.json")
 		api.on(http.MethodGet, escaped+"/merge_requests/7", http.StatusOK, "merge_request_squash_merged.json")
-		api.onMerge(escaped+"/merge_requests/7/merge", s, "merge_request_squash_merged.json")
+		api.onMerge(s)
 
 		pr, err := client.PR(ctx, branch)
 		Expect(err).NotTo(HaveOccurred())
@@ -367,7 +415,8 @@ var _ = Describe("The GitLab forge adapter", Label("unit"), func() {
 		const moved = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c"
 		api.on(http.MethodGet, escaped, http.StatusOK, "project.json")
 		api.on(http.MethodGet, escaped+"/merge_requests", http.StatusOK, "merge_requests_open.json")
-		api.onMerge(escaped+"/merge_requests/7/merge", moved, "merge_request_squash_merged.json")
+		api.on(http.MethodGet, escaped+"/merge_requests/7", http.StatusOK, "merge_request_opened.json")
+		api.onMerge(moved)
 
 		pr, err := client.PR(ctx, branch)
 		Expect(err).NotTo(HaveOccurred())
