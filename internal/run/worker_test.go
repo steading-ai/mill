@@ -1,6 +1,7 @@
 package run_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -369,6 +370,111 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			Expect(calls.Load()).To(Equal(int64(2)), "one claim per node, no more, once both are held")
 			Consistently(calls.Load, ttl+time.Second, 100*time.Millisecond).
 				Should(Equal(int64(2)), "dagger's lease table gains one row per node, not thousands")
+		})
+	})
+
+	Describe("Resuming at start", func() {
+		// Scenario (mill#44): a worker with concurrency 2 running steading#4
+		// at implement and mill#33 at review, when it restarts, its first
+		// two claims are steading#4 and mill#33, and no new node is claimed
+		// until one of them frees a slot.
+		It("reclaims runs a stop left aborted before claiming anything new, up to concurrency", func() {
+			By("given two nodes held under this worker at concurrency two")
+			first := f.node(ctx, "the first interrupted fix", "Change the README's first line.")
+			second := f.node(ctx, "the second interrupted fix", "Change the README's second line.")
+			hold := fake.Script{Hold: true, Cancelled: fake.Terminal("stopped", nil, nil)}
+			f.script(hold, hold)
+			setup := f.workerOver(f.runner(quick), func(o *run.WorkerOptions) { o.Concurrency = 2 })
+			setupDone := startWorker(ctx, setup)
+			Eventually(func() []millv1.RunStatus {
+				a, b := f.runOfRef(ctx, first), f.runOfRef(ctx, second)
+				if a == nil || b == nil {
+					return nil
+				}
+				return []millv1.RunStatus{a.GetStatus(), b.GetStatus()}
+			}, time.Minute, 100*time.Millisecond).Should(Equal([]millv1.RunStatus{
+				millv1.RunStatus_RUN_STATUS_RUNNING, millv1.RunStatus_RUN_STATUS_RUNNING,
+			}))
+			firstRunID, secondRunID := f.runOfRef(ctx, first).GetId(), f.runOfRef(ctx, second).GetId()
+
+			By("when SIGTERM arrives")
+			setup.Stop()
+			Eventually(setupDone, time.Minute).Should(Receive(BeNil()))
+
+			By("and a third, unrelated node ready but with no free slot at that concurrency")
+			third := f.createNode(ctx, &daggerv1.CreateNodeOp{
+				Title: "a third fix with no free slot", Body: "Change the README's third line.",
+			})
+
+			By("when the next worker starts at the same concurrency")
+			journal := &bytes.Buffer{}
+			client, counter := f.counted()
+			next := f.workerOver(f.runner(quick, func(o *run.Options) { o.Dagger = client }),
+				func(o *run.WorkerOptions) { o.Concurrency = 2; o.Out = journal })
+			resumed := startWorker(ctx, next)
+			DeferCleanup(func() {
+				next.Stop()
+				Eventually(resumed, time.Minute).Should(Receive(BeNil()))
+			})
+
+			By("then its first two claims are the two runs it held, resumed rather than claimed fresh")
+			Eventually(func() int64 { return counter.claims.Load() }, time.Minute, 100*time.Millisecond).
+				Should(Equal(int64(2)))
+			Expect(f.runOfRef(ctx, first).GetId()).To(Equal(firstRunID), "the same run, not a new claim")
+			Expect(f.runOfRef(ctx, second).GetId()).To(Equal(secondRunID), "the same run, not a new claim")
+			Expect(f.runOfRef(ctx, first).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+			Expect(f.runOfRef(ctx, second).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+			Expect(journal.String()).To(ContainSubstring("resumed " + first + ", aborted at"))
+			Expect(journal.String()).To(ContainSubstring("resumed " + second + ", aborted at"))
+
+			By("and no new node is claimed until one of them frees a slot")
+			Consistently(func() daggerv1.Status { return f.statusOf(ctx, third) }, 2*time.Second, 100*time.Millisecond).
+				Should(Equal(daggerv1.Status_STATUS_OPEN))
+			Consistently(func() int64 { return counter.claims.Load() }, 2*time.Second, 100*time.Millisecond).
+				Should(Equal(int64(2)), "the third slot never opens because nothing frees the two reclaim took")
+		})
+
+		It("still claims fresh work with whatever concurrency reclaim did not use", func() {
+			By("given one node held under this worker")
+			resumable := f.node(ctx, "the interrupted fix", "Change the README's first line.")
+			f.script(
+				ok("context gathered"),
+				fake.Script{Hold: true, Cancelled: fake.Terminal("stopped", nil, nil)},
+			)
+			setup := f.workerOver(f.runner(quick))
+			setupDone := startWorker(ctx, setup)
+			Eventually(func() string { return f.runningStep(ctx, resumable) }, time.Minute, 100*time.Millisecond).
+				Should(Equal("implement"))
+			setup.Stop()
+			Eventually(setupDone, time.Minute).Should(Receive(BeNil()))
+			runID := f.runOfRef(ctx, resumable).GetId()
+
+			By("and a second, unrelated node also ready")
+			fresh := f.node(ctx, "an unrelated fix", "Change the README's second line.")
+			// A run row exists as soon as the claim lands (openRun, before any
+			// workspace or session work) — proving the claim needs no more
+			// than that, so this holds rather than driving the fresh run
+			// through a real commit concurrently with the resumed run's own
+			// workspace, which races the fixture's single f.workspace field
+			// (support_test.go, shared across whichever run last attached or
+			// created one, and read by f.commits).
+			f.script(fake.Script{Hold: true, Cancelled: fake.Terminal("stopped", nil, nil)})
+
+			By("when the next worker starts with a spare slot")
+			journal := &bytes.Buffer{}
+			next := f.workerOver(f.runner(quick), func(o *run.WorkerOptions) { o.Concurrency = 2; o.Out = journal })
+			resumed := startWorker(ctx, next)
+			DeferCleanup(func() {
+				next.Stop()
+				Eventually(resumed, time.Minute).Should(Receive(BeNil()))
+			})
+
+			By("then the held run is resumed and the spare slot still claims the fresh node")
+			Eventually(func() *millv1.Run { return f.runOfRef(ctx, fresh) }, time.Minute, 100*time.Millisecond).
+				ShouldNot(BeNil(), "reclaim took only one slot; the other went to an ordinary claim")
+			Expect(f.runOfRef(ctx, resumable).GetId()).To(Equal(runID), "the same run, not a new claim")
+			Expect(journal.String()).To(ContainSubstring("resumed " + resumable + ", aborted at"))
+			Expect(journal.String()).NotTo(ContainSubstring("resumed " + fresh))
 		})
 	})
 
