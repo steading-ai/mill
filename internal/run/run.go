@@ -958,7 +958,13 @@ func (r *Runner) stop(ctx context.Context, s *state, err error) error {
 	}
 	if s.beat != nil {
 		s.beat.stop()
-		if beatErr := s.beat.err(); beatErr != nil && err == nil {
+		// A raw context.Canceled surviving this far is never more authoritative
+		// than the reason that raised it: some call left running past walk's own
+		// ctx.Err() checkpoints returned the bare cancellation instead of the
+		// heartbeat's own translated error. errReleased and an already-resolved
+		// ErrFenced are deliberate outcomes stopped() already computed, and
+		// neither wraps context.Canceled, so they pass through untouched.
+		if beatErr := s.beat.err(); beatErr != nil && (err == nil || errors.Is(err, context.Canceled)) {
 			err = beatErr
 		}
 	}

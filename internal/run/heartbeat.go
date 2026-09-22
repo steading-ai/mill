@@ -103,6 +103,8 @@ func (r *Runner) beat(ctx context.Context, s *state) error {
 func (r *Runner) reclaim(ctx context.Context, s *state) error {
 	claimed, err := s.dagger.Claim(ctx, s.node.GetReference())
 	if err != nil {
+		r.options.Log.Warn("reclaiming a fenced node: claim refused",
+			"node", s.node.GetReference(), "run", s.run.GetId(), "error", err)
 		return err
 	}
 	if _, err := call(ctx, r.options.Store.SetLease, &millv1.SetLeaseRequest{
@@ -110,9 +112,13 @@ func (r *Runner) reclaim(ctx context.Context, s *state) error {
 		RunId:     s.run.GetId(),
 		WorkerRef: r.options.WorkerRef,
 	}); err != nil {
+		r.options.Log.Warn("reclaiming a fenced node: setting the new lease failed",
+			"node", s.node.GetReference(), "run", s.run.GetId(), "error", err)
 		return err
 	}
 	s.setLease(claimed.Lease.GetId())
+	r.options.Log.Debug("reclaimed a fenced node",
+		"node", s.node.GetReference(), "run", s.run.GetId(), "lease", claimed.Lease.GetId())
 	return nil
 }
 
