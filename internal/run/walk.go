@@ -370,9 +370,11 @@ func (r *Runner) rotateGateway(s *state, step *millv1.Step, sr *millv1.StepRun, 
 	if r.options.Gateway == nil {
 		return
 	}
-	// The recorder runs on the gateway's goroutines, so it carries the
-	// lease it was installed under rather than reading the run's state.
-	lease := s.leaseID()
+	// The recorder runs on the gateway's own goroutines, so it reads the
+	// lease off state fresh on every call rather than closing over the one
+	// installed under: state.lease is an atomic.Pointer[string] built for
+	// exactly this cross-goroutine read, and a reclaim mid-attempt moves it
+	// after the step is already installed (internal/run/heartbeat.go).
 	r.options.Gateway.Rotate(s.run.GetId(), gateway.Step{
 		StepRunID: sr.GetId(),
 		StepName:  step.GetName(),
@@ -380,7 +382,7 @@ func (r *Runner) rotateGateway(s *state, step *millv1.Step, sr *millv1.StepRun, 
 		Budget:    step.GetTokenBudget(),
 		Models:    step.GetModels(),
 		Record: func(ctx context.Context, usage gateway.Usage) error {
-			return r.recordGatewayUsage(ctx, lease, sr, usage)
+			return r.recordGatewayUsage(ctx, s.leaseID(), sr, usage)
 		},
 	})
 }
