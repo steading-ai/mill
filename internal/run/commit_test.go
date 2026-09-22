@@ -11,6 +11,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	harnessv1 "github.com/ivy/mill/gen/harness/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/harness"
 	"github.com/ivy/mill/internal/harness/fake"
@@ -82,6 +83,39 @@ var _ = Describe("Commit evidence", Label(testsupport.DBLabel), func() {
 		Expect(attempt.GetBaseCommit()).To(Equal(head), "the head never moved")
 		Expect(f.comments(ctx)).To(ContainElement(ContainSubstring(head)))
 		Expect(f.comments(ctx)).To(ContainElement(ContainSubstring("the session made no commit")))
+
+		By("and the exit recorded is the session's own, not an unknown one")
+		Expect(attempt.GetExit().GetStatus()).To(Equal(int32(0)))
+		Expect(attempt.GetExit().GetReason()).To(Equal(harnessv1.ExitReason_EXIT_REASON_UNSPECIFIED))
+	})
+
+	It("the harness's own reason is not diluted by an evidence verdict", func() {
+		By("given a commit step whose harness never started the session")
+		f.script(
+			fake.Script{Terminal: fake.Terminal("context gathered", nil, usage(10))},
+			fake.Script{Terminal: fake.Terminal("the change is made", nil, usage(20))},
+			// An empty final message forces the failure's findings to fall
+			// back to the joined cause, which is the one path that
+			// exercises the fix (mill#34): a non-empty message would pass
+			// this spec whether or not the fix exists.
+			fake.Script{Terminal: fake.NeverRan(harness.ReasonRefused, "")},
+		)
+
+		By("when the session ends")
+		Expect(f.runner().Execute(ctx, f.nodeRef)).To(Succeed())
+
+		By("then the step run is failed with the harness's own reason")
+		attempt := commitStep()
+		Expect(attempt.GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_FAILED))
+		Expect(f.comments(ctx)).To(ContainElement(ContainSubstring("without running: refused")))
+
+		By("and not with a judgement about the commit it never got to make")
+		Expect(f.comments(ctx)).NotTo(ContainElement(ContainSubstring("no commit was recorded")))
+		Expect(f.comments(ctx)).NotTo(ContainElement(ContainSubstring("the session made no commit")))
+
+		By("and the exit recorded names the reason, never an empty one")
+		Expect(attempt.GetExit().GetStatus()).To(Equal(int32(-1)))
+		Expect(attempt.GetExit().GetReason()).To(Equal(harnessv1.ExitReason_EXIT_REASON_REFUSED))
 	})
 
 	It("The commit that was made is the evidence", func() {

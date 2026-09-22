@@ -639,6 +639,12 @@ var _ = Describe("The sidecar", Label("unit"), func() {
 		failed := run(fakeEntrypoint, map[string]string{"MILL_FAKE_SCENARIO": "failed"}, startRequest("failed-1", nil))
 		Expect(failed.terminal().GetExit().GetStatus()).To(Equal(int32(1)))
 		Expect(failed.terminal().GetExit().GetReason()).To(Equal(harnessv1.ExitReason_EXIT_REASON_UNSPECIFIED))
+
+		By("and a session whose first SDK message is already its result is never-ran, not a clean success")
+		bare := run(fakeEntrypoint, map[string]string{"MILL_FAKE_SCENARIO": "bare-result"}, startRequest("bare-result-1", nil))
+		Expect(bare.terminal().GetExit().GetStatus()).To(BeNumerically("==", -1))
+		Expect(bare.terminal().GetExit().GetReason()).To(Equal(harnessv1.ExitReason_EXIT_REASON_REFUSED))
+		Expect(bare.terminal().GetFinalMessage()).NotTo(Equal("Looks like nothing to do here."))
 	})
 
 	It("refuses a cancel on stdin, because cancellation is a signal", func() {

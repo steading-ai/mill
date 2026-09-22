@@ -174,6 +174,14 @@ function taskStarted(): SDKMessage {
   } as unknown as SDKMessage;
 }
 
+// systemInit stands for one of the three "system"/"init" messages a real
+// session sends before its first turn (docs/spikes/sdk-sessions.md §Q5) —
+// bookkeeping, never a turn, so the "bare-result" scenario below yields
+// three of them to prove they are not mistaken for one.
+function systemInit(): SDKMessage {
+  return { type: "system", subtype: "init", session_id: TASK_SESSION } as unknown as SDKMessage;
+}
+
 function taskNotification(status: string): SDKMessage {
   return {
     type: "system",
@@ -293,6 +301,16 @@ async function* play(
       return;
     case "bad-session-id":
       throw new Error(BAD_SESSION_ERROR);
+    case "bare-result":
+      // A resume whose first SDK messages are its own "system" init
+      // sequence and then, with no "assistant"/"user" turn in between, its
+      // result — the shape mill#19's attempt 1 left behind, suspected of a
+      // resume racing the predecessor session's own teardown.
+      yield systemInit();
+      yield systemInit();
+      yield systemInit();
+      yield success("Looks like nothing to do here.");
+      return;
     case "hang": {
       yield toolCall("toolu_hang", "Bash", { command: "python3 -c 'import time; time.sleep(120)'" });
       const signal = options.abortController?.signal;
@@ -400,6 +418,19 @@ async function* play(
       yield toolResult(agentCallId, "the subagent's answer");
       yield assistantText("Done.");
       yield success("Done.");
+      return;
+    }
+    case "subagent-open": {
+      // Same shape as "subagent", except the Agent call's own result never
+      // arrives: the turn ends with the subagent still running.
+      const agentCallId = "toolu_agent_open";
+      yield toolCall(agentCallId, "Agent", { description: "look something up" });
+      yield streamEvent(messageStart("msg_sub_open"), agentCallId);
+      yield streamEvent(blockStart(0, "text"), agentCallId);
+      yield streamEvent(textDelta(0, "Still looking into it."), agentCallId);
+      yield streamEvent(blockStop(0), agentCallId);
+      yield assistantText("Waiting on the subagent.");
+      yield success("Waiting on the subagent.");
       return;
     }
     case "large-result": {
