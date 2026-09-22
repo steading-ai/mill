@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	harnessv1 "github.com/ivy/mill/gen/harness/v1"
 	millv1 "github.com/ivy/mill/gen/mill/v1"
 	"github.com/ivy/mill/internal/dagger"
 	"github.com/ivy/mill/internal/evidence"
@@ -306,6 +307,14 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 	if err := r.postUsage(ctx, s, sr); err != nil {
 		return outcome{}, err
 	}
+
+	// Every request this attempt made was refused by the upstream: an
+	// outage, not the step's own work, and not a verdict to ask about
+	// (mill#57). It is recognized here, before verify ever runs, so an
+	// outage never gets read as malformed evidence.
+	if result.exit.GetReason() == harnessv1.ExitReason_EXIT_REASON_UPSTREAM_REFUSED {
+		return r.upstreamRefusal(ctx, s, step, sr, result, execErr)
+	}
 	verified, verifyErr := r.verify(ctx, s, step, sr, detail, result)
 
 	// A verdict that parsed goes on the node whichever way it went, and a
@@ -351,7 +360,14 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 		return outcome{}, nil
 
 	default:
-		return r.failStep(ctx, s, step, sr, detail, result, errors.Join(execErr, verifyErr))
+		cause := errors.Join(execErr, verifyErr)
+		if execErr != nil && result.exit.GetStatus() < 0 {
+			// The harness itself already says this attempt never ran; an
+			// evidence verdict about work that never happened is not a
+			// second reason, it is noise (mill#34).
+			cause = execErr
+		}
+		return r.failStep(ctx, s, step, sr, detail, result, cause)
 	}
 }
 
@@ -363,9 +379,11 @@ func (r *Runner) rotateGateway(s *state, step *millv1.Step, sr *millv1.StepRun, 
 	if r.options.Gateway == nil {
 		return
 	}
-	// The recorder runs on the gateway's goroutines, so it carries the
-	// lease it was installed under rather than reading the run's state.
-	lease := s.leaseID()
+	// The recorder runs on the gateway's own goroutines, so it reads the
+	// lease off state fresh on every call rather than closing over the one
+	// installed under: state.lease is an atomic.Pointer[string] built for
+	// exactly this cross-goroutine read, and a reclaim mid-attempt moves it
+	// after the step is already installed (internal/run/heartbeat.go).
 	r.options.Gateway.Rotate(s.run.GetId(), gateway.Step{
 		StepRunID: sr.GetId(),
 		StepName:  step.GetName(),
@@ -373,7 +391,7 @@ func (r *Runner) rotateGateway(s *state, step *millv1.Step, sr *millv1.StepRun, 
 		Budget:    step.GetTokenBudget(),
 		Models:    step.GetModels(),
 		Record: func(ctx context.Context, usage gateway.Usage) error {
-			return r.recordGatewayUsage(ctx, lease, sr, usage)
+			return r.recordGatewayUsage(ctx, s.leaseID(), sr, usage)
 		},
 	})
 }

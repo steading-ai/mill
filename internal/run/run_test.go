@@ -3,6 +3,7 @@ package run_test
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -124,11 +125,13 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 			f.node(ctx, "a held step", "This one is taken away mid-flight.")
 			f.script(fake.Script{Hold: true, Cancelled: fake.Terminal("stopped", nil, nil)})
 
+			warnings := &warnCounter{message: "reclaiming a fenced node: claim refused"}
 			runner := f.runner(func(o *run.Options) {
 				// A TTL the spec can outlive, and a heartbeat frequent
 				// enough to notice quickly once it has.
 				o.TTL = 12 * time.Second
 				o.Interval = 200 * time.Millisecond
+				o.Log = slog.New(warnings)
 			})
 			done := make(chan error, 1)
 			go func() { done <- runner.Execute(ctx, f.nodeRef) }()
@@ -150,15 +153,18 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 			// step that was in flight.
 			Expect(verbs(f.harness.Calls())).To(ContainElement("cancel"))
 			Expect(closedSteps(f.inspect(ctx))).NotTo(HaveKey("gather-context"))
+			Expect(warnings.Count()).To(Equal(1), "reclaim logs the refused claim exactly once")
 		})
 
 		It("A fenced heartbeat that can win the node back keeps the step running", func() {
 			f.node(ctx, "a paused host", "This one's lease expires while the step is still alive, but nobody else takes the node.")
 			f.script(fake.Script{Hold: true, Cancelled: fake.Terminal("stopped", nil, nil)})
 
+			debug := &warnCounter{message: "reclaimed a fenced node"}
 			runner := f.runner(func(o *run.Options) {
 				o.TTL = 12 * time.Second
 				o.Interval = 200 * time.Millisecond
+				o.Log = slog.New(debug)
 			})
 			done := make(chan error, 1)
 			go func() { done <- runner.Execute(ctx, f.nodeRef) }()
@@ -192,6 +198,44 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 			// leaking a held session.
 			Expect(f.cancelRun(ctx)).To(Succeed())
 			Eventually(done, 20*time.Second).Should(Receive(BeNil()))
+			Expect(debug.Count()).To(Equal(1), "reclaim logs the won-back lease exactly once")
+		})
+
+		It("reports the heartbeat's fenced reason, not a bare context.Canceled leaked from a store write already in flight", func() {
+			f.node(ctx, "a write outlives the fence", "The store write from the finished step is still in flight when the heartbeat fences.")
+			f.script(fake.Script{Terminal: fake.Terminal("context gathered", nil, usage(10))})
+
+			blocking := &blockingUsage{StoreServiceClient: f.store, started: make(chan struct{})}
+			warnings := &warnCounter{message: "releasing the lease after a failure"}
+			runner := f.runner(func(o *run.Options) {
+				o.TTL = 12 * time.Second
+				o.Interval = 200 * time.Millisecond
+				o.Store = blocking
+				o.Log = slog.New(warnings)
+			})
+			done := make(chan error, 1)
+			go func() { done <- runner.Execute(ctx, f.nodeRef) }()
+
+			// The step ran to completion and is now blocked inside the
+			// store write that follows it — recordUsage, which every closed
+			// or failed attempt makes before anything releases the lease it
+			// needs (internal/run/walk.go).
+			Eventually(blocking.started, 30*time.Second).Should(BeClosed())
+			first := f.leaseOf(ctx).GetId()
+			Expect(first).NotTo(BeEmpty())
+
+			// Force the expiry, then let another principal take the node, so
+			// the worker's own reclaim fails and the heartbeat fences the
+			// step: its cancellation is what wakes the blocked write, which
+			// answers it with a bare context.Canceled — a call that was in
+			// flight the instant the heartbeat cancelled the step.
+			f.expire(ctx, first)
+			second := f.reclaim(ctx)
+			Expect(second).NotTo(Equal(first))
+
+			Eventually(done, 30*time.Second).Should(Receive(MatchError(run.ErrFenced)))
+			Expect(warnings.Count()).To(Equal(0),
+				"the lease was already known dead; stop must not try to release it again")
 		})
 	})
 
@@ -424,4 +468,22 @@ func (f failing) Done(ctx context.Context, req *connect.Request[millv1.DoneReque
 		return nil, errors.New("the process died before store.Done")
 	}
 	return f.StoreServiceClient.Done(ctx, req)
+}
+
+// blockingUsage wraps the store and holds its first RecordUsage call open
+// until the context it was given is cancelled, then answers with that
+// cancellation, unwrapped: a store write left in flight at the instant a
+// heartbeat cancels the step's shared context, exactly as it reaches the
+// caller when nothing has translated it yet. started closes once the call
+// arrives, so a spec can wait for the write to be in flight before staging
+// whatever is meant to cancel the context underneath it.
+type blockingUsage struct {
+	millv1connect.StoreServiceClient
+	started chan struct{}
+}
+
+func (b *blockingUsage) RecordUsage(ctx context.Context, _ *connect.Request[millv1.RecordUsageRequest]) (*connect.Response[millv1.RecordUsageResponse], error) {
+	close(b.started)
+	<-ctx.Done()
+	return nil, ctx.Err()
 }

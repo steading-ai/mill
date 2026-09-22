@@ -3,11 +3,14 @@ package cli_test
 import (
 	"context"
 	"strings"
+	"time"
 
+	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	millv1 "github.com/ivy/mill/gen/mill/v1"
+	"github.com/ivy/mill/internal/run"
 	"github.com/ivy/mill/internal/testsupport"
 )
 
@@ -45,6 +48,30 @@ var _ = Describe("mill explain", Label(testsupport.DBLabel), func() {
 
 		Expect(out).To(ContainSubstring("step      gather-context (skill) failed"))
 		Expect(out).To(ContainSubstring("exit      7"))
+	})
+
+	It("on a run whose latest attempt the upstream refused, says it is waiting out the outage", func() {
+		r := openRun(ctx, "millcli#12", nodeID(12))
+		r.closeGatherContext(ctx, "sha256:"+strings.Repeat("a", 64))
+		sr := r.refuse(ctx, "implement")
+
+		out := r.cli(ctx, "explain", "millcli#12")
+
+		detail, err := r.store.Inspect(ctx, connect.NewRequest(&millv1.InspectRequest{Id: r.run.GetId()}))
+		Expect(err).NotTo(HaveOccurred())
+		var ended time.Time
+		for _, d := range detail.Msg.GetSteps() {
+			if d.GetStepRun().GetId() == sr.GetId() {
+				ended = d.GetStepRun().GetEndedAt().AsTime()
+			}
+		}
+		Expect(ended.IsZero()).To(BeFalse(), "the refused attempt is on the ledger")
+		retryAt := ended.Add(run.UpstreamWait(1)).UTC().Format(time.RFC3339)
+
+		Expect(out).To(ContainSubstring("step      implement (skill) failed"))
+		Expect(out).To(ContainSubstring(
+			"waiting   the upstream to recover; step implement retries at " + retryAt))
+		Expect(out).To(ContainSubstring("refused 1 times in a row since"))
 	})
 
 	It("on a waiting run prints the gate node's reference and the gate's title", func() {

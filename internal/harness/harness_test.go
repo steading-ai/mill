@@ -61,7 +61,7 @@ var _ = Describe("The harness interface", Label("unit"), func() {
 		It("round-trips every exit reason through the wire's spelling", func() {
 			for _, reason := range []harness.ExitReason{
 				harness.ReasonNone, harness.ReasonRefused, harness.ReasonPolicy,
-				harness.ReasonTimeout, harness.ReasonCancelled, harness.ReasonStalled,
+				harness.ReasonTimeout, harness.ReasonCancelled, harness.ReasonStalled, harness.ReasonUpstream,
 			} {
 				Expect(harness.ReasonFrom(reason.Proto())).To(Equal(reason))
 			}

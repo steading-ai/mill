@@ -67,6 +67,11 @@ const (
 	// turn's and this reason is what says the words were taken rather than
 	// offered.
 	ExitReason_EXIT_REASON_STALLED ExitReason = 5
+	// EXIT_REASON_UPSTREAM_REFUSED means every request the turn made to the
+	// model's own upstream was refused — an outage, not the session's own
+	// failure. It carries no verdict evidence to consult: an outage is a fact
+	// about the upstream, not about the step's work.
+	ExitReason_EXIT_REASON_UPSTREAM_REFUSED ExitReason = 6
 )
 
 // Enum value maps for ExitReason.
@@ -78,14 +83,16 @@ var (
 		3: "EXIT_REASON_TIMEOUT",
 		4: "EXIT_REASON_CANCELLED",
 		5: "EXIT_REASON_STALLED",
+		6: "EXIT_REASON_UPSTREAM_REFUSED",
 	}
 	ExitReason_value = map[string]int32{
-		"EXIT_REASON_UNSPECIFIED": 0,
-		"EXIT_REASON_REFUSED":     1,
-		"EXIT_REASON_POLICY":      2,
-		"EXIT_REASON_TIMEOUT":     3,
-		"EXIT_REASON_CANCELLED":   4,
-		"EXIT_REASON_STALLED":     5,
+		"EXIT_REASON_UNSPECIFIED":      0,
+		"EXIT_REASON_REFUSED":          1,
+		"EXIT_REASON_POLICY":           2,
+		"EXIT_REASON_TIMEOUT":          3,
+		"EXIT_REASON_CANCELLED":        4,
+		"EXIT_REASON_STALLED":          5,
+		"EXIT_REASON_UPSTREAM_REFUSED": 6,
 	}
 )
 
@@ -2027,7 +2034,7 @@ const file_harness_v1_harness_proto_rawDesc = "" +
 	"\x05event\x18\x01 \x01(\v2\x11.harness.v1.EventH\x00R\x05event\x122\n" +
 	"\bterminal\x18\x02 \x01(\v2\x14.harness.v1.TerminalH\x00R\bterminal\x12/\n" +
 	"\afailure\x18\x03 \x01(\v2\x13.harness.v1.FailureH\x00R\afailureB\x06\n" +
-	"\x04body*\xa7\x01\n" +
+	"\x04body*\xc9\x01\n" +
 	"\n" +
 	"ExitReason\x12\x1b\n" +
 	"\x17EXIT_REASON_UNSPECIFIED\x10\x00\x12\x17\n" +
@@ -2035,7 +2042,8 @@ const file_harness_v1_harness_proto_rawDesc = "" +
 	"\x12EXIT_REASON_POLICY\x10\x02\x12\x17\n" +
 	"\x13EXIT_REASON_TIMEOUT\x10\x03\x12\x19\n" +
 	"\x15EXIT_REASON_CANCELLED\x10\x04\x12\x17\n" +
-	"\x13EXIT_REASON_STALLED\x10\x05B.Z,github.com/ivy/mill/gen/harness/v1;harnessv1b\x06proto3"
+	"\x13EXIT_REASON_STALLED\x10\x05\x12 \n" +
+	"\x1cEXIT_REASON_UPSTREAM_REFUSED\x10\x06B.Z,github.com/ivy/mill/gen/harness/v1;harnessv1b\x06proto3"
 
 var (
 	file_harness_v1_harness_proto_rawDescOnce sync.Once

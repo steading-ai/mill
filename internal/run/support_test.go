@@ -876,6 +876,17 @@ func ok(final string) fake.Script {
 	return fake.Script{Terminal: fake.Terminal(final, nil, usage(1))}
 }
 
+// refused is a session every request of which the upstream turned away: no
+// request it made was ever answered, so it carries no verdict, only an
+// outage (mill#57).
+func refused(final string) fake.Script {
+	return fake.Script{Terminal: &harness.Terminal{
+		FinalMessage: final,
+		Exit:         harness.ProcessExit{Status: 1, Reason: harness.ReasonUpstream},
+		Usage:        usage(1),
+	}}
+}
+
 // gatesOn is every user-assigned child of the node: the gates, and nothing
 // else, because nothing else in these specs is assigned to a person.
 func (f *fixture) gatesOn(ctx context.Context) []*daggerv1.Node {

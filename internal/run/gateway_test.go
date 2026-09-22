@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -269,5 +270,76 @@ var _ = Describe("The credential gateway in the run loop", Label(testsupport.DBL
 		Expect(f2.runner().Execute(ctx, f2.nodeRef)).To(Succeed())
 		Expect(env).NotTo(HaveKey("ANTHROPIC_BASE_URL"))
 		Expect(env).NotTo(HaveKey("ANTHROPIC_AUTH_TOKEN"))
+	})
+
+	// Scenario: Usage recorded after a reclaim reaches the ledger
+	//   Given a step in flight whose run's lease was reclaimed by the
+	//     heartbeat
+	//   When the gateway forwards the next response
+	//   Then its usage is recorded in the ledger under the new lease and
+	//     no fenced write is logged
+	It("Usage recorded after a reclaim reaches the ledger under the new lease", func() {
+		By("given a gateway, and a step held open across a reclaim")
+		g := startGateway()
+
+		ready := make(chan struct{})
+		proceed := make(chan struct{})
+		f.script(fake.Script{Hold: true, Cancelled: fake.Terminal("stopped", nil, nil), Do: func(session harness.Session) {
+			g.requests(1)(session)
+			close(ready)
+			<-proceed
+			g.requests(1)(session)
+		}})
+
+		runner := f.runner(g.options, func(o *run.Options) {
+			// A TTL the spec can outlive, and a heartbeat frequent enough
+			// to notice quickly once it has, matching the self-reclaim
+			// spec in run_test.go.
+			o.TTL = 12 * time.Second
+			o.Interval = 200 * time.Millisecond
+		})
+		done := make(chan error, 1)
+		go func() { done <- runner.Execute(ctx, f.nodeRef) }()
+
+		By("when the step makes a request, its lease is reclaimed mid-attempt, and it makes another")
+		Eventually(ready, 30*time.Second).Should(BeClosed())
+		first := f.leaseOf(ctx).GetId()
+		Expect(first).NotTo(BeEmpty())
+
+		// Force the expiry but let nobody else claim the node: the next
+		// heartbeat wins it back rather than fencing the step.
+		f.expire(ctx, first)
+		Eventually(func() string {
+			return f.leaseOf(ctx).GetId()
+		}, 30*time.Second, 200*time.Millisecond).ShouldNot(Or(BeEmpty(), Equal(first)))
+
+		close(proceed)
+		Eventually(func() int { return len(g.seen()) }, 10*time.Second, 100*time.Millisecond).Should(Equal(2))
+
+		Expect(f.cancelRun(ctx)).To(Succeed())
+		Eventually(done, 20*time.Second).Should(Receive(BeNil()))
+
+		By("then both requests' usage reached the ledger, not just the one made before the reclaim")
+		detail := f.inspect(ctx)
+		attempts := stepRuns(detail, "gather-context")
+		Expect(attempts).To(HaveLen(1))
+		var gathered *millv1.StepRunDetail
+		for _, d := range detail.GetSteps() {
+			if d.GetStepRun().GetId() == attempts[0].GetId() {
+				gathered = d
+			}
+		}
+		Expect(gathered).NotTo(BeNil())
+		// TotalsForStepRun groups by (model, source); both requests share
+		// turnModel, so a fix is proven by the doubled counts in a single
+		// row, not by a second row appearing.
+		Expect(gathered.GetGatewayTotals()).To(HaveLen(1))
+		counted := gathered.GetGatewayTotals()[0]
+		Expect(counted.GetSource()).To(Equal(millv1.UsageSource_USAGE_SOURCE_GATEWAY))
+		Expect(counted.GetModel()).To(Equal(turnModel))
+		Expect(counted.GetInputTokens()).To(Equal(int64(2 * turnInput)))
+		Expect(counted.GetOutputTokens()).To(Equal(int64(2 * turnOutput)))
+		Expect(counted.GetCacheReadTokens()).To(Equal(int64(2 * turnCacheRead)))
+		Expect(counted.GetCacheWriteTokens()).To(Equal(int64(2 * turnCacheWrite)))
 	})
 })

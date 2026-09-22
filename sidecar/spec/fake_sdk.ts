@@ -148,6 +148,21 @@ function failure(subtype: string, errors: string[]): SDKMessage {
   } as unknown as SDKMessage;
 }
 
+// apiError is a result shaped like a turn every one of whose requests the
+// upstream refused: `is_error` true and `api_error_status` naming the
+// upstream's own answer, `null` for a request that got no response at all.
+function apiError(status: number | null): SDKMessage {
+  return {
+    type: "result",
+    subtype: "error_during_execution",
+    is_error: true,
+    api_error_status: status,
+    errors: ["upstream overloaded"],
+    modelUsage: MODEL_USAGE,
+    permission_denials: [],
+  } as unknown as SDKMessage;
+}
+
 // probeEnvironment runs `env` under exactly the environment the sidecar
 // built for the session, which is what the real harness does with its CLI
 // child, and returns its output.
@@ -172,6 +187,14 @@ function taskStarted(): SDKMessage {
     is_backgrounded: true,
     session_id: TASK_SESSION,
   } as unknown as SDKMessage;
+}
+
+// systemInit stands for one of the three "system"/"init" messages a real
+// session sends before its first turn (docs/spikes/sdk-sessions.md §Q5) —
+// bookkeeping, never a turn, so the "bare-result" scenario below yields
+// three of them to prove they are not mistaken for one.
+function systemInit(): SDKMessage {
+  return { type: "system", subtype: "init", session_id: TASK_SESSION } as unknown as SDKMessage;
 }
 
 function taskNotification(status: string): SDKMessage {
@@ -291,8 +314,28 @@ async function* play(
       yield assistantText("Working on it.");
       yield failure("error_during_execution", ["the harness lost its connection"]);
       return;
+    case "upstream-refused":
+      // Every request the turn made was answered 529, the incident this
+      // scenario stands in for.
+      yield apiError(529);
+      return;
+    case "upstream-unreachable":
+      // A request that got no response at all: api_error_status is null
+      // rather than a status code, and still counts as an outage.
+      yield apiError(null);
+      return;
     case "bad-session-id":
       throw new Error(BAD_SESSION_ERROR);
+    case "bare-result":
+      // A resume whose first SDK messages are its own "system" init
+      // sequence and then, with no "assistant"/"user" turn in between, its
+      // result — the shape mill#19's attempt 1 left behind, suspected of a
+      // resume racing the predecessor session's own teardown.
+      yield systemInit();
+      yield systemInit();
+      yield systemInit();
+      yield success("Looks like nothing to do here.");
+      return;
     case "hang": {
       yield toolCall("toolu_hang", "Bash", { command: "python3 -c 'import time; time.sleep(120)'" });
       const signal = options.abortController?.signal;
@@ -400,6 +443,19 @@ async function* play(
       yield toolResult(agentCallId, "the subagent's answer");
       yield assistantText("Done.");
       yield success("Done.");
+      return;
+    }
+    case "subagent-open": {
+      // Same shape as "subagent", except the Agent call's own result never
+      // arrives: the turn ends with the subagent still running.
+      const agentCallId = "toolu_agent_open";
+      yield toolCall(agentCallId, "Agent", { description: "look something up" });
+      yield streamEvent(messageStart("msg_sub_open"), agentCallId);
+      yield streamEvent(blockStart(0, "text"), agentCallId);
+      yield streamEvent(textDelta(0, "Still looking into it."), agentCallId);
+      yield streamEvent(blockStop(0), agentCallId);
+      yield assistantText("Waiting on the subagent.");
+      yield success("Waiting on the subagent.");
       return;
     }
     case "large-result": {
