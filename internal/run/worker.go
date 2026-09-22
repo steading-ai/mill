@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -199,6 +200,10 @@ func (w *Worker) Run(ctx context.Context) error {
 		return err
 	}
 	var wg sync.WaitGroup
+	if err := w.reclaim(ctx, &wg); err != nil {
+		wg.Wait()
+		return err
+	}
 	err := w.claim(ctx, &wg)
 	wg.Wait()
 	if err == nil && w.killed.Load() {
@@ -372,13 +377,7 @@ func (w *Worker) claim(ctx context.Context, wg *sync.WaitGroup) error {
 		// A claim that landed as the stop did. Give it straight back rather
 		// than open a run only to stop it: nothing has been written yet, so
 		// the node simply returns to the ready set.
-		if w.stopped() {
-			if err := runner.options.Dagger.Release(ctx, claimed.Lease.GetId(),
-				daggerv1.ReleaseReason_RELEASE_REASON_PREEMPTED, "shutdown"); err != nil {
-				w.options.Log.Warn("releasing a claim that landed as the worker stopped",
-					"node", claimed.Node.GetReference(), "error", err)
-			}
-			<-w.slots
+		if w.releaseIfStopped(ctx, runner, claimed) {
 			return nil
 		}
 
@@ -403,15 +402,88 @@ func (w *Worker) claim(ctx context.Context, wg *sync.WaitGroup) error {
 			continue
 		}
 
-		w.inFlight.Store(nodeID, struct{}{})
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer func() { <-w.slots }()
-			defer w.inFlight.Delete(nodeID)
-			w.drive(ctx, claimed)
-		}()
+		w.spawn(ctx, wg, claimed)
 	}
+}
+
+// spawn hands a claimed node to its own goroutine: the slot it took, and the
+// inFlight entry the sweep reads, are released as it ends.
+func (w *Worker) spawn(ctx context.Context, wg *sync.WaitGroup, claimed *dagger.Claimed) {
+	nodeID := claimed.Node.GetId()
+	w.inFlight.Store(nodeID, struct{}{})
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer func() { <-w.slots }()
+		defer w.inFlight.Delete(nodeID)
+		w.drive(ctx, claimed)
+	}()
+}
+
+// releaseIfStopped gives a claim straight back if it landed after the
+// worker had already begun stopping, and frees the slot it took: nothing
+// has been written yet, so the node simply returns to the ready set.
+func (w *Worker) releaseIfStopped(ctx context.Context, runner *Runner, claimed *dagger.Claimed) bool {
+	if !w.stopped() {
+		return false
+	}
+	if err := runner.options.Dagger.Release(ctx, claimed.Lease.GetId(),
+		daggerv1.ReleaseReason_RELEASE_REASON_PREEMPTED, "shutdown"); err != nil {
+		w.options.Log.Warn("releasing a claim that landed as the worker stopped",
+			"node", claimed.Node.GetReference(), "error", err)
+	}
+	<-w.slots
+	return true
+}
+
+// reclaim claims this worker's own resumable runs before the first
+// ClaimNext, oldest abort first, up to concurrency (docs/architecture.md
+// §"Failure and stop", "Stop.", mill#44). Only slots reclaim leaves unfilled
+// go to the ordinary claim loop afterward: it never waits for one, and a
+// candidate no longer ready when its turn comes is skipped rather than
+// failing the whole pass.
+//
+// A candidate outside w.options.Projects is left for ClaimNext, the same
+// filter that governs everything else the worker claims. It is not filtered
+// by w.options.Labels: a run this worker was already driving already passed
+// that filter when it was first claimed.
+//
+// Only a ledger that cannot be listed stops the worker; a single candidate
+// that cannot be claimed does not.
+func (w *Worker) reclaim(ctx context.Context, wg *sync.WaitGroup) error {
+	runner := w.options.Runner
+	candidates, err := runner.Resumable(ctx)
+	if err != nil {
+		return fmt.Errorf("work: listing resumable runs before claiming: %w", err)
+	}
+	for _, c := range candidates {
+		if w.stopped() || ctx.Err() != nil {
+			return nil
+		}
+		if len(w.options.Projects) > 0 && !slices.Contains(w.options.Projects, projectOf(c.NodeRef)) {
+			continue
+		}
+		select {
+		case w.slots <- struct{}{}:
+		default:
+			return nil
+		}
+
+		claimed, err := runner.options.Dagger.Scoped(projectOf(c.NodeRef)).Claim(ctx, c.NodeRef)
+		if err != nil {
+			<-w.slots
+			w.options.Log.Warn("reclaiming a resumable run", "node", c.NodeRef, "error", err)
+			continue
+		}
+
+		if w.releaseIfStopped(ctx, runner, claimed) {
+			return nil
+		}
+
+		w.printf("resumed %s, aborted at %s\n", claimed.Node.GetReference(), c.AbortedAt.Format(time.RFC3339))
+		w.spawn(ctx, wg, claimed)
+	}
+	return nil
 }
 
 // sleepBackoff waits out one slice of a node's backoff window, cut short by
