@@ -19,7 +19,7 @@ The first week on stead was supervised by hand, from the conversation, and the s
 - **The guest has its own habits**: `--socket` on every mill call, `--utc` on the journal, checkouts owned by the guest user, a bundle to reset them, no `strings` binary, a classifier that blocks `gh pr merge`.
 - **Reporting drifted.** The person asked twice for the shape they wanted: the node's title on first mention, then a concise summary of what a stage did.
 
-`docs/retrospectives/first-week-on-stead.md` is the record this skill was written from. The runbook beside it holds the recipes so the next supervisor does not pay for them again.
+`docs/retrospectives/2026-09-22-first-week-on-stead.md` is the record this skill was written from. The runbook beside it holds the recipes so the next supervisor does not pay for them again.
 
 ## What it does NOT do
 

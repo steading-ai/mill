@@ -1,6 +1,6 @@
 ---
 name: retrospective
-description: Use when asked to write up a week or a milestone of the factory — progress, tokens, code, what went wrong, gaps — as docs/retrospectives/<slug>.md, and to carry it through numbered rounds of the person's %% comments. Every number comes from the ledger, dagger, and the forge, never from memory.
+description: Use when asked to write up a week or a milestone of the factory — progress, tokens, code, what went wrong, gaps — as docs/retrospectives/YYYY-MM-DD-<slug>.md, and to carry it through numbered rounds of the person's %% comments. Every number comes from the ledger, dagger, and the forge, never from memory.
 argument-hint: "[<slug> [since <date-or-window>] | round <N> <slug>]"
 disable-model-invocation: true
 allowed-tools:
@@ -39,7 +39,7 @@ $ARGUMENTS
 
 ## Instructions
 
-The document is `docs/retrospectives/<slug>.md` in this repository, shaped like `first-week-on-stead.md`. Data recipes: QUERIES.md.
+The document is `docs/retrospectives/YYYY-MM-DD-<slug>.md` in this repository, dated the day of its first round and shaped like `2026-09-22-first-week-on-stead.md`; `round N` finds it by slug. Data recipes: QUERIES.md.
 
 1. **Window.** `since` is the subscription reset (Sunday 04:00 PDT) unless given. State it in the scope line, in UTC too.
 2. **First round** (no `round`): gather before writing, all of it:
@@ -56,7 +56,7 @@ The document is `docs/retrospectives/<slug>.md` in this repository, shaped like 
 ## Examples
 
 ```
-/retrospective first-week-on-stead                 → gather, write, Round 1
+/retrospective 2026-09-22-first-week-on-stead                 → gather, write, Round 1
 /retrospective o3 since 2026-09-27                 → a milestone, explicit window
-/retrospective round 2 first-week-on-stead         → read the %% comments, append Round 2
+/retrospective round 2 2026-09-22-first-week-on-stead         → read the %% comments, append Round 2
 ```

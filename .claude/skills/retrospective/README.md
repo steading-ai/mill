@@ -3,9 +3,9 @@
 Writes `docs/retrospectives/<slug>.md`: what the factory built, what it cost in tokens and lines, how that compares to the week before, what went wrong and what is still missing. Then carries the document through numbered rounds as the person comments in `%%` blocks and the agent answers, corrects itself, and proposes the next iteration.
 
 ```
-/retrospective first-week-on-stead
+/retrospective 2026-09-22-first-week-on-stead
 /retrospective o3 since 2026-09-27
-/retrospective round 2 first-week-on-stead
+/retrospective round 2 2026-09-22-first-week-on-stead
 ```
 
 ## Why this exists
@@ -15,7 +15,7 @@ Writes `docs/retrospectives/<slug>.md`: what the factory built, what it cost in 
 - **The comments are the point.** The person writes into the document between `%%` markers; the agent appends a round underneath and leaves those blocks byte-for-byte. Restructuring or rewording a comment loses the record of what was actually said.
 - **A list of everything wrong is not a plan.** Round 2 ends with the few items the record says would remove most of the cost, mapped to buckets and sized for a node, with the rest deferred and the reason stated. That is what the person can say yes or no to.
 
-The first document written this way is `docs/retrospectives/first-week-on-stead.md`; `o2.md` beside it is the milestone shape it descends from.
+The first document written this way is `docs/retrospectives/2026-09-22-first-week-on-stead.md`; `o2.md` beside it is the milestone shape it descends from.
 
 ## What it does NOT do
 
