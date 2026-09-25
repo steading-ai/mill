@@ -202,7 +202,7 @@ var _ = Describe("The mill plugin", Label("unit", "slow"), func() {
 		Expect(found).To(BeTrue(), "the skill needs frontmatter to be loaded at all")
 		firstScreen := head(prose, 50)
 
-		Expect(firstScreen).To(ContainSubstring("File a dagger node"))
+		Expect(firstScreen).To(ContainSubstring("File a skift node"))
 		Expect(firstScreen).To(ContainSubstring("`run` is not an MCP tool"))
 		for _, role := range []string{"`operator`", "`reader`"} {
 			Expect(firstScreen).To(ContainSubstring(role))

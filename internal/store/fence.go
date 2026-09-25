@@ -32,7 +32,7 @@ type fenceState struct {
 // and a row that is only locked, never updated, is not re-read once the
 // lock is granted. Reading the lease in the locking statement would
 // therefore miss a lease a concurrent claim committed while this
-// transaction waited for the lock — exactly the trap dagger's
+// transaction waited for the lock — exactly the trap skift's
 // internal/domain/patch.go fence() comments on.
 //
 // Every mutating method calls this before its first write, with the id of

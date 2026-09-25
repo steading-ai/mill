@@ -15,7 +15,7 @@ import (
 
 // Resumable is specified against the store alone: the ledger already knows
 // which of a worker's own runs an abort left behind, so nothing here reaches
-// dagger. [fixture.abortedRun] leaves a run exactly as shutdownStep does
+// skift. [fixture.abortedRun] leaves a run exactly as shutdownStep does
 // (internal/run/shutdown.go) — one aborted attempt, the run itself still
 // `selecting`, the default status [Store.CreateRun] gives a fresh run — which
 // is one of the two statuses docs/ledger.md §Resume's resume branch names and

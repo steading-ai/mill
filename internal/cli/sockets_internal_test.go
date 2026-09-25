@@ -19,40 +19,40 @@ var _ = Describe("The socket resolver", Label("unit"), func() {
 
 	BeforeEach(func() {
 		config = filepath.Join(GinkgoT().TempDir(), "config.yaml")
-		Expect(os.WriteFile(config, []byte("socket: /from/the/file.sock\ndagger-socket: /from/the/file/dg.sock\n"), 0o600)).To(Succeed())
+		Expect(os.WriteFile(config, []byte("socket: /from/the/file.sock\nskift-socket: /from/the/file/skift.sock\n"), 0o600)).To(Succeed())
 	})
 
 	// dialing is a command declaring the two flags the way every face
 	// does, with the file applied the way the root applies it.
-	dialing := func(args ...string) (socket, daggerSocket string) {
+	dialing := func(args ...string) (socket, skiftSocket string) {
 		GinkgoHelper()
 		cmd := &cobra.Command{Use: "dials"}
 		cmd.Flags().StringVar(&socket, "socket", defaultSocketPath(), "")
-		cmd.Flags().StringVar(&daggerSocket, "dagger-socket", envOr(daggerSocketEnv, defaultDaggerSocket), "")
+		cmd.Flags().StringVar(&skiftSocket, "skift-socket", envOr(skiftSocketEnv, defaultSkiftSocket), "")
 		Expect(cmd.ParseFlags(args)).To(Succeed())
 		GinkgoT().Setenv(configEnv, config)
 		Expect(applySocketConfig(cmd, nil)).To(Succeed())
-		return socket, daggerSocket
+		return socket, skiftSocket
 	}
 
 	It("reads both sockets from the file when the command line and the environment say nothing", func() {
-		socket, daggerSocket := dialing()
+		socket, skiftSocket := dialing()
 		Expect(socket).To(Equal("/from/the/file.sock"))
-		Expect(daggerSocket).To(Equal("/from/the/file/dg.sock"))
+		Expect(skiftSocket).To(Equal("/from/the/file/skift.sock"))
 	})
 
-	It("lets --socket and --dagger-socket win over the file", func() {
-		socket, daggerSocket := dialing("--socket", "/from/the/flag.sock", "--dagger-socket", "/from/the/flag/dg.sock")
+	It("lets --socket and --skift-socket win over the file", func() {
+		socket, skiftSocket := dialing("--socket", "/from/the/flag.sock", "--skift-socket", "/from/the/flag/skift.sock")
 		Expect(socket).To(Equal("/from/the/flag.sock"))
-		Expect(daggerSocket).To(Equal("/from/the/flag/dg.sock"))
+		Expect(skiftSocket).To(Equal("/from/the/flag/skift.sock"))
 	})
 
-	It("lets $MILL_SOCKET and $DG_SOCKET win over the file", func() {
+	It("lets $MILL_SOCKET and $SKIFT_SOCKET win over the file", func() {
 		GinkgoT().Setenv(socketEnv, "/from/the/environment.sock")
-		GinkgoT().Setenv(daggerSocketEnv, "/from/the/environment/dg.sock")
-		socket, daggerSocket := dialing()
+		GinkgoT().Setenv(skiftSocketEnv, "/from/the/environment/skift.sock")
+		socket, skiftSocket := dialing()
 		Expect(socket).To(Equal("/from/the/environment.sock"))
-		Expect(daggerSocket).To(Equal("/from/the/environment/dg.sock"))
+		Expect(skiftSocket).To(Equal("/from/the/environment/skift.sock"))
 	})
 
 	It("lets a flag win over the environment", func() {
@@ -63,9 +63,9 @@ var _ = Describe("The socket resolver", Label("unit"), func() {
 
 	It("leaves the default alone when the file names no socket", func() {
 		Expect(os.WriteFile(config, []byte("concurrency: 1\n"), 0o600)).To(Succeed())
-		socket, daggerSocket := dialing()
+		socket, skiftSocket := dialing()
 		Expect(socket).To(Equal(defaultSocketPath()))
-		Expect(daggerSocket).To(Equal(defaultDaggerSocket))
+		Expect(skiftSocket).To(Equal(defaultSkiftSocket))
 	})
 
 	It("reads the file --config names when the command declares one", func() {
@@ -110,6 +110,6 @@ var _ = Describe("The socket resolver", Label("unit"), func() {
 		Expect(cmd.ParseFlags([]string{"--config", config})).To(Succeed())
 		Expect(applyConfig(cmd, &opts)).To(Succeed())
 		Expect(opts.run.socket).To(Equal("/from/the/environment.sock"))
-		Expect(opts.run.daggerSocket).To(Equal("/from/the/file/dg.sock"), "the file fills what the environment left alone")
+		Expect(opts.run.skiftSocket).To(Equal("/from/the/file/skift.sock"), "the file fills what the environment left alone")
 	})
 })

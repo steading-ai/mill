@@ -184,7 +184,7 @@ var _ = Describe("The reviewer's verdict", Label(testsupport.DBLabel), func() {
 				approves("AC-1", "the change matches the plan"), usage(5)),
 		})
 
-		By("when the node is shown in dagger")
+		By("when the node is shown in skift")
 		verdict := artifactNamed(f.artifactsOn(ctx), "review-1.1.md")
 
 		By("then a text artifact named for the step, the generation and the attempt carries the verdict with its findings and the reviewing session's id")

@@ -193,7 +193,7 @@ type Spec struct {
 	// RunID is the run the workspace belongs to. It names the workspace's
 	// directory, so two runs can never be given the same one.
 	RunID string
-	// NodeRef is the dagger node the run is working, such as `mill#12`. The
+	// NodeRef is the skift node the run is working, such as `mill#12`. The
 	// branch is derived from it; see [BranchFor].
 	NodeRef string
 	// Origin is the repository to clone.
@@ -827,7 +827,7 @@ var ErrNotImplemented = errors.New("workspace: not implemented")
 // rotated away, or never issued.
 var ErrUnauthorized = errors.New("workspace: unauthorized")
 
-// ErrNoForge is a forge verb on a workspace whose run has no forge: a dagger
+// ErrNoForge is a forge verb on a workspace whose run has no forge: a skift
 // project with no repository, or a workspace built without one.
 var ErrNoForge = errors.New("workspace: no forge is configured for this run")
 

@@ -72,7 +72,7 @@ test-db:
 	$(GINKGO) --label-filter='db' ./...
 
 # The acceptance suite: the whole mill against real dependencies — a real
-# dagger, a real GitLab, the real sidecar, a real Claude account. It costs
+# skift, a real GitLab, the real sidecar, a real Claude account. It costs
 # money and spends merge requests, so it is off in `make test` and turned on
 # here alone. docs/runbook.md is what it needs, what it leaves behind, and
 # how to clean up after it.

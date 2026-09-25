@@ -141,7 +141,7 @@ var _ = Describe("Plan approval", Label(testsupport.DBLabel), func() {
 				o.Notifier = command
 			}).Execute(ctx, f.nodeRef)).To(Succeed())
 
-			By("then it is auto-approved and nothing is filed in dagger")
+			By("then it is auto-approved and nothing is filed in skift")
 			var approval *millv1.StepRun
 			for _, sr := range stepRuns(f.inspect(ctx), "plan-approval") {
 				approval = sr
@@ -281,7 +281,7 @@ var _ = Describe("Plan approval", Label(testsupport.DBLabel), func() {
 					o.Notifier = command
 				}).Execute(ctx, f.nodeRef)).To(Succeed())
 
-				By("then the gate exists in dagger")
+				By("then the gate exists in skift")
 				gate := f.theGate(ctx)
 				Expect(gate.GetStatus()).To(Equal(skiftv1.Status_STATUS_OPEN))
 				Expect(f.blockedBy(ctx)).To(ContainElement(gate.GetId()))

@@ -280,11 +280,11 @@ var _ = Describe("A machine on a real host", Label("live"), Serial, Ordered, fun
 	// Scenario: The production sockets never reach the machine
 	//   Given a machine has booted
 	//   When a session execs inside it
-	//   Then /run/dagger does not exist and /run/mill holds only the workspace socket
+	//   Then /run/skift does not exist and /run/mill holds only the workspace socket
 	//
 	// docs/sandbox.md §Credentials: the model credential never enters the
-	// machine, and neither does a path to the host's own dagger or mill
-	// socket — DG_SOCKET and MILL_SOCKET point at dead paths under the run's
+	// machine, and neither does a path to the host's own skift or mill
+	// socket — SKIFT_SOCKET and MILL_SOCKET point at dead paths under the run's
 	// own directory instead (internal/workspace.DeadSockets).
 	It("The production sockets never reach the machine", func(ctx context.Context) {
 		id := "acceptance-nosocket-" + nonce
@@ -295,8 +295,8 @@ var _ = Describe("A machine on a real host", Label("live"), Serial, Ordered, fun
 		DeferCleanup(func(ctx context.Context) { Expect(ws.Destroy(ctx)).To(Succeed()) })
 		name := "mill-" + id
 
-		By("then /run/dagger does not exist inside the machine")
-		out, status := inMachine(name, "", "test", "-e", "/run/dagger")
+		By("then /run/skift does not exist inside the machine")
+		out, status := inMachine(name, "", "test", "-e", "/run/skift")
 		Expect(status).NotTo(BeZero(), out)
 
 		By("and /run/mill holds only the workspace socket")

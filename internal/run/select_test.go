@@ -248,7 +248,7 @@ var _ = Describe("Selection by assessment", Label(testsupport.DBLabel), func() {
 			Expect(f.runner(noDefault).Execute(ctx, f.nodeRef)).To(Succeed())
 
 			Expect(f.runOf(ctx).GetTier()).To(Equal(millv1.Tier_TIER_QUICK_FIX))
-			Expect(f.gatesOn(ctx)).To(BeEmpty(), "nothing was filed in dagger")
+			Expect(f.gatesOn(ctx)).To(BeEmpty(), "nothing was filed in skift")
 			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_DONE))
 		})
 	})

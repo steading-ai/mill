@@ -7,7 +7,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
 -- Exactly the rows of one step run that have not been posted yet. A step's
--- totals go to dagger when the attempt closes or fails, and only those rows
+-- totals go to skift when the attempt closes or fails, and only those rows
 -- are marked.
 -- name: MarkUsagePosted :many
 UPDATE usage SET posted_at = now()
@@ -18,7 +18,7 @@ RETURNING *;
 SELECT * FROM usage WHERE step_run_id = $1 ORDER BY recorded_at, id;
 
 -- A step run's totals by model and by who counted them. The adapter's rows
--- are the step's cost — what is posted to dagger and what status shows —
+-- are the step's cost — what is posted to skift and what status shows —
 -- and the gateway's are the count taken outside the session, beside them.
 -- name: TotalsForStepRun :many
 SELECT model, source,

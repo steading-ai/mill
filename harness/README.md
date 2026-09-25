@@ -1,6 +1,6 @@
 # Harness
 
-Works one epic in a running dagger service. One node per iteration, two agents.
+Works one epic in a running skift service. One node per iteration, two agents.
 
 ```
 harness/.venv/bin/python harness/loop.py --epic '#1' --dry-run   what is ready under the epic
@@ -9,19 +9,19 @@ harness/.venv/bin/python harness/loop.py --epic '#1' --max 1     one node
 harness/.venv/bin/python harness/loop.py --report                per-node tokens and cost
 ```
 
-The project comes from `--project`, then `$DG_PROJECT`, then `dagger`. The
-service is reached the way `dg` reaches it: the socket, or `$DG_ADDRESS`.
+The project comes from `--project`, then `$SKIFT_PROJECT`, then `skift`. The
+service is reached the way `skift` reaches it: the socket, or `$SKIFT_ADDRESS`.
 
 ## Scope
 
 The epic is a grouping node. On start, every open child gets the label
 `epic-<N>`, and the harness claims only nodes carrying it. That is the whole
-scoping mechanism, so it is legible in the graph: `dg node list` shows what is
+scoping mechanism, so it is legible in the graph: `skift node list` shows what is
 in scope, and removing the label takes a node out.
 
 ## How a node is worked
 
-1. `dg claim -l epic-N --assignee-kind agent` takes the most urgent ready child
+1. `skift claim -l epic-N --assignee-kind agent` takes the most urgent ready child
    under a one-hour lease. The harness renews the lease every ten minutes while
    an agent runs, and releases it with reason `crash` if the harness dies.
 2. The work order is the node's body plus **inputs**: the result of every done
@@ -44,15 +44,15 @@ in scope, and removing the label takes a node out.
    retry it.
 
 A child that has children of its own and no acceptance criteria is a grouping
-node; when dagger makes it ready, the harness completes it as bookkeeping.
+node; when skift makes it ready, the harness completes it as bookkeeping.
 
 Gates (`assignee_kind: user`) are never claimed; the dry run lists them as
 waiting on a person.
 
 ## State
 
-Status, leases, results and comments live in dagger. `harness/state.json`
-holds only what dagger cannot take yet: attempt counts per node and the usage
+Status, leases, results and comments live in skift. `harness/state.json`
+holds only what skift cannot take yet: attempt counts per node and the usage
 history behind `--report`. It also keeps the last review of a node that failed, so a
 relaunch resumes with it. Delete it to reset attempts; nothing in the graph
 changes.

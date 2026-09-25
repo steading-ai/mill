@@ -15,9 +15,9 @@ import (
 
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
-	"github.com/steading-ai/mill/internal/dagger"
 	"github.com/steading-ai/mill/internal/harness/fake"
 	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/skift"
 	"github.com/steading-ai/mill/internal/testsupport"
 )
 
@@ -65,7 +65,7 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 			}))
 		})
 
-		It("posts usage to dagger once per model for every step run, before the completing patch", func() {
+		It("posts usage to skift once per model for every step run, before the completing patch", func() {
 			Expect(f.runner().Execute(ctx, f.nodeRef)).To(Succeed())
 
 			detail := f.inspect(ctx)
@@ -79,12 +79,12 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 			}
 			Expect(billed).To(Equal(4), "the four skill steps bill")
 
-			// Dagger sums the records of a lease, so a step posted twice
+			// Skift sums the records of a lease, so a step posted twice
 			// would show as twice the ledger's own total; a step never
 			// posted would show as less. And the completing patch releases
 			// the lease ReportUsage needs, so the last step's numbers being
 			// there at all means they were posted before that patch.
-			Expect(f.daggerUsage(ctx)).To(Equal(ledgerUsage(detail)))
+			Expect(f.skiftUsage(ctx)).To(Equal(ledgerUsage(detail)))
 		})
 	})
 
@@ -270,7 +270,7 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_DONE))
 		})
 
-		It("Dagger first, store second, and a crash in between is recoverable", func() {
+		It("Skift first, store second, and a crash in between is recoverable", func() {
 			f.node(ctx, "completed but not recorded", "The patch lands; the store write does not.")
 			f.script(f.quickFixScripts()...)
 
@@ -286,14 +286,14 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 			Expect(node.GetStatus()).To(Equal(skiftv1.Status_STATUS_DONE))
 			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
 			recorded := f.runOf(ctx).GetCompleteRequestId()
-			Expect(recorded).To(HavePrefix(dagger.RequestIDPrefix))
+			Expect(recorded).To(HavePrefix(skift.RequestIDPrefix))
 			before, err := f.result(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			turns := len(f.harness.Calls())
 
-			// A second run finds the node done in dagger and marks the run
+			// A second run finds the node done in skift and marks the run
 			// done without a second patch: nothing is executed again, the
-			// result dagger holds is untouched, and the request id the
+			// result skift holds is untouched, and the request id the
 			// completing patch would be retried under is the stored one.
 			Expect(f.runner().Execute(ctx, f.nodeRef)).To(Succeed())
 			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_DONE))
@@ -306,13 +306,13 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 	})
 
 	Describe("The completing patch", func() {
-		It("leaves the run running and the node open when dagger never sees it", func() {
-			f.node(ctx, "the patch is lost", "The completing patch never reaches dagger.")
+		It("leaves the run running and the node open when skift never sees it", func() {
+			f.node(ctx, "the patch is lost", "The completing patch never reaches skift.")
 			f.script(f.quickFixScripts()...)
 
 			client, breaker := f.breaking()
 			err := f.runner(func(o *run.Options) {
-				o.Dagger = client
+				o.Skift = client
 				o.Store = arming{StoreServiceClient: f.store, breaker: breaker}
 			}).Execute(ctx, f.nodeRef)
 			Expect(err).To(HaveOccurred())
@@ -413,7 +413,7 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 			f.blocks(ctx, blocker, node)
 
 			err := f.runner().Execute(ctx, node)
-			var notReady *dagger.NotReadyError
+			var notReady *skift.NotReadyError
 			Expect(errors.As(err, &notReady)).To(BeTrue())
 			Expect(err.Error()).To(ContainSubstring("blocked by"))
 		})
@@ -458,7 +458,7 @@ func blockAround(text, content string) string {
 }
 
 // failing wraps the store client and refuses one method, which is how a spec
-// stages the crash between dagger's write and the store's.
+// stages the crash between skift's write and the store's.
 type failing struct {
 	millv1connect.StoreServiceClient
 	on string

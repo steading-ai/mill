@@ -13,7 +13,7 @@ import (
 // The environment a sidecar is spawned with.
 //
 // The mill's own process is not a floor. It carries a database URL, a forge
-// token, the dagger project it was started for, and — when an operator runs
+// token, the skift project it was started for, and — when an operator runs
 // `mill run` from a Claude Code session — the markers that make the SDK
 // think it is nested. None of that is a session's business, and the first
 // end-to-end run handed the sidecar all of it.
@@ -98,9 +98,9 @@ var (
 		// The mill's own settings and credentials, MILL_FORGE_TOKEN among
 		// them.
 		"MILL_",
-		// Dagger's socket and project: a session speaks to the work graph
+		// Skift's socket and project: a session speaks to the work graph
 		// through nothing.
-		"DG_",
+		"SKIFT_",
 		// Everything an interactive Claude Code session exports about
 		// itself, CLAUDE_CODE_OAUTH_TOKEN included.
 		"CLAUDE_CODE_",

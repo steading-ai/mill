@@ -1,7 +1,7 @@
 {
   "name": "mill",
   "version": "0.1.0",
-  "description": "A workflow runner over dagger's work graph. Registers the mill MCP server and teaches the model to read a run, say why one is stuck, and file a dagger node instead of running work itself.",
+  "description": "A workflow runner over skift's work graph. Registers the mill MCP server and teaches the model to read a run, say why one is stuck, and file a skift node instead of running work itself.",
   "author": {
     "name": "Ivy Evans"
   },

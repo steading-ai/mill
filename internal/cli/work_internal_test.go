@@ -101,14 +101,14 @@ var _ = Describe("The worker's configuration file", Label("unit"), func() {
 		Expect(os.WriteFile(path, []byte(`
 project:
   - mill
-  - dagger
+  - skift
 label:
   - agent
 concurrency: 4
 ttl: 1h
 heartbeat: 10m
 workflow: feature
-dagger-socket: /run/dagger/other.sock
+skift-socket: /run/skift/other.sock
 env_mode: strict
 notify_command: /usr/local/bin/thicket-send.sh
 workspace: machine
@@ -133,7 +133,7 @@ model_credential_minted: 2026-09-01
 
 	It("fills in every flag the command line left alone", func() {
 		opts := parse()
-		Expect(opts.projects).To(Equal([]string{"mill", "dagger"}))
+		Expect(opts.projects).To(Equal([]string{"mill", "skift"}))
 		Expect(opts.labels).To(Equal([]string{"agent"}))
 		Expect(opts.concurrency).To(Equal(4))
 		// The lease is the deployment's to size: a host that sleeps longer
@@ -141,7 +141,7 @@ model_credential_minted: 2026-09-01
 		Expect(opts.run.ttl).To(Equal(time.Hour))
 		Expect(opts.run.interval).To(Equal(10 * time.Minute))
 		Expect(opts.run.workflow).To(Equal("feature"))
-		Expect(opts.run.daggerSocket).To(Equal("/run/dagger/other.sock"))
+		Expect(opts.run.skiftSocket).To(Equal("/run/skift/other.sock"))
 		// The environment mode is what a deployment sets and the one
 		// setting a unit must not forget; the file says it the way the
 		// deployment does.

@@ -1,11 +1,11 @@
 // Package sweep is the external state a machine may leave, as the worker's
-// reconciliation pass reaches it: dagger's scratch projects and the forge's,
+// reconciliation pass reaches it: skift's scratch projects and the forge's,
 // each behind [machine.External] (docs/sandbox.md §"External state"). The
 // reconciler decides what is stale — the suite's name pattern, the age, no
 // live run — and these adapters only list and remove.
 //
-// The dagger adapter takes the worker's own client, so the sweep reaches
-// exactly the dagger the worker was configured for: never one named by the
+// The skift adapter takes the worker's own client, so the sweep reaches
+// exactly the skift the worker was configured for: never one named by the
 // environment, which is how a test process once became a worker against the
 // live graph (mill#49).
 package sweep
@@ -21,24 +21,24 @@ import (
 	"github.com/steading-ai/mill/internal/workspace/machine"
 )
 
-// Projects is what the dagger adapter needs of a client: the three project
-// verbs of internal/dagger's [dagger.Client].
+// Projects is what the skift adapter needs of a client: the three project
+// verbs of internal/skift's [skift.Client].
 type Projects interface {
 	ListProjects(ctx context.Context) ([]*skiftv1.Project, error)
 	ArchiveProject(ctx context.Context, slug string) (*skiftv1.Project, error)
 	DeleteProject(ctx context.Context, slug string) error
 }
 
-// Dagger is the configured dagger's projects as an external the reconciler
+// Skift is the configured skift's projects as an external the reconciler
 // sweeps. A stale project is deleted when the service offers a delete and
 // archived when it does not, and the action says which.
-func Dagger(client Projects) machine.External { return daggerProjects{client: client} }
+func Skift(client Projects) machine.External { return skiftProjects{client: client} }
 
-type daggerProjects struct{ client Projects }
+type skiftProjects struct{ client Projects }
 
-func (daggerProjects) Kind() string { return "dagger" }
+func (skiftProjects) Kind() string { return "skift" }
 
-func (d daggerProjects) List(ctx context.Context) ([]machine.Scratch, error) {
+func (d skiftProjects) List(ctx context.Context) ([]machine.Scratch, error) {
 	projects, err := d.client.ListProjects(ctx)
 	if err != nil {
 		return nil, err
@@ -53,7 +53,7 @@ func (d daggerProjects) List(ctx context.Context) ([]machine.Scratch, error) {
 	return listed, nil
 }
 
-func (d daggerProjects) Remove(ctx context.Context, scratch machine.Scratch) (string, error) {
+func (d skiftProjects) Remove(ctx context.Context, scratch machine.Scratch) (string, error) {
 	err := d.client.DeleteProject(ctx, scratch.Name)
 	switch {
 	case err == nil:
@@ -62,7 +62,7 @@ func (d daggerProjects) Remove(ctx context.Context, scratch machine.Scratch) (st
 		if _, err := d.client.ArchiveProject(ctx, scratch.Name); err != nil {
 			return "", err
 		}
-		return "archived (dagger offers no project delete)", nil
+		return "archived (skift offers no project delete)", nil
 	default:
 		return "", fmt.Errorf("delete project %s: %w", scratch.Name, err)
 	}

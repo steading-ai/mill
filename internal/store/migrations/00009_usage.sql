@@ -4,7 +4,7 @@
 -- One row per turn per model, as the adapter reports: a turn that bills two
 -- models writes two rows. Counts, never currency; a rate table is applied at
 -- query time. posted_at is the one field that changes, when the step's
--- totals have been reported to dagger.
+-- totals have been reported to skift.
 
 -- +goose Up
 
@@ -18,7 +18,7 @@ CREATE TABLE usage (
     cache_read_tokens  bigint      NOT NULL DEFAULT 0,
     cache_write_tokens bigint      NOT NULL DEFAULT 0,
     recorded_at        timestamptz NOT NULL DEFAULT now(),
-    -- When this row's step totals were posted to dagger; null until then.
+    -- When this row's step totals were posted to skift; null until then.
     posted_at          timestamptz,
 
     CONSTRAINT usage_pkey          PRIMARY KEY (id),

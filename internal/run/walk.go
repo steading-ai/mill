@@ -10,9 +10,9 @@ import (
 
 	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
-	"github.com/steading-ai/mill/internal/dagger"
 	"github.com/steading-ai/mill/internal/evidence"
 	"github.com/steading-ai/mill/internal/gateway"
+	"github.com/steading-ai/mill/internal/skift"
 	"github.com/steading-ai/mill/internal/workspace"
 )
 
@@ -36,7 +36,7 @@ func (r *Runner) requireHarnesses(ctx context.Context, s *state) error {
 		return nil
 	}
 	reason := fmt.Sprintf("missing harness: %s", err)
-	r.hold(ctx, s, dagger.RequestID(s.run.GetId(), "missing-harness", s.run.GetGeneration()), reason)
+	r.hold(ctx, s, skift.RequestID(s.run.GetId(), "missing-harness", s.run.GetGeneration()), reason)
 	return err
 }
 
@@ -292,7 +292,7 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 	if err := r.recordInstalls(ctx, s, sr); err != nil {
 		return outcome{}, err
 	}
-	// Usage is written to the ledger and posted to dagger whether the
+	// Usage is written to the ledger and posted to skift whether the
 	// attempt closes or fails, once per model, before anything releases the
 	// lease that ReportUsage needs.
 	if err := r.recordUsage(ctx, s, sr, result.usage); err != nil {

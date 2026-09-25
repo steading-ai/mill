@@ -7,10 +7,10 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/steading-ai/mill/internal/dagger"
 	"github.com/steading-ai/mill/internal/forge"
 	"github.com/steading-ai/mill/internal/forge/gitlab"
 	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/skift"
 	"github.com/steading-ai/mill/internal/sweep"
 	"github.com/steading-ai/mill/internal/workspace"
 	"github.com/steading-ai/mill/internal/workspace/machine"
@@ -28,7 +28,7 @@ type machineStartup struct {
 }
 
 // workerStartup is the startup for the configured backend: the machine
-// backend's pass, or nothing for the local one. The sweep's dagger client is
+// backend's pass, or nothing for the local one. The sweep's skift client is
 // the worker's own — the configured socket and project, the worker's agent
 // ref — and never one the environment names.
 func workerStartup(ctx context.Context, kind workspace.Kind, opts runOptions, project, workerRef string, out io.Writer, log *slog.Logger) (run.Startup, error) {
@@ -36,8 +36,8 @@ func workerStartup(ctx context.Context, kind workspace.Kind, opts runOptions, pr
 		return nil, nil
 	}
 	config := machineConfig(opts, run.Repository{}, nil)
-	client := dagger.Dial(opts.daggerSocket, project, dagger.WithAgentRef(workerRef))
-	externals := []machine.External{sweep.Dagger(client)}
+	client := skift.Dial(opts.skiftSocket, project, skift.WithAgentRef(workerRef))
+	externals := []machine.External{sweep.Skift(client)}
 	if opts.sandbox.scratchNamespace != "" {
 		// The scratch namespace is on the project's own forge, which the
 		// project names.

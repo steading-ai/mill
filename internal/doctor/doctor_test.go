@@ -85,7 +85,7 @@ var _ = Describe("The isolation probe", Label("unit"), func() {
 	It("SessionSockets provisions a throwaway workspace, checks it, and cleans up after itself", func(ctx context.Context) {
 		workspaceDir := GinkgoT().TempDir()
 
-		result := doctor.SessionSockets(ctx, workspaceDir, "/run/mill/ws.sock", "/run/dagger/dg.sock")
+		result := doctor.SessionSockets(ctx, workspaceDir, "/run/mill/ws.sock", "/run/skift/skift.sock")
 		Expect(result.OK).To(BeTrue(), result.Reason)
 
 		matches, err := filepath.Glob(filepath.Join(workspaceDir, "doctor-isolation-*"))

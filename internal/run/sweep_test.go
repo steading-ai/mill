@@ -17,7 +17,7 @@ import (
 	"github.com/steading-ai/mill/internal/workspace/machine"
 )
 
-// docs/ledger.md §Sweep: the ledger reconciled against dagger. A run whose
+// docs/ledger.md §Sweep: the ledger reconciled against skift. A run whose
 // node was closed underneath it — dropped, or completed by someone else —
 // is never claimed again, so nothing inside a claim can end it; the sweep
 // does, and gives back what the run held.
@@ -66,7 +66,7 @@ var _ = Describe("The stranded-run sweep", Label(testsupport.DBLabel), func() {
 	// atStepTwo drives the node until its second step's session is in
 	// flight, then cancels: the run is `running` at step 2 with its lease
 	// released, exactly as a worker that was stopped there leaves it — and
-	// with no live lease, dagger admits a drop.
+	// with no live lease, skift admits a drop.
 	atStepTwo := func() {
 		GinkgoHelper()
 		f.script(
@@ -286,12 +286,12 @@ var _ = Describe("The stranded-run sweep", Label(testsupport.DBLabel), func() {
 		Expect(report.Findings).To(BeEmpty())
 	})
 
-	// Scenario: A node dagger cannot read is a failure finding, not a stop
-	//   Given a live run on a node dagger does not know beside a stranded one
+	// Scenario: A node skift cannot read is a failure finding, not a stop
+	//   Given a live run on a node skift does not know beside a stranded one
 	//   When the worker sweeps
 	//   Then the unreadable one is a failure finding and the stranded one is still failed
-	It("A node dagger cannot read is a failure finding, not a stop", func() {
-		By("given a live run on a node dagger does not know, beside a stranded one")
+	It("A node skift cannot read is a failure finding, not a stop", func() {
+		By("given a live run on a node skift does not know, beside a stranded one")
 		res, err := f.store.CreateRun(ctx, connect.NewRequest(&millv1.CreateRunRequest{
 			NodeId: "01SPECNOWHERE00000000000000", NodeRef: project + "#404", ContextId: "nowhere",
 			Generation: 1, WorkerRef: f.worker, Branch: "mill/nowhere",

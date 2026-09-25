@@ -67,9 +67,9 @@ var _ = Describe("The forge registry", Label("unit"), func() {
 		Expect(missing.Project).To(Equal("mill"))
 		Expect(err.Error()).To(ContainSubstring("mill"))
 		// The one source there is, named: the project's own vcs_url in
-		// dagger, and the command that sets it. No flag, no variable and
+		// skift, and the command that sets it. No flag, no variable and
 		// no label to send an operator looking elsewhere.
-		Expect(err.Error()).To(ContainSubstring("dg project update mill --vcs-url"))
+		Expect(err.Error()).To(ContainSubstring("skift project update mill --vcs-url"))
 		Expect(err.Error()).NotTo(ContainSubstring("MILL_VCS_URL"))
 		Expect(err.Error()).NotTo(ContainSubstring("label"))
 		Expect(forge.Retryable(err)).To(BeFalse(), "no number of attempts adds a URL to the project")
@@ -114,7 +114,7 @@ var _ = Describe("The forge registry", Label("unit"), func() {
 	)
 
 	// A self-hosted forge is a GitLab until mill has another adapter: the
-	// kind follows the host, and there is nothing on a dagger project to
+	// kind follows the host, and there is nothing on a skift project to
 	// override it with.
 	It("takes a self-hosted host for a GitLab", func() {
 		repo, err := forge.RepoFor(forge.Project{

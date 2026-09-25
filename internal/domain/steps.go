@@ -151,7 +151,7 @@ func (s *Service) RecordUsage(ctx context.Context, leaseID, stepRunID string, us
 	return s.store.RecordUsage(ctx, leaseID, stepRunID, usage)
 }
 
-// MarkUsagePosted marks a step run's usage rows as posted to dagger.
+// MarkUsagePosted marks a step run's usage rows as posted to skift.
 func (s *Service) MarkUsagePosted(ctx context.Context, leaseID, stepRunID string) (int64, error) {
 	return s.store.MarkUsagePosted(ctx, leaseID, stepRunID)
 }

@@ -96,7 +96,7 @@ var _ = Describe("Restart", Label(testsupport.DBLabel), func() {
 		Expect(was).NotTo(BeEmpty())
 
 		// The park gate is the human's to dispose of; mill never touches
-		// one it filed, and dagger would not let the node be claimed again
+		// one it filed, and skift would not let the node be claimed again
 		// while it is open.
 		f.approveGate(ctx, f.gatesOn(ctx)[0].GetReference())
 

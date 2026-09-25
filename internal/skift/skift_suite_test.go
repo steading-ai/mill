@@ -1,4 +1,4 @@
-package dagger_test
+package skift_test
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"github.com/steading-ai/mill/internal/testsupport"
 )
 
-// The dagger client is specified against a real dagger and, where it writes them,
+// The skift client is specified against a real skift and, where it writes them,
 // a real ledger. Fencing is the whole contract on both sides and a fake
 // would prove nothing about it, so the container holds both databases.
 // `make test-unit` filters the db label out, so it must not be started
@@ -20,10 +20,10 @@ import (
 // execute before any of them runs.
 var needsDatabase bool
 
-func TestDagger(t *testing.T) {
+func TestSkift(t *testing.T) {
 	RegisterFailHandler(Fail)
 	needsDatabase = previewNeedsDatabase()
-	RunSpecs(t, "dagger")
+	RunSpecs(t, "skift")
 }
 
 // pg is the server every spec clones its database from.
@@ -52,7 +52,7 @@ var _ = SynchronizedBeforeSuite(func(ctx context.Context) []byte {
 // previewNeedsDatabase reports whether the current filters leave any spec
 // carrying the db label to run.
 func previewNeedsDatabase() bool {
-	for _, spec := range PreviewSpecs("dagger").SpecReports {
+	for _, spec := range PreviewSpecs("skift").SpecReports {
 		if spec.LeafNodeType != types.NodeTypeIt || spec.State == types.SpecStateSkipped {
 			continue
 		}

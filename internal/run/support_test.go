@@ -31,13 +31,13 @@ import (
 
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
-	"github.com/steading-ai/mill/internal/dagger"
 	"github.com/steading-ai/mill/internal/domain"
 	"github.com/steading-ai/mill/internal/forge"
 	"github.com/steading-ai/mill/internal/harness"
 	"github.com/steading-ai/mill/internal/harness/fake"
 	"github.com/steading-ai/mill/internal/run"
 	"github.com/steading-ai/mill/internal/server"
+	"github.com/steading-ai/mill/internal/skift"
 	"github.com/steading-ai/mill/internal/testsupport"
 	"github.com/steading-ai/mill/internal/workflow"
 	"github.com/steading-ai/mill/internal/workspace"
@@ -46,11 +46,11 @@ import (
 )
 
 // The run loop is specified end to end, because that is what it is: the only
-// thing it does that no other package does is put dagger, the ledger, the
+// thing it does that no other package does is put skift, the ledger, the
 // workspace, a harness and a forge in one order. A fixture that faked any of
 // the first three would specify the fake.
 //
-// Real: dagger, the ledger over PostgreSQL, git, the workspace. Scripted:
+// Real: skift, the ledger over PostgreSQL, git, the workspace. Scripted:
 // the harness, because a spec that called a model would be a spec about the
 // model; and the forge, because there is no GitLab on this host and the
 // forge adapter has specs of its own (mill#13).
@@ -64,11 +64,11 @@ const workflowDir = "../../workflows/quick-fix"
 
 // fixture is one spec's whole world.
 type fixture struct {
-	dagger *testsupport.Dagger
+	skift *testsupport.Skift
 	// db is the ledger's own database, for the one read the store's API
 	// does not offer.
 	db        *pgxpool.Pool
-	client    *dagger.Client
+	client    *skift.Client
 	graph     skiftv1connect.GraphServiceClient
 	store     millv1connect.StoreServiceClient
 	workflow  *millv1.Workflow
@@ -154,17 +154,17 @@ func (f *fixture) head(ctx context.Context) string {
 	return commits[0].SHA
 }
 
-// start builds the world: a dagger with a project in it, the ledger behind
+// start builds the world: a skift with a project in it, the ledger behind
 // its own Connect handlers, the quick-fix workflow pushed, and a repository
 // to clone.
 func start(ctx context.Context) *fixture {
 	GinkgoHelper()
-	service := pg.StartDagger(ctx)
+	service := pg.StartSkift(ctx)
 	httpClient := service.HTTPClient()
 
 	f := &fixture{
-		dagger:   service,
-		client:   dagger.New(httpClient, service.BaseURL(), project, dagger.WithAgentRef("spec@host"), dagger.WithSessionRef("spec")),
+		skift:    service,
+		client:   skift.New(httpClient, service.BaseURL(), project, skift.WithAgentRef("spec@host"), skift.WithSessionRef("spec")),
 		graph:    skiftv1connect.NewGraphServiceClient(httpClient, service.BaseURL()),
 		forge:    &fixtureForge{},
 		worker:   "spec@host",
@@ -267,7 +267,7 @@ func (f *fixture) runner(options ...func(*run.Options)) *run.Runner {
 
 	opts := run.Options{
 		Store:      f.store,
-		Dagger:     f.client,
+		Skift:      f.client,
 		Workspaces: f.workspaces(),
 		Attach:     f.attached(),
 		Repositories: func(context.Context, *skiftv1.Project) (run.Repository, error) {
@@ -333,7 +333,7 @@ func (f *fixture) attached() run.Workspaces {
 }
 
 // drop closes a node as a person does — no lease, no mill request id —
-// which dagger admits only once no live lease holds it. It is how a spec
+// which skift admits only once no live lease holds it. It is how a spec
 // strands a run: the node is gone from every ready set, and nothing will
 // claim it to end the run underneath.
 func (f *fixture) drop(ctx context.Context, ref string) {
@@ -660,7 +660,7 @@ func mustAbs(path string) string {
 	return absolute
 }
 
-// result is the node's result once dagger says it is done.
+// result is the node's result once skift says it is done.
 func (f *fixture) result(ctx context.Context) (*skiftv1.Result, error) {
 	res, err := f.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{
 		Project: project, Node: f.nodeRef, View: skiftv1.View_VIEW_FULL,
@@ -682,7 +682,7 @@ func (f *fixture) leaseOf(ctx context.Context) *skiftv1.Lease {
 }
 
 // expire takes the node's lease away, which is what the run loop's next
-// heartbeat has to notice. Dagger's own expiry is a timer; a release is the
+// heartbeat has to notice. Skift's own expiry is a timer; a release is the
 // same end state reached at a time the spec chooses.
 func (f *fixture) expire(ctx context.Context, leaseID string) {
 	GinkgoHelper()
@@ -693,8 +693,8 @@ func (f *fixture) expire(ctx context.Context, leaseID string) {
 // reclaim is a second client taking the node, and returns its lease id.
 func (f *fixture) reclaim(ctx context.Context) string {
 	GinkgoHelper()
-	other := dagger.New(f.dagger.HTTPClient(), f.dagger.BaseURL(), project,
-		dagger.WithAgentRef("other@host"), dagger.WithSessionRef("other"))
+	other := skift.New(f.skift.HTTPClient(), f.skift.BaseURL(), project,
+		skift.WithAgentRef("other@host"), skift.WithSessionRef("other"))
 	claimed, err := other.Claim(ctx, f.nodeRef)
 	Expect(err).NotTo(HaveOccurred())
 	return claimed.Lease.GetId()
@@ -709,10 +709,10 @@ func (f *fixture) cancelRun(ctx context.Context) error {
 	return err
 }
 
-// daggerUsage is what dagger recorded against the node's attempt, by model.
-// Dagger sums the records of a lease, so posting the same step twice would
+// skiftUsage is what skift recorded against the node's attempt, by model.
+// Skift sums the records of a lease, so posting the same step twice would
 // double what this returns.
-func (f *fixture) daggerUsage(ctx context.Context) map[string]int64 {
+func (f *fixture) skiftUsage(ctx context.Context) map[string]int64 {
 	GinkgoHelper()
 	res, err := f.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{
 		Project: project, Node: f.nodeRef, View: skiftv1.View_VIEW_FULL,
@@ -760,7 +760,7 @@ func referenceOf(result *skiftv1.Result, name string) string {
 	return ""
 }
 
-// patchBreaker sits between the run loop and dagger and refuses the next
+// patchBreaker sits between the run loop and skift and refuses the next
 // ApplyPatch once it is armed. It is how a spec stages the failure of the
 // completing patch — the one write whose ordering against `store.Done` is
 // the whole of Invariant 11 — without reaching inside the client.
@@ -774,7 +774,7 @@ func (p *patchBreaker) RoundTrip(req *http.Request) (*http.Response, error) {
 	if p.armed.Load() && strings.HasSuffix(req.URL.Path, "/ApplyPatch") {
 		p.armed.Store(false)
 		p.broke.Store(true)
-		return nil, errors.New("the patch never reached dagger")
+		return nil, errors.New("the patch never reached skift")
 	}
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -784,14 +784,14 @@ func (p *patchBreaker) RoundTrip(req *http.Request) (*http.Response, error) {
 	return transport.RoundTrip(req)
 }
 
-// breaking builds a dagger client whose patches this spec can interrupt.
-func (f *fixture) breaking() (*dagger.Client, *patchBreaker) {
-	breaker := &patchBreaker{socket: f.dagger.Socket}
-	return dagger.New(&http.Client{Transport: breaker}, f.dagger.BaseURL(), project), breaker
+// breaking builds a skift client whose patches this spec can interrupt.
+func (f *fixture) breaking() (*skift.Client, *patchBreaker) {
+	breaker := &patchBreaker{socket: f.skift.Socket}
+	return skift.New(&http.Client{Transport: breaker}, f.skift.BaseURL(), project), breaker
 }
 
 // arming wraps the store client so that the completing patch's request id
-// being minted is what arms the breaker: the very next dagger write is the
+// being minted is what arms the breaker: the very next skift write is the
 // patch that completes the node.
 type arming struct {
 	millv1connect.StoreServiceClient
@@ -947,7 +947,7 @@ func (f *fixture) comments(ctx context.Context) []string {
 // again. It writes as a human does: no lease, and no mill request id.
 //
 // A denial is the other half of the same story and is not here, because a
-// person who denies drops the gate, and dagger never lets the node it blocks
+// person who denies drops the gate, and skift never lets the node it blocks
 // become ready again. The run that records a denial is therefore the one
 // still holding the lease, which is single-run mode; see the specs that put
 // an [answerer] at the terminal.
@@ -963,11 +963,11 @@ func (f *fixture) approveGate(ctx context.Context, ref string) {
 }
 
 // approveGateEmpty completes a gate with a blank result, the way a person
-// leaves blank at the terminal. dagger itself refuses a truly empty body
+// leaves blank at the terminal. skift itself refuses a truly empty body
 // (internal/domain.ErrResultRequired), so this sends whitespace, which
 // clears that check but still leaves `gate` evidence with nothing to read
 // (internal/evidence.verifyGate trims before comparing) — how a spec fails
-// resumeGate's evidence.Verify call without reaching inside dagger (mill#30).
+// resumeGate's evidence.Verify call without reaching inside skift (mill#30).
 func (f *fixture) approveGateEmpty(ctx context.Context, ref string) {
 	GinkgoHelper()
 	_, err := f.graph.ApplyPatch(ctx, connect.NewRequest(&skiftv1.ApplyPatchRequest{
@@ -1151,9 +1151,9 @@ var (
 )
 
 // releases records every lease release the run made, with its reason, by
-// reading the requests on their way to dagger. The reason is part of the
+// reading the requests on their way to skift. The reason is part of the
 // contract — a gate, a budget stop and a preemption are three different
-// things to whoever reads dagger's leases afterwards — and nothing dagger
+// things to whoever reads skift's leases afterwards — and nothing skift
 // returns afterwards says which one was sent.
 type releases struct {
 	socket string
@@ -1192,11 +1192,11 @@ func (r *releases) reasons() []skiftv1.ReleaseReason {
 	return append([]skiftv1.ReleaseReason{}, r.seen...)
 }
 
-// watching builds a dagger client whose releases this spec can read.
-func (f *fixture) watching() (*dagger.Client, *releases) {
-	watcher := &releases{socket: f.dagger.Socket}
-	return dagger.New(&http.Client{Transport: watcher}, f.dagger.BaseURL(), project,
-		dagger.WithAgentRef(f.worker), dagger.WithSessionRef("spec")), watcher
+// watching builds a skift client whose releases this spec can read.
+func (f *fixture) watching() (*skift.Client, *releases) {
+	watcher := &releases{socket: f.skift.Socket}
+	return skift.New(&http.Client{Transport: watcher}, f.skift.BaseURL(), project,
+		skift.WithAgentRef(f.worker), skift.WithSessionRef("spec")), watcher
 }
 
 // patchFailure refuses an ApplyPatch that carries an op this spec is
@@ -1220,7 +1220,7 @@ func (p *patchFailure) RoundTrip(req *http.Request) (*http.Response, error) {
 		if err := proto.Unmarshal(body, &patch); err == nil {
 			for _, op := range patch.GetOps() {
 				if p.match(op) {
-					return nil, errors.New("the patch never reached dagger")
+					return nil, errors.New("the patch never reached skift")
 				}
 			}
 		}
@@ -1235,11 +1235,11 @@ func (p *patchFailure) RoundTrip(req *http.Request) (*http.Response, error) {
 	return transport.RoundTrip(req)
 }
 
-// failingPatches builds a dagger client whose ApplyPatch this spec can fail
+// failingPatches builds a skift client whose ApplyPatch this spec can fail
 // selectively, by op, rather than for every patch the way [fixture.breaking]
 // does.
-func (f *fixture) failingPatches(match func(*skiftv1.PatchOp) bool) *dagger.Client {
-	return dagger.New(&http.Client{Transport: &patchFailure{socket: f.dagger.Socket, match: match}}, f.dagger.BaseURL(), project)
+func (f *fixture) failingPatches(match func(*skiftv1.PatchOp) bool) *skift.Client {
+	return skift.New(&http.Client{Transport: &patchFailure{socket: f.skift.Socket, match: match}}, f.skift.BaseURL(), project)
 }
 
 // reviewer is a harness whose review sessions always find something and
@@ -1518,13 +1518,13 @@ func (f *fixture) eventOps(ctx context.Context) []string {
 	return ops
 }
 
-// releasedLease is why the last lease on the node ended. Dagger returns the
+// releasedLease is why the last lease on the node ended. Skift returns the
 // live lease on a node and nothing about the one before it, so its own
 // record is read directly: the release reason is on the lease row and the
-// detail is on the event, which dagger writes as "reason: detail".
+// detail is on the event, which skift writes as "reason: detail".
 func (f *fixture) releasedLease(ctx context.Context) (reason, detail string) {
 	GinkgoHelper()
-	conn, err := pgx.Connect(ctx, f.dagger.DatabaseURL)
+	conn, err := pgx.Connect(ctx, f.skift.DatabaseURL)
 	Expect(err).NotTo(HaveOccurred())
 	defer func() { _ = conn.Close(ctx) }()
 

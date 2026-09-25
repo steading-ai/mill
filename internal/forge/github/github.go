@@ -3,7 +3,7 @@
 // GitHub is one host. An organisation's plan changes which protections and
 // features are switched on, not where the API is, so nothing about the host
 // is configured: the API is https://api.github.com and the repository is the
-// dagger project's `vcs_url`. What does vary is the credential, and that is
+// skift project's `vcs_url`. What does vary is the credential, and that is
 // the person's.
 //
 // The mill delivers as the person. A GitHub App needs an organisation

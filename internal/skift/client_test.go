@@ -1,4 +1,4 @@
-package dagger_test
+package skift_test
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 
 	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
 
-	"github.com/steading-ai/mill/internal/dagger"
+	"github.com/steading-ai/mill/internal/skift"
 	"github.com/steading-ai/mill/internal/testsupport"
 )
 
@@ -19,7 +19,7 @@ import (
 // passed, so the heartbeat under test is the first since the claim.
 var errNotYetExpired = errors.New("the lease has not expired yet")
 
-var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
+var _ = Describe("The skift client", Label(testsupport.DBLabel), func() {
 	var f *fixture
 	var ctx context.Context
 
@@ -39,7 +39,7 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 			claimed, err := f.mill.Claim(ctx, ref)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(claimed.Node.GetReference()).To(Equal(ref))
-			Expect(claimed.Lease.GetHarness()).To(Equal(dagger.HarnessName))
+			Expect(claimed.Lease.GetHarness()).To(Equal(skift.HarnessName))
 			Expect(claimed.Lease.GetAgentRef()).To(Equal("spec@host"))
 			Expect(claimed.Lease.GetSessionRef()).To(Equal("spec"))
 		})
@@ -74,7 +74,7 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 			f.link(ctx, blocker, blocked)
 
 			_, err := f.mill.Claim(ctx, blocked)
-			var notReady *dagger.NotReadyError
+			var notReady *skift.NotReadyError
 			Expect(err).To(BeAssignableToTypeOf(notReady))
 			Expect(err.Error()).To(ContainSubstring("blocked by"))
 		})
@@ -89,13 +89,13 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 
 		It("refuses to claim it", func() {
 			_, err := f.mill.Claim(ctx, gate)
-			Expect(err).To(MatchError(dagger.ErrUserNode))
+			Expect(err).To(MatchError(skift.ErrUserNode))
 			Expect(err.Error()).To(ContainSubstring("refusing to claim"))
 		})
 
 		It("refuses to complete it", func() {
 			err := f.mill.Complete(ctx, "mill-spec-complete", "", gate, &skiftv1.Result{Body: "approved"})
-			Expect(err).To(MatchError(dagger.ErrUserNode))
+			Expect(err).To(MatchError(skift.ErrUserNode))
 			Expect(err.Error()).To(ContainSubstring("refusing to complete"))
 		})
 
@@ -105,7 +105,7 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 					Node: gate, Reason: skiftv1.DropReason_DROP_REASON_NO_LONGER_RELEVANT,
 				}},
 			})
-			Expect(err).To(MatchError(dagger.ErrUserNode))
+			Expect(err).To(MatchError(skift.ErrUserNode))
 			Expect(err.Error()).To(ContainSubstring("refusing to drop"))
 		})
 
@@ -116,7 +116,7 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 					Node: gate, AssigneeKind: &agent,
 				}},
 			})
-			Expect(err).To(MatchError(dagger.ErrUserNode))
+			Expect(err).To(MatchError(skift.ErrUserNode))
 			Expect(err.Error()).To(ContainSubstring("refusing to reclassify"))
 		})
 
@@ -129,7 +129,7 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 					From: gate, To: work, Kind: skiftv1.EdgeKind_EDGE_KIND_BLOCKS,
 				}},
 			})
-			Expect(err).To(MatchError(dagger.ErrUserNode))
+			Expect(err).To(MatchError(skift.ErrUserNode))
 			Expect(err.Error()).To(ContainSubstring("refusing to unlink"))
 		})
 
@@ -138,7 +138,7 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 			claimed, err := f.mill.Claim(ctx, work)
 			Expect(err).NotTo(HaveOccurred())
 
-			filed, err := f.mill.CreateGate(ctx, "mill-spec-gate", claimed.Lease.GetId(), dagger.Gate{
+			filed, err := f.mill.CreateGate(ctx, "mill-spec-gate", claimed.Lease.GetId(), skift.Gate{
 				Title:  "Merge?",
 				Body:   "Complete this node to merge.",
 				Blocks: work,
@@ -148,14 +148,14 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 
 			err = f.mill.Complete(ctx, "mill-spec-complete-own", claimed.Lease.GetId(),
 				filed.GetReference(), &skiftv1.Result{Body: "approved"})
-			Expect(err).To(MatchError(dagger.ErrUserNode))
+			Expect(err).To(MatchError(skift.ErrUserNode))
 		})
 
-		It("is mill's refusal and not dagger's: the same principal may complete a gate", func() {
-			// Mill runs as the operator's `user` principal, and dagger
+		It("is mill's refusal and not skift's: the same principal may complete a gate", func() {
+			// Mill runs as the operator's `user` principal, and skift
 			// applies no gate veto to a user. The refusal above is
 			// therefore mill's own discipline, which is only worth
-			// asserting beside the proof that dagger permits the act.
+			// asserting beside the proof that skift permits the act.
 			_, err := f.graph.ApplyPatch(ctx, connect.NewRequest(&skiftv1.ApplyPatchRequest{
 				RequestId: "spec-complete-gate",
 				Project:   f.project,
@@ -210,19 +210,19 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 			Expect(claimed.Project.GetSlug()).To(Equal(second))
 
 			// Scoped is what internal/run/run.go's drive pins the run's own
-			// dagger client to right after a claim, so every write and gate
+			// skift client to right after a claim, so every write and gate
 			// read that follows lands in the project the claim actually
 			// came from — not the worker's own (here empty) one.
 			scoped := unscoped.Scoped(claimed.Project.GetSlug())
 
 			Expect(scoped.Comment(ctx, "mill-spec-scoped-comment", claimed.Lease.GetId(), ref, "hello")).To(Succeed())
 
-			filed, err := scoped.CreateGate(ctx, "mill-spec-scoped-gate", claimed.Lease.GetId(), dagger.Gate{
-				Title: "Merge?", Body: "Complete this node to merge.", Blocks: ref, Labels: []string{dagger.GateLabel},
+			filed, err := scoped.CreateGate(ctx, "mill-spec-scoped-gate", claimed.Lease.GetId(), skift.Gate{
+				Title: "Merge?", Body: "Complete this node to merge.", Blocks: ref, Labels: []string{skift.GateLabel},
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			gates, err := scoped.Gates(ctx, ref, dagger.GateLabel)
+			gates, err := scoped.Gates(ctx, ref, skift.GateLabel)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(gates).To(HaveLen(1))
 			Expect(gates[0].GetReference()).To(Equal(filed.GetReference()))
@@ -269,13 +269,13 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 				}
 				_, err := f.mill.Heartbeat(ctx, claimed.Lease.GetId(), time.Second)
 				return err
-			}, 10*time.Second, 200*time.Millisecond).Should(MatchError(dagger.ErrFenced))
+			}, 10*time.Second, 200*time.Millisecond).Should(MatchError(skift.ErrFenced))
 		})
 	})
 
 	Describe("Request ids", func() {
 		It("names the run, the step and the attempt, under mill's prefix", func() {
-			Expect(dagger.RequestID("01RUN", "implement", 2)).To(Equal("mill-01RUN-implement-2"))
+			Expect(skift.RequestID("01RUN", "implement", 2)).To(Equal("mill-01RUN-implement-2"))
 		})
 	})
 

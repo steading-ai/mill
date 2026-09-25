@@ -4,7 +4,7 @@
 // a commit SHA that resolves on the run's branch, a process that exited with
 // the code the definition names, a verdict that parsed and approved, a URL
 // the forge returns when asked for the branch's pull request, a status the
-// forge reports as success, a digest dagger accepted, a gate node that is
+// forge reports as success, a digest skift accepted, a gate node that is
 // done. An agent saying "done", a transcript that reads well, or a task list
 // marked complete is not evidence and never closes a step
 // (docs/core-principles.md §8, docs/domain-model.md §Evidence).
@@ -12,7 +12,7 @@
 // Three rules shape this package.
 //
 // **Nothing a session says is consulted.** The verifiers reach the world
-// through the seams on [Step] — git in the run's checkout, the forge, dagger
+// through the seams on [Step] — git in the run's checkout, the forge, skift
 // — and not through the session. [Session.FinalMessage] and
 // [Session.Transcript] are on [Step] precisely so that the rule is checkable:
 // a spec hands the verifiers a transcript that records every open and asserts
@@ -98,25 +98,25 @@ type Committer struct {
 // String renders an identity the way git does: `Name <email>`.
 func (c Committer) String() string { return c.Name + " <" + c.Email + ">" }
 
-// Artifacts is dagger, asked whether it holds an artifact. `artifact`
-// evidence is a digest dagger accepted, so the acceptance is dagger's to
+// Artifacts is skift, asked whether it holds an artifact. `artifact`
+// evidence is a digest skift accepted, so the acceptance is skift's to
 // confirm and not the session's to claim.
 type Artifacts interface {
 	Accepted(ctx context.Context, digest string) (bool, error)
 }
 
-// GateNode is a dagger node as the `gate` verifier reads it.
+// GateNode is a skift node as the `gate` verifier reads it.
 type GateNode struct {
 	// ID is the gate node's id.
 	ID string
-	// Status is dagger's own: `open`, `done`, or `dropped`.
+	// Status is skift's own: `open`, `done`, or `dropped`.
 	Status string
 	// Result is what the node completed with, attached to the gate.
 	Result string
 }
 
-// Gates is dagger, asked about the node a gate step filed. It is an
-// interface because the dagger client belongs to the run loop: this package
+// Gates is skift, asked about the node a gate step filed. It is an
+// interface because the skift client belongs to the run loop: this package
 // reads one node through whatever the worker built, and depends on none of
 // it.
 type Gates interface {
@@ -174,7 +174,7 @@ type Step struct {
 	// AutoApproved is the `auto` predicate that closed a gate step without
 	// asking a human, and is empty for every other step and for a gate a
 	// person answered. A gate closed by policy has no gate node to read —
-	// nothing reaches dagger at all — so the policy that fired is the fact
+	// nothing reaches skift at all — so the policy that fired is the fact
 	// (docs/domain-model.md §Gate).
 	AutoApproved string
 	// Exit is how the check's process ended, as the check runner recorded
@@ -205,9 +205,9 @@ type Step struct {
 	Git Git
 	// Forge is the project's forge, for `url` and `status`.
 	Forge Forge
-	// Artifacts is dagger's artifact store, for `artifact`.
+	// Artifacts is skift's artifact store, for `artifact`.
 	Artifacts Artifacts
-	// Gates is dagger, for `gate`.
+	// Gates is skift, for `gate`.
 	Gates Gates
 	// Now is the clock, for `verified_at`. Nil means [time.Now].
 	Now func() time.Time
@@ -706,8 +706,8 @@ func (s Step) statusPolicy() (interval, timeout time.Duration) {
 	return interval, timeout
 }
 
-// verifyArtifact proves an artifact: dagger accepted something with this
-// digest. Dagger holding the bytes is the fact; a session naming a digest is
+// verifyArtifact proves an artifact: skift accepted something with this
+// digest. Skift holding the bytes is the fact; a session naming a digest is
 // not.
 func verifyArtifact(ctx context.Context, step Step) (Evidence, error) {
 	kind := millv1.EvidenceKind_EVIDENCE_KIND_ARTIFACT
@@ -723,15 +723,15 @@ func verifyArtifact(ctx context.Context, step Step) (Evidence, error) {
 	}
 	accepted, err := step.Artifacts.Accepted(ctx, digest)
 	if err != nil {
-		return refuse(fmt.Sprintf("dagger could not be asked about %s", digest), err)
+		return refuse(fmt.Sprintf("skift could not be asked about %s", digest), err)
 	}
 	if !accepted {
-		return refuse(fmt.Sprintf("dagger holds no artifact with digest %s", digest), nil)
+		return refuse(fmt.Sprintf("skift holds no artifact with digest %s", digest), nil)
 	}
 	return Evidence{Value: &millv1.Evidence{Value: &millv1.Evidence_Artifact{Artifact: digest}}}, nil
 }
 
-// verifyGate proves a gate: the gate node dagger holds is `done` and its
+// verifyGate proves a gate: the gate node skift holds is `done` and its
 // result is attached — or, for a gate the workflow's own `auto` policy
 // closed, the policy that fired.
 //
@@ -751,7 +751,7 @@ func verifyGate(ctx context.Context, step Step) (Evidence, error) {
 		return Evidence{Value: &millv1.Evidence{Value: &millv1.Evidence_Gate{Gate: "auto:" + policy}}}, nil
 	}
 	if step.Gates == nil {
-		return refuse("there is no dagger to read the gate from", nil)
+		return refuse("there is no skift to read the gate from", nil)
 	}
 	id := strings.TrimSpace(step.Claim)
 	if id == "" {

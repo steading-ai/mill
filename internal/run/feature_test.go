@@ -20,7 +20,7 @@ import (
 	"github.com/steading-ai/mill/internal/workspace/socket"
 )
 
-// The `feature` workflow, driven end to end against a real dagger, ledger,
+// The `feature` workflow, driven end to end against a real skift, ledger,
 // git and workspace, with the sessions scripted.
 //
 // What this is about is the two things `feature` adds to `quick-fix` that the
@@ -203,7 +203,7 @@ var _ = Describe("The feature workflow", Label(testsupport.DBLabel), func() {
 	})
 })
 
-// artifactsOn is every artifact dagger holds for the run's node.
+// artifactsOn is every artifact skift holds for the run's node.
 func (f *fixture) artifactsOn(ctx context.Context) []*skiftv1.Artifact {
 	GinkgoHelper()
 	held, err := f.client.Artifacts(ctx, f.nodeRef)

@@ -230,7 +230,7 @@ type ClaimsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// The worker's OS hostname.
 	Host string `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"`
-	// The dagger projects the worker claims from; empty means every project
+	// The skift projects the worker claims from; empty means every project
 	// its principal may read.
 	Projects []string `protobuf:"bytes,2,rep,name=projects,proto3" json:"projects,omitempty"`
 	// The labels every claimed node must carry.

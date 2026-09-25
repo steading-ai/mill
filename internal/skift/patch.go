@@ -1,4 +1,4 @@
-package dagger
+package skift
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 // kind, and the whole patch is refused if any of them touches a user's node
 // (docs/domain-model.md §Principal). The check is a read per named node,
 // which is the price of the guarantee being in mill's code rather than in
-// dagger's policy — dagger permits all five to the principal mill runs as.
+// skift's policy — skift permits all five to the principal mill runs as.
 func (c *Client) ApplyPatch(ctx context.Context, requestID, leaseID string, ops ...*skiftv1.PatchOp) (*skiftv1.ApplyPatchResponse, error) {
 	if err := c.refuseGateWrites(ctx, ops); err != nil {
 		return nil, err
@@ -29,7 +29,7 @@ func (c *Client) ApplyPatch(ctx context.Context, requestID, leaseID string, ops 
 		View:      skiftv1.View_VIEW_REFS,
 	}))
 	if err != nil {
-		return nil, wrap("dagger: apply patch", err)
+		return nil, wrap("skift: apply patch", err)
 	}
 	return res.Msg, nil
 }
@@ -90,7 +90,7 @@ func (c *Client) refuseIfUser(ctx context.Context, ref, verb string) error {
 
 // Complete finishes a node with a result and its artifacts. Completing is
 // not an RPC: it is an ApplyPatch carrying a complete_node operation, and
-// dagger releases the lease inside that same patch — which is why the final
+// skift releases the lease inside that same patch — which is why the final
 // step's usage is posted before this, why there is no Release on the done
 // path, and why store.Done comes after it (docs/ledger.md §Resume).
 func (c *Client) Complete(ctx context.Context, requestID, leaseID, ref string, result *skiftv1.Result) error {
@@ -129,7 +129,7 @@ type Gate struct {
 // gateAlias names the created gate for the edge in the same patch.
 const gateAlias = "gate"
 
-// CreateGate files a human decision the only way dagger allows: a node with
+// CreateGate files a human decision the only way skift allows: a node with
 // assignee_kind `user`, a child of the run's node, with a blocks edge into
 // it. One patch, so the gate and the edge that makes it block arrive
 // together; the store records the id it returns before the lease is
@@ -156,7 +156,7 @@ func (c *Client) CreateGate(ctx context.Context, requestID, leaseID string, gate
 	}
 	ref, ok := res.GetAliases()[gateAlias]
 	if !ok {
-		return nil, fmt.Errorf("dagger: the patch that filed the gate returned no %q alias", gateAlias)
+		return nil, fmt.Errorf("skift: the patch that filed the gate returned no %q alias", gateAlias)
 	}
 	return c.Node(ctx, ref)
 }
@@ -175,12 +175,12 @@ func (c *Client) setLabels(ctx context.Context, leaseID, requestID, ref string, 
 
 // AttachText attaches an artifact carrying its own content to a node: a
 // plan, a verdict, a step's summary. Every artifact mill attaches carries
-// the run id in its metadata, which is how dagger's side of a run joins to
+// the run id in its metadata, which is how skift's side of a run joins to
 // the ledger's.
 func (c *Client) AttachText(ctx context.Context, requestID, leaseID, ref, name, description, body string, meta map[string]any) error {
 	value, err := structpb.NewStruct(meta)
 	if err != nil {
-		return fmt.Errorf("dagger: artifact %s metadata: %w", name, err)
+		return fmt.Errorf("skift: artifact %s metadata: %w", name, err)
 	}
 	_, err = c.ApplyPatch(ctx, requestID, leaseID, &skiftv1.PatchOp{
 		Op: &skiftv1.PatchOp_AttachArtifact{AttachArtifact: &skiftv1.AttachArtifactOp{
@@ -202,7 +202,7 @@ func (c *Client) AttachText(ctx context.Context, requestID, leaseID, ref, name, 
 }
 
 // Artifacts are what a node carries. The `artifact` verifier reads them:
-// evidence of that kind is a digest dagger accepted, so dagger is asked.
+// evidence of that kind is a digest skift accepted, so skift is asked.
 func (c *Client) Artifacts(ctx context.Context, ref string) ([]*skiftv1.Artifact, error) {
 	res, err := c.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{
 		Project: c.project,
@@ -210,7 +210,7 @@ func (c *Client) Artifacts(ctx context.Context, ref string) ([]*skiftv1.Artifact
 		View:    skiftv1.View_VIEW_FULL,
 	}))
 	if err != nil {
-		return nil, fmt.Errorf("dagger: get artifacts of %s: %w", ref, err)
+		return nil, fmt.Errorf("skift: get artifacts of %s: %w", ref, err)
 	}
 	return res.Msg.GetArtifacts(), nil
 }
@@ -218,8 +218,8 @@ func (c *Client) Artifacts(ctx context.Context, ref string) ([]*skiftv1.Artifact
 // GateLabels are the labels mill puts on every gate it files: one saying
 // mill filed it, one naming the run, one naming the step.
 //
-// They are how a gate is found again. Dagger resolves references — `mill#7`
-// — and never ids, so the id the ledger holds is not something dagger can be
+// They are how a gate is found again. Skift resolves references — `mill#7`
+// — and never ids, so the id the ledger holds is not something skift can be
 // asked for; a run's own gates are found among its node's children by these
 // labels and matched on the id there. They are also how a worker finds a
 // gate it filed before it crashed.
@@ -241,10 +241,10 @@ const GateLabel = "mill-gate"
 // their own reasons.
 //
 // It exists for the one window the write order of docs/ledger.md §Resume
-// cannot close. Filing a gate is dagger first, store second: a crash between
-// them leaves a gate dagger has and the store does not, and a rerun that
+// cannot close. Filing a gate is skift first, store second: a crash between
+// them leaves a gate skift has and the store does not, and a rerun that
 // trusted the store alone would file a second one for the same step.
-// Dagger's graph is the source of truth for that single check, so the worker
+// Skift's graph is the source of truth for that single check, so the worker
 // asks it before it files (docs/domain-model.md §Gate, "A gate is filed
 // once").
 //
@@ -264,7 +264,7 @@ func (c *Client) Gates(ctx context.Context, parent string, labels ...string) ([]
 		View: skiftv1.View_VIEW_FULL,
 	}))
 	if err != nil {
-		return nil, wrap("dagger: list the gates on "+parent, err)
+		return nil, wrap("skift: list the gates on "+parent, err)
 	}
 	return res.Msg.GetNodes(), nil
 }

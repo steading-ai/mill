@@ -2,10 +2,10 @@
 // contract the store, its API, and the worker are derived from;
 // docs/domain-model.md is its rationale and docs/ledger.md its storage.
 //
-// The mill holds exactly one kind of state dagger does not — which workflow,
-// which step, what evidence, which session. Where dagger already names a
+// The mill holds exactly one kind of state skift does not — which workflow,
+// which step, what evidence, which session. Where skift already names a
 // thing (node, lease, gate, artifact, usage, principal, context id) this
-// package stores dagger's *identifier* and never dagger's content, so a
+// package stores skift's *identifier* and never skift's content, so a
 // message here is never a copy of a message there.
 //
 // Where a field's comment and docs/domain-model.md disagree, the comment
@@ -41,7 +41,7 @@ enum RunStatus {
   // WAITING; distinguished so status can say why.
   RUN_STATUS_PARKED = 4;
   // RUN_STATUS_DONE means the terminal step closed with evidence and the
-  // completing patch was accepted by dagger.
+  // completing patch was accepted by skift.
   RUN_STATUS_DONE = 5;
   // RUN_STATUS_FAILED means a gate was denied, or the node was dropped
   // underneath the run. Terminal.
@@ -82,7 +82,7 @@ enum StepKind {
   // STEP_KIND_CHECK runs a command through the workspace and reads its exit
   // code and stdout. It produces evidence directly.
   STEP_KIND_CHECK = 2;
-  // STEP_KIND_GATE files a dagger gate and releases the lease. It produces
+  // STEP_KIND_GATE files a skift gate and releases the lease. It produces
   // no evidence of its own; the gate's result is the evidence.
   STEP_KIND_GATE = 3;
   // STEP_KIND_PREPARATORY readies the machine for the sessions: a command
@@ -137,7 +137,7 @@ enum EvidenceKind {
   // as success for the commit.
   EVIDENCE_KIND_STATUS = 6;
   // EVIDENCE_KIND_ARTIFACT closes any step: an artifact with this digest was
-  // accepted by dagger.
+  // accepted by skift.
   EVIDENCE_KIND_ARTIFACT = 7;
   // EVIDENCE_KIND_GATE closes gate steps: the gate node's status is done and
   // its result is attached.
@@ -318,9 +318,9 @@ enum UsageSource {
 message Run {
   // ULID, internal.
   string id = 1;
-  // The dagger node.
+  // The skift node.
   string node_id = 2;
-  // The display key (`dagger#18`).
+  // The display key (`skift#18`).
   string node_ref = 3;
   // 1 for the first run on a node; incremented by restart.
   // `(node_id, generation)` is unique; at most one run per node is live.
@@ -328,7 +328,7 @@ message Run {
   // unique outright; docs/domain-model.md §Restart requires the generation
   // and wins.
   int64 generation = 4;
-  // Dagger's context id for the node, copied at creation. Every session in
+  // Skift's context id for the node, copied at creation. Every session in
   // the run derives from it and the generation.
   string context_id = 5;
   // The immutable workflow version this run follows. Fixed at selection;
@@ -336,8 +336,8 @@ message Run {
   string workflow_id = 6;
   // Where the run is. See RunStatus.
   RunStatus status = 7;
-  // The current dagger lease, or empty while waiting or parked. The fencing
-  // token on every dagger write.
+  // The current skift lease, or empty while waiting or parked. The fencing
+  // token on every skift write.
   string lease_id = 8;
   // Where the current attempt runs. Free string; a hostname and account
   // today.
@@ -366,7 +366,7 @@ message Run {
   // The idempotency key of the patch that completes the node, minted and
   // stored before that patch is sent. A worker resuming a run whose
   // completing patch may or may not have landed retries it under the same
-  // key rather than under a new one, which is what makes "dagger first,
+  // key rather than under a new one, which is what makes "skift first,
   // store second" recoverable (docs/ledger.md §Resume, Invariant 11).
   string complete_request_id = 18;
 }
@@ -386,7 +386,7 @@ message StepRun {
   StepKind kind = 5;
   // Skill steps: the session this attempt ran in.
   string session_id = 6;
-  // The dagger lease held when this attempt ran.
+  // The skift lease held when this attempt ran.
   string lease_id = 7;
   // The worker that ran this attempt.
   string worker_ref = 8;
@@ -473,7 +473,7 @@ message Evidence {
     string url = 7;
     // A status string the forge reports for the commit.
     string status = 8;
-    // An artifact digest dagger accepted.
+    // An artifact digest skift accepted.
     string artifact = 9;
     // The gate node's id, whose result is attached to the closing step.
     string gate = 10;
@@ -597,7 +597,7 @@ message Ask {
   string body = 2;
 }
 
-// Gate is a human decision, expressed the only way dagger allows: a node with
+// Gate is a human decision, expressed the only way skift allows: a node with
 // assignee_kind user that blocks this run's node. The mill files it, never
 // claims it, never completes it, and never disposes of it.
 message Gate {
@@ -674,7 +674,7 @@ message Step {
   // this step's attempts. Default 3.
   int32 retries = 11;
   // Wall clock for the step, enforced by the worker. Independent of the
-  // dagger lease, which the worker heartbeats for the step's whole duration;
+  // skift lease, which the worker heartbeats for the step's whole duration;
   // a step may run longer than a lease TTL.
   google.protobuf.Duration timeout = 12;
   // JSON Schema the session's structured output must validate against, for a
@@ -766,10 +766,10 @@ message StatusPolicy {
 }
 
 // ProjectDefault is a project naming the workflow its nodes are worked
-// through, and the tier that workflow stands for. Dagger nodes carry no
-// workflow label; dagger never learns the word.
+// through, and the tier that workflow stands for. Skift nodes carry no
+// workflow label; skift never learns the word.
 message ProjectDefault {
-  // The dagger project.
+  // The skift project.
   string project = 1;
   // Name, resolved to the newest version in scope at run creation.
   string workflow = 2;
@@ -819,7 +819,7 @@ message Usage {
   int64 cache_write_tokens = 6;
   // When the turn was recorded.
   google.protobuf.Timestamp recorded_at = 7;
-  // When this row's step totals were posted to dagger; unset until then.
+  // When this row's step totals were posted to skift; unset until then.
   google.protobuf.Timestamp posted_at = 8;
   // Who counted it. Unset reads as the adapter's report.
   UsageSource source = 9;
@@ -928,7 +928,7 @@ message RunSummary {
   int64 current_attempt = 3;
   // The run's cost so far, summed over its step runs, by model.
   repeated ModelTotals totals = 4;
-  // How many dagger leases the node has held under this run. Distinct from a
+  // How many skift leases the node has held under this run. Distinct from a
   // step's attempt.
   int64 leases = 5;
   // The run's workspace as the ledger recorded it: where it is, whether
@@ -960,7 +960,7 @@ message StepRunDetail {
   // The session it ran in, for a skill step.
   Session session = 3;
   // What it cost, by model, as the adapter reported it: the rows posted to
-  // dagger.
+  // skift.
   repeated ModelTotals totals = 4;
   // How many times the harness asked this attempt's session about a
   // background task that had gone silent. A stalled attempt is one whose
@@ -969,7 +969,7 @@ message StepRunDetail {
   int64 heartbeats = 5;
   // What the credential gateway counted for the attempt, by model, from the
   // upstream's responses outside the session. Empty when no gateway sat in
-  // front of it. Never posted to dagger: it is the check on `totals`, read
+  // front of it. Never posted to skift: it is the check on `totals`, read
   // beside it (docs/sandbox.md §Credentials).
   repeated ModelTotals gateway_totals = 6;
 }

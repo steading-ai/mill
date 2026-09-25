@@ -117,7 +117,7 @@ printf '%s\n' '{"terminal":{"exit":{"status":0}}}'
 		carrying("ANTHROPIC_API_KEY", "sk-ant-not-a-real-key")
 		carrying("GOFLAGS", "-mod=mod")
 		carrying("DATABASE_URL", "postgres://mill@localhost/mill")
-		carrying("DG_PROJECT", "mill")
+		carrying("SKIFT_PROJECT", "mill")
 		carrying("CLAUDECODE", "1")
 
 		By("when the adapter spawns the sidecar")
@@ -130,14 +130,14 @@ printf '%s\n' '{"terminal":{"exit":{"status":0}}}'
 		By("and not ANTHROPIC_API_KEY")
 		Expect(env).NotTo(HaveKey("ANTHROPIC_API_KEY"))
 		Expect(env).NotTo(HaveKey("DATABASE_URL"))
-		Expect(env).NotTo(HaveKey("DG_PROJECT"))
+		Expect(env).NotTo(HaveKey("SKIFT_PROJECT"))
 		Expect(env).NotTo(HaveKey("CLAUDECODE"))
 
 		By("and the step run records ANTHROPIC_API_KEY as stripped")
 		// The ledger's half of this Then clause is the spec of the same name
 		// in internal/run; what the adapter owns is reporting it.
 		Expect(turn.Environment.Stripped).To(ContainElements(
-			"ANTHROPIC_API_KEY", "CLAUDECODE", "DATABASE_URL", "DG_PROJECT"))
+			"ANTHROPIC_API_KEY", "CLAUDECODE", "DATABASE_URL", "SKIFT_PROJECT"))
 		Expect(sort.StringsAreSorted(turn.Environment.Stripped)).To(BeTrue())
 	})
 
@@ -247,12 +247,12 @@ printf '%s\n' '{"terminal":{"exit":{"status":0}}}'
 	})
 
 	It("The workspace's dead sockets reach the session, and neither can be carved out", func() {
-		By("given a workspace that decided dead DG_SOCKET and MILL_SOCKET paths, over a mill carrying its own")
-		carrying("DG_SOCKET", "/run/user/1000/dagger/dagger.sock")
+		By("given a workspace that decided dead SKIFT_SOCKET and MILL_SOCKET paths, over a mill carrying its own")
+		carrying("SKIFT_SOCKET", "/run/user/1000/skift/skift.sock")
 		carrying("MILL_SOCKET", "/run/user/1000/mill/mill.sock")
 		session.Workspace.Env = map[string]string{
-			"DG_SOCKET":   "/var/lib/mill/runs/01J0RUN/dead-dagger.sock",
-			"MILL_SOCKET": "/var/lib/mill/runs/01J0RUN/dead-mill.sock",
+			"SKIFT_SOCKET": "/var/lib/mill/runs/01J0RUN/dead-skift.sock",
+			"MILL_SOCKET":  "/var/lib/mill/runs/01J0RUN/dead-mill.sock",
 		}
 
 		for _, mode := range []EnvMode{EnvInherit, EnvStrict} {
@@ -260,12 +260,12 @@ printf '%s\n' '{"terminal":{"exit":{"status":0}}}'
 			env, _ := spawn(New(WithExecer(&watching{Execer: workspace.Spawner{}}), WithEnvMode(mode)))
 
 			By("then the sidecar holds the workspace's dead paths, not the mill's own")
-			Expect(env).To(HaveKeyWithValue("DG_SOCKET", "/var/lib/mill/runs/01J0RUN/dead-dagger.sock"), "mode %s", mode)
+			Expect(env).To(HaveKeyWithValue("SKIFT_SOCKET", "/var/lib/mill/runs/01J0RUN/dead-skift.sock"), "mode %s", mode)
 			Expect(env).To(HaveKeyWithValue("MILL_SOCKET", "/var/lib/mill/runs/01J0RUN/dead-mill.sock"), "mode %s", mode)
 		}
 
-		By("and a step whose claude options name env.passthrough DG_SOCKET or MILL_SOCKET is refused before spawning")
-		for _, name := range []string{"DG_SOCKET", "MILL_SOCKET"} {
+		By("and a step whose claude options name env.passthrough SKIFT_SOCKET or MILL_SOCKET is refused before spawning")
+		for _, name := range []string{"SKIFT_SOCKET", "MILL_SOCKET"} {
 			session.Options = map[string]any{"env": map[string]any{"passthrough": []any{name}}}
 			adapter := New(WithExecer(spawner), WithEntrypoint("/bin/sh", stub(`printf '%s\n' '{"terminal":{"exit":{"status":0}}}'`)))
 			_, err := adapter.Start(lifetime, session, harness.Prompt{Text: "implement"}, nil)

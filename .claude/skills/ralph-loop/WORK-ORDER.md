@@ -94,12 +94,12 @@ were cache reads. All of it is reproducible from `harness/state.json`.
 | Go module and Makefile | 12 | $1.32 |
 | Migrations: nodes, edges, leases | 21 | $3.20 |
 | Connect server over a unix socket | 21 | $4.35 |
-| dg CLI | 47 | $8.91 |
+| skift CLI | 47 | $8.91 |
 | Concurrency and failure suite | 60 | $11.12 |
 | Embedded OPA and default policy | 79 | $13.02 |
 | Handlers and wire mapping | 111 | $17.33 |
 
 Cost tracks turns, and turns track how much of the system the node has to hold
 at once. Handlers touched every domain type; the Makefile touched one file.
-Per-node history lives in `harness/state.json` in dagger's own `Usage` shape,
+Per-node history lives in `harness/state.json` in skift's own `Usage` shape,
 which is the calibration data for estimating the next backlog.

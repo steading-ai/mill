@@ -197,9 +197,9 @@ func Forge(ctx context.Context, f forge.Forge, tokenSource, repositoryURL string
 }
 
 // SessionSockets asks a throwaway local workspace for the environment a
-// session's tools would run under, and checks that DG_SOCKET and MILL_SOCKET
+// session's tools would run under, and checks that SKIFT_SOCKET and MILL_SOCKET
 // in it are dead: this is the wiring the mill#38 incident found missing,
-// where a session ran unsandboxed against the production dagger and mill
+// where a session ran unsandboxed against the production skift and mill
 // sockets because nothing had ever overwritten them (docs/sandbox.md
 // §Credentials).
 //
@@ -211,7 +211,7 @@ func Forge(ctx context.Context, f forge.Forge, tokenSource, repositoryURL string
 // workspace directory this host cannot actually use for a run (wrong
 // filesystem, no exec permission) fails here too. The workspace is destroyed
 // before this returns either way.
-func SessionSockets(ctx context.Context, workspaceDir, socket, daggerSocket string) Result {
+func SessionSockets(ctx context.Context, workspaceDir, socket, skiftSocket string) Result {
 	dir, err := os.MkdirTemp(workspaceDir, "doctor-isolation-*")
 	if err != nil {
 		return fail("workspace directory %s: %v", workspaceDir, err)
@@ -232,7 +232,7 @@ func SessionSockets(ctx context.Context, workspaceDir, socket, daggerSocket stri
 	}
 	env := ws.Environment()
 	_ = ws.Destroy(ctx)
-	return checkSessionEnv(env, socket, daggerSocket)
+	return checkSessionEnv(env, socket, skiftSocket)
 }
 
 // gitInit makes dir an empty git repository, spawned through
@@ -258,14 +258,14 @@ func gitInit(ctx context.Context, dir string) error {
 	return nil
 }
 
-// checkSessionEnv is whether a session's environment keeps DG_SOCKET and
+// checkSessionEnv is whether a session's environment keeps SKIFT_SOCKET and
 // MILL_SOCKET away from the sockets this host actually serves: present,
-// distinct from socket and daggerSocket, and answering no dial. A dial
+// distinct from socket and skiftSocket, and answering no dial. A dial
 // succeeding on the value handed back means the wiring leaked the real
 // address rather than a dead one — on a healthy host the real socket is
 // live, which is what the `socket` probe already establishes.
-func checkSessionEnv(env map[string]string, socket, daggerSocket string) Result {
-	for name, real := range map[string]string{"DG_SOCKET": daggerSocket, "MILL_SOCKET": socket} {
+func checkSessionEnv(env map[string]string, socket, skiftSocket string) Result {
+	for name, real := range map[string]string{"SKIFT_SOCKET": skiftSocket, "MILL_SOCKET": socket} {
 		value := env[name]
 		if value == "" {
 			return fail("%s is missing from a session's own environment", name)
@@ -277,7 +277,7 @@ func checkSessionEnv(env map[string]string, socket, daggerSocket string) Result 
 			return fail("%s is %s, which answers a dial", name, value)
 		}
 	}
-	return pass("DG_SOCKET and MILL_SOCKET are dead paths, neither %s nor %s", daggerSocket, socket)
+	return pass("SKIFT_SOCKET and MILL_SOCKET are dead paths, neither %s nor %s", skiftSocket, socket)
 }
 
 // dialable reports whether something is listening on a unix socket path.

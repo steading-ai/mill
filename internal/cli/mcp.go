@@ -21,14 +21,14 @@ import (
 
 // `mill mcp` is the CLI's client wrapped for a session: an MCP server on
 // stdio whose tools are the read commands and the operate ones, taking the same
-// references and answering with the same fields. It is dagger's `dg mcp`
+// references and answering with the same fields. It is skift's `skift mcp`
 // with mill's verbs — deliberately so, because an agent that knows one
 // should not have to learn the other (docs/architecture.md §"One binary, two
 // faces").
 //
 // `run` is not here and will not be: it executes in the calling process and
 // is local to the mill's host and account. A session elsewhere that wants
-// work done files a dagger node (docs/prd.md R-55).
+// work done files a skift node (docs/prd.md R-55).
 //
 // The protocol is JSON-RPC 2.0, one message per line, as the MCP stdio
 // transport specifies:
@@ -167,7 +167,7 @@ says: the store maps that account's uid to a role, and a reader is refused.
 
 "run" is deliberately absent. It executes in the calling process and is
 local to the mill's host and account; a session that wants work done files a
-dagger node instead.
+skift node instead.
 
 --describe prints the tool list as JSON and connects to nothing, which is
 how the plugin's reference document is checked against this server.`,
@@ -181,7 +181,7 @@ how the plugin's reference document is checked against this server.`,
 	}
 	cmd.Flags().BoolVar(&describe, "describe", false, "print the tool list as JSON and exit, without serving")
 	addReadFlags(cmd, &opts)
-	addDaggerFlags(cmd, &opts)
+	addSkiftFlags(cmd, &opts)
 	cmd.Flags().StringVar(&opts.workspaceDir, "workspace-dir", defaultWorkspaceDir(), "directory run workspaces live under")
 	return cmd
 }
@@ -357,7 +357,7 @@ func (s *mcpServer) initialize(raw json.RawMessage) (any, *jsonrpcError) {
 	return mcpInitializeResult{
 		ProtocolVersion: protocol,
 		ServerInfo:      mcpServerInfo{Name: "mill", Version: version.String()},
-		Instructions: `mill is a workflow runner over dagger's work graph. A run is one dagger
+		Instructions: `mill is a workflow runner over skift's work graph. A run is one skift
 node being worked: a workflow's steps in order, each closed by evidence the
 mill verified.
 
@@ -369,7 +369,7 @@ A run is named by its node reference — mill#18 — or by the run id status
 prints. Views size an answer: refs is identifiers, summary is the default,
 full is everything the ledger holds.
 
-A run that is waiting or parked is blocked on a dagger gate, and only a
+A run that is waiting or parked is blocked on a skift gate, and only a
 person can answer it: say what you think should happen, do not try to
 unblock it yourself.
 

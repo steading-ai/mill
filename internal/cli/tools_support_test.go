@@ -147,7 +147,7 @@ func (r *runs) closeGatherContext(ctx context.Context, digest string) {
 		Evidence: &millv1.Evidence{
 			Kind:       millv1.EvidenceKind_EVIDENCE_KIND_ARTIFACT,
 			Value:      &millv1.Evidence_Artifact{Artifact: digest},
-			VerifiedBy: "mill: dagger accepted the artifact",
+			VerifiedBy: "mill: skift accepted the artifact",
 		},
 	})
 }
@@ -211,10 +211,10 @@ func (r *runs) cli(ctx context.Context, args ...string) string {
 	return r.mill.run(ctx, args...)
 }
 
-// gateFixture is a dagger with a gate node in it, for the tools that resolve
+// gateFixture is a skift with a gate node in it, for the tools that resolve
 // a gate node id to a reference and a title.
 type gateFixture struct {
-	service *testsupport.Dagger
+	service *testsupport.Skift
 	graph   skiftv1connect.GraphServiceClient
 	nodeRef string
 	nodeID  string
@@ -223,27 +223,27 @@ type gateFixture struct {
 	title   string
 }
 
-// daggerNode brings up a dagger with one project and one node in it: the
+// skiftNode brings up a skift with one project and one node in it: the
 // work a run is for, and the node a gate will hang off. The project names
-// no repository; daggerNodeWith gives it one.
-func daggerNode(ctx context.Context) *gateFixture {
+// no repository; skiftNodeWith gives it one.
+func skiftNode(ctx context.Context) *gateFixture {
 	GinkgoHelper()
-	return daggerNodeWith(ctx, "")
+	return skiftNodeWith(ctx, "")
 }
 
-// daggerNodeWith is daggerNode with the project's repository set, which is
+// skiftNodeWith is skiftNode with the project's repository set, which is
 // what a run resolves its forge and its clone from.
-func daggerNodeWith(ctx context.Context, vcsURL string) *gateFixture {
+func skiftNodeWith(ctx context.Context, vcsURL string) *gateFixture {
 	GinkgoHelper()
-	service := pg.StartDagger(ctx)
+	service := pg.StartSkift(ctx)
 	graph := skiftv1connect.NewGraphServiceClient(service.HTTPClient(), service.BaseURL())
 	_, err := graph.CreateProject(ctx, connect.NewRequest(&skiftv1.CreateProjectRequest{
-		RequestId: "cli-spec-project", Title: "mill cli specs", Slug: daggerProject, VcsUrl: vcsURL,
+		RequestId: "cli-spec-project", Title: "mill cli specs", Slug: skiftProject, VcsUrl: vcsURL,
 	}))
 	Expect(err).NotTo(HaveOccurred())
 
 	created, err := graph.ApplyPatch(ctx, connect.NewRequest(&skiftv1.ApplyPatchRequest{
-		RequestId: "cli-spec-node", Project: daggerProject,
+		RequestId: "cli-spec-node", Project: skiftProject,
 		Ops: []*skiftv1.PatchOp{{Op: &skiftv1.PatchOp_CreateNode{CreateNode: &skiftv1.CreateNodeOp{
 			Title: "the work the run is for", Body: "a node with a gate on it",
 		}}}},
@@ -254,7 +254,7 @@ func daggerNodeWith(ctx context.Context, vcsURL string) *gateFixture {
 	return f
 }
 
-// secondProject creates a second dagger project beside the fixture's own,
+// secondProject creates a second skift project beside the fixture's own,
 // with the given slug and vcs_url, and one ready node in it — for the specs
 // proving a worker's claim reaches across projects or stays confined to one.
 func (g *gateFixture) secondProject(ctx context.Context, slug, vcsURL string) (project, nodeRef string) {
@@ -278,7 +278,7 @@ func (g *gateFixture) secondProject(ctx context.Context, slug, vcsURL string) (p
 func (g *gateFixture) idOf(ctx context.Context, ref string) string {
 	GinkgoHelper()
 	res, err := g.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{
-		Project: daggerProject, Node: ref, View: skiftv1.View_VIEW_FULL,
+		Project: skiftProject, Node: ref, View: skiftv1.View_VIEW_FULL,
 	}))
 	Expect(err).NotTo(HaveOccurred())
 	return res.Msg.GetNode().GetId()
@@ -290,7 +290,7 @@ func (g *gateFixture) idOf(ctx context.Context, ref string) string {
 func (g *gateFixture) fileGate(ctx context.Context, runID, step, title string) {
 	GinkgoHelper()
 	filed, err := g.graph.ApplyPatch(ctx, connect.NewRequest(&skiftv1.ApplyPatchRequest{
-		RequestId: "cli-spec-gate-" + step, Project: daggerProject,
+		RequestId: "cli-spec-gate-" + step, Project: skiftProject,
 		Ops: []*skiftv1.PatchOp{
 			{Op: &skiftv1.PatchOp_CreateNode{CreateNode: &skiftv1.CreateNodeOp{
 				Alias:        "gate",
@@ -312,8 +312,8 @@ func (g *gateFixture) fileGate(ctx context.Context, runID, step, title string) {
 	g.title = title
 }
 
-// daggerProject is the project the CLI specs file their nodes in.
-const daggerProject = "millcli"
+// skiftProject is the project the CLI specs file their nodes in.
+const skiftProject = "millcli"
 
 // structOf builds a struct value for evidence.
 func structOf(fields map[string]any) *structpb.Struct {
@@ -385,8 +385,8 @@ func runCLI(ctx context.Context, socket string, args ...string) (string, error) 
 }
 
 // runCLIArgs is args with --socket appended and, when the target command
-// itself takes --dagger-socket and the caller did not already name one, a
-// --dagger-socket pointing at a path this process never listens on. An
+// itself takes --skift-socket and the caller did not already name one, a
+// --skift-socket pointing at a path this process never listens on. An
 // empty socket means the fixture was called before the service it needs was
 // up, which is a bug in the spec, not a case to run against the production
 // socket. runCLI and (mill).run/(mill).try all build their args through this
@@ -396,23 +396,23 @@ func runCLIArgs(socket string, args []string) []string {
 	if socket == "" {
 		panic("empty socket passed to runCLIArgs; start a service first, e.g. serving(ctx)")
 	}
-	if !slices.Contains(args, "--dagger-socket") && commandTakesDaggerSocket(args) {
-		args = append(args, "--dagger-socket", filepath.Join(GinkgoT().TempDir(), "no-dagger.sock"))
+	if !slices.Contains(args, "--skift-socket") && commandTakesSkiftSocket(args) {
+		args = append(args, "--skift-socket", filepath.Join(GinkgoT().TempDir(), "no-skift.sock"))
 	}
 	return append(args, "--socket", socket)
 }
 
-// commandTakesDaggerSocket is whether the command args resolve to declares
-// its own --dagger-socket flag: most of the command tree never reaches
-// dagger at all, and handing it an unknown flag is a sharper failure than
+// commandTakesSkiftSocket is whether the command args resolve to declares
+// its own --skift-socket flag: most of the command tree never reaches
+// skift at all, and handing it an unknown flag is a sharper failure than
 // the one the socket guard exists to catch.
-func commandTakesDaggerSocket(args []string) bool {
+func commandTakesSkiftSocket(args []string) bool {
 	var stdout, stderr bytes.Buffer
 	cmd, _, err := cli.NewRootCommand(&stdout, &stderr).Find(args)
 	if err != nil {
 		return false
 	}
-	return cmd.Flags().Lookup("dagger-socket") != nil
+	return cmd.Flags().Lookup("skift-socket") != nil
 }
 
 var _ = Describe("runCLI's socket guard", Label("unit"), func() {
@@ -420,17 +420,17 @@ var _ = Describe("runCLI's socket guard", Label("unit"), func() {
 		Expect(func() { _, _ = runCLI(context.Background(), "", "status") }).To(PanicWith(ContainSubstring("serving(ctx)")))
 	})
 
-	It("appends a dead --dagger-socket when the target command takes one", func() {
-		Expect(runCLIArgs("/nonexistent/mill.sock", []string{"explain", "millcli#1"})).To(ContainElement("--dagger-socket"))
+	It("appends a dead --skift-socket when the target command takes one", func() {
+		Expect(runCLIArgs("/nonexistent/mill.sock", []string{"explain", "millcli#1"})).To(ContainElement("--skift-socket"))
 	})
 
-	It("does not hand an unknown flag to a command with no --dagger-socket", func() {
-		Expect(runCLIArgs("/nonexistent/mill.sock", []string{"status"})).NotTo(ContainElement("--dagger-socket"))
+	It("does not hand an unknown flag to a command with no --skift-socket", func() {
+		Expect(runCLIArgs("/nonexistent/mill.sock", []string{"status"})).NotTo(ContainElement("--skift-socket"))
 	})
 })
 
-// nodeID is a ULID-shaped id for a node the ledger records but no dagger
-// holds, for the specs that need no dagger at all.
+// nodeID is a ULID-shaped id for a node the ledger records but no skift
+// holds, for the specs that need no skift at all.
 func nodeID(n int) string {
 	return fmt.Sprintf("01HZZZZZZZZZZZZZZZZZZZZZ%02d", n)
 }

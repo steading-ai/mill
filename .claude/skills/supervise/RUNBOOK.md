@@ -10,7 +10,7 @@ $S shell -- mill explain '<ref>' $M                          # what a run waits 
 $S shell -- mill inspect '<ref>' $M | awk '/^(implement|review|merge) /'   # attempts per step
 $S shell -- mill history '<ref>' $M | tail -12               # ledger ops with timestamps
 $S shell -- mill doctor $M                                   # version, migrations, workflow store vs disk
-dg ready -p <project> --view refs                            # per project: mill dagger stead steading
+skift ready -p <project> --view refs                            # per project: mill skift stead steading
 $S shell -- sudo journalctl -u mill.service --utc --since "2 hours ago" --no-pager -o cat | grep -v 'gateway:\|recording activity'
 ```
 
@@ -50,7 +50,7 @@ Empty-session signature (mill#34): prompt begin/end only, zero `usage|tool|resul
 
 ## Gates
 
-`mill explain` names the gate id; the gate node is `<project>#N` titled `<ref>: <step> stopped after N attempts`. Answer with `dg complete '<gate>' --result "…"`. Drop a stale one with `dg drop '<gate>' --reason no_longer_relevant`.
+`mill explain` names the gate id; the gate node is `<project>#N` titled `<ref>: <step> stopped after N attempts`. Answer with `skift complete '<gate>' --result "…"`. Drop a stale one with `skift drop '<gate>' --reason no_longer_relevant`.
 
 | Cause, from the gate body and the step log | Whose | Action |
 |---|---|---|
@@ -76,13 +76,13 @@ The checkout is owned by the guest user, not `mill`. Commits to mill on the Mac 
 
 ## Filing
 
-`dg create -p <project> --kind bug --priority pN --body "$(cat <<'EOF' … EOF)" "<title>" --view refs`. Body: **What happened** with UTC timestamps, run and step-run ids, the journal lines verbatim, and what the other slot was doing at the time; **Why**, citing `file:line` in the deployed version (`mill doctor` prints it); **Acceptance criteria**; **Scenario** in Gherkin. No hostnames. p0 when main can be harmed, p1 when a run is lost or a cap can cascade, p2 otherwise. Comment occurrences on an existing node: `dg comment '<ref>' "<body>"` (body is positional).
+`skift create -p <project> --kind bug --priority pN --body "$(cat <<'EOF' … EOF)" "<title>" --view refs`. Body: **What happened** with UTC timestamps, run and step-run ids, the journal lines verbatim, and what the other slot was doing at the time; **Why**, citing `file:line` in the deployed version (`mill doctor` prints it); **Acceptance criteria**; **Scenario** in Gherkin. No hostnames. p0 when main can be harmed, p1 when a run is lost or a cap can cascade, p2 otherwise. Comment occurrences on an existing node: `skift comment '<ref>' "<body>"` (body is positional).
 
-Ledger queries when the journal is not enough, on the guest: `sudo -u postgres psql -d mill -Atc "…"` (`step_runs`, `events`, `usage`); dagger's is `-d dagger` (`leases`, `events` with `op`, `reason`, `request_id`).
+Ledger queries when the journal is not enough, on the guest: `sudo -u postgres psql -d mill -Atc "…"` (`step_runs`, `events`, `usage`); skift's is `-d skift` (`leases`, `events` with `op`, `reason`, `request_id`).
 
 ## Cap
 
-Hold every ready node so nothing new claims: `for n in $(dg ready -p <p> --view refs | jq -r '.nodes[].reference'); do dg hold "$n" --reason "…"; done` across projects. A 429 from the cap is a 4xx to mill and walks the ready set into park gates (mill#63); holding is the stopgap. Stopping the worker is `sudo systemctl stop mill.service` and is the person's call; a stop aborts attempts as `shutdown`, a free retry.
+Hold every ready node so nothing new claims: `for n in $(skift ready -p <p> --view refs | jq -r '.nodes[].reference'); do skift hold "$n" --reason "…"; done` across projects. A 429 from the cap is a 4xx to mill and walks the ready set into park gates (mill#63); holding is the stopgap. Stopping the worker is `sudo systemctl stop mill.service` and is the person's call; a stop aborts attempts as `shutdown`, a free retry.
 
 ## Restarts
 

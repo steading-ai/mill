@@ -184,9 +184,9 @@ var _ = Describe("The credential gateway in the run loop", Label(testsupport.DBL
 		Expect(implement.GetTotals()[0].GetSource()).To(Equal(millv1.UsageSource_USAGE_SOURCE_SDK))
 		Expect(implement.GetTotals()[0].GetInputTokens()).To(Equal(int64(20)))
 
-		By("and dagger was posted the adapter's totals, not the gateway's on top")
-		Expect(f.daggerUsage(ctx)).To(HaveKeyWithValue("claude-sonnet", int64(30)))
-		Expect(f.daggerUsage(ctx)).NotTo(HaveKey(turnModel))
+		By("and skift was posted the adapter's totals, not the gateway's on top")
+		Expect(f.skiftUsage(ctx)).To(HaveKeyWithValue("claude-sonnet", int64(30)))
+		Expect(f.skiftUsage(ctx)).NotTo(HaveKey(turnModel))
 	})
 
 	// Scenario: The assessment reaches the model through the gateway

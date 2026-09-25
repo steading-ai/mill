@@ -46,14 +46,14 @@ const (
 	DefaultRoot     = driver.DefaultRoot
 	DefaultMachines = driver.DefaultMachines
 	DefaultRunState = driver.DefaultRunState
-	// DefaultDaggerCheckout is where the host keeps the dagger checkout a
+	// DefaultSkiftCheckout is where the host keeps the skift checkout a
 	// nested machine's test fixture reads migrations from, bound read-only
-	// at [DaggerCheckoutTarget] (docs/sandbox.md §Testing, §Self-hosting).
+	// at [SkiftCheckoutTarget] (docs/sandbox.md §Testing, §Self-hosting).
 	// The helper's policy names it among the nested read-only sources.
-	DefaultDaggerCheckout = DefaultRoot + "/dagger"
-	// DaggerCheckoutTarget is where a nested machine sees it: the same
-	// path, so `MILL_DAGGER_REPO` reads alike inside and out.
-	DaggerCheckoutTarget = DefaultRoot + "/dagger"
+	DefaultSkiftCheckout = DefaultRoot + "/skift"
+	// SkiftCheckoutTarget is where a nested machine sees it: the same
+	// path, so `MILL_SKIFT_REPO` reads alike inside and out.
+	SkiftCheckoutTarget = DefaultRoot + "/skift"
 	// NestedRoot is the sandbox root of a worker inside a machine
 	// (docs/sandbox.md §Self-hosting).
 	NestedRoot = driver.NestedRoot
@@ -224,9 +224,9 @@ type Config struct {
 	// its origin URL. An ungranted request is a finding (docs/sandbox.md
 	// §mill.toml, §Self-hosting).
 	NestedRepos []string
-	// DaggerCheckout is the dagger checkout bound read-only into a nested
-	// machine; [DefaultDaggerCheckout] when empty.
-	DaggerCheckout string
+	// SkiftCheckout is the skift checkout bound read-only into a nested
+	// machine; [DefaultSkiftCheckout] when empty.
+	SkiftCheckout string
 	// ReadyTimeout bounds readiness; [DefaultReadyTimeout] when zero.
 	ReadyTimeout time.Duration
 	// StopTimeout bounds the machine unit's stop; [DefaultStopTimeout]
@@ -249,8 +249,8 @@ func (c Config) withDefaults() Config {
 	if c.RunState == "" {
 		c.RunState = DefaultRunState
 	}
-	if c.DaggerCheckout == "" {
-		c.DaggerCheckout = DefaultDaggerCheckout
+	if c.SkiftCheckout == "" {
+		c.SkiftCheckout = DefaultSkiftCheckout
 	}
 	if c.Skill == "" {
 		if home, err := os.UserHomeDir(); err == nil {
@@ -694,10 +694,10 @@ func (w *Workspace) SigningKey() *signing.Key {
 // configuration file to point it at — and they carry no key: such a commit
 // is unsigned, and the push verb refuses it (docs/sandbox.md §Verbs).
 //
-// DG_SOCKET and MILL_SOCKET are dead paths under handle.Socket's own
+// SKIFT_SOCKET and MILL_SOCKET are dead paths under handle.Socket's own
 // directory, a host-side accounting path the machine's namespace never
 // mounts anywhere — so this is defense in depth, not the load-bearing
-// guarantee: the machine already binds nothing at /run/dagger and only
+// guarantee: the machine already binds nothing at /run/skift and only
 // ws.sock at /run/mill (docs/sandbox.md §Credentials).
 func (w *Workspace) Environment() map[string]string {
 	w.mu.RLock()

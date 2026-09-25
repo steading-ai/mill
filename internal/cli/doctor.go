@@ -17,13 +17,13 @@ import (
 	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
 
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
-	"github.com/steading-ai/mill/internal/dagger"
 	"github.com/steading-ai/mill/internal/doctor"
 	"github.com/steading-ai/mill/internal/forge"
 	"github.com/steading-ai/mill/internal/gateway"
 	"github.com/steading-ai/mill/internal/harness/claude"
 	"github.com/steading-ai/mill/internal/notify"
 	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/skift"
 	"github.com/steading-ai/mill/internal/workflow"
 	"github.com/steading-ai/mill/internal/workspace"
 	"github.com/steading-ai/mill/internal/workspace/machine"
@@ -44,7 +44,7 @@ import (
 // command's usage text and docs/tools.md §doctor name each of them, and a
 // spec holds both to this list.
 var ProbeNames = []string{
-	"socket", "schema", "dagger", "sidecar", "signing",
+	"socket", "schema", "skift", "sidecar", "signing",
 	"forge", "notify", "workspace", "isolation", "space", "activity", "gateway", "mcp", "workflows",
 }
 
@@ -72,7 +72,7 @@ func fail(name, format string, args ...any) probe {
 
 type doctorOptions struct {
 	socket        string
-	daggerSocket  string
+	skiftSocket   string
 	project       string
 	sidecar       string
 	envMode       string
@@ -115,7 +115,7 @@ func newDoctorCommand() *cobra.Command {
 
   socket    the service answers on its unix socket
   schema    the database is migrated to the schema this binary carries
-  dagger    dagger answers, and this account resolves to a principal there
+  skift     skift answers, and this account resolves to a principal there
   sidecar   the harness sidecar starts, under the environment mode a run
             would spawn it with, and answers a no-op
   signing   the commit signing key exists and some project trusts it
@@ -125,8 +125,8 @@ func newDoctorCommand() *cobra.Command {
   notify    the configured notify command runs and accepts a probe notice
   workspace the workspace kind in effect and, for machine, whether the
             sandbox root is btrfs
-  isolation a session's own tools see dead paths for DG_SOCKET and
-            MILL_SOCKET, answering no dial, never the production dagger
+  isolation a session's own tools see dead paths for SKIFT_SOCKET and
+            MILL_SOCKET, answering no dial, never the production skift
             or mill socket this host actually serves
   space     free space on the sandbox volume against the eviction
             watermarks: a warning below the low one, a failure below the
@@ -153,8 +153,8 @@ failed; a warning does not fail it.`,
 	}
 	f := cmd.Flags()
 	f.StringVar(&opts.socket, "socket", defaultSocketPath(), "path of the service's unix socket (default: $"+socketEnv+")")
-	f.StringVar(&opts.daggerSocket, "dagger-socket", envOr(daggerSocketEnv, defaultDaggerSocket), "path of dagger's unix socket (default: $"+daggerSocketEnv+")")
-	f.StringVar(&opts.project, "project", os.Getenv(daggerProjectEnv), "dagger project to probe readiness in (default: $"+daggerProjectEnv+")")
+	f.StringVar(&opts.skiftSocket, "skift-socket", envOr(skiftSocketEnv, defaultSkiftSocket), "path of skift's unix socket (default: $"+skiftSocketEnv+")")
+	f.StringVar(&opts.project, "project", os.Getenv(skiftProjectEnv), "skift project to probe readiness in (default: $"+skiftProjectEnv+")")
 	f.StringVar(&opts.sidecar, "sidecar", envOr(sidecarEnv, claude.DefaultEntrypoint), "path of the harness sidecar's entrypoint (default: $"+sidecarEnv+")")
 	f.StringVar(&opts.envMode, "env-mode", string(claude.DefaultEnvMode), envModeUsage)
 	f.StringVar(&opts.workspaceDir, "workspace-dir", defaultWorkspaceDir(), "directory run workspaces and the signing key live under")
@@ -221,7 +221,7 @@ func runDoctor(cmd *cobra.Command, opts doctorOptions) error {
 	if opts.retentionProjects, err = parseRetentionProjects(config.RetentionProjects); err != nil {
 		return err
 	}
-	// opts.project's flag default is already $DG_PROJECT (newDoctorCommand
+	// opts.project's flag default is already $SKIFT_PROJECT (newDoctorCommand
 	// declares it that way), so empty here means neither the flag nor the
 	// variable supplied one — the file's project is read last, same as the
 	// socket resolver's precedence (sockets.go).
@@ -271,7 +271,7 @@ func runProbes(ctx context.Context, opts doctorOptions) []probe {
 	probes := []probe{
 		socket,
 		schema,
-		probeDagger(ctx, opts),
+		probeSkift(ctx, opts),
 		probeSidecar(ctx, opts, worker, workerErr),
 		probeSigning(ctx, opts, worker, workerErr),
 		probeForge(ctx, opts, worker, workerErr),
@@ -491,28 +491,28 @@ func probeService(ctx context.Context, opts doctorOptions) (socket, schema probe
 	return socket, schema
 }
 
-// probeDagger asks dagger for the ready set of the configured project. A
-// successful answer proves two things at once: dagger is reachable on the
+// probeSkift asks skift for the ready set of the configured project. A
+// successful answer proves two things at once: skift is reachable on the
 // socket, and the account this process runs as resolves to a principal that
-// may read the project — dagger resolves a principal from the transport and
-// refuses a uid it does not know (dagger's docs/architecture.md, the trust
+// may read the project — skift resolves a principal from the transport and
+// refuses a uid it does not know (skift's docs/architecture.md, the trust
 // boundary).
 //
-// What it cannot prove is the principal's name. Dagger's API exposes no
+// What it cannot prove is the principal's name. Skift's API exposes no
 // whoami and its principals carry no name, so "the principal is mill" is not
-// a question dagger will answer; the reason line says what was checked.
-func probeDagger(ctx context.Context, opts doctorOptions) probe {
+// a question skift will answer; the reason line says what was checked.
+func probeSkift(ctx context.Context, opts doctorOptions) probe {
 	if opts.project == "" {
-		return fail("dagger", "no project to probe: pass --project or set %s", daggerProjectEnv)
+		return fail("skift", "no project to probe: pass --project or set %s", skiftProjectEnv)
 	}
 	ctx, cancel := context.WithTimeout(ctx, doctor.ProbeTimeout)
 	defer cancel()
-	nodes, err := dagger.Dial(opts.daggerSocket, opts.project).Ready(ctx, []string{opts.project}, skiftv1.AssigneeKind_ASSIGNEE_KIND_AGENT)
+	nodes, err := skift.Dial(opts.skiftSocket, opts.project).Ready(ctx, []string{opts.project}, skiftv1.AssigneeKind_ASSIGNEE_KIND_AGENT)
 	if err != nil {
-		return fail("dagger", "%s did not answer as this account: %v", opts.daggerSocket, err)
+		return fail("skift", "%s did not answer as this account: %v", opts.skiftSocket, err)
 	}
-	return pass("dagger", "%s answers; this account is a principal on %s, %d node(s) ready for an agent",
-		opts.daggerSocket, opts.project, len(nodes))
+	return pass("skift", "%s answers; this account is a principal on %s, %d node(s) ready for an agent",
+		opts.skiftSocket, opts.project, len(nodes))
 }
 
 // probeSidecar starts the harness sidecar and asks it for a no-op — the
@@ -556,7 +556,7 @@ func signingContentReader(ctx context.Context, opts doctorOptions) forge.Content
 	if opts.project == "" {
 		return nil
 	}
-	f, _, err := resolveForgeProject(ctx, opts.daggerSocket, opts.project, opts.forge)
+	f, _, err := resolveForgeProject(ctx, opts.skiftSocket, opts.project, opts.forge)
 	if err != nil {
 		return nil
 	}
@@ -570,7 +570,7 @@ func signingContentReader(ctx context.Context, opts doctorOptions) forge.Content
 // probeForge asks the forge whether the credential the mill holds — the
 // credential store's forge-token, else $MILL_FORGE_TOKEN — will serve a
 // delivery, before a run spends a session finding out. The repository is
-// the project's, read from dagger the way a run reads it, so the probe
+// the project's, read from skift the way a run reads it, so the probe
 // needs the project and nothing else; the adapter is the one a run would
 // use, resolved the same way, so a `forge:` that names no adapter fails
 // here too.
@@ -590,7 +590,7 @@ func probeForge(ctx context.Context, opts doctorOptions, worker *millv1.ProbeRes
 		return result
 	}
 	if opts.project == "" {
-		return fail("forge", "no project to read the repository from: pass --project or set %s", daggerProjectEnv)
+		return fail("forge", "no project to read the repository from: pass --project or set %s", skiftProjectEnv)
 	}
 	token, err := loadForgeToken()
 	if err != nil {
@@ -602,7 +602,7 @@ func probeForge(ctx context.Context, opts doctorOptions, worker *millv1.ProbeRes
 	}
 	ctx, cancel := context.WithTimeout(ctx, doctor.ProbeTimeout)
 	defer cancel()
-	f, repositoryURL, err := resolveForgeProject(ctx, opts.daggerSocket, opts.project, opts.forge)
+	f, repositoryURL, err := resolveForgeProject(ctx, opts.skiftSocket, opts.project, opts.forge)
 	if err != nil {
 		return fail("forge", "%v", err)
 	}
@@ -620,13 +620,13 @@ func probeForge(ctx context.Context, opts doctorOptions, worker *millv1.ProbeRes
 // (contrib/notify/thicket-send.sh).
 //
 // A deployment with no notify command passes. Filing a gate that reaches
-// nobody is a choice the mill supports — the answer is written in dagger
+// nobody is a choice the mill supports — the answer is written in skift
 // either way — and a probe that failed for it would make every mill without
 // a notifier report itself sick.
 func probeNotify(ctx context.Context, opts doctorOptions) probe {
 	command := notify.Parse(opts.notifyCommand)
 	if command == nil {
-		return pass("notify", "no notify command is configured; a filed gate waits in dagger for somebody to find it")
+		return pass("notify", "no notify command is configured; a filed gate waits in skift for somebody to find it")
 	}
 	ctx, cancel := context.WithTimeout(ctx, notify.Timeout)
 	defer cancel()
@@ -676,7 +676,7 @@ func probeWorkspace(ctx context.Context, opts doctorOptions, host driver.Driver)
 }
 
 // probeIsolation asks whether a session's own tools would ever see the
-// production dagger or mill socket: the logic lives in internal/doctor, so
+// production skift or mill socket: the logic lives in internal/doctor, so
 // internal/server's WorkerService can answer the same question from the
 // worker's own process. It is local-only — no worker RPC round-trip,
 // following probeWorkspace/probeSpace's own pattern — because a session's
@@ -685,7 +685,7 @@ func probeWorkspace(ctx context.Context, opts doctorOptions, host driver.Driver)
 func probeIsolation(ctx context.Context, opts doctorOptions) probe {
 	ctx, cancel := context.WithTimeout(ctx, doctor.ProbeTimeout)
 	defer cancel()
-	result := doctor.SessionSockets(ctx, opts.workspaceDir, opts.socket, opts.daggerSocket)
+	result := doctor.SessionSockets(ctx, opts.workspaceDir, opts.socket, opts.skiftSocket)
 	return probe{Name: "isolation", OK: result.OK, Reason: result.Reason}
 }
 

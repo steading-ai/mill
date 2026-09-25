@@ -33,7 +33,7 @@ const (
 	strangerUID = 9003
 )
 
-// lease is the dagger lease the fixture's worker holds. Every fenced write
+// lease is the skift lease the fixture's worker holds. Every fenced write
 // presents it.
 const lease = "lease-1"
 

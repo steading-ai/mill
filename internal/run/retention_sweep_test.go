@@ -46,7 +46,7 @@ func closeSealed(ctx context.Context, f *sealFixture) {
 }
 
 // retentionRunner builds a bare *run.Runner over f's store client and log
-// dir with the policy and clock a spec is testing — no dagger, no
+// dir with the policy and clock a spec is testing — no skift, no
 // workspace, exactly what SweepRetention itself touches.
 func retentionRunner(f *sealFixture, policy run.Policy, projects map[string]run.Policy, now time.Time) *run.Runner {
 	return run.New(run.Options{

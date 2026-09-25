@@ -29,7 +29,7 @@ func stoppedAtCleanTree(ctx context.Context, nodeRef string, id int) *runs {
 		Evidence: &millv1.Evidence{
 			Kind:       millv1.EvidenceKind_EVIDENCE_KIND_ARTIFACT,
 			Value:      &millv1.Evidence_Artifact{Artifact: "sha256:" + strings.Repeat("b", 64)},
-			VerifiedBy: "mill: dagger accepted the artifact",
+			VerifiedBy: "mill: skift accepted the artifact",
 		},
 	})
 	r.close(ctx, r.start(ctx, "commit", millv1.StepKind_STEP_KIND_SKILL), &millv1.CloseStepRunRequest{

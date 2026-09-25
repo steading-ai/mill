@@ -433,7 +433,7 @@ func (w *Workspace) environmentFor(token workspace.Token) map[string]string {
 	for name, value := range egress.Environment(token.Value) {
 		env[name] = value
 	}
-	// DG_SOCKET and MILL_SOCKET are real, dead paths under the run's own
+	// SKIFT_SOCKET and MILL_SOCKET are real, dead paths under the run's own
 	// directory, so a child that names neither flag and finds neither in a
 	// real environment does not fall back to the compiled-in production
 	// sockets, which the local backend's shared filesystem and uid make

@@ -278,7 +278,7 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 	workErr := <-worked
 	close(stopped)
 	if workErr != nil {
-		// The worker gave up on its own — dagger unreachable, most likely.
+		// The worker gave up on its own — skift unreachable, most likely.
 		// Serving on with no worker would be a mill that answers reads and
 		// never takes work, so the process ends and the unit restarts it.
 		drain()
@@ -336,7 +336,7 @@ func workerForgeResolver(opts *workOptions) func(context.Context) (forge.Forge, 
 	projects := resolveProjects(opts.projects)
 	return func(ctx context.Context) (forge.Forge, string, string, error) {
 		if len(projects) == 0 {
-			return nil, "", "", fmt.Errorf("no project to read a repository from: pass --project or set %s", daggerProjectEnv)
+			return nil, "", "", fmt.Errorf("no project to read a repository from: pass --project or set %s", skiftProjectEnv)
 		}
 		token, err := loadForgeToken()
 		if err != nil {
@@ -346,7 +346,7 @@ func workerForgeResolver(opts *workOptions) func(context.Context) (forge.Forge, 
 			return nil, "", "", fmt.Errorf("the mill holds no forge credential: deliver %s to the credential store or set $%s",
 				forgeCredentialName, forgeTokenEnv)
 		}
-		f, repositoryURL, err := resolveForgeProject(ctx, opts.run.daggerSocket, projects[0], opts.run.forge)
+		f, repositoryURL, err := resolveForgeProject(ctx, opts.run.skiftSocket, projects[0], opts.run.forge)
 		if err != nil {
 			return nil, "", "", err
 		}

@@ -15,7 +15,7 @@ import (
 // The configuration file.
 //
 // A worker's settings are the long tail of a systemd ExecStart line: which
-// projects, which labels, where dagger's socket is, where workspaces go.
+// projects, which labels, where skift's socket is, where workspaces go.
 // Putting them in a file keeps the unit one line and lets an operator change
 // what the mill works on without editing a unit and reloading systemd.
 //
@@ -33,15 +33,15 @@ const configEnv = "MILL_CONFIG"
 // exception, `env_mode`, which is spelled the way the deployment that sets
 // it spells it.
 type Config struct {
-	Socket       string   `yaml:"socket"`
-	DaggerSocket string   `yaml:"dagger-socket"`
-	Projects     []string `yaml:"project"`
-	Labels       []string `yaml:"label"`
-	Concurrency  int      `yaml:"concurrency"`
+	Socket      string   `yaml:"socket"`
+	SkiftSocket string   `yaml:"skift-socket"`
+	Projects    []string `yaml:"project"`
+	Labels      []string `yaml:"label"`
+	Concurrency int      `yaml:"concurrency"`
 	// TTL and Heartbeat are durations as `time.ParseDuration` reads them.
 	// A host that sleeps — a laptop with its lid closed — freezes the
 	// worker past its lease, and every run it held is fenced on wake, so a
-	// deployment on such a host asks for the longest TTL dagger allows.
+	// deployment on such a host asks for the longest TTL skift allows.
 	TTL         string `yaml:"ttl"`
 	Heartbeat   string `yaml:"heartbeat"`
 	Workflow    string `yaml:"workflow"`
@@ -116,11 +116,11 @@ type Config struct {
 	NoProxy         string `yaml:"no-proxy"`
 	// Nesting (docs/sandbox.md §Self-hosting): the repositories whose
 	// `[machine].nested` request is granted, each by its path on the forge
-	// (`wellspring/mill`) or its origin URL, and the dagger checkout a
+	// (`wellspring/mill`) or its origin URL, and the skift checkout a
 	// nested machine gets bound read-only for its test fixture. Spelled
 	// with underscores the way env_mode is: a deployment writes them.
-	NestedRepos    []string `yaml:"nested_repos"`
-	DaggerCheckout string   `yaml:"dagger_checkout"`
+	NestedRepos   []string `yaml:"nested_repos"`
+	SkiftCheckout string   `yaml:"skift_checkout"`
 	// The reconciliation sweep (docs/sandbox.md §"External state"): the
 	// forge group the acceptance suite makes its scratch projects in, by
 	// path or numeric id, and how old a scratch project must be before the
@@ -357,7 +357,7 @@ type configKey struct {
 // rendering. The order is the Config struct's.
 var configKeys = []configKey{
 	{"socket", "socket"},
-	{"dagger-socket", "dagger-socket"},
+	{"skift-socket", "skift-socket"},
 	{"project", "project"},
 	{"label", "label"},
 	{"concurrency", "concurrency"},
@@ -397,7 +397,7 @@ var configKeys = []configKey{
 	{"proxy", ""},
 	{"no-proxy", ""},
 	{"nested_repos", ""},
-	{"dagger_checkout", ""},
+	{"skift_checkout", ""},
 	{"scratch-namespace", ""},
 	{"scratch-budget", ""},
 	{"log-dir", "log-dir"},

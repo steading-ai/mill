@@ -6,19 +6,19 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/steading-ai/mill/internal/dagger"
 	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/skift"
 	"github.com/steading-ai/mill/internal/workspace"
 	"github.com/steading-ai/mill/internal/workspace/machine"
 	"github.com/steading-ai/mill/internal/workspace/redact"
 )
 
 type restartOptions struct {
-	config       string
-	socket       string
-	daggerSocket string
-	project      string
-	reason       string
+	config      string
+	socket      string
+	skiftSocket string
+	project     string
+	reason      string
 	// run carries what the workspace the restart destroys is found by: the
 	// backend, its roots, and the identity the checkout was made under.
 	run runOptions
@@ -50,7 +50,7 @@ decision; this is that decision.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.project == "" {
-				return fmt.Errorf("mill restart: a dagger project is required; pass --project or set %s", daggerProjectEnv)
+				return fmt.Errorf("mill restart: a skift project is required; pass --project or set %s", skiftProjectEnv)
 			}
 			if err := applyRestartConfig(cmd, &opts); err != nil {
 				return err
@@ -68,8 +68,8 @@ decision; this is that decision.`,
 				opts.run.identity = defaultIdentity()
 			}
 			runner := run.New(run.Options{
-				Store:  storeClient(opts.socket),
-				Dagger: dagger.Dial(opts.daggerSocket, opts.project, dagger.WithAgentRef(worker)),
+				Store: storeClient(opts.socket),
+				Skift: skift.Dial(opts.skiftSocket, opts.project, skift.WithAgentRef(worker)),
 				// Attach-only: a restart destroys the workspace the run left
 				// behind and must never clone or boot one in order to
 				// delete it.
@@ -85,8 +85,8 @@ decision; this is that decision.`,
 	f := cmd.Flags()
 	f.StringVar(&opts.config, "config", defaultConfigPath(), "path of the configuration file, for the workspace backend and its roots (default: $"+configEnv+", else $XDG_CONFIG_HOME/mill/config.yaml, else /etc/mill/config.yaml)")
 	f.StringVar(&opts.socket, "socket", defaultSocketPath(), "path of the service's unix socket (default: $"+socketEnv+")")
-	f.StringVar(&opts.daggerSocket, "dagger-socket", envOr(daggerSocketEnv, defaultDaggerSocket), "path of dagger's unix socket (default: $"+daggerSocketEnv+")")
-	f.StringVar(&opts.project, "project", os.Getenv(daggerProjectEnv), "dagger project a bare #7 reference resolves in (default: $"+daggerProjectEnv+")")
+	f.StringVar(&opts.skiftSocket, "skift-socket", envOr(skiftSocketEnv, defaultSkiftSocket), "path of skift's unix socket (default: $"+skiftSocketEnv+")")
+	f.StringVar(&opts.project, "project", os.Getenv(skiftProjectEnv), "skift project a bare #7 reference resolves in (default: $"+skiftProjectEnv+")")
 	f.StringVar(&opts.run.workspaceDir, "workspace-dir", defaultWorkspaceDir(), "directory run workspaces live under")
 	f.StringVar(&opts.run.workspace, "workspace", string(workspace.KindLocal), workspaceUsage)
 	f.StringVar(&opts.run.sandboxRoot, "sandbox-root", machine.DefaultRoot, sandboxRootUsage)

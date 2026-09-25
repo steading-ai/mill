@@ -1,11 +1,11 @@
 // Package acceptance_test is the suite that drives the whole mill against
-// real dependencies: a real dagger, a real GitLab, the real sidecar, and a
+// real dependencies: a real skift, a real GitLab, the real sidecar, and a
 // real Claude account.
 //
 // Every other suite in this tree proves a part. This one proves O0's
 // done-when: a quick-fix node delivered by `mill run`, with every step's
 // evidence in the ledger (docs/prd.md §8). Nothing here is faked, which is
-// the point — dagger's first build passed its entire suite while agents
+// the point — skift's first build passed its entire suite while agents
 // could not file work, and the lesson was that an acceptance suite must
 // drive the system as the principal the design describes.
 //

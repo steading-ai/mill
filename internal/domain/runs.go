@@ -48,7 +48,7 @@ type RunDetail struct {
 	Steps    []*millv1.StepRunDetail
 }
 
-// GetRunByNode returns the live run for a dagger node, or nil when the node
+// GetRunByNode returns the live run for a skift node, or nil when the node
 // has none. The first call a worker makes after a claim.
 func (s *Service) GetRunByNode(ctx context.Context, nodeID string) (*millv1.Run, error) {
 	return s.store.GetRunByNode(ctx, nodeID)
@@ -173,7 +173,7 @@ func (s *Service) SetCompleteRequestID(ctx context.Context, leaseID, runID, requ
 	return s.store.SetCompleteRequestID(ctx, leaseID, runID, requestID)
 }
 
-// Done marks a run done, after dagger has confirmed the completing patch.
+// Done marks a run done, after skift has confirmed the completing patch.
 func (s *Service) Done(ctx context.Context, leaseID, runID string) (*millv1.Run, error) {
 	if err := s.checkTransition(ctx, runID, millv1.RunStatus_RUN_STATUS_DONE); err != nil {
 		return nil, err
@@ -182,7 +182,7 @@ func (s *Service) Done(ctx context.Context, leaseID, runID string) (*millv1.Run,
 }
 
 // Fail ends a run a gate denied. The node's own result already carries the
-// gate's deny_result: this is the ledger catching up with what dagger was
+// gate's deny_result: this is the ledger catching up with what skift was
 // told, in the order docs/ledger.md fixes.
 func (s *Service) Fail(ctx context.Context, leaseID, runID, reason string) (*millv1.Run, error) {
 	if err := s.checkTransition(ctx, runID, millv1.RunStatus_RUN_STATUS_FAILED); err != nil {
@@ -309,7 +309,7 @@ func (s *Service) LatestEventCursor(ctx context.Context) (time.Time, string, err
 type WatchableEvent = store.WatchableEvent
 
 // WatchableEvents reads events across every run, from after (exclusive) in
-// (occurred_at, id) order, optionally narrowed to one dagger project.
+// (occurred_at, id) order, optionally narrowed to one skift project.
 func (s *Service) WatchableEvents(ctx context.Context, after time.Time, afterID, project string) ([]WatchableEvent, error) {
 	return s.store.WatchableEvents(ctx, after, afterID, project)
 }
@@ -320,7 +320,7 @@ type CostParams struct {
 	Since time.Time
 	// Until bounds the window above. Zero means no upper bound.
 	Until time.Time
-	// Project narrows to one dagger project. Empty means every project.
+	// Project narrows to one skift project. Empty means every project.
 	Project string
 	// Bucket says whether, and how, to also group the window over time.
 	Bucket millv1.TimeBucket

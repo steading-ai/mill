@@ -13,9 +13,9 @@ import (
 
 	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
-	"github.com/steading-ai/mill/internal/dagger"
 	"github.com/steading-ai/mill/internal/gateway"
 	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/skift"
 )
 
 // recordUsage appends what an attempt billed to the ledger, one row per
@@ -50,7 +50,7 @@ func (r *Runner) recordUsage(ctx context.Context, s *state, sr *millv1.StepRun, 
 // recordGatewayUsage appends what the credential gateway counted on one
 // response, as its own row with source `gateway`: the same shape as the
 // adapter's report, distinct from it, so the two can be read beside each
-// other (docs/sandbox.md §Credentials). It is never posted to dagger; the
+// other (docs/sandbox.md §Credentials). It is never posted to skift; the
 // adapter's rows are the step's cost there.
 func (r *Runner) recordGatewayUsage(ctx context.Context, lease string, sr *millv1.StepRun, usage gateway.Usage) error {
 	_, err := call(ctx, r.options.Store.RecordUsage, &millv1.RecordUsageRequest{
@@ -70,7 +70,7 @@ func (r *Runner) recordGatewayUsage(ctx context.Context, lease string, sr *millv
 	return err
 }
 
-// postUsage sends an attempt's totals to dagger, one record per model, and
+// postUsage sends an attempt's totals to skift, one record per model, and
 // marks the rows posted. The totals are the adapter's rows alone: the
 // store keeps the gateway's count out of them (mill.v1.StepRunDetail).
 //
@@ -89,7 +89,7 @@ func (r *Runner) postUsage(ctx context.Context, s *state, sr *millv1.StepRun) er
 			continue
 		}
 		for _, totals := range d.GetTotals() {
-			if err := s.dagger.ReportUsage(ctx, s.leaseID(), s.node.GetReference(), totals.GetModel(), dagger.TokenCounts{
+			if err := s.skift.ReportUsage(ctx, s.leaseID(), s.node.GetReference(), totals.GetModel(), skift.TokenCounts{
 				InputTokens:      totals.GetInputTokens(),
 				OutputTokens:     totals.GetOutputTokens(),
 				CacheReadTokens:  totals.GetCacheReadTokens(),
@@ -113,11 +113,11 @@ func (r *Runner) postUsage(ctx context.Context, s *state, sr *millv1.StepRun) er
 //  1. the completing patch's request id, minted and stored before use;
 //  2. the patch itself, which carries the result and its artifacts and
 //     releases the lease as part of the same write;
-//  3. store.Done, only once dagger has acknowledged the patch;
+//  3. store.Done, only once skift has acknowledged the patch;
 //  4. the workspace, destroyed, and its end recorded: the files gone and
 //     what its caches promoted (docs/ledger.md §workspaces).
 //
-// Never the reverse. A run marked done before dagger confirmed would strand
+// Never the reverse. A run marked done before skift confirmed would strand
 // a node nothing can ever claim; a crash between 2 and 3 is recovered by the
 // next `mill run`, which finds the node done and marks the run done under
 // the request id already stored (docs/architecture.md §"Write ordering").
@@ -125,14 +125,14 @@ func (r *Runner) finish(ctx context.Context, s *state, detail *millv1.InspectRes
 	keyed, err := call(ctx, r.options.Store.SetCompleteRequestId, &millv1.SetCompleteRequestIdRequest{
 		LeaseId:   s.leaseID(),
 		RunId:     s.run.GetId(),
-		RequestId: dagger.RequestID(s.run.GetId(), completeStep, s.run.GetGeneration()),
+		RequestId: skift.RequestID(s.run.GetId(), completeStep, s.run.GetGeneration()),
 	})
 	if err != nil {
 		return err
 	}
 	requestID := keyed.GetRun().GetCompleteRequestId()
 
-	if err := s.dagger.Complete(ctx, requestID, s.leaseID(), s.node.GetReference(), r.result(s, detail)); err != nil {
+	if err := s.skift.Complete(ctx, requestID, s.leaseID(), s.node.GetReference(), r.result(s, detail)); err != nil {
 		return err
 	}
 	if _, err := call(ctx, r.options.Store.Done, &millv1.DoneRequest{
@@ -162,7 +162,7 @@ const completeStep = "complete"
 // result is what the node is completed with: the implementer's summary as
 // the body, and the run's references and usage as artifacts. Every
 // artifact's metadata carries the run id (docs/ledger.md §"What goes to
-// dagger, and when").
+// skift, and when").
 func (r *Runner) result(s *state, detail *millv1.InspectResponse) *skiftv1.Result {
 	result := &skiftv1.Result{Body: s.summary}
 	if result.Body == "" {
@@ -182,10 +182,10 @@ func (r *Runner) result(s *state, detail *millv1.InspectResponse) *skiftv1.Resul
 	return result
 }
 
-// reference is an artifact naming something outside dagger: a commit, a
+// reference is an artifact naming something outside skift: a commit, a
 // pull request. docs/ledger.md calls both `reference`.
 //
-// Dagger requires a sha256 digest on a reference part. Mill does not fetch
+// Skift requires a sha256 digest on a reference part. Mill does not fetch
 // what the reference points at — the commit is on a forge, and pulling it
 // back to hash it would prove nothing the forge has not already said — so
 // the digest is over the reference itself. It identifies what was recorded,
@@ -224,7 +224,7 @@ func text(s *state, name, description, body string) *skiftv1.Artifact {
 }
 
 // metadata is what every artifact mill attaches carries: the run it belongs
-// to, so a reader can join dagger's side of a run to the ledger's.
+// to, so a reader can join skift's side of a run to the ledger's.
 func metadata(s *state, name string) *structpb.Struct {
 	value, err := structpb.NewStruct(map[string]any{
 		"run_id":   s.run.GetId(),

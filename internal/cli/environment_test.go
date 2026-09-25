@@ -14,8 +14,8 @@ import (
 	"github.com/steading-ai/mill/internal/workspace"
 )
 
-// A face run in-process reads the mill's own environment: the dagger project
-// it claims from, dagger's socket, the forge credential, the configuration
+// A face run in-process reads the mill's own environment: the skift project
+// it claims from, skift's socket, the forge credential, the configuration
 // file. That is right for a deployed mill and wrong for a spec, which is
 // asserting about the command line it wrote down and not about the shell it
 // happens to be run from. Under `mise exec` the project variable names the
@@ -29,8 +29,8 @@ import (
 // under test because what a spec removes from the process is a name, and a
 // name the command stopped reading is one this list should stop naming too.
 var workerEnvironment = []string{
-	"DG_PROJECT",
-	"DG_SOCKET",
+	"SKIFT_PROJECT",
+	"SKIFT_SOCKET",
 	"MILL_SOCKET",
 	"MILL_FORGE_TOKEN",
 	"MILL_FORGE_USER",
@@ -52,14 +52,14 @@ func scrubEnvironment() {
 }
 
 // setEnvironment is a shell set up for the live mill: the project it works,
-// dagger's socket, and the forge credential a workspace pushes with. The
+// skift's socket, and the forge credential a workspace pushes with. The
 // socket is a path nothing listens on, so a command that got as far as
-// asking dagger for work fails rather than claiming.
+// asking skift for work fails rather than claiming.
 func setEnvironment() {
 	GinkgoHelper()
 	for name, value := range map[string]string{
-		"DG_PROJECT":       "mill",
-		"DG_SOCKET":        filepath.Join(GinkgoT().TempDir(), "dg.sock"),
+		"SKIFT_PROJECT":    "mill",
+		"SKIFT_SOCKET":     filepath.Join(GinkgoT().TempDir(), "skift.sock"),
 		"MILL_SOCKET":      filepath.Join(GinkgoT().TempDir(), "from-the-environment.sock"),
 		"MILL_FORGE_TOKEN": "not-a-real-token",
 		"MILL_FORGE_USER":  "mill",
@@ -96,7 +96,7 @@ var _ = Describe("A face's environment", Label("unit"), func() {
 	}
 
 	It("A unit spec starts no worker whatever the environment names", func() {
-		By("given DG_PROJECT and the forge variables are set in the environment")
+		By("given SKIFT_PROJECT and the forge variables are set in the environment")
 		setEnvironment()
 
 		By("when the cli unit suite runs")
@@ -110,18 +110,18 @@ var _ = Describe("A face's environment", Label("unit"), func() {
 		// rather than refusing to start, so this spec proves the point
 		// differently: the filter it logs is empty, not "mill" leaked back
 		// in from the scrubbed environment. Both sockets name paths nothing
-		// listens on — spelled out rather than left to DG_SOCKET/MILL_SOCKET's
+		// listens on — spelled out rather than left to SKIFT_SOCKET/MILL_SOCKET's
 		// own defaults, which on a host running a real mill would otherwise
 		// reach it.
 		socket := filepath.Join(GinkgoT().TempDir(), "not-listening.sock")
-		daggerSocket := filepath.Join(GinkgoT().TempDir(), "not-listening-dagger.sock")
-		exit := invoke("work", "--config", config, "--socket", socket, "--dagger-socket", daggerSocket)
+		skiftSocket := filepath.Join(GinkgoT().TempDir(), "not-listening-skift.sock")
+		exit := invoke("work", "--config", config, "--socket", socket, "--skift-socket", skiftSocket)
 
 		By("then the worker's filter is empty and the suite finishes")
 		Expect(exit).NotTo(BeZero())
 		Expect(stderr.String()).To(ContainSubstring("mill work starting"))
 		Expect(stderr.String()).To(ContainSubstring("projects=[]"),
-			"the worker claims from every project; DG_PROJECT was scrubbed before it started")
+			"the worker claims from every project; SKIFT_PROJECT was scrubbed before it started")
 	})
 
 	It("A config path that does not exist is refused", func() {
@@ -165,7 +165,7 @@ var _ = Describe("A face's environment", Label("unit"), func() {
 	})
 
 	// A session with neither flag given falls back to internal/cli's own
-	// compiled-in socket default, so a workspace's dead DG_SOCKET/MILL_SOCKET
+	// compiled-in socket default, so a workspace's dead SKIFT_SOCKET/MILL_SOCKET
 	// must win over that default, not merely be present alongside it. Only a
 	// real, flagless `status` invocation tells those two apart.
 	It("dials the dead socket a session's own environment names when no flag says otherwise, never the production default", func() {

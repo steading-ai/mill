@@ -2,21 +2,21 @@
 
 ## What this repo is
 
-Mill is a workflow runner over dagger's work graph. It claims a ready node, selects a workflow, drives each step as a headless coding-agent session or a deterministic check, closes steps only on evidence it verified, files dagger gates for human decisions, and completes the node with a result and provenance. It stores nothing but the record of its own runs.
+Mill is a workflow runner over skift's work graph. It claims a ready node, selects a workflow, drives each step as a headless coding-agent session or a deterministic check, closes steps only on evidence it verified, files skift gates for human decisions, and completes the node with a result and provenance. It stores nothing but the record of its own runs.
 
 - **Design is frontloaded and authoritative.** `docs/` settles the decisions; code follows it, not the other way round. When code and a document disagree, the document wins and the disagreement is a finding to report.
-- **The repo builds itself.** Work is filed as nodes in the deployed dagger service (project `mill`) and executed by agents through `harness/loop.py`, one milestone at a time.
-- **Mill runs as the operator.** It is the operator's dagger principal; dagger applies no gate veto to it. Never claiming, completing, dropping, reclassifying, or unlinking a gate is mill's own discipline — see `docs/domain-model.md` §Principal.
+- **The repo builds itself.** Work is filed as nodes in the deployed skift service (project `mill`) and executed by agents through `harness/loop.py`, one milestone at a time.
+- **Mill runs as the operator.** It is the operator's skift principal; skift applies no gate veto to it. Never claiming, completing, dropping, reclassifying, or unlinking a gate is mill's own discipline — see `docs/domain-model.md` §Principal.
 
 ## If you were dispatched to work a node
 
 The harness hands you the work order — the node's body plus the results of every node that blocks it. To see it again, or to look around:
 
 ```bash
-dg node show '#18'      # the full work order for one node
-dg inputs '#18'         # results handed on by the nodes it depends on
-dg ready                # what is claimable now
-dg explain '#18'        # why a node is or is not ready
+skift node show '#18'      # the full work order for one node
+skift inputs '#18'         # results handed on by the nodes it depends on
+skift ready                # what is claimable now
+skift explain '#18'        # why a node is or is not ready
 ```
 
 The work order names the documents that govern it. Read them before writing code; they are the authority when they disagree with existing code.
@@ -33,7 +33,7 @@ Your contract is the node's **Acceptance criteria** and **Scenarios**. Every cri
 cmd/mill/             binary entrypoint; one binary, two faces (service, worker)
 internal/cli/         the cobra command tree: serve, work, run, restart, workflow, image, cache, doctor, mcp, the readers, version
 internal/store/       persistence and its migrations; only internal/domain may import it
-internal/dagger/      the client for dagger's dagger.v1 API, and the refusals mill owes a gate
+internal/skift/      the client for skift's skift.v1 API, and the refusals mill owes a gate
 internal/run/         the loop: claim, heartbeat, steps, evidence, finish. docs/ledger.md §Resume in Go
 internal/harness/     the adapter seam: the Harness interface, the claude sidecar driver, a scripted fake
 internal/workflow/    the loader: a workflow directory in, a versioned definition and its skills out
@@ -41,7 +41,7 @@ internal/workspace/   the process chokepoint. os/exec is forbidden everywhere el
 internal/workspace/machine  the machine backend: a run's systemd-nspawn machine through mill-machine@, its driver seam, images, cache lineages, eviction, reconciliation; docs/sandbox.md
 internal/gateway/     the credential gateway: the session's step token in, the subscription credential out, usage counted from outside; docs/sandbox.md §Credentials
 internal/skill/       the mill skill and the sidecar copy the worker mounts read-only into every machine; docs/sandbox.md §"Skill mount"
-internal/testsupport/ the testcontainers PostgreSQL fixture db-labelled specs use, and a real `dg serve` for the run loop
+internal/testsupport/ the testcontainers PostgreSQL fixture db-labelled specs use, and a real `skift serve` for the run loop
 internal/version/     the version injected at link time by the Makefile
 proto/                the contracts: mill.v1 the store API, harness.v1 the sidecar wire; README.md is the compatibility policy and says where skift.v1 comes from
 gen/                  generated Go, committed. buf owns it; `make generate` writes it
@@ -64,7 +64,7 @@ compose.yaml          PostgreSQL for local development; .env.example seeds .env
 - **How the pieces fit** — `docs/architecture.md`: two faces, the request path, the harness adapter, the workspace socket, identity, failure.
 - **The store and the resume algorithm** — `docs/ledger.md`. The pseudocode there is the specification of the run loop.
 - **Where this is going** — `docs/roadmap.md`. O0 is the walking skeleton; everything past it is parked there with its provenance.
-- **The contract mill consumes** — dagger's `docs/domain-model.md`, checked out on this host under `~/src/github.com/ivy/dagger`.
+- **The contract mill consumes** — skift's `docs/domain-model.md`, checked out on this host under `~/src/github.com/steading-ai/skift`.
 - **The sandbox a run works in** — `docs/sandbox.md`: the machine, its image and `mill.toml`, caches and eviction, network and the credential gateway, privilege, reconciliation, what the host provides. `docs/sandbox-scenarios.md` is its behaviour; ADR-018 its decision.
 - **The tools an operator has** — `docs/tools.md`: what each read tool answers, what `doctor` probes, `cache` and `image`, and how a session reaches them over `mill mcp`.
 - **How to run the acceptance suite** — `docs/runbook.md`: what it needs, what it leaves behind, how to clean up.
@@ -80,7 +80,7 @@ make build              # ./mill
 make test               # all specs
 make test-unit          # specs needing no database
 make test-db            # specs needing PostgreSQL, via testcontainers
-make test-acceptance    # the whole mill against a real dagger, GitLab and Claude account
+make test-acceptance    # the whole mill against a real skift, GitLab and Claude account
 make lint               # go vet and golangci-lint
 make lint-contract      # buf breaking against main: a report, not a gate
 make check              # the release gate: lint, the contract report, every spec
@@ -108,7 +108,7 @@ Two lint rules carry design decisions rather than style: `depguard` stops anythi
 
 - Do the node you were given. If a dependency is missing, report it rather than building it.
 - Add specs with the code. A criterion with no spec is not done.
-- Follow the patterns already in the tree over your own preferences; dagger's repository is the style reference.
+- Follow the patterns already in the tree over your own preferences; skift's repository is the style reference.
 - No repo-wide reformatting, and no dependency the work order did not name.
 - Never commit a secret. `.env` is ignored; `.env.example` is the template.
 - Generated code is committed. Run `make generate` and include the result.

@@ -16,7 +16,7 @@ import (
 	"github.com/steading-ai/mill/internal/workspace"
 )
 
-// The repository a run delivers to is the dagger project's, read from the
+// The repository a run delivers to is the skift project's, read from the
 // claim: never the worker's configuration, and never shared between runs.
 var _ = Describe("The run's repository", Label(testsupport.DBLabel), func() {
 	var f *fixture
@@ -70,7 +70,7 @@ var _ = Describe("The run's repository", Label(testsupport.DBLabel), func() {
 
 		err := runner.Execute(ctx, f.nodeRef)
 
-		Expect(err).To(MatchError(ContainSubstring("dg project update " + project + " --vcs-url")))
+		Expect(err).To(MatchError(ContainSubstring("skift project update " + project + " --vcs-url")))
 		Expect(opened.Load()).To(BeZero(), "nothing was cloned")
 		Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_FAILED))
 		node, err := f.client.Node(ctx, f.nodeRef)
@@ -80,7 +80,7 @@ var _ = Describe("The run's repository", Label(testsupport.DBLabel), func() {
 		Expect(node.GetStatus()).To(Equal(skiftv1.Status_STATUS_OPEN))
 	})
 
-	It("reads the project from dagger when the claim carries none", func() {
+	It("reads the project from skift when the claim carries none", func() {
 		var slug string
 		runner := f.runner(func(o *run.Options) {
 			o.Repositories = func(_ context.Context, project *skiftv1.Project) (run.Repository, error) {
@@ -90,7 +90,7 @@ var _ = Describe("The run's repository", Label(testsupport.DBLabel), func() {
 		})
 		claimed, err := f.client.Claim(ctx, f.nodeRef)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(claimed.Project).NotTo(BeNil(), "dagger hands the project back with the claim")
+		Expect(claimed.Project).NotTo(BeNil(), "skift hands the project back with the claim")
 		claimed.Project = nil
 
 		Expect(runner.ExecuteClaimed(ctx, claimed, nil)).To(Succeed())

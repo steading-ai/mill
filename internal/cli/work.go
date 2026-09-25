@@ -30,7 +30,7 @@ type workOptions struct {
 	grace         time.Duration
 }
 
-// newWorkCommand is the worker face: ClaimNext against dagger, then drive
+// newWorkCommand is the worker face: ClaimNext against skift, then drive
 // the claimed node's run.
 func newWorkCommand() *cobra.Command {
 	return workCommand(&workOptions{})
@@ -41,11 +41,11 @@ func newWorkCommand() *cobra.Command {
 func workCommand(opts *workOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "work",
-		Short: "Claim ready dagger nodes and drive their runs",
-		Long: `Run a worker: ask dagger for the next ready node matching the configured
+		Short: "Claim ready skift nodes and drive their runs",
+		Long: `Run a worker: ask skift for the next ready node matching the configured
 projects and labels, drive its run to a result, and ask again. With no
 --project it claims from every project the worker's principal may read.
-There is no scheduler and no event subscription — readiness is dagger's, and
+There is no scheduler and no event subscription — readiness is skift's, and
 a worker asking for work is the scheduling.
 
 --concurrency caps how many runs are in flight; one is the value this
@@ -72,13 +72,13 @@ func bindWorkFlags(cmd *cobra.Command, opts *workOptions) {
 	f := cmd.Flags()
 	f.StringVar(&opts.config, "config", defaultConfigPath(), "path of the configuration file (default: $"+configEnv+", else $XDG_CONFIG_HOME/mill/config.yaml, else /etc/mill/config.yaml)")
 	f.StringVar(&opts.run.socket, "socket", defaultSocketPath(), "path of the service's unix socket: what `serve` listens on, and what a worker reaches it at (default: $"+socketEnv+")")
-	f.StringSliceVar(&opts.projects, "project", nil, "dagger project to claim from; repeat for more (default: $"+daggerProjectEnv+", else every project the worker may read)")
+	f.StringSliceVar(&opts.projects, "project", nil, "skift project to claim from; repeat for more (default: $"+skiftProjectEnv+", else every project the worker may read)")
 	f.StringSliceVar(&opts.labels, "label", nil, "only claim nodes carrying every one of these labels; repeat for more")
 	f.IntVar(&opts.concurrency, "concurrency", run.DefaultConcurrency, "how many runs to drive at once")
 	f.DurationVar(&opts.wait, "wait", run.DefaultWait, "how long one claim blocks for work before asking again")
-	f.DurationVar(&opts.sweepInterval, "sweep-interval", run.DefaultSweepInterval, "how long the worker goes between sweeps of the ledger against dagger, for runs whose node was closed underneath them")
+	f.DurationVar(&opts.sweepInterval, "sweep-interval", run.DefaultSweepInterval, "how long the worker goes between sweeps of the ledger against skift, for runs whose node was closed underneath them")
 	f.DurationVar(&opts.grace, "grace", run.DefaultStopGrace, "how long a stopping worker gives its runs before a second signal kills them")
-	f.StringVar(&opts.run.daggerSocket, "dagger-socket", envOr(daggerSocketEnv, defaultDaggerSocket), "path of dagger's unix socket (default: $"+daggerSocketEnv+")")
+	f.StringVar(&opts.run.skiftSocket, "skift-socket", envOr(skiftSocketEnv, defaultSkiftSocket), "path of skift's unix socket (default: $"+skiftSocketEnv+")")
 	f.StringVar(&opts.run.workflow, "workflow", "", "workflow to select when a run has none (default: assess the node and let the assessment name one)")
 	f.StringVar(&opts.run.tier, "tier", "", "tier that workflow stands for, which gate policies compare against (default: quick-fix, or the assessed tier)")
 	f.StringVar(&opts.run.workflowDir, "workflow-dir", "", "directory the workflow was loaded from, for a check step's scripts")
@@ -95,7 +95,7 @@ func bindWorkFlags(cmd *cobra.Command, opts *workOptions) {
 	f.StringVar(&opts.run.notifyCommand, "notify-command", "", notifyCommandUsage)
 	f.StringVar(&opts.run.identity, "identity", "", "address the mill commits under (default: mill@<host>)")
 	f.StringVar(&opts.run.name, "name", defaultForgeUser, "name on the mill's commits")
-	f.DurationVar(&opts.run.ttl, "ttl", run.DefaultTTL, "lease TTL to ask dagger for")
+	f.DurationVar(&opts.run.ttl, "ttl", run.DefaultTTL, "lease TTL to ask skift for")
 	f.DurationVar(&opts.run.interval, "heartbeat", 0, "how often to renew the lease (default: a third of the TTL)")
 	bindGatewayFlags(cmd, &opts.run.gateway)
 }
@@ -255,9 +255,9 @@ func newWorker(cmd *cobra.Command, opts *workOptions, onActivity func(string)) (
 	// One client for the worker, whatever the filter: an empty or
 	// many-project filter has no one project to pin the client to, and
 	// every claim scopes its own writes to the project it actually landed
-	// in (internal/run/run.go's state.dagger). No answerer: a worker has
+	// in (internal/run/run.go's state.skift). No answerer: a worker has
 	// nobody at its terminal, so a gate is filed and the lease released,
-	// and whoever answers does it in dagger (docs/architecture.md §"Gate
+	// and whoever answers does it in skift (docs/architecture.md §"Gate
 	// steps").
 	project := ""
 	if len(projects) == 1 {

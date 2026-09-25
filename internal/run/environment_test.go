@@ -66,7 +66,7 @@ var _ = Describe("A session's environment", Label(testsupport.DBLabel), func() {
 	It("Inherit mode keeps credentials out", func() {
 		By("given env_mode inherit and a mill process carrying ANTHROPIC_API_KEY and GOFLAGS")
 		adapter := deciding{Harness: f.harness, env: harness.Environment{
-			Stripped: []string{"ANTHROPIC_API_KEY", "CLAUDECODE", "DATABASE_URL", "DG_PROJECT"},
+			Stripped: []string{"ANTHROPIC_API_KEY", "CLAUDECODE", "DATABASE_URL", "SKIFT_PROJECT"},
 		}}
 
 		By("when the adapter spawns the sidecar")
@@ -76,7 +76,7 @@ var _ = Describe("A session's environment", Label(testsupport.DBLabel), func() {
 		attempts := environments("implement")
 		Expect(attempts).To(HaveLen(1))
 		Expect(attempts[0].GetEnvStripped()).To(ContainElement("ANTHROPIC_API_KEY"))
-		Expect(attempts[0].GetEnvStripped()).To(ContainElements("CLAUDECODE", "DATABASE_URL", "DG_PROJECT"))
+		Expect(attempts[0].GetEnvStripped()).To(ContainElements("CLAUDECODE", "DATABASE_URL", "SKIFT_PROJECT"))
 		Expect(attempts[0].GetEnvPassthrough()).To(BeEmpty())
 	})
 

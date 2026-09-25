@@ -214,7 +214,7 @@ var _ = Describe("Reconciliation on resume, in the loop", Label(testsupport.DBLa
 	})
 
 	It("refuses to drive a done run on an open node rather than resume it", func() {
-		By("given the ledger says the run is done but dagger's node was never told (Invariant 11 violated)")
+		By("given the ledger says the run is done but skift's node was never told (Invariant 11 violated)")
 		claimed, err := f.client.Claim(ctx, f.nodeRef)
 		Expect(err).NotTo(HaveOccurred())
 		created, err := f.store.CreateRun(ctx, connect.NewRequest(&millv1.CreateRunRequest{
@@ -283,7 +283,7 @@ var _ = Describe("Reconciliation on resume, in the loop", Label(testsupport.DBLa
 		f.script(f.quickFixScripts()...)
 		client, counter := f.counted()
 		startup := &recordingStartup{claim: counter.claims.Load}
-		worker := f.workerOver(f.runner(quick, func(o *run.Options) { o.Dagger = client }),
+		worker := f.workerOver(f.runner(quick, func(o *run.Options) { o.Skift = client }),
 			func(o *run.WorkerOptions) { o.Startup = startup })
 		done := startWorker(ctx, worker)
 		DeferCleanup(func() {
@@ -312,7 +312,7 @@ var _ = Describe("Reconciliation on resume, in the loop", Label(testsupport.DBLa
 		startup := &recordingStartup{claim: counter.claims.Load, also: func() string {
 			return f.inspectRun(ctx, first.GetId()).GetSummary().GetRun().GetStatus().String()
 		}}
-		worker := f.workerOver(f.runner(quick, func(o *run.Options) { o.Dagger = client }),
+		worker := f.workerOver(f.runner(quick, func(o *run.Options) { o.Skift = client }),
 			func(o *run.WorkerOptions) { o.Startup = startup })
 		done := startWorker(ctx, worker)
 		DeferCleanup(func() {

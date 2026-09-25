@@ -6,11 +6,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Where a face finds the service and dagger.
+// Where a face finds the service and skift.
 //
-// Every command that dials the service's socket or dagger's resolves each
+// Every command that dials the service's socket or skift's resolves each
 // path the same way, in one order: the flag, then the variable ($MILL_SOCKET,
-// $DG_SOCKET), then the configuration file's `socket` and `dagger-socket`,
+// $SKIFT_SOCKET), then the configuration file's `socket` and `skift-socket`,
 // then the default. The file sits below the environment on purpose: a
 // deployment that sets $MILL_SOCKET on a unit or a plugin registration keeps
 // reaching the service it named, whatever a file on the host says, and a
@@ -24,7 +24,7 @@ import (
 // flag it fills and the variable that outranks it.
 var socketKeys = []struct{ flag, env string }{
 	{"socket", socketEnv},
-	{"dagger-socket", daggerSocketEnv},
+	{"skift-socket", skiftSocketEnv},
 }
 
 // dialsSockets reports whether a command declares either socket flag, which
@@ -44,7 +44,7 @@ func dialsSockets(cmd *cobra.Command) bool {
 // is bound to sees the value, and marks it set, so a second pass — `work`
 // applies its file after the root has — changes nothing.
 func resolveSockets(cmd *cobra.Command, config Config) error {
-	values := map[string]string{"socket": config.Socket, "dagger-socket": config.DaggerSocket}
+	values := map[string]string{"socket": config.Socket, "skift-socket": config.SkiftSocket}
 	for _, key := range socketKeys {
 		value := values[key.flag]
 		if value == "" || !unset(cmd, key.flag) || os.Getenv(key.env) != "" {

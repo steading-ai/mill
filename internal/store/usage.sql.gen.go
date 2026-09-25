@@ -99,7 +99,7 @@ RETURNING id, step_run_id, model, input_tokens, output_tokens, cache_read_tokens
 `
 
 // Exactly the rows of one step run that have not been posted yet. A step's
-// totals go to dagger when the attempt closes or fails, and only those rows
+// totals go to skift when the attempt closes or fails, and only those rows
 // are marked.
 func (q *Queries) MarkUsagePosted(ctx context.Context, stepRunID string) ([]Usage, error) {
 	rows, err := q.db.Query(ctx, markUsagePosted, stepRunID)
@@ -200,7 +200,7 @@ type TotalsForStepRunRow struct {
 }
 
 // A step run's totals by model and by who counted them. The adapter's rows
-// are the step's cost — what is posted to dagger and what status shows —
+// are the step's cost — what is posted to skift and what status shows —
 // and the gateway's are the count taken outside the session, beside them.
 func (q *Queries) TotalsForStepRun(ctx context.Context, stepRunID string) ([]TotalsForStepRunRow, error) {
 	rows, err := q.db.Query(ctx, totalsForStepRun, stepRunID)

@@ -48,22 +48,22 @@ var suite struct {
 }
 
 // The suite is set up once for the whole run, not once per process: one
-// build, one `mill serve`, one dagger, one workflow push, however many
+// build, one `mill serve`, one skift, one workflow push, however many
 // processes the scenarios are spread over. Each scenario still gets a
-// scratch project, a dagger project and a workspace root of its own, so
-// they share the store and the dagger and nothing else.
+// scratch project, a skift project and a workspace root of its own, so
+// they share the store and the skift and nothing else.
 var _ = SynchronizedBeforeSuite(func(ctx SpecContext) []byte {
 	if !enabled() {
 		Skip("set " + EnabledVar + "=1 to run the acceptance suite; see docs/runbook.md for what it needs")
 	}
 	env = preflight()
-	if !env.ExternalDagger {
-		env.DaggerSocket = startDagger(ctx)
+	if !env.ExternalSkift {
+		env.SkiftSocket = startSkift(ctx)
 	}
 	env.Mill = buildMill(ctx)
 	suite.service = startService()
 	pushWorkflow(ctx)
-	shared, err := json.Marshal(sharedSetup{Mill: env.Mill, Socket: suite.service.Socket, DaggerSocket: env.DaggerSocket})
+	shared, err := json.Marshal(sharedSetup{Mill: env.Mill, Socket: suite.service.Socket, SkiftSocket: env.SkiftSocket})
 	Expect(err).NotTo(HaveOccurred())
 	return shared
 }, func(shared []byte) {
@@ -74,21 +74,21 @@ var _ = SynchronizedBeforeSuite(func(ctx SpecContext) []byte {
 	var setup sharedSetup
 	Expect(json.Unmarshal(shared, &setup)).To(Succeed())
 	env.Mill = setup.Mill
-	env.DaggerSocket = setup.DaggerSocket
+	env.SkiftSocket = setup.SkiftSocket
 	suite.service = connectService(setup.Socket)
 })
 
 // sharedSetup is what the first process hands the others: the binary it
-// built, the socket the service it started listens on, and the dagger every
+// built, the socket the service it started listens on, and the skift every
 // scratch project goes in.
 type sharedSetup struct {
-	Mill         string `json:"mill"`
-	Socket       string `json:"socket"`
-	DaggerSocket string `json:"dagger_socket"`
+	Mill        string `json:"mill"`
+	Socket      string `json:"socket"`
+	SkiftSocket string `json:"skift_socket"`
 }
 
-// startDagger brings up the suite's own dagger — a PostgreSQL in a
-// container, a database of its own on it, and `dg serve` on a socket in a
+// startSkift brings up the suite's own skift — a PostgreSQL in a
+// container, a database of its own on it, and `skift serve` on a socket in a
 // temporary directory — and returns the socket. All of it is torn down
 // with the suite, and a suite killed before then leaves its scratch
 // projects in a container the reaper removes rather than in the
@@ -97,12 +97,12 @@ type sharedSetup struct {
 // The container's template is left unmigrated: nothing clones it. The
 // ledger's database is the one the environment names, because its rows are
 // the record of the run and are kept on purpose.
-func startDagger(ctx context.Context) string {
+func startSkift(ctx context.Context) string {
 	GinkgoHelper()
 	pg, err := testsupport.Start(ctx, nil)
-	Expect(err).NotTo(HaveOccurred(), "starting PostgreSQL for the suite's own dagger")
+	Expect(err).NotTo(HaveOccurred(), "starting PostgreSQL for the suite's own skift")
 	DeferCleanup(pg.Stop)
-	return pg.StartSuiteDagger(ctx).Socket
+	return pg.StartSuiteSkift(ctx).Socket
 }
 
 // buildMill compiles the binary under test from this tree. The suite tests
@@ -279,7 +279,7 @@ type runOptions struct {
 }
 
 // start invokes `mill run` for a node, against the suite's service, the
-// host's dagger, and the scenario's scratch project. It returns as soon as
+// host's skift, and the scenario's scratch project. It returns as soon as
 // the process is running.
 func start(ctx context.Context, s *staged, opts runOptions) *worker {
 	GinkgoHelper()
@@ -295,7 +295,7 @@ func start(ctx context.Context, s *staged, opts runOptions) *worker {
 	args := []string{
 		"run", s.NodeRef,
 		"--socket", suite.service.Socket,
-		"--dagger-socket", env.DaggerSocket,
+		"--skift-socket", env.SkiftSocket,
 		"--project", s.Graph.Slug,
 		"--workflow-dir", dir,
 		"--origin", s.Origin,

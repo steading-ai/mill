@@ -1,4 +1,4 @@
-package dagger
+package skift
 
 import (
 	"context"
@@ -21,16 +21,16 @@ type Claimed struct {
 	Lease *skiftv1.Lease
 	// Project is the project the node was claimed in, as the claim
 	// response carried it: where the work delivers, read without a second
-	// call. Nil from a dagger older than the field, which [Client.GetProject]
+	// call. Nil from a skift older than the field, which [Client.GetProject]
 	// answers for.
 	Project *skiftv1.Project
 }
 
 // Claim takes a lease on one named node.
 //
-// Dagger has no per-node claim: `ClaimNext` is the whole of the lease side's
+// Skift has no per-node claim: `ClaimNext` is the whole of the lease side's
 // admission, and it hands back whatever the ready set puts first. Naming the
-// node is therefore done the way dagger's own harness does it — a label only
+// node is therefore done the way skift's own harness does it — a label only
 // this claim knows, written before the claim and removed after it, with the
 // claim filtered to that label. The two label writes are ordinary patches
 // under `mill-` request ids, and a crash between them leaves a label a later
@@ -90,7 +90,7 @@ func (c *Client) claimLabelled(ctx context.Context, label, nodeID string) (*Clai
 		SessionRef: c.options.sessionRef,
 	}))
 	if err != nil {
-		return nil, wrap("dagger: claim", err)
+		return nil, wrap("skift: claim", err)
 	}
 	node, lease := res.Msg.GetNode(), res.Msg.GetLease()
 	if node == nil || lease == nil {
@@ -101,7 +101,7 @@ func (c *Client) claimLabelled(ctx context.Context, label, nodeID string) (*Clai
 		// is a bug rather than a race. Give the lease back rather than hold
 		// one on work nobody asked for.
 		_ = c.Release(ctx, lease.GetId(), skiftv1.ReleaseReason_RELEASE_REASON_PREEMPTED, "mill: not the node asked for")
-		return nil, fmt.Errorf("dagger: claim returned %s, not the node asked for", node.GetReference())
+		return nil, fmt.Errorf("skift: claim returned %s, not the node asked for", node.GetReference())
 	}
 	return &Claimed{Node: node, Lease: lease, Project: res.Msg.GetProject()}, nil
 }
@@ -115,7 +115,7 @@ func (c *Client) Heartbeat(ctx context.Context, leaseID string, ttl time.Duratio
 		Ttl:       durationOrNil(ttl),
 	}))
 	if err != nil {
-		return nil, wrap("dagger: heartbeat", err)
+		return nil, wrap("skift: heartbeat", err)
 	}
 	return res.Msg.GetLease(), nil
 }
@@ -129,7 +129,7 @@ func (c *Client) Release(ctx context.Context, leaseID string, reason skiftv1.Rel
 		Reason:    reason,
 		Detail:    detail,
 	}))
-	return wrap("dagger: release", err)
+	return wrap("skift: release", err)
 }
 
 // TokenCounts is one model's tokens for one step run.
@@ -145,7 +145,7 @@ type TokenCounts struct {
 }
 
 // ReportUsage records what one step run cost, attributed to the lease it ran
-// under. Dagger sums records per attempt, and each report renews the lease,
+// under. Skift sums records per attempt, and each report renews the lease,
 // so posting per step is both the contract's shape and a second heartbeat.
 func (c *Client) ReportUsage(ctx context.Context, leaseID, ref, model string, counts TokenCounts) error {
 	_, err := c.work.ReportUsage(ctx, connect.NewRequest(&skiftv1.ReportUsageRequest{
@@ -159,7 +159,7 @@ func (c *Client) ReportUsage(ctx context.Context, leaseID, ref, model string, co
 		CacheReadTokens:  counts.CacheReadTokens,
 		CacheWriteTokens: counts.CacheWriteTokens,
 	}))
-	return wrap("dagger: report usage", err)
+	return wrap("skift: report usage", err)
 }
 
 // durationOrNil leaves a zero duration unset, so the server applies its own
@@ -171,11 +171,11 @@ func durationOrNil(d time.Duration) *durationpb.Duration {
 	return durationpb.New(d)
 }
 
-// Ready is the ready set of projects, as dagger reports it to this caller. An
+// Ready is the ready set of projects, as skift reports it to this caller. An
 // empty projects means every project this caller may read. It is a read:
 // nothing is claimed and nothing is written.
 //
-// `mill doctor` uses it as its liveness probe, because dagger resolves a
+// `mill doctor` uses it as its liveness probe, because skift resolves a
 // principal from the transport and refuses a uid it does not know, so an
 // answer proves both that the service is there and that this account reaches
 // it as a principal.
@@ -185,15 +185,15 @@ func (c *Client) Ready(ctx context.Context, projects []string, kind skiftv1.Assi
 		View:   skiftv1.View_VIEW_REFS,
 	}))
 	if err != nil {
-		return nil, fmt.Errorf("dagger: ready: %w", err)
+		return nil, fmt.Errorf("skift: ready: %w", err)
 	}
 	return res.Msg.GetNodes(), nil
 }
 
-// claimChunk bounds one ClaimNext request inside a longer wait. Dagger
+// claimChunk bounds one ClaimNext request inside a longer wait. Skift
 // clamps a wait to five minutes and polls its ready set at most a second
 // apart, so a long wait is many short requests rather than one held
-// connection — the same shape `dg claim --wait` takes.
+// connection — the same shape `skift claim --wait` takes.
 const claimChunk = time.Minute
 
 // ClaimNext is the worker's claim: the next ready node of projects matching
@@ -205,7 +205,7 @@ const claimChunk = time.Minute
 // (docs/architecture.md §"Request path", step 1). `assignee_kind: agent` is
 // not one of them in the configurable sense: it is the seam's refusal to
 // claim a node only a person may complete, which includes every gate mill
-// itself files (docs/domain-model.md §Principal). Dagger reads it as "agent
+// itself files (docs/domain-model.md §Principal). Skift reads it as "agent
 // or unassigned", so an ordinary node is still claimable.
 //
 // The request id is held across the chunks of one wait: an empty answer
@@ -230,7 +230,7 @@ func (c *Client) ClaimNext(ctx context.Context, projects, labels []string, wait 
 			SessionRef: c.options.sessionRef,
 		}))
 		if err != nil {
-			return nil, wrap("dagger: claim next", err)
+			return nil, wrap("skift: claim next", err)
 		}
 		if node, lease := res.Msg.GetNode(), res.Msg.GetLease(); node != nil && lease != nil {
 			return &Claimed{Node: node, Lease: lease, Project: res.Msg.GetProject()}, nil

@@ -117,7 +117,7 @@ var _ = Describe("An attempt's writer and sink on a failed write", Label(testsup
 
 		It("closes the writer and detaches the sink when reviewed's verdict attach fails", func() {
 			// quick-fix declares no verdict step, so this spec adds one: a
-			// review after pr, whose own AttachText this run's dagger
+			// review after pr, whose own AttachText this run's skift
 			// client refuses. "review-" alone would also catch a
 			// review-plan step's attach in a workflow that had one; this
 			// workflow does not, but the exclusion documents the seam a
@@ -137,7 +137,7 @@ var _ = Describe("An attempt's writer and sink on a failed write", Label(testsup
 
 			err := f.runner(func(o *run.Options) {
 				o.Workflow = workflow
-				o.Dagger = client
+				o.Skift = client
 				o.LogDir = logDir
 			}).Execute(ctx, f.nodeRef)
 			Expect(err).To(HaveOccurred())

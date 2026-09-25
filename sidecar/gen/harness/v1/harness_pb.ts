@@ -72,7 +72,7 @@ export const ProcessExitSchema: GenMessage<ProcessExit> = /*@__PURE__*/
 
 /**
  * TokenCounts is one model's token usage. Counts, never currency: a rate
- * table is applied by whoever wants money, exactly as in dagger.
+ * table is applied by whoever wants money, exactly as in skift.
  *
  * @generated from message harness.v1.TokenCounts
  */
@@ -117,7 +117,7 @@ export const TokenCountsSchema: GenMessage<TokenCounts> = /*@__PURE__*/
  * Usage is what a turn or a whole session cost, keyed by model. It is a map
  * and not a single model's counts because one assistant turn bills an
  * auxiliary model alongside the one the step asked for, and the mill posts
- * one dagger usage record per (lease, model). Usage is part of the adapter's
+ * one skift usage record per (lease, model). Usage is part of the adapter's
  * contract, not an optional event: the adapter is the only component that
  * sees the harness's numbers.
  *
@@ -280,7 +280,7 @@ export type Attachment = Message<"harness.v1.Attachment"> & {
   /**
    * Who is making this claim: the principal or step the content came from.
    * Predecessor content is rendered as attributed, delimited data and never
-   * as instructions, which is dagger's rule and the mill's to honour.
+   * as instructions, which is skift's rule and the mill's to honour.
    *
    * @generated from field: string source = 2;
    */

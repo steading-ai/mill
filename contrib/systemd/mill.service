@@ -5,9 +5,9 @@
 #
 #   install -Dm644 contrib/systemd/mill.service /etc/systemd/system/mill.service
 #
-# dagger identifies a caller by the numeric user id on its socket and has no
+# skift identifies a caller by the numeric user id on its socket and has no
 # principal kind for an orchestrator, so the account this unit runs as is the
-# dagger principal every claim is made by (docs/domain-model.md §Principal).
+# skift principal every claim is made by (docs/domain-model.md §Principal).
 # A deployment that wants mill to act as the operator overrides the account
 # with a drop-in and nothing else:
 #
@@ -20,8 +20,8 @@
 # and runtime directories are declared below rather than made by a
 # scriptlet, so systemd creates /var/lib/mill and /run/mill at start and
 # gives them to whichever account the unit runs as — chowning what an
-# earlier account left there. The overriding account needs to reach dagger's
-# socket, which is a matter of dagger's group.
+# earlier account left there. The overriding account needs to reach skift's
+# socket, which is a matter of skift's group.
 #
 # DATABASE_URL and any other environment come from /etc/mill/env, one
 # KEY=value per line, read by systemd and never by a session. What the
@@ -35,9 +35,9 @@
 # anything ordered After= it can rely on all three.
 
 [Unit]
-Description=mill: a workflow runner over dagger's work graph
+Description=mill: a workflow runner over skift's work graph
 Documentation=https://github.com/steading-ai/mill
-After=network.target dagger.service
+After=network.target skift.service
 
 [Service]
 Type=notify

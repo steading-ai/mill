@@ -257,7 +257,7 @@ var _ = Describe("Invariants", Label(testsupport.DBLabel), func() {
 		Expect(l.currentStep(ctx, run.GetId(), workflow)).To(Equal("simplify"))
 	}, SpecTimeout(time.Minute))
 
-	It(`Invariant 11: "Dagger first, store second." gate_node_id is recorded only after dagger has returned the gate's id; the store never asserts a fact about dagger that dagger has not yet made true`, func(ctx SpecContext) {
+	It(`Invariant 11: "Skift first, store second." gate_node_id is recorded only after skift has returned the gate's id; the store never asserts a fact about skift that skift has not yet made true`, func(ctx SpecContext) {
 		l := newLedger(ctx)
 		run, _ := l.runWithWorkflow(ctx, "mill#8")
 		open := l.start(ctx, run.GetId(), "implement")

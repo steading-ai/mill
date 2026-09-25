@@ -58,7 +58,7 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 			// Nothing else on this host is configured, so every probe but
 			// the two the service answers fails — and says why, which is
 			// what the report is for.
-			"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
+			"--skift-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
 			"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
 			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 			"--config", filepath.Join(GinkgoT().TempDir(), "no-config.yaml"),
@@ -87,8 +87,8 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 		Expect(schema).To(Equal("pass"))
 		Expect(reason).To(ContainSubstring("current"))
 
-		dagger, reason := probe(out, "dagger")
-		Expect(dagger).To(Equal("fail"))
+		skift, reason := probe(out, "skift")
+		Expect(skift).To(Equal("fail"))
 		Expect(reason).To(ContainSubstring("no project to probe"))
 
 		sidecar, reason := probe(out, "sidecar")
@@ -113,7 +113,7 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 
 		By("with no configuration file, the worker claims from every project")
 		out, _ := runCLI(ctx, m.socket, "doctor",
-			"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
+			"--skift-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
 			"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
 			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 			"--config", filepath.Join(GinkgoT().TempDir(), "no-config.yaml"),
@@ -124,7 +124,7 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 		config := filepath.Join(GinkgoT().TempDir(), "config.yaml")
 		Expect(os.WriteFile(config, []byte("project: [mill]\n"), 0o600)).To(Succeed())
 		out, _ = runCLI(ctx, m.socket, "doctor",
-			"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
+			"--skift-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
 			"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
 			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 			"--config", config,
@@ -133,7 +133,7 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 	})
 
 	It("when a worker shares this process, its own claim is what's printed, not a client's local --config", func(ctx SpecContext) {
-		g := daggerNodeWith(ctx, "https://forge.test/mill/mill.git")
+		g := skiftNodeWith(ctx, "https://forge.test/mill/mill.git")
 		databaseURL := pg.Database(ctx).Config().ConnString()
 		socket := filepath.Join(GinkgoT().TempDir(), "mill.sock")
 		workerConfig := filepath.Join(GinkgoT().TempDir(), "empty.yaml")
@@ -146,9 +146,9 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 			"--socket", socket,
 			"--database-url", databaseURL,
 			"--config", workerConfig,
-			"--project", daggerProject,
+			"--project", skiftProject,
 			"--label", "worker-only-label",
-			"--dagger-socket", g.service.Socket,
+			"--skift-socket", g.service.Socket,
 			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 			"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
 		})
@@ -177,27 +177,27 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 		var out string
 		Eventually(func() string {
 			out, _ = runCLI(ctx, socket, "doctor",
-				"--dagger-socket", g.service.Socket,
+				"--skift-socket", g.service.Socket,
 				"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
 				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 				"--config", localConfig)
 			return out
 		}, time.Minute, 100*time.Millisecond).Should(ContainSubstring("claims from:"), out)
-		Expect(lines(out)[0]).To(Equal("claims from: " + daggerProject + ", label worker-only-label"))
+		Expect(lines(out)[0]).To(Equal("claims from: " + skiftProject + ", label worker-only-label"))
 	})
 
 	It("the forge probe reads the repository from the project", func() {
 		m := serving(ctx)
-		g := daggerNode(ctx)
+		g := skiftNode(ctx)
 
 		out, _ := runCLI(ctx, m.socket, "doctor",
-			"--dagger-socket", g.service.Socket, "--project", daggerProject,
+			"--skift-socket", g.service.Socket, "--project", skiftProject,
 			"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
 			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"))
 
 		verdict, reason := probe(out, "forge")
 		Expect(verdict).To(Equal("fail"), out)
-		Expect(reason).To(ContainSubstring("dg project update "+daggerProject+" --vcs-url"),
+		Expect(reason).To(ContainSubstring("skift project update "+skiftProject+" --vcs-url"),
 			"a project with no repository is told how to get one")
 	})
 
@@ -216,7 +216,7 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 			GinkgoHelper()
 			m := serving(ctx)
 			out, _ := runCLI(ctx, m.socket, "doctor",
-				"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
+				"--skift-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
 				"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
 				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 				"--config", filepath.Join(GinkgoT().TempDir(), "no-config.yaml"),
@@ -288,7 +288,7 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 		Expect(os.WriteFile(path, []byte("sidecar: "+sidecar+"\nenv_mode: strict\nworkspace-dir: "+workspaces+"\n"), 0o600)).To(Succeed())
 
 		out, _ := runCLI(ctx, m.socket, "doctor", "--project", "", "--config", path,
-			"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"))
+			"--skift-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"))
 		verdict, reason := probe(out, "sidecar")
 		Expect(verdict).To(Equal("fail"), out)
 		Expect(reason).To(ContainSubstring(sidecar), "the file's sidecar is the one probed")
@@ -299,7 +299,7 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 		// A flag still wins over the file.
 		flagged := filepath.Join(GinkgoT().TempDir(), "flagged.js")
 		out, _ = runCLI(ctx, m.socket, "doctor", "--project", "", "--config", path,
-			"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
+			"--skift-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
 			"--sidecar", flagged)
 		_, reason = probe(out, "sidecar")
 		Expect(reason).To(ContainSubstring(flagged))
@@ -313,7 +313,7 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 			GinkgoHelper()
 			m := serving(ctx)
 			out, _ := runCLI(ctx, m.socket, append([]string{"doctor",
-				"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
+				"--skift-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
 				"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
 				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 				"--project", ""}, args...)...)
@@ -397,7 +397,7 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 		m := serving(ctx)
 
 		out, _ := runCLI(ctx, m.socket, "doctor",
-			"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
+			"--skift-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
 			"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
 			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 			"--env-mode", "strict",
@@ -411,7 +411,7 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 		m := serving(ctx)
 
 		out, err := runCLI(ctx, m.socket, "doctor",
-			"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
+			"--skift-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
 			"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
 			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 			"--env-mode", "relaxed",
@@ -440,7 +440,7 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 		It("passes and says so when no workflows-root is configured", func() {
 			m := serving(ctx)
 			out, _ := runCLI(ctx, m.socket, "doctor",
-				"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
+				"--skift-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
 				"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
 				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 				"--config", filepath.Join(GinkgoT().TempDir(), "no-config.yaml"),
@@ -463,7 +463,7 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 			Expect(workflow.Write(filepath.Join(root, "quick-fix"), definition, skills)).To(Succeed())
 
 			out, _ := runCLI(ctx, m.socket, "doctor",
-				"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
+				"--skift-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
 				"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
 				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 				"--config", filepath.Join(GinkgoT().TempDir(), "no-config.yaml"),
@@ -500,7 +500,7 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 			Expect(workflow.Write(filepath.Join(root, "build-workflow"), definition, skills)).To(Succeed())
 
 			out, _ := runCLI(ctx, m.socket, "doctor",
-				"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
+				"--skift-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
 				"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
 				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 				"--config", filepath.Join(GinkgoT().TempDir(), "no-config.yaml"),
@@ -512,81 +512,81 @@ var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {
 		})
 	})
 
-	It("reports dagger as reachable when it answers this account", func() {
+	It("reports skift as reachable when it answers this account", func() {
 		m := serving(ctx)
-		g := daggerNode(ctx)
+		g := skiftNode(ctx)
 
 		out, _ := runCLI(ctx, m.socket, "doctor",
-			"--dagger-socket", g.service.Socket, "--project", daggerProject,
+			"--skift-socket", g.service.Socket, "--project", skiftProject,
 			"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
 			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"))
 
-		verdict, reason := probe(out, "dagger")
+		verdict, reason := probe(out, "skift")
 		Expect(verdict).To(Equal("pass"), out)
-		Expect(reason).To(ContainSubstring("this account is a principal on " + daggerProject))
+		Expect(reason).To(ContainSubstring("this account is a principal on " + skiftProject))
 	})
 
 	Describe("the project setting", func() {
 		// The file's `project` key is a list, since `work` claims from
 		// several; doctor probes one project, so it reads the first entry —
-		// same precedence as the sockets (flag, then $DG_PROJECT, then the
+		// same precedence as the sockets (flag, then $SKIFT_PROJECT, then the
 		// file), applied to a single value instead of a set.
-		It("reads the file's project when neither the flag nor $DG_PROJECT names one", func() {
+		It("reads the file's project when neither the flag nor $SKIFT_PROJECT names one", func() {
 			m := serving(ctx)
-			g := daggerNode(ctx)
+			g := skiftNode(ctx)
 			scrubEnvironment()
 
 			config := filepath.Join(GinkgoT().TempDir(), "config.yaml")
-			Expect(os.WriteFile(config, []byte("project: ["+daggerProject+"]\n"), 0o600)).To(Succeed())
+			Expect(os.WriteFile(config, []byte("project: ["+skiftProject+"]\n"), 0o600)).To(Succeed())
 
 			out, _ := runCLI(ctx, m.socket, "doctor",
-				"--dagger-socket", g.service.Socket,
+				"--skift-socket", g.service.Socket,
 				"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
 				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 				"--config", config)
 
-			verdict, reason := probe(out, "dagger")
+			verdict, reason := probe(out, "skift")
 			Expect(verdict).To(Equal("pass"), out)
-			Expect(reason).To(ContainSubstring("this account is a principal on " + daggerProject))
+			Expect(reason).To(ContainSubstring("this account is a principal on " + skiftProject))
 		})
 
 		It("--project still wins over the file", func() {
 			m := serving(ctx)
-			g := daggerNode(ctx)
+			g := skiftNode(ctx)
 			scrubEnvironment()
 
 			config := filepath.Join(GinkgoT().TempDir(), "config.yaml")
 			Expect(os.WriteFile(config, []byte("project: [not-the-project]\n"), 0o600)).To(Succeed())
 
 			out, _ := runCLI(ctx, m.socket, "doctor",
-				"--dagger-socket", g.service.Socket, "--project", daggerProject,
+				"--skift-socket", g.service.Socket, "--project", skiftProject,
 				"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
 				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 				"--config", config)
 
-			verdict, reason := probe(out, "dagger")
+			verdict, reason := probe(out, "skift")
 			Expect(verdict).To(Equal("pass"), out)
-			Expect(reason).To(ContainSubstring("this account is a principal on " + daggerProject))
+			Expect(reason).To(ContainSubstring("this account is a principal on " + skiftProject))
 		})
 
-		It("$DG_PROJECT still wins over the file", func() {
+		It("$SKIFT_PROJECT still wins over the file", func() {
 			m := serving(ctx)
-			g := daggerNode(ctx)
+			g := skiftNode(ctx)
 			scrubEnvironment()
-			GinkgoT().Setenv("DG_PROJECT", daggerProject)
+			GinkgoT().Setenv("SKIFT_PROJECT", skiftProject)
 
 			config := filepath.Join(GinkgoT().TempDir(), "config.yaml")
 			Expect(os.WriteFile(config, []byte("project: [not-the-project]\n"), 0o600)).To(Succeed())
 
 			out, _ := runCLI(ctx, m.socket, "doctor",
-				"--dagger-socket", g.service.Socket,
+				"--skift-socket", g.service.Socket,
 				"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
 				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 				"--config", config)
 
-			verdict, reason := probe(out, "dagger")
+			verdict, reason := probe(out, "skift")
 			Expect(verdict).To(Equal("pass"), out)
-			Expect(reason).To(ContainSubstring("this account is a principal on " + daggerProject))
+			Expect(reason).To(ContainSubstring("this account is a principal on " + skiftProject))
 		})
 	})
 })

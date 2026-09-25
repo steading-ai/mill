@@ -104,7 +104,7 @@ func OnFloor(name string) bool {
 	return false
 }
 
-// DeadSockets are the DG_SOCKET and MILL_SOCKET a workspace hands every
+// DeadSockets are the SKIFT_SOCKET and MILL_SOCKET a workspace hands every
 // process it spawns: real, absolute, non-empty paths under dir, so
 // envOr/defaultSocketPath's "empty means unset" fallback to the compiled-in
 // production sockets never triggers, and scoped to the run's own directory,
@@ -116,8 +116,8 @@ func OnFloor(name string) bool {
 // closes the hole from the environment's side.
 func DeadSockets(dir string) map[string]string {
 	return map[string]string{
-		"DG_SOCKET":   filepath.Join(dir, "no-dagger.sock"),
-		"MILL_SOCKET": filepath.Join(dir, "no-mill.sock"),
+		"SKIFT_SOCKET": filepath.Join(dir, "no-skift.sock"),
+		"MILL_SOCKET":  filepath.Join(dir, "no-mill.sock"),
 	}
 }
 

@@ -104,14 +104,14 @@ var _ = Describe("mill run", func() {
 			Expect(err).To(MatchError(ContainSubstring("build-workflow")))
 		})
 
-		It("claims nothing: it never reaches dagger", func(ctx SpecContext) {
+		It("claims nothing: it never reaches skift", func(ctx SpecContext) {
 			m := serving(ctx)
 			m.run(ctx, "workflow", "push", quickFix)
 
-			// The dagger socket is a path nothing listens on. A dry run that
+			// The skift socket is a path nothing listens on. A dry run that
 			// claimed, explained, or read a node would fail against it.
 			out := m.run(ctx, "run", "millspec#1", "--dry-run", "--workflow", "quick-fix",
-				"--project", "millspec", "--dagger-socket", "/nonexistent/dg.sock")
+				"--project", "millspec", "--skift-socket", "/nonexistent/skift.sock")
 			Expect(out).To(ContainSubstring("quick-fix"))
 		})
 	})
@@ -128,7 +128,7 @@ var _ = Describe("mill run", func() {
 			stderr.Reset()
 		})
 
-		// The socket and the dagger socket are paths nothing listens on, so
+		// The socket and the skift socket are paths nothing listens on, so
 		// a command that got as far as reading a workflow, claiming a node
 		// or taking a lease would fail on one of them and say so. The
 		// refusal has to arrive before any of that.
@@ -137,7 +137,7 @@ var _ = Describe("mill run", func() {
 				"run", "millspec#1",
 				"--project", "millspec",
 				"--socket", "/nonexistent/mill.sock",
-				"--dagger-socket", "/nonexistent/dg.sock",
+				"--skift-socket", "/nonexistent/skift.sock",
 			}, args...), strings.NewReader(""), &stdout, &stderr)
 		}
 
@@ -194,14 +194,14 @@ var _ = Describe("mill run", func() {
 
 			By("when mill run is invoked for a ready node")
 			// Every socket named here is a path nothing listens on, so a
-			// command that reached the store, dagger or a lease would fail
+			// command that reached the store, skift or a lease would fail
 			// on one of them and say so.
 			exit := cli.Run([]string{
 				"run", "millspec#1",
 				"--project", "millspec",
 				"--workspace-dir", dir,
 				"--socket", "/nonexistent/mill.sock",
-				"--dagger-socket", "/nonexistent/dg.sock",
+				"--skift-socket", "/nonexistent/skift.sock",
 			}, strings.NewReader(""), &stdout, &stderr)
 
 			By("then it exits before claiming")
@@ -227,7 +227,7 @@ var _ = Describe("mill run", func() {
 				"--project", "millspec",
 				"--workspace-dir", GinkgoT().TempDir(),
 				"--socket", "/nonexistent/mill.sock",
-				"--dagger-socket", "/nonexistent/dg.sock",
+				"--skift-socket", "/nonexistent/skift.sock",
 			}, strings.NewReader(""), &stdout, &stderr)
 
 			Expect(exit).NotTo(BeZero())
@@ -258,7 +258,7 @@ var _ = Describe("mill run", func() {
 				"--config", path,
 				"--project", "millspec",
 				"--socket", "/nonexistent/mill.sock",
-				"--dagger-socket", "/nonexistent/dg.sock",
+				"--skift-socket", "/nonexistent/skift.sock",
 			}, strings.NewReader(""), &stdout, &stderr)
 
 			By("then it fails naming the credential file, and nothing was claimed")
@@ -279,7 +279,7 @@ var _ = Describe("mill run", func() {
 				"--gateway",
 				"--project", "millspec",
 				"--socket", "/nonexistent/mill.sock",
-				"--dagger-socket", "/nonexistent/dg.sock",
+				"--skift-socket", "/nonexistent/skift.sock",
 			}, strings.NewReader(""), &stdout, &stderr)
 			Expect(exit).NotTo(BeZero())
 			Expect(stderr.String()).To(ContainSubstring("no upstream credential"))
@@ -322,7 +322,7 @@ var _ = Describe("mill run", func() {
 
 			By("when a run is started on a host with no sandbox root")
 			// Every socket named here is a path nothing listens on, so a
-			// command that reached the store, dagger or a lease would fail
+			// command that reached the store, skift or a lease would fail
 			// on one of them and say so. The sandbox root is a path that is
 			// not there, which is the preflight's first question.
 			exit := cli.Run([]string{
@@ -332,7 +332,7 @@ var _ = Describe("mill run", func() {
 				"--sandbox-root", filepath.Join(tmp, "absent-sandbox"),
 				"--sidecar", entrypoint,
 				"--socket", "/nonexistent/mill.sock",
-				"--dagger-socket", "/nonexistent/dg.sock",
+				"--skift-socket", "/nonexistent/skift.sock",
 			}, strings.NewReader(""), &stdout, &stderr)
 
 			By("then it fails before claiming with an error naming what the host lacks")
@@ -349,7 +349,7 @@ var _ = Describe("mill run", func() {
 				"--project", "millspec",
 				"--workspace", "podman",
 				"--socket", "/nonexistent/mill.sock",
-				"--dagger-socket", "/nonexistent/dg.sock",
+				"--skift-socket", "/nonexistent/skift.sock",
 			}, strings.NewReader(""), &stdout, &stderr)
 
 			Expect(exit).NotTo(BeZero())
@@ -359,22 +359,22 @@ var _ = Describe("mill run", func() {
 		})
 	})
 
-	// The repository a run delivers to is the dagger project's `vcs_url`
+	// The repository a run delivers to is the skift project's `vcs_url`
 	// and comes from nowhere else: no flag, no variable, no label. A
 	// refusal names the command that sets it.
 	Describe("the repository a run delivers to", Label(testsupport.DBLabel), func() {
 		It("delivers to the project's repository", func(ctx SpecContext) {
 			m := serving(ctx)
 			m.run(ctx, "workflow", "push", quickFix)
-			g := daggerNodeWith(ctx, "https://gitlab.example.test/group/thing.git")
+			g := skiftNodeWith(ctx, "https://gitlab.example.test/group/thing.git")
 			var stdout, stderr bytes.Buffer
 
 			// The host does not exist, so the run fails at the clone; what
 			// is under test is what it set out to clone.
 			exit := cli.Run([]string{
 				"run", g.nodeRef,
-				"--project", daggerProject, "--workflow", "quick-fix",
-				"--socket", m.socket, "--dagger-socket", g.service.Socket,
+				"--project", skiftProject, "--workflow", "quick-fix",
+				"--socket", m.socket, "--skift-socket", g.service.Socket,
 				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 				"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
 			}, strings.NewReader(""), &stdout, &stderr)
@@ -384,7 +384,7 @@ var _ = Describe("mill run", func() {
 		})
 
 		It("still runs when the socket's own worker shares this host, rather than refusing itself", func(ctx SpecContext) {
-			g := daggerNodeWith(ctx, "https://gitlab.example.test/group/thing.git")
+			g := skiftNodeWith(ctx, "https://gitlab.example.test/group/thing.git")
 			databaseURL := pg.Database(ctx).Config().ConnString()
 			workSocket := filepath.Join(GinkgoT().TempDir(), "mill.sock")
 			workerConfig := filepath.Join(GinkgoT().TempDir(), "empty.yaml")
@@ -397,13 +397,13 @@ var _ = Describe("mill run", func() {
 				"--socket", workSocket,
 				"--database-url", databaseURL,
 				"--config", workerConfig,
-				"--project", daggerProject,
+				"--project", skiftProject,
 				// A label no node carries, so the co-located worker never
 				// claims the node this spec drives through `mill run`
 				// directly: what is under test is that a same-host worker
 				// does not make `mill run` refuse itself.
 				"--label", "nothing-carries-this",
-				"--dagger-socket", g.service.Socket,
+				"--skift-socket", g.service.Socket,
 				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 				"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
 			})
@@ -431,8 +431,8 @@ var _ = Describe("mill run", func() {
 			Eventually(func() int {
 				exit = cli.Run([]string{
 					"run", g.nodeRef,
-					"--project", daggerProject, "--workflow", "quick-fix",
-					"--socket", workSocket, "--dagger-socket", g.service.Socket,
+					"--project", skiftProject, "--workflow", "quick-fix",
+					"--socket", workSocket, "--skift-socket", g.service.Socket,
 					"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 					"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
 				}, strings.NewReader(""), &stdout, &stderr)
@@ -450,23 +450,23 @@ var _ = Describe("mill run", func() {
 		It("refuses a project that names no repository before anything is cloned, and holds the node", func(ctx SpecContext) {
 			m := serving(ctx)
 			m.run(ctx, "workflow", "push", quickFix)
-			g := daggerNode(ctx)
+			g := skiftNode(ctx)
 			workspaces := filepath.Join(GinkgoT().TempDir(), "workspaces")
 			var stdout, stderr bytes.Buffer
 
 			exit := cli.Run([]string{
 				"run", g.nodeRef,
-				"--project", daggerProject, "--workflow", "quick-fix",
-				"--socket", m.socket, "--dagger-socket", g.service.Socket,
+				"--project", skiftProject, "--workflow", "quick-fix",
+				"--socket", m.socket, "--skift-socket", g.service.Socket,
 				"--workspace-dir", workspaces,
 				"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
 			}, strings.NewReader(""), &stdout, &stderr)
 
 			Expect(exit).NotTo(BeZero())
-			Expect(stderr.String()).To(ContainSubstring("dg project update " + daggerProject + " --vcs-url"))
+			Expect(stderr.String()).To(ContainSubstring("skift project update " + skiftProject + " --vcs-url"))
 			Expect(stderr.String()).NotTo(ContainSubstring("label"))
 			Expect(filepath.Glob(filepath.Join(workspaces, "*", "*"))).To(BeEmpty(), "nothing was cloned")
-			res, err := g.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{Project: daggerProject, Node: g.nodeRef}))
+			res, err := g.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{Project: skiftProject, Node: g.nodeRef}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(res.Msg.GetNode().GetClaimed()).To(BeTrue(), "the failed run's lease is still held, so the node is not reclaimed into the same refusal")
 			Expect(res.Msg.GetNode().GetHold().GetReason()).To(HavePrefix("no repository"))

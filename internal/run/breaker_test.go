@@ -43,7 +43,7 @@ var _ = Describe("The circuit breaker", Label(testsupport.DBLabel), func() {
 			// the fifth — its retries already spent — is the breaker's.
 			Expect(f.runner(withHarness(adapter), func(o *run.Options) {
 				o.Workflow = workflow
-				o.Dagger = client
+				o.Skift = client
 			}).Execute(ctx, f.nodeRef)).To(Succeed())
 
 			detail := f.inspect(ctx)

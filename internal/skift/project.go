@@ -1,4 +1,4 @@
-package dagger
+package skift
 
 import (
 	"context"
@@ -11,10 +11,10 @@ import (
 )
 
 // The project verbs the worker's reconciliation sweep uses (docs/sandbox.md
-// §"External state"): what the configured dagger holds, and how a scratch
+// §"External state"): what the configured skift holds, and how a scratch
 // project the acceptance suite left behind is taken out of it. They are on
 // the same client as everything else, against the same socket, because the
-// sweep must reach exactly the dagger the worker was configured for and no
+// sweep must reach exactly the skift the worker was configured for and no
 // other (mill#49).
 
 // GetProject reads this client's project in full: the slug a bare reference
@@ -22,7 +22,7 @@ import (
 func (c *Client) GetProject(ctx context.Context) (*skiftv1.Project, error) {
 	res, err := c.graph.GetProject(ctx, connect.NewRequest(&skiftv1.GetProjectRequest{Project: c.project}))
 	if err != nil {
-		return nil, wrap("dagger: get project "+c.project, err)
+		return nil, wrap("skift: get project "+c.project, err)
 	}
 	return res.Msg.GetProject(), nil
 }
@@ -34,7 +34,7 @@ func (c *Client) GetProject(ctx context.Context) (*skiftv1.Project, error) {
 func (c *Client) ProjectNamed(ctx context.Context, slug string) (*skiftv1.Project, error) {
 	res, err := c.graph.GetProject(ctx, connect.NewRequest(&skiftv1.GetProjectRequest{Project: slug}))
 	if err != nil {
-		return nil, wrap("dagger: get project "+slug, err)
+		return nil, wrap("skift: get project "+slug, err)
 	}
 	return res.Msg.GetProject(), nil
 }
@@ -47,7 +47,7 @@ func (c *Client) ListProjects(ctx context.Context) ([]*skiftv1.Project, error) {
 	for {
 		res, err := c.graph.ListProjects(ctx, connect.NewRequest(&skiftv1.ListProjectsRequest{PageToken: token}))
 		if err != nil {
-			return nil, fmt.Errorf("dagger: list projects: %w", err)
+			return nil, fmt.Errorf("skift: list projects: %w", err)
 		}
 		projects = append(projects, res.Msg.GetProjects()...)
 		token = res.Msg.GetNextPageToken()
@@ -65,17 +65,17 @@ func (c *Client) ArchiveProject(ctx context.Context, slug string) (*skiftv1.Proj
 		Project:   slug,
 	}))
 	if err != nil {
-		return nil, fmt.Errorf("dagger: archive project %s: %w", slug, err)
+		return nil, fmt.Errorf("skift: archive project %s: %w", slug, err)
 	}
 	return res.Msg.GetProject(), nil
 }
 
-// ErrNoProjectDelete is what DeleteProject answers while dagger offers no
+// ErrNoProjectDelete is what DeleteProject answers while skift offers no
 // such verb: the skift.v1 contract has ArchiveProject and nothing that
-// removes a project. The sweep archives instead and says so. When dagger's
+// removes a project. The sweep archives instead and says so. When skift's
 // project-delete lands, the pinned contract gains the RPC and this becomes
 // a call; nothing above it changes.
-var ErrNoProjectDelete = fmt.Errorf("%w: dagger offers no project delete; archive is the most a sweep can do", errors.ErrUnsupported)
+var ErrNoProjectDelete = fmt.Errorf("%w: skift offers no project delete; archive is the most a sweep can do", errors.ErrUnsupported)
 
 // DeleteProject removes a project when the service offers a delete. It
 // does not today: the answer is [ErrNoProjectDelete], which a caller tests

@@ -30,7 +30,7 @@ var (
 
 // gateFiled is a gate_filed fixture record, the one activity kind that
 // populates RunEnd.Gate (internal/server/logs.go's gateRef: built from the
-// record already on file, not a fresh call to dagger). It is written to the
+// record already on file, not a fresh call to skift). It is written to the
 // attempt's own activity file before the ledger write that signals the
 // observer, exactly as a worker's own gate step would, so a follow opened
 // either before or after that write sees it.

@@ -100,14 +100,14 @@ var _ = Describe("Acceptance", Label("acceptance"), func() {
 		Expect(err).NotTo(HaveOccurred(), "git verify-commit %s: %s", signed, out)
 		Expect(out).To(ContainSubstring(goodSignatureFor(allowedSignersPath(s.WorkspaceDir))))
 
-		By("and dagger reports what the run cost, per step and across models")
-		// Dagger's rollup sums by model and keeps a count of the records it
+		By("and skift reports what the run cost, per step and across models")
+		// Skift's rollup sums by model and keeps a count of the records it
 		// summed; it carries neither the principal nor the lease, so
 		// "reported by the mill's principal" is asserted structurally — this
 		// project was made by the suite, the mill's run is the only thing
 		// that ever held a lease on this node, and nothing else can have
 		// written a usage record against it.
-		Expect(view.Usage.Actual).NotTo(BeEmpty(), "usage reached dagger")
+		Expect(view.Usage.Actual).NotTo(BeEmpty(), "usage reached skift")
 		var records int64
 		models := map[string]bool{}
 		for _, total := range view.Usage.Actual {

@@ -154,7 +154,7 @@ func (f *fixtureForge) Checks(_ context.Context, sha string) (forge.Status, erro
 
 var _ evidence.Forge = (*fixtureForge)(nil)
 
-// fixtureArtifacts is dagger's artifact store, holding one digest.
+// fixtureArtifacts is skift's artifact store, holding one digest.
 type fixtureArtifacts struct {
 	held string
 	err  error
@@ -164,7 +164,7 @@ func (a fixtureArtifacts) Accepted(_ context.Context, digest string) (bool, erro
 	return digest == a.held, a.err
 }
 
-// fixtureGates is dagger, holding one gate node.
+// fixtureGates is skift, holding one gate node.
 type fixtureGates struct {
 	node evidence.GateNode
 	err  error

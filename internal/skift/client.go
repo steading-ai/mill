@@ -1,11 +1,11 @@
-// Package dagger is mill's client for dagger's dagger.v1 Connect API: the
+// Package skift is mill's client for skift's skift.v1 Connect API: the
 // only place in the mill that talks to the work graph.
 //
-// The generated client is dagger's own — the skift.v1 package is imported
-// from dagger's module and vendored — so nothing here re-describes the wire. What it adds
-// is the discipline docs/domain-model.md §Principal puts on mill and dagger
+// The generated client is skift's own — the skift.v1 package is imported
+// from skift's module and vendored — so nothing here re-describes the
+// wire. What it adds is the discipline docs/domain-model.md §Principal puts on mill and skift
 // does not enforce, because mill runs as the operator's `user` principal and
-// dagger applies no gate veto to a user:
+// skift applies no gate veto to a user:
 //
 //   - Every claim carries `harness: mill`, an `agent_ref` naming the worker
 //     and a `session_ref` naming the run, so "everything mill did" is a join
@@ -15,7 +15,7 @@
 //   - Mill never claims, completes, drops, reclassifies, or unlinks a node
 //     whose assignee_kind is `user` — a gate, including one mill filed. The
 //     refusal is here, at the seam, so no caller can route around it.
-package dagger
+package skift
 
 import (
 	"context"
@@ -35,17 +35,17 @@ import (
 // socketURL is the base every request is made against. The host is never
 // resolved — the transport dials the unix socket whatever it says — but
 // Connect needs a well-formed URL to build a path from.
-const socketURL = "http://dagger"
+const socketURL = "http://skift"
 
 // HarnessName is what mill puts in the `harness` field of every lease it
 // takes. docs/domain-model.md §Principal calls it not optional.
 const HarnessName = "mill"
 
 // RequestIDPrefix begins every request id mill mints. On a lease-less write
-// it is the only thing in dagger's event log that says mill did it.
+// it is the only thing in skift's event log that says mill did it.
 const RequestIDPrefix = "mill-"
 
-// Client is the mill's view of one dagger service.
+// Client is the mill's view of one skift service.
 type Client struct {
 	graph   skiftv1connect.GraphServiceClient
 	work    skiftv1connect.WorkServiceClient
@@ -72,7 +72,7 @@ func WithSessionRef(ref string) Option { return func(o *options) { o.sessionRef 
 // applies its own default when this is zero.
 func WithTTL(ttl time.Duration) Option { return func(o *options) { o.ttl = ttl } }
 
-// Dial builds a client over dagger's unix socket. project is what a bare
+// Dial builds a client over skift's unix socket. project is what a bare
 // `#7` reference resolves in.
 func Dial(socket, project string, opts ...Option) *Client {
 	client := &http.Client{Transport: &http.Transport{
@@ -119,7 +119,7 @@ func (c *Client) Node(ctx context.Context, ref string) (*skiftv1.Node, error) {
 		View:    skiftv1.View_VIEW_FULL,
 	}))
 	if err != nil {
-		return nil, fmt.Errorf("dagger: get node %s: %w", ref, err)
+		return nil, fmt.Errorf("skift: get node %s: %w", ref, err)
 	}
 	return res.Msg.GetNode(), nil
 }
@@ -134,7 +134,7 @@ func (c *Client) Result(ctx context.Context, ref string) (*skiftv1.Result, error
 		View:    skiftv1.View_VIEW_FULL,
 	}))
 	if err != nil {
-		return nil, wrap("dagger: get result of "+ref, err)
+		return nil, wrap("skift: get result of "+ref, err)
 	}
 	return res.Msg.GetResult(), nil
 }
@@ -149,7 +149,7 @@ func (c *Client) Inputs(ctx context.Context, ref string) ([]*skiftv1.Input, erro
 		View:    skiftv1.View_VIEW_FULL,
 	}))
 	if err != nil {
-		return nil, fmt.Errorf("dagger: get inputs of %s: %w", ref, err)
+		return nil, fmt.Errorf("skift: get inputs of %s: %w", ref, err)
 	}
 	return res.Msg.GetInputs(), nil
 }
@@ -162,7 +162,7 @@ func (c *Client) Explain(ctx context.Context, ref string) ([]string, error) {
 		Node:    ref,
 	}))
 	if err != nil {
-		return nil, fmt.Errorf("dagger: explain %s: %w", ref, err)
+		return nil, fmt.Errorf("skift: explain %s: %w", ref, err)
 	}
 	reasons := make([]string, 0, len(res.Msg.GetReasons()))
 	for _, reason := range res.Msg.GetReasons() {
@@ -200,7 +200,7 @@ func describe(reason *skiftv1.Reason) string {
 	}
 }
 
-// statusName is a dagger status without its enum prefix.
+// statusName is a skift status without its enum prefix.
 func statusName(status skiftv1.Status) string {
 	switch status {
 	case skiftv1.Status_STATUS_OPEN:
@@ -215,8 +215,8 @@ func statusName(status skiftv1.Status) string {
 }
 
 // RequestID is the idempotency key of one patch, in the shape docs/ledger.md
-// §"What goes to dagger, and when" fixes: `mill-<run>-<step>-<attempt>`. The
-// same step run retried after a crash sends the same key, so dagger applies
+// §"What goes to skift, and when" fixes: `mill-<run>-<step>-<attempt>`. The
+// same step run retried after a crash sends the same key, so skift applies
 // the patch once.
 func RequestID(runID, step string, attempt int64) string {
 	return fmt.Sprintf("%s%s-%s-%d", RequestIDPrefix, runID, step, attempt)

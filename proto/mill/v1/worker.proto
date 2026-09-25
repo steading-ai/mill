@@ -71,7 +71,7 @@ message ClaimsRequest {
 message ClaimsResponse {
   // The worker's OS hostname.
   string host = 1;
-  // The dagger projects the worker claims from; empty means every project
+  // The skift projects the worker claims from; empty means every project
   // its principal may read.
   repeated string projects = 2;
   // The labels every claimed node must carry.

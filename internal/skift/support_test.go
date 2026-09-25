@@ -1,4 +1,4 @@
-package dagger_test
+package skift_test
 
 import (
 	"context"
@@ -10,34 +10,34 @@ import (
 	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
 	"github.com/steading-ai/skift/gen/skift/v1/skiftv1connect"
 
-	"github.com/steading-ai/mill/internal/dagger"
+	"github.com/steading-ai/mill/internal/skift"
 	"github.com/steading-ai/mill/internal/testsupport"
 )
 
-// fixture is a running dagger with a project in it, mill's client, and the
+// fixture is a running skift with a project in it, mill's client, and the
 // generated client underneath. Two clients on purpose: the point of several
 // specs is that mill's refusals are mill's own, which is only demonstrable
 // beside a client that does not make them.
 type fixture struct {
-	service *testsupport.Dagger
+	service *testsupport.Skift
 	project string
-	mill    *dagger.Client
+	mill    *skift.Client
 	graph   skiftv1connect.GraphServiceClient
 	work    skiftv1connect.WorkServiceClient
 }
 
 const projectSlug = "millspec"
 
-// start brings up dagger and creates the spec's project.
+// start brings up skift and creates the spec's project.
 func start(ctx context.Context) *fixture {
 	GinkgoHelper()
-	service := pg.StartDagger(ctx)
+	service := pg.StartSkift(ctx)
 	client := service.HTTPClient()
 	f := &fixture{
 		service: service,
 		project: projectSlug,
-		mill: dagger.New(client, service.BaseURL(), projectSlug,
-			dagger.WithAgentRef("spec@host"), dagger.WithSessionRef("spec")),
+		mill: skift.New(client, service.BaseURL(), projectSlug,
+			skift.WithAgentRef("spec@host"), skift.WithSessionRef("spec")),
 		graph: skiftv1connect.NewGraphServiceClient(client, service.BaseURL()),
 		work:  skiftv1connect.NewWorkServiceClient(client, service.BaseURL()),
 	}
@@ -96,10 +96,10 @@ func (f *fixture) secondProject(ctx context.Context) string {
 // unscoped is a client pinned to no project at all — a worker's own client
 // when it is configured with no --project, claiming across every project
 // its principal may read.
-func (f *fixture) unscoped() *dagger.Client {
+func (f *fixture) unscoped() *skift.Client {
 	GinkgoHelper()
-	return dagger.New(f.service.HTTPClient(), f.service.BaseURL(), "",
-		dagger.WithAgentRef("spec@host"), dagger.WithSessionRef("spec"))
+	return skift.New(f.service.HTTPClient(), f.service.BaseURL(), "",
+		skift.WithAgentRef("spec@host"), skift.WithSessionRef("spec"))
 }
 
 // link makes from block to.

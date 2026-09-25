@@ -664,7 +664,7 @@ func wireAttachments(attachments []harness.Attachment) []*harnessv1.Attachment {
 }
 
 // requestID correlates one request with the events and terminal record it
-// produces. The mill- prefix is the same marker its lease-less dagger writes
+// produces. The mill- prefix is the same marker its lease-less skift writes
 // carry, so a frame in a log says who sent it.
 func requestID() string {
 	raw := make([]byte, 8)

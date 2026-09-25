@@ -12,42 +12,42 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-// The graph half of the suite: a scratch dagger project, the fixture node
+// The graph half of the suite: a scratch skift project, the fixture node
 // filed in it, and the node read back with its result, its lease and its
 // usage.
 //
-// It goes through `dg` rather than through mill's own dagger client on
+// It goes through `skift` rather than through mill's own skift client on
 // purpose. The client is what mill uses, so a suite that asserted through it
-// would be asking mill to mark its own homework; `dg` is the operator's own
+// would be asking mill to mark its own homework; `skift` is the operator's own
 // tool and the one docs/prd.md §8 names in the done-when.
 
-// daggerCLI is `dg` against one dagger, optionally as another principal.
-type daggerCLI struct {
+// skiftCLI is `skift` against one skift, optionally as another principal.
+type skiftCLI struct {
 	socket  string
 	project string
 	config  string
 }
 
-// scratchGraph is a dagger project the suite made and will archive.
+// scratchGraph is a skift project the suite made and will archive.
 type scratchGraph struct {
-	cli  daggerCLI
+	cli  skiftCLI
 	Slug string
 }
 
-// newScratchGraph creates a dagger project for one scenario, in the dagger
+// newScratchGraph creates a skift project for one scenario, in the skift
 // the suite started for itself unless the environment named another. The
 // project carries the repository the scenario delivers to, because that is
 // where `mill run` reads it from and nowhere else.
 //
-// Dagger has no delete: a project is archived, which makes it read-only and
+// Skift has no delete: a project is archived, which makes it read-only and
 // takes it out of every ready set, and that is what "cleaned up" means on
-// this side (dagger's docs/domain-model.md §Project). In the suite's own
-// dagger the archive is a courtesy — the whole instance goes with the
-// suite — and it is the only cleanup an external dagger gets.
+// this side (skift's docs/domain-model.md §Project). In the suite's own
+// skift the archive is a courtesy — the whole instance goes with the
+// suite — and it is the only cleanup an external skift gets.
 func newScratchGraph(ctx context.Context, name, vcsURL string) *scratchGraph {
 	GinkgoHelper()
 	slug := "mill-acceptance-" + name + "-" + nonce()
-	cli := daggerCLI{socket: env.DaggerSocket}
+	cli := skiftCLI{socket: env.SkiftSocket}
 
 	var created struct {
 		Project struct {
@@ -57,7 +57,7 @@ func newScratchGraph(ctx context.Context, name, vcsURL string) *scratchGraph {
 	cli.json(ctx, &created, "project", "create", slug, "--slug", slug, "--vcs-url", vcsURL)
 	Expect(created.Project.Slug).To(Equal(slug))
 
-	graph := &scratchGraph{cli: daggerCLI{socket: env.DaggerSocket, project: slug}, Slug: slug}
+	graph := &scratchGraph{cli: skiftCLI{socket: env.SkiftSocket, project: slug}, Slug: slug}
 	DeferCleanup(func(ctx context.Context) {
 		graph.cli.json(ctx, nil, "project", "archive", slug)
 	})
@@ -66,9 +66,9 @@ func newScratchGraph(ctx context.Context, name, vcsURL string) *scratchGraph {
 
 // file creates the fixture's node and returns its reference.
 //
-// `dg create` is a patch, and a patch answers with the nodes it touched:
-// dagger's one way to mutate the graph is `patch`, and every verb that
-// writes reports through it (dagger's docs/domain-model.md §Patch).
+// `skift create` is a patch, and a patch answers with the nodes it touched:
+// skift's one way to mutate the graph is `patch`, and every verb that
+// writes reports through it (skift's docs/domain-model.md §Patch).
 func (g *scratchGraph) file(ctx context.Context, title, body string) string {
 	GinkgoHelper()
 	var created struct {
@@ -77,12 +77,12 @@ func (g *scratchGraph) file(ctx context.Context, title, body string) string {
 		} `json:"nodes"`
 	}
 	g.cli.json(ctx, &created, "create", title, "--body", body, "--kind", "task", "--priority", "p1")
-	Expect(created.Nodes).To(HaveLen(1), "dg create filed one node")
+	Expect(created.Nodes).To(HaveLen(1), "skift create filed one node")
 	Expect(created.Nodes[0].Reference).NotTo(BeEmpty())
 	return created.Nodes[0].Reference
 }
 
-// nodeView is `dg node show` as the suite reads it.
+// nodeView is `skift node show` as the suite reads it.
 type nodeView struct {
 	Node struct {
 		Reference string `json:"reference"`
@@ -110,7 +110,7 @@ type nodeView struct {
 		ID     string `json:"id"`
 		Holder string `json:"holder"`
 	} `json:"lease"`
-	// Usage is dagger's rollup over every record reported on the node: by
+	// Usage is skift's rollup over every record reported on the node: by
 	// model, with a count of the records each total sums.
 	Usage struct {
 		Actual []struct {
@@ -130,7 +130,7 @@ func (g *scratchGraph) show(ctx context.Context, ref string) nodeView {
 	return view
 }
 
-// nodeArtifact is one artifact as `dg node show` renders it.
+// nodeArtifact is one artifact as `skift node show` renders it.
 type nodeArtifact struct {
 	Name  string `json:"name"`
 	Parts []struct {
@@ -176,7 +176,7 @@ type gateNode struct {
 }
 
 // gateNodes are the gates mill filed for a run, newest last. They are found
-// by the labels mill puts on every gate it files (internal/dagger.GateLabels),
+// by the labels mill puts on every gate it files (internal/skift.GateLabels),
 // which is how mill itself finds them again.
 func (g *scratchGraph) gateNodes(ctx context.Context, runID string) []gateNode {
 	GinkgoHelper()
@@ -199,8 +199,8 @@ func (g *scratchGraph) gates(ctx context.Context, runID string) []string {
 	return bodies
 }
 
-// complete answers a gate the way the person it was filed for does: `dg
-// complete`, from the operator's own dagger configuration, with no lease —
+// complete answers a gate the way the person it was filed for does: `skift
+// complete`, from the operator's own skift configuration, with no lease —
 // mill released the node when it filed the gate, and the answer is the
 // user's write and not the mill's (docs/domain-model.md §Principal).
 func (g *scratchGraph) complete(ctx context.Context, ref, result string) {
@@ -234,9 +234,9 @@ func (v nodeView) artifact(name string) string {
 // scenario reaches the state a crash or a fence leaves behind without waiting
 // out the TTL.
 //
-// The reason is `preempted` because that is the only one dagger accepts for
+// The reason is `preempted` because that is the only one skift accepts for
 // this act: `expired` is the server's own, set by the expiry timer and
-// refused from a client (dagger's docs/domain-model.md §Lease), and an
+// refused from a client (skift's docs/domain-model.md §Lease), and an
 // operator taking a lease away is exactly what `preempted` means — mill's own
 // `restart` and `cancel` release under it for the same reason
 // (internal/run/restart.go). The holder cannot tell the routes apart: its
@@ -264,7 +264,7 @@ func (g *scratchGraph) leaseID(ctx context.Context, ref string) string {
 func (g *scratchGraph) claimAs(ctx context.Context, agentRef string) string {
 	GinkgoHelper()
 	cli := g.cli
-	cli.config = env.SecondDaggerConfig
+	cli.config = env.SecondSkiftConfig
 	var claimed struct {
 		Lease struct {
 			ID string `json:"id"`
@@ -281,14 +281,14 @@ func (g *scratchGraph) claimAs(ctx context.Context, agentRef string) string {
 func (g *scratchGraph) handBack(ctx context.Context, leaseID string) {
 	GinkgoHelper()
 	cli := g.cli
-	cli.config = env.SecondDaggerConfig
+	cli.config = env.SecondSkiftConfig
 	cli.json(ctx, nil, "release", leaseID,
 		"--reason", "preempted", "--detail", "the acceptance suite handing the node back")
 }
 
-// json runs a `dg` command and decodes its JSON output into out, which may
+// json runs a `skift` command and decodes its JSON output into out, which may
 // be nil for a command whose output the caller does not read.
-func (c daggerCLI) json(ctx context.Context, out any, args ...string) {
+func (c skiftCLI) json(ctx context.Context, out any, args ...string) {
 	GinkgoHelper()
 	full := []string{"--socket", c.socket, "--output", "json"}
 	if c.project != "" {
@@ -301,16 +301,16 @@ func (c daggerCLI) json(ctx context.Context, out any, args ...string) {
 
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, env.DG, full...) //nolint:gosec // the suite's own dagger CLI
+	command := exec.CommandContext(ctx, env.Skift, full...) //nolint:gosec // the suite's own skift CLI
 	command.Env = os.Environ()
 	var stdout, stderr strings.Builder
 	command.Stdout = &stdout
 	command.Stderr = &stderr
 	err := command.Run()
-	Expect(err).NotTo(HaveOccurred(), "dg %s: %s", strings.Join(args, " "), stderr.String())
+	Expect(err).NotTo(HaveOccurred(), "skift %s: %s", strings.Join(args, " "), stderr.String())
 	if out == nil {
 		return
 	}
 	Expect(json.Unmarshal([]byte(stdout.String()), out)).To(Succeed(),
-		"dg %s: %s", strings.Join(args, " "), stdout.String())
+		"skift %s: %s", strings.Join(args, " "), stdout.String())
 }

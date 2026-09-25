@@ -12,10 +12,10 @@ import (
 
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 	"github.com/steading-ai/mill/internal/check"
-	"github.com/steading-ai/mill/internal/dagger"
 	"github.com/steading-ai/mill/internal/evidence"
 	"github.com/steading-ai/mill/internal/forge"
 	"github.com/steading-ai/mill/internal/notify"
+	"github.com/steading-ai/mill/internal/skift"
 	"github.com/steading-ai/mill/internal/workspace"
 )
 
@@ -24,7 +24,7 @@ import (
 //
 // A gate step evaluates its `auto` predicate over the evidence prior steps
 // closed on and the run's tier ([evaluate]). If it holds, the ledger records
-// an auto-approval and nothing reaches dagger at all. If it does not, the
+// an auto-approval and nothing reaches skift at all. If it does not, the
 // gate is filed in the three writes whose order is the whole of Invariant
 // 12, and the run stops until somebody answers — except in single-run mode,
 // where somebody is watching and [Runner.askNow] asks them.
@@ -367,7 +367,7 @@ func (r *Runner) fileGate(ctx context.Context, s *state, step *millv1.Step, sr *
 		return err
 	default:
 		// Filing is the mill's own bookkeeping, not the step's work: a
-		// patch dagger refused or a store write that failed is not a gate
+		// patch skift refused or a store write that failed is not a gate
 		// a human declined, and parking the run on it would ask somebody to
 		// answer a question that was never put to them.
 		return fmt.Errorf("%w: filing the %s gate: %w", errAborted, step.GetName(), err)
@@ -391,13 +391,13 @@ func (r *Runner) file(ctx context.Context, s *state, step *millv1.Step, sr *mill
 		if err != nil {
 			return err
 		}
-		gate, err = s.dagger.CreateGate(ctx,
-			dagger.RequestID(s.run.GetId(), step.GetName(), sr.GetAttempt()), s.leaseID(),
-			dagger.Gate{
+		gate, err = s.skift.CreateGate(ctx,
+			skift.RequestID(s.run.GetId(), step.GetName(), sr.GetAttempt()), s.leaseID(),
+			skift.Gate{
 				Title:  ask.title,
 				Body:   ask.body,
 				Blocks: s.node.GetReference(),
-				Labels: dagger.GateLabels(s.run.GetId(), step.GetName()),
+				Labels: skift.GateLabels(s.run.GetId(), step.GetName()),
 			})
 		if err != nil {
 			return err
@@ -454,7 +454,7 @@ func (r *Runner) file(ctx context.Context, s *state, step *millv1.Step, sr *mill
 	if r.options.Answers != nil {
 		return r.askNow(ctx, s, gate)
 	}
-	if err := r.options.Dagger.Release(ctx, s.leaseID(), skiftv1.ReleaseReason_RELEASE_REASON_GATE, "gate "+gate.GetReference()); err != nil {
+	if err := r.options.Skift.Release(ctx, s.leaseID(), skiftv1.ReleaseReason_RELEASE_REASON_GATE, "gate "+gate.GetReference()); err != nil {
 		return err
 	}
 	r.printf("  gate %s filed as %s; waiting on a human\n", step.GetName(), gate.GetReference())
@@ -462,7 +462,7 @@ func (r *Runner) file(ctx context.Context, s *state, step *millv1.Step, sr *mill
 }
 
 // askNow puts a gate to the person running `mill run` and writes their
-// answer to dagger as theirs.
+// answer to skift as theirs.
 //
 // The gate is filed and recorded first, in the same writes and the same
 // order a worker uses, so a process killed while the question is on screen
@@ -470,10 +470,10 @@ func (r *Runner) file(ctx context.Context, s *state, step *millv1.Step, sr *mill
 // the release: the lease is still held, so the run reads the answer instead
 // of waiting to be claimed again.
 //
-// That matters beyond convenience. Dagger's rule is that a dropped gate
+// That matters beyond convenience. Skift's rule is that a dropped gate
 // never satisfies the edge out of it, so a node whose gate was denied is
 // never ready again — a run that had released its lease could not be claimed
-// back to record the denial (dagger's docs/domain-model.md §Gates).
+// back to record the denial (skift's docs/domain-model.md §Gates).
 func (r *Runner) askNow(ctx context.Context, s *state, gate *skiftv1.Node) error {
 	approved, err := r.options.Answers.Answer(ctx, Ask{
 		NodeRef: s.node.GetReference(),
@@ -490,14 +490,14 @@ func (r *Runner) askNow(ctx context.Context, s *state, gate *skiftv1.Node) error
 	}
 	// As the person, never as the mill: no lease, and a request id that
 	// does not begin with mill's prefix (docs/domain-model.md §Principal).
-	if err := r.options.Dagger.AnswerGate(ctx,
-		dagger.UserRequestIDPrefix+gate.GetId(), gate.GetReference(), approved,
+	if err := r.options.Skift.AnswerGate(ctx,
+		skift.UserRequestIDPrefix+gate.GetId(), gate.GetReference(), approved,
 		&skiftv1.Result{Body: answer}); err != nil {
 		return err
 	}
 	// MarkWaiting took the lease off the run, because for a worker that is
 	// where the run stops. This one has not stopped: the same lease, which
-	// dagger still holds, goes back on so that the writes which follow are
+	// skift still holds, goes back on so that the writes which follow are
 	// fenced by it again.
 	leased, err := call(ctx, r.options.Store.SetLease, &millv1.SetLeaseRequest{
 		LeaseId:   s.leaseID(),
@@ -519,9 +519,9 @@ var errAnswered = errors.New("run: the gate was answered")
 
 // findFiledGate is the answer to the one window the write order cannot
 // close. `ApplyPatch` comes before the store's record of the gate id, so a
-// process that dies between them leaves a gate dagger has and the ledger
+// process that dies between them leaves a gate skift has and the ledger
 // does not; a rerun that trusted the ledger alone would file a second one
-// for the same step. Dagger's graph is the source of truth for that single
+// for the same step. Skift's graph is the source of truth for that single
 // check, and mill's own labels — the run and the step — say which gate is
 // this step's rather than some other child a human filed.
 //
@@ -531,11 +531,11 @@ var errAnswered = errors.New("run: the gate was answered")
 // second way for a gate to close; the run is marked waiting, the lease goes
 // back, and the ordinary resume branch reads the answer on the next claim.
 //
-// Nothing else in the loop reads dagger to decide what to write. This does,
+// Nothing else in the loop reads skift to decide what to write. This does,
 // and the reason is written into docs/ledger.md §Resume beside it.
 func (r *Runner) findFiledGate(ctx context.Context, s *state, step *millv1.Step) (*skiftv1.Node, error) {
-	gates, err := s.dagger.Gates(ctx, s.node.GetReference(),
-		dagger.GateLabels(s.run.GetId(), step.GetName())...)
+	gates, err := s.skift.Gates(ctx, s.node.GetReference(),
+		skift.GateLabels(s.run.GetId(), step.GetName())...)
 	if err != nil {
 		return nil, err
 	}
@@ -550,16 +550,16 @@ func (r *Runner) findFiledGate(ctx context.Context, s *state, step *millv1.Step)
 	return filed, nil
 }
 
-// gateByID is the gate the ledger recorded, read back from dagger.
+// gateByID is the gate the ledger recorded, read back from skift.
 //
-// It is a search rather than a lookup because dagger resolves references and
+// It is a search rather than a lookup because skift resolves references and
 // not ids — `mill#7` is a reference, the ULID beside it is not something the
 // API can be asked for — and what the ledger holds, correctly, is the id.
 // Mill's own labels narrow the node's children to this run's gates, and the
 // id picks the one out.
 func (r *Runner) gateByID(ctx context.Context, s *state, id string) (*skiftv1.Node, error) {
-	gates, err := s.dagger.Gates(ctx, s.node.GetReference(),
-		dagger.GateLabel, dagger.RunLabel(s.run.GetId()))
+	gates, err := s.skift.Gates(ctx, s.node.GetReference(),
+		skift.GateLabel, skift.RunLabel(s.run.GetId()))
 	if err != nil {
 		return nil, err
 	}
@@ -588,7 +588,7 @@ func (r *Runner) resumeGate(ctx context.Context, s *state, step *millv1.Step, de
 		// Nobody has answered yet. A node blocked by an open gate is not in
 		// the ready set, so this is a `mill run` aimed at it by hand; give
 		// the lease back and leave the run exactly as it was.
-		if err := r.options.Dagger.Release(ctx, s.leaseID(),
+		if err := r.options.Skift.Release(ctx, s.leaseID(),
 			skiftv1.ReleaseReason_RELEASE_REASON_GATE, "gate "+gate.GetReference()); err != nil {
 			return err
 		}
@@ -630,15 +630,15 @@ func (r *Runner) resumeGate(ctx context.Context, s *state, step *millv1.Step, de
 
 // denyGate ends a run whose gate a human disposed of rather than completing.
 // The node is completed with the step's deny_result, so whoever asked for
-// the work is told why it stopped, and only then is the run failed: dagger
+// the work is told why it stopped, and only then is the run failed: skift
 // first, store second, as everywhere else.
 func (r *Runner) denyGate(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, gate *skiftv1.Node) error {
 	body := step.GetGate().GetDenyResult()
 	if body == "" {
 		body = fmt.Sprintf("The %s gate was not approved.", step.GetName())
 	}
-	if err := s.dagger.Complete(ctx,
-		dagger.RequestID(s.run.GetId(), step.GetName(), denialAttempt), s.leaseID(),
+	if err := s.skift.Complete(ctx,
+		skift.RequestID(s.run.GetId(), step.GetName(), denialAttempt), s.leaseID(),
 		s.node.GetReference(), &skiftv1.Result{Body: body}); err != nil {
 		return err
 	}
@@ -690,11 +690,11 @@ func (r *Runner) renderAsk(ctx context.Context, s *state, step *millv1.Step, det
 // A gate is answered by reading, and what is being read is regularly a step's
 // artifact: `feature`'s plan gate asks a person to approve a plan, and a
 // question that does not carry the plan is a question that cannot be answered
-// where it is asked. The artifact is on the node in dagger, so `artifact`
+// where it is asked. The artifact is on the node in skift, so `artifact`
 // fetches it and `head` cuts it to the length a notification can carry.
 //
 // Neither ever fails the ask. An artifact that is not there yields a line
-// saying so and the gate is filed regardless: a person who has to open dagger
+// saying so and the gate is filed regardless: a person who has to open skift
 // to read the plan is a worse outcome than a run that stops, and stopping the
 // run is what an error here would do (docs/domain-model.md §Gate).
 func (r *Runner) askFuncs(ctx context.Context, s *state, detail *millv1.InspectResponse) template.FuncMap {
@@ -704,7 +704,7 @@ func (r *Runner) askFuncs(ctx context.Context, s *state, detail *millv1.InspectR
 	}
 }
 
-// artifactOf is the text of a step's artifact evidence, read from dagger.
+// artifactOf is the text of a step's artifact evidence, read from skift.
 // The ledger holds the digest of what was attached, not the bytes, so the
 // node is where the bytes are.
 func (r *Runner) artifactOf(ctx context.Context, s *state, detail *millv1.InspectResponse, step string) string {
@@ -718,7 +718,7 @@ func (r *Runner) artifactOf(ctx context.Context, s *state, detail *millv1.Inspec
 	if digest == "" {
 		return fmt.Sprintf("(step %s has attached no artifact to %s)", step, s.node.GetReference())
 	}
-	held, err := s.dagger.Artifacts(ctx, s.node.GetReference())
+	held, err := s.skift.Artifacts(ctx, s.node.GetReference())
 	if err != nil {
 		r.options.Log.Warn("gate ask", "artifact", step, "error", err)
 		return fmt.Sprintf("(the artifact of %s could not be read from %s: %v)", step, s.node.GetReference(), err)
@@ -737,7 +737,7 @@ func (r *Runner) artifactOf(ctx context.Context, s *state, detail *millv1.Inspec
 }
 
 // head is the first n lines of a text, with a line saying what was left out.
-// A gate's body travels: it is read in dagger, and carried to a person by
+// A gate's body travels: it is read in skift, and carried to a person by
 // whatever the deployment configured (internal/notify). Quoting a whole plan
 // there is quoting it into a chat message.
 func head(n int, text string) string {
@@ -779,14 +779,14 @@ func (g gates) Node(ctx context.Context, id string) (evidence.GateNode, error) {
 	if err != nil {
 		return evidence.GateNode{}, err
 	}
-	gate := evidence.GateNode{ID: node.GetId(), Status: daggerStatus(node.GetStatus())}
+	gate := evidence.GateNode{ID: node.GetId(), Status: skiftStatus(node.GetStatus())}
 	if gate.Status != "done" {
 		return gate, nil
 	}
 	// The gate's result is the evidence. A node message carries none, so
-	// the one node dagger is asked about twice is the one whose answer the
+	// the one node skift is asked about twice is the one whose answer the
 	// ledger is about to record.
-	result, err := g.state.dagger.Result(ctx, node.GetReference())
+	result, err := g.state.skift.Result(ctx, node.GetReference())
 	if err != nil {
 		return evidence.GateNode{}, err
 	}
@@ -794,8 +794,8 @@ func (g gates) Node(ctx context.Context, id string) (evidence.GateNode, error) {
 	return gate, nil
 }
 
-// daggerStatus is a node status as the `gate` verifier reads it.
-func daggerStatus(status skiftv1.Status) string {
+// skiftStatus is a node status as the `gate` verifier reads it.
+func skiftStatus(status skiftv1.Status) string {
 	switch status {
 	case skiftv1.Status_STATUS_OPEN:
 		return "open"

@@ -340,7 +340,7 @@ printf '%s\n' '{"terminal":{"exit":{"status":0}}}'
 
 		turn, err := adapter(script).Start(lifetime, session,
 			harness.Prompt{Text: "implement the node", OutputSchema: `{"type":"object"}`},
-			[]harness.Attachment{{Name: "dagger#3", Source: "predecessor", MediaType: "text/markdown", Content: "done"}})
+			[]harness.Attachment{{Name: "skift#3", Source: "predecessor", MediaType: "text/markdown", Content: "done"}})
 		Expect(err).NotTo(HaveOccurred())
 		_, err = turn.Wait(lifetime)
 		Expect(err).NotTo(HaveOccurred())

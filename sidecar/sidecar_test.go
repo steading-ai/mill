@@ -386,10 +386,10 @@ var _ = Describe("The sidecar", Label("unit"), func() {
 	})
 
 	It("The workspace's dead sockets reach the session, not the production ones", func() {
-		By("given a sidecar spawned with the dead DG_SOCKET and MILL_SOCKET the workspace decided")
+		By("given a sidecar spawned with the dead SKIFT_SOCKET and MILL_SOCKET the workspace decided")
 		env := map[string]string{
-			"DG_SOCKET":   "/var/lib/mill/runs/01JB/no-dagger.sock",
-			"MILL_SOCKET": "/var/lib/mill/runs/01JB/no-mill.sock",
+			"SKIFT_SOCKET": "/var/lib/mill/runs/01JB/no-skift.sock",
+			"MILL_SOCKET":  "/var/lib/mill/runs/01JB/no-mill.sock",
 		}
 		for name, value := range decided {
 			env[name] = value
@@ -398,12 +398,12 @@ var _ = Describe("The sidecar", Label("unit"), func() {
 		By("when the session runs `env` through its exec tool")
 		printed := probed(env)
 
-		By("then DG_SOCKET and MILL_SOCKET are the workspace's dead paths")
-		Expect(printed).To(ContainSubstring("DG_SOCKET=/var/lib/mill/runs/01JB/no-dagger.sock\n"))
+		By("then SKIFT_SOCKET and MILL_SOCKET are the workspace's dead paths")
+		Expect(printed).To(ContainSubstring("SKIFT_SOCKET=/var/lib/mill/runs/01JB/no-skift.sock\n"))
 		Expect(printed).To(ContainSubstring("MILL_SOCKET=/var/lib/mill/runs/01JB/no-mill.sock\n"))
 
-		By("and neither the host's dagger nor the host's mill socket ever appears")
-		Expect(printed).NotTo(ContainSubstring("/run/dagger/dg.sock"))
+		By("and neither the host's skift nor the host's mill socket ever appears")
+		Expect(printed).NotTo(ContainSubstring("/run/skift/skift.sock"))
 		Expect(printed).NotTo(ContainSubstring("/run/mill/mill.sock"))
 	})
 
@@ -591,7 +591,7 @@ var _ = Describe("The sidecar", Label("unit"), func() {
 			"ANTHROPIC_API_KEY": "sk-ant-should-not-leak",
 			"GITHUB_TOKEN":      "ghp-should-not-leak",
 			"GH_TOKEN":          "ghp-should-not-leak",
-			"DAGGER_SOCKET":     "/run/dagger.sock",
+			"SKIFT_CONFIG":      "/etc/skift/config.json",
 			// A short PATH keeps the probe's output inside the limit the
 			// sidecar truncates a tool result at; this host's own PATH is
 			// longer than a tool result is allowed to be.
@@ -617,7 +617,7 @@ var _ = Describe("The sidecar", Label("unit"), func() {
 		Expect(printed).NotTo(ContainSubstring("ANTHROPIC_API_KEY"))
 		Expect(printed).NotTo(ContainSubstring("GITHUB_TOKEN"))
 		Expect(printed).NotTo(ContainSubstring("GH_TOKEN"))
-		Expect(printed).NotTo(ContainSubstring("DAGGER"))
+		Expect(printed).NotTo(ContainSubstring("SKIFT_CONFIG"))
 		Expect(printed).NotTo(ContainSubstring("should-not-leak"))
 	})
 

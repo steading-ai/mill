@@ -1,4 +1,4 @@
-package dagger
+package skift
 
 import (
 	"context"
@@ -15,9 +15,9 @@ import (
 // Everything else here refuses to complete, drop, reclassify or unlink a
 // user-assigned node, because mill must not dispose of the gates it files
 // (docs/domain-model.md §Principal). That refusal is mill's discipline and
-// not dagger's rule: dagger scopes the filer restrictions to non-user
+// not skift's rule: skift scopes the filer restrictions to non-user
 // principals, and mill runs as the operator's user principal, so a person
-// answering their own gate through this process is exactly the case dagger's
+// answering their own gate through this process is exactly the case skift's
 // §Gates allows. The distinction the ledger has to keep is therefore *who
 // acted*, which is why this carries no lease and a request id that does not
 // begin with mill's prefix: nothing here is attributable to the mill.
@@ -45,10 +45,10 @@ func (c *Client) AnswerGate(ctx context.Context, requestID, ref string, approve 
 		Ops:       []*skiftv1.PatchOp{op},
 		View:      skiftv1.View_VIEW_REFS,
 	}))
-	return wrap("dagger: answer gate "+ref, err)
+	return wrap("skift: answer gate "+ref, err)
 }
 
 // UserRequestIDPrefix begins a request id for a write a person made through
-// mill's process. It is deliberately not [RequestIDPrefix]: dagger's event
+// mill's process. It is deliberately not [RequestIDPrefix]: skift's event
 // log should not say the mill did what a human did.
 const UserRequestIDPrefix = "user-"

@@ -28,7 +28,7 @@ import (
 // only for the two verifiers that read structured output.
 type result struct {
 	// claim is what the mill observed: a SHA git returned, a URL the forge
-	// returned, an artifact digest dagger accepted, a gate node's id.
+	// returned, an artifact digest skift accepted, a gate node's id.
 	claim string
 	// session is what the session produced.
 	session evidence.Session
@@ -803,7 +803,7 @@ func (r *Runner) prompt(ctx context.Context, s *state, step *millv1.Step, detail
 	if err != nil {
 		return harness.Prompt{}, err
 	}
-	inputs, err := r.options.Dagger.Inputs(ctx, s.node.GetReference())
+	inputs, err := r.options.Skift.Inputs(ctx, s.node.GetReference())
 	if err != nil {
 		return harness.Prompt{}, err
 	}

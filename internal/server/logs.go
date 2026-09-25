@@ -332,7 +332,7 @@ func latestStepRun(detail *domain.RunDetail, step string, attempt int64) *millv1
 // gateRef reads a's gate_filed body, when it has one, into the shape
 // RunEnd.gate carries. docs/activity.md's Decisions: RunEnd's gate is built
 // from the gate_filed record already in the stream being followed, not a
-// fresh call to dagger.
+// fresh call to skift.
 func gateRef(a *millv1.Activity) *millv1.GateRef {
 	filed := a.GetGateFiled()
 	if filed == nil {

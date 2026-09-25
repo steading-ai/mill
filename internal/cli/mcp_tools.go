@@ -22,7 +22,7 @@ import (
 // The tools `mill mcp` offers. Each is one CLI command with its flags as
 // arguments, described for the model that will call it.
 //
-// The readers take `view` and size their answer with it, as dagger's do:
+// The readers take `view` and size their answer with it, as skift's do:
 // refs for identifiers, summary for what an operator reads at a glance, full
 // for everything the ledger holds. A session that starts with refs and asks
 // for full only where it needs to is a session that has not filled its
@@ -86,7 +86,7 @@ func (s *mcpServer) toolset() []*mcpTool {
 it has cost, and the gate a waiting run is blocked on. Start here.
 ` + viewIdiom,
 			schema: objectSchema(map[string]any{
-				"project":  stringProp("Only runs on nodes in this dagger project."),
+				"project":  stringProp("Only runs on nodes in this skift project."),
 				"statuses": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Only runs in these states: selecting, running, waiting, parked, done, failed, abandoned. Empty means every state that has not ended."},
 				"view":     viewProp(),
 			}),
@@ -162,7 +162,7 @@ ended, and what it cost. ` + runIdiom + `
 			name: "explain",
 			description: `Say what step a run is on, why that step is open, what evidence would close
 it, how many attempts it has used against its retries, and what it is
-waiting on. A waiting or parked run is blocked on a dagger gate: the gate's
+waiting on. A waiting or parked run is blocked on a skift gate: the gate's
 reference and title are named, and only a person can answer it. ` + runIdiom + `
 
 This is the tool to reach for when asked why a run is stuck. It returns no
@@ -180,7 +180,7 @@ transcript content; the ledger holds none.`,
 				if args.Run == "" {
 					return nil, fmt.Errorf("run is required")
 				}
-				return explain(ctx, storeClient(s.opts.socket), daggerFor(s.opts), args.Run)
+				return explain(ctx, storeClient(s.opts.socket), skiftFor(s.opts), args.Run)
 			},
 		},
 		{
@@ -248,7 +248,7 @@ revise rounds it answered.`,
 				"since":   stringProp("Only usage recorded within this window, such as 24h or 7d. Empty means everything."),
 				"until":   stringProp("Exclude usage within this window of now, such as 1h. Empty means up to now."),
 				"bucket":  stringProp(`Also group the window over time: "day". Empty means no time grouping.`),
-				"project": stringProp("Only runs on nodes in this dagger project."),
+				"project": stringProp("Only runs on nodes in this skift project."),
 			}),
 			call: func(ctx context.Context, raw json.RawMessage) (any, error) {
 				var args struct {
@@ -498,7 +498,7 @@ role.`,
 		{
 			name: "doctor",
 			description: `Probe everything a run depends on and report each as pass or fail with one
-line of reason: the service's socket, the database schema, dagger, the
+line of reason: the service's socket, the database schema, skift, the
 harness sidecar, the commit signing key, and the forge credential.`,
 			schema: objectSchema(map[string]any{}),
 			call: func(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -661,7 +661,7 @@ func (s *mcpServer) doctorOptions() doctorOptions {
 	config := deploymentConfig()
 	opts := doctorOptions{
 		socket:        s.opts.socket,
-		daggerSocket:  s.opts.daggerSocket,
+		skiftSocket:   s.opts.skiftSocket,
 		project:       s.opts.project,
 		sidecar:       envOr(sidecarEnv, "sidecar/dist/main.js"),
 		workspaceDir:  defaultWorkspaceDir(),

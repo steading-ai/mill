@@ -16,7 +16,7 @@ import (
 
 var _ = Describe("SealOrphans", Label(testsupport.DBLabel), func() {
 	// closingRunner builds a bare *run.Runner over sealFixture's store
-	// client and log dir — no dagger, no workspace, exactly what
+	// client and log dir — no skift, no workspace, exactly what
 	// SealOrphans itself touches.
 	closingRunner := func(f *sealFixture) *run.Runner {
 		return run.New(run.Options{

@@ -1,7 +1,7 @@
 // Package cli assembles the cobra command tree for the mill binary.
 //
 // One binary has two faces: the service that owns the store and its API, and
-// the worker that claims a dagger node and drives its run. See the "One
+// the worker that claims a skift node and drives its run. See the "One
 // binary, two faces" section of docs/architecture.md. The subcommands here
 // are the faces themselves plus "version"; each carries no behaviour yet and
 // the nodes that follow the scaffold fill them in.
@@ -56,12 +56,12 @@ func ExitCode(err error) int {
 func NewRootCommand(stdout, stderr io.Writer) *cobra.Command {
 	root := &cobra.Command{
 		Use:     "mill",
-		Short:   "A workflow runner over dagger's work graph",
+		Short:   "A workflow runner over skift's work graph",
 		Version: version.String(),
 		Long: `mill is the single entry point to the workflow runner.
 
 "mill serve" runs the service: the store, the workflows, and the ledger.
-"mill work" runs a worker: claim a ready dagger node, then drive its run.
+"mill work" runs a worker: claim a ready skift node, then drive its run.
 "mill run" drives a single named node in the calling process.
 "mill restart" abandons a node's run and starts a new generation.
 "mill rerun" redoes a run from a step, keeping the generation and sessions.

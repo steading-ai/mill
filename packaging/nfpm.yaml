@@ -26,7 +26,7 @@ release: 1
 maintainer: Ivy Evans <ivy@ivyevans.net>
 homepage: https://github.com/steading-ai/mill
 description: |
-  A workflow runner over dagger's work graph. It claims a ready node, drives
+  A workflow runner over skift's work graph. It claims a ready node, drives
   each step as a headless coding-agent session or a deterministic check,
   closes steps on verified evidence, and completes the node with a result
   and provenance.
@@ -68,5 +68,5 @@ scripts:
   preremove: packaging/scripts/preremove.sh
   postremove: packaging/scripts/postremove.sh
 rpm:
-  summary: A workflow runner over dagger's work graph
+  summary: A workflow runner over skift's work graph
   compression: zstd

@@ -2,10 +2,10 @@
 // contract the store, its API, and the worker are derived from;
 // docs/domain-model.md is its rationale and docs/ledger.md its storage.
 //
-// The mill holds exactly one kind of state dagger does not — which workflow,
-// which step, what evidence, which session. Where dagger already names a
+// The mill holds exactly one kind of state skift does not — which workflow,
+// which step, what evidence, which session. Where skift already names a
 // thing (node, lease, gate, artifact, usage, principal, context id) this
-// package stores dagger's *identifier* and never dagger's content, so a
+// package stores skift's *identifier* and never skift's content, so a
 // message here is never a copy of a message there.
 //
 // Where a field's comment and docs/domain-model.md disagree, the comment
@@ -59,7 +59,7 @@ const (
 	// WAITING; distinguished so status can say why.
 	RunStatus_RUN_STATUS_PARKED RunStatus = 4
 	// RUN_STATUS_DONE means the terminal step closed with evidence and the
-	// completing patch was accepted by dagger.
+	// completing patch was accepted by skift.
 	RunStatus_RUN_STATUS_DONE RunStatus = 5
 	// RUN_STATUS_FAILED means a gate was denied, or the node was dropped
 	// underneath the run. Terminal.
@@ -202,7 +202,7 @@ const (
 	// STEP_KIND_CHECK runs a command through the workspace and reads its exit
 	// code and stdout. It produces evidence directly.
 	StepKind_STEP_KIND_CHECK StepKind = 2
-	// STEP_KIND_GATE files a dagger gate and releases the lease. It produces
+	// STEP_KIND_GATE files a skift gate and releases the lease. It produces
 	// no evidence of its own; the gate's result is the evidence.
 	StepKind_STEP_KIND_GATE StepKind = 3
 	// STEP_KIND_PREPARATORY readies the machine for the sessions: a command
@@ -353,7 +353,7 @@ const (
 	// as success for the commit.
 	EvidenceKind_EVIDENCE_KIND_STATUS EvidenceKind = 6
 	// EVIDENCE_KIND_ARTIFACT closes any step: an artifact with this digest was
-	// accepted by dagger.
+	// accepted by skift.
 	EvidenceKind_EVIDENCE_KIND_ARTIFACT EvidenceKind = 7
 	// EVIDENCE_KIND_GATE closes gate steps: the gate node's status is done and
 	// its result is attached.
@@ -1239,9 +1239,9 @@ type Run struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// ULID, internal.
 	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	// The dagger node.
+	// The skift node.
 	NodeId string `protobuf:"bytes,2,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	// The display key (`dagger#18`).
+	// The display key (`skift#18`).
 	NodeRef string `protobuf:"bytes,3,opt,name=node_ref,json=nodeRef,proto3" json:"node_ref,omitempty"`
 	// 1 for the first run on a node; incremented by restart.
 	// `(node_id, generation)` is unique; at most one run per node is live.
@@ -1249,7 +1249,7 @@ type Run struct {
 	// unique outright; docs/domain-model.md §Restart requires the generation
 	// and wins.
 	Generation int64 `protobuf:"varint,4,opt,name=generation,proto3" json:"generation,omitempty"`
-	// Dagger's context id for the node, copied at creation. Every session in
+	// Skift's context id for the node, copied at creation. Every session in
 	// the run derives from it and the generation.
 	ContextId string `protobuf:"bytes,5,opt,name=context_id,json=contextId,proto3" json:"context_id,omitempty"`
 	// The immutable workflow version this run follows. Fixed at selection;
@@ -1257,8 +1257,8 @@ type Run struct {
 	WorkflowId string `protobuf:"bytes,6,opt,name=workflow_id,json=workflowId,proto3" json:"workflow_id,omitempty"`
 	// Where the run is. See RunStatus.
 	Status RunStatus `protobuf:"varint,7,opt,name=status,proto3,enum=mill.v1.RunStatus" json:"status,omitempty"`
-	// The current dagger lease, or empty while waiting or parked. The fencing
-	// token on every dagger write.
+	// The current skift lease, or empty while waiting or parked. The fencing
+	// token on every skift write.
 	LeaseId string `protobuf:"bytes,8,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
 	// Where the current attempt runs. Free string; a hostname and account
 	// today.
@@ -1287,7 +1287,7 @@ type Run struct {
 	// The idempotency key of the patch that completes the node, minted and
 	// stored before that patch is sent. A worker resuming a run whose
 	// completing patch may or may not have landed retries it under the same
-	// key rather than under a new one, which is what makes "dagger first,
+	// key rather than under a new one, which is what makes "skift first,
 	// store second" recoverable (docs/ledger.md §Resume, Invariant 11).
 	CompleteRequestId string `protobuf:"bytes,18,opt,name=complete_request_id,json=completeRequestId,proto3" json:"complete_request_id,omitempty"`
 	unknownFields     protoimpl.UnknownFields
@@ -1466,7 +1466,7 @@ type StepRun struct {
 	Kind StepKind `protobuf:"varint,5,opt,name=kind,proto3,enum=mill.v1.StepKind" json:"kind,omitempty"`
 	// Skill steps: the session this attempt ran in.
 	SessionId string `protobuf:"bytes,6,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	// The dagger lease held when this attempt ran.
+	// The skift lease held when this attempt ran.
 	LeaseId string `protobuf:"bytes,7,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
 	// The worker that ran this attempt.
 	WorkerRef string `protobuf:"bytes,8,opt,name=worker_ref,json=workerRef,proto3" json:"worker_ref,omitempty"`
@@ -2011,7 +2011,7 @@ type Evidence_Status struct {
 }
 
 type Evidence_Artifact struct {
-	// An artifact digest dagger accepted.
+	// An artifact digest skift accepted.
 	Artifact string `protobuf:"bytes,9,opt,name=artifact,proto3,oneof"`
 }
 
@@ -2559,7 +2559,7 @@ func (x *Ask) GetBody() string {
 	return ""
 }
 
-// Gate is a human decision, expressed the only way dagger allows: a node with
+// Gate is a human decision, expressed the only way skift allows: a node with
 // assignee_kind user that blocks this run's node. The mill files it, never
 // claims it, never completes it, and never disposes of it.
 type Gate struct {
@@ -2778,7 +2778,7 @@ type Step struct {
 	// this step's attempts. Default 3.
 	Retries int32 `protobuf:"varint,11,opt,name=retries,proto3" json:"retries,omitempty"`
 	// Wall clock for the step, enforced by the worker. Independent of the
-	// dagger lease, which the worker heartbeats for the step's whole duration;
+	// skift lease, which the worker heartbeats for the step's whole duration;
 	// a step may run longer than a lease TTL.
 	Timeout *durationpb.Duration `protobuf:"bytes,12,opt,name=timeout,proto3" json:"timeout,omitempty"`
 	// JSON Schema the session's structured output must validate against, for a
@@ -3258,11 +3258,11 @@ func (x *StatusPolicy) GetTimeout() *durationpb.Duration {
 }
 
 // ProjectDefault is a project naming the workflow its nodes are worked
-// through, and the tier that workflow stands for. Dagger nodes carry no
-// workflow label; dagger never learns the word.
+// through, and the tier that workflow stands for. Skift nodes carry no
+// workflow label; skift never learns the word.
 type ProjectDefault struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The dagger project.
+	// The skift project.
 	Project string `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
 	// Name, resolved to the newest version in scope at run creation.
 	Workflow string `protobuf:"bytes,2,opt,name=workflow,proto3" json:"workflow,omitempty"`
@@ -3448,7 +3448,7 @@ type Usage struct {
 	CacheWriteTokens int64 `protobuf:"varint,6,opt,name=cache_write_tokens,json=cacheWriteTokens,proto3" json:"cache_write_tokens,omitempty"`
 	// When the turn was recorded.
 	RecordedAt *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=recorded_at,json=recordedAt,proto3" json:"recorded_at,omitempty"`
-	// When this row's step totals were posted to dagger; unset until then.
+	// When this row's step totals were posted to skift; unset until then.
 	PostedAt *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=posted_at,json=postedAt,proto3" json:"posted_at,omitempty"`
 	// Who counted it. Unset reads as the adapter's report.
 	Source        UsageSource `protobuf:"varint,9,opt,name=source,proto3,enum=mill.v1.UsageSource" json:"source,omitempty"`
@@ -3995,7 +3995,7 @@ type RunSummary struct {
 	CurrentAttempt int64 `protobuf:"varint,3,opt,name=current_attempt,json=currentAttempt,proto3" json:"current_attempt,omitempty"`
 	// The run's cost so far, summed over its step runs, by model.
 	Totals []*ModelTotals `protobuf:"bytes,4,rep,name=totals,proto3" json:"totals,omitempty"`
-	// How many dagger leases the node has held under this run. Distinct from a
+	// How many skift leases the node has held under this run. Distinct from a
 	// step's attempt.
 	Leases int64 `protobuf:"varint,5,opt,name=leases,proto3" json:"leases,omitempty"`
 	// The run's workspace as the ledger recorded it: where it is, whether
@@ -4123,7 +4123,7 @@ type StepRunDetail struct {
 	// The session it ran in, for a skill step.
 	Session *Session `protobuf:"bytes,3,opt,name=session,proto3" json:"session,omitempty"`
 	// What it cost, by model, as the adapter reported it: the rows posted to
-	// dagger.
+	// skift.
 	Totals []*ModelTotals `protobuf:"bytes,4,rep,name=totals,proto3" json:"totals,omitempty"`
 	// How many times the harness asked this attempt's session about a
 	// background task that had gone silent. A stalled attempt is one whose
@@ -4132,7 +4132,7 @@ type StepRunDetail struct {
 	Heartbeats int64 `protobuf:"varint,5,opt,name=heartbeats,proto3" json:"heartbeats,omitempty"`
 	// What the credential gateway counted for the attempt, by model, from the
 	// upstream's responses outside the session. Empty when no gateway sat in
-	// front of it. Never posted to dagger: it is the check on `totals`, read
+	// front of it. Never posted to skift: it is the check on `totals`, read
 	// beside it (docs/sandbox.md §Credentials).
 	GatewayTotals []*ModelTotals `protobuf:"bytes,6,rep,name=gateway_totals,json=gatewayTotals,proto3" json:"gateway_totals,omitempty"`
 	unknownFields protoimpl.UnknownFields

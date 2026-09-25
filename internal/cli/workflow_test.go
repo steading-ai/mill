@@ -116,15 +116,15 @@ var _ = Describe("mill.run/mill.try's socket guard", Label("unit"), func() {
 		Expect(func() { mill{}.run(context.Background(), "status") }).To(PanicWith(ContainSubstring("serving(ctx)")))
 	})
 
-	It("appends a dead --dagger-socket when the target command takes one", func() {
+	It("appends a dead --skift-socket when the target command takes one", func() {
 		m := mill{socket: "/nonexistent/mill.sock"}
 		args := m.argsWithSockets([]string{"explain", "millcli#1"})
-		Expect(args).To(ContainElement("--dagger-socket"))
+		Expect(args).To(ContainElement("--skift-socket"))
 	})
 
-	It("does not hand an unknown flag to a command with no --dagger-socket", func() {
+	It("does not hand an unknown flag to a command with no --skift-socket", func() {
 		m := mill{socket: "/nonexistent/mill.sock"}
-		Expect(m.argsWithSockets([]string{"status"})).NotTo(ContainElement("--dagger-socket"))
+		Expect(m.argsWithSockets([]string{"status"})).NotTo(ContainElement("--skift-socket"))
 	})
 })
 

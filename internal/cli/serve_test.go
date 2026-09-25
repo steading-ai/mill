@@ -251,7 +251,7 @@ var _ = Describe("mill serve", Label(testsupport.DBLabel), func() {
 	})
 
 	It("answers WorkerService.Probe from this process's own worker once --work runs one", func(ctx SpecContext) {
-		g := daggerNodeWith(ctx, "https://forge.test/mill/mill.git")
+		g := skiftNodeWith(ctx, "https://forge.test/mill/mill.git")
 		databaseURL := pg.Database(ctx).Config().ConnString()
 		socket := filepath.Join(GinkgoT().TempDir(), "mill.sock")
 		config := filepath.Join(GinkgoT().TempDir(), "empty.yaml")
@@ -264,11 +264,11 @@ var _ = Describe("mill serve", Label(testsupport.DBLabel), func() {
 			"--socket", socket,
 			"--database-url", databaseURL,
 			"--config", config,
-			"--project", daggerProject,
+			"--project", skiftProject,
 			// A label no node carries: what is under test is WorkerService
 			// answering beside the worker, not what the worker claims.
 			"--label", "nothing-carries-this",
-			"--dagger-socket", g.service.Socket,
+			"--skift-socket", g.service.Socket,
 			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 			"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
 		})

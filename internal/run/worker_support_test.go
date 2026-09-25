@@ -16,8 +16,8 @@ import (
 	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
 
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
-	"github.com/steading-ai/mill/internal/dagger"
 	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/skift"
 )
 
 // What the worker's specs need on top of the run loop's own fixture: nodes
@@ -96,7 +96,7 @@ func (f *fixture) complete(ctx context.Context, ref string) {
 	Expect(err).NotTo(HaveOccurred())
 }
 
-// statusOf is what dagger says of one node.
+// statusOf is what skift says of one node.
 func (f *fixture) statusOf(ctx context.Context, ref string) skiftv1.Status {
 	GinkgoHelper()
 	node, err := f.client.Node(ctx, ref)
@@ -104,7 +104,7 @@ func (f *fixture) statusOf(ctx context.Context, ref string) skiftv1.Status {
 	return node.GetStatus()
 }
 
-// holdReasonOf is the reason dagger holds a node under, or "" while it is
+// holdReasonOf is the reason skift holds a node under, or "" while it is
 // not held.
 func (f *fixture) holdReasonOf(ctx context.Context, ref string) string {
 	GinkgoHelper()
@@ -123,7 +123,7 @@ func (f *fixture) runOfRef(ctx context.Context, ref string) *millv1.Run {
 	return res.Msg.GetRun()
 }
 
-// counting records which dagger procedures were called, so a spec can assert
+// counting records which skift procedures were called, so a spec can assert
 // what the worker did *not* do — subscribe to a change stream — as well as
 // what it did.
 type counting struct {
@@ -148,11 +148,11 @@ func (c *counting) RoundTrip(req *http.Request) (*http.Response, error) {
 	return transport.RoundTrip(req)
 }
 
-// counted builds a dagger client whose calls this spec can count.
-func (f *fixture) counted() (*dagger.Client, *counting) {
-	counter := &counting{socket: f.dagger.Socket}
-	return dagger.New(&http.Client{Transport: counter}, f.dagger.BaseURL(), project,
-		dagger.WithAgentRef(f.worker)), counter
+// counted builds a skift client whose calls this spec can count.
+func (f *fixture) counted() (*skift.Client, *counting) {
+	counter := &counting{socket: f.skift.Socket}
+	return skift.New(&http.Client{Transport: counter}, f.skift.BaseURL(), project,
+		skift.WithAgentRef(f.worker)), counter
 }
 
 // runningStep is the step whose attempt is in flight, and "" while the

@@ -43,7 +43,7 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 	}
 
 	Describe("A predicate that holds", func() {
-		It("records an auto-approval in the ledger and files nothing in dagger", func() {
+		It("records an auto-approval in the ledger and files nothing in skift", func() {
 			Expect(f.runner().Execute(ctx, f.nodeRef)).To(Succeed())
 
 			var merge *millv1.StepRun
@@ -51,7 +51,7 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 				merge = sr
 			}
 			Expect(merge.GetAutoApproved()).To(BeTrue(), "the ledger records the auto-approval")
-			Expect(f.gatesOn(ctx)).To(BeEmpty(), "nothing was filed in dagger")
+			Expect(f.gatesOn(ctx)).To(BeEmpty(), "nothing was filed in skift")
 		})
 	})
 
@@ -62,7 +62,7 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 
 			Expect(f.runner(func(o *run.Options) {
 				o.Workflow = workflow
-				o.Dagger = client
+				o.Skift = client
 			}).Execute(ctx, f.nodeRef)).To(Succeed())
 
 			gate := f.theGate(ctx)
@@ -86,7 +86,7 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 			store := &failingStore{StoreServiceClient: f.store}
 
 			// When the process dies after ApplyPatch and before the store
-			// write. The gate is in dagger; the ledger knows nothing of it.
+			// write. The gate is in skift; the ledger knows nothing of it.
 			err := f.runner(func(o *run.Options) {
 				o.Workflow = workflow
 				o.Store = store
@@ -133,7 +133,7 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 		})
 
 		It("fails the run with the step's deny_result when the gate is denied", func() {
-			// A denial is a gate a person disposed of, and dagger's rule is
+			// A denial is a gate a person disposed of, and skift's rule is
 			// that dropping a gate never satisfies the edge out of it: the
 			// node is never ready again, so the run that records the denial
 			// has to be the one still holding the lease. That is single-run
@@ -205,7 +205,7 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 			err := f.runner(withAnswers(person), func(o *run.Options) {
 				o.Workflow = workflow
 				o.LogDir = logDir
-				o.Dagger = client
+				o.Skift = client
 			}).Execute(ctx, f.nodeRef)
 			Expect(err).To(HaveOccurred())
 			f.assertWriterClosed(ctx, logDir, "merge")

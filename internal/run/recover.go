@@ -16,7 +16,7 @@ import (
 // between an attempt closing (endActivity, execute.go) and its own seal
 // landing leaves behind (docs/activity.md). Wired into worker.go's start(),
 // right after the sweep and before the host's own reconciliation, since
-// sealing local files needs neither dagger nor that pass.
+// sealing local files needs neither skift nor that pass.
 //
 // The only error is a LogDir that cannot be listed. Anything wrong with one
 // run — the store cannot say what became of it, or a seal itself fails — is

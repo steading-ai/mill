@@ -500,7 +500,7 @@ var _ = Describe("The machine workspace", Label("unit"), func() {
 	// handle.Socket's own directory, so neither side can resolve the value,
 	// but the environment no longer falls back to the production sockets
 	// either way.
-	It("hands every child a dead DG_SOCKET and MILL_SOCKET", func(ctx context.Context) {
+	It("hands every child a dead SKIFT_SOCKET and MILL_SOCKET", func(ctx context.Context) {
 		ws := f.workspace()
 		handle, err := ws.Create(ctx, spec)
 		Expect(err).NotTo(HaveOccurred())
@@ -508,7 +508,7 @@ var _ = Describe("The machine workspace", Label("unit"), func() {
 
 		dead := workspace.DeadSockets(filepath.Dir(handle.Socket))
 		env := ws.Environment()
-		Expect(env).To(HaveKeyWithValue("DG_SOCKET", dead["DG_SOCKET"]))
+		Expect(env).To(HaveKeyWithValue("SKIFT_SOCKET", dead["SKIFT_SOCKET"]))
 		Expect(env).To(HaveKeyWithValue("MILL_SOCKET", dead["MILL_SOCKET"]))
 	})
 
@@ -553,7 +553,7 @@ var _ = Describe("The machine workspace", Label("unit"), func() {
 		m := f.manifest()
 		Expect(m.Nested).To(BeFalse())
 		Expect(m.Binds).NotTo(ContainElement(HaveField("Target", "/var/lib/machines")))
-		Expect(m.Binds).NotTo(ContainElement(HaveField("Target", machine.DaggerCheckoutTarget)))
+		Expect(m.Binds).NotTo(ContainElement(HaveField("Target", machine.SkiftCheckoutTarget)))
 		Expect(m.Image).To(Equal(string(base)), "the flat image, not the nested variant")
 
 		By("and the first session receives a finding, beside mill.toml's other findings")
@@ -579,8 +579,8 @@ var _ = Describe("The machine workspace", Label("unit"), func() {
 	It("grants nested to a listed repository: machine.json gains nested, the two read-only binds and the nested image, and nothing else differs", func(ctx context.Context) {
 		f = newFixture(origin(map[string]string{"mill.toml": "[machine]\nnested = true\n[image]\npackages = [\"libpq-devel\"]\n"}))
 		spec.Origin = f.config.Origin
-		f.config.DaggerCheckout = filepath.Join(f.root, "dagger")
-		Expect(os.MkdirAll(f.config.DaggerCheckout, 0o755)).To(Succeed())
+		f.config.SkiftCheckout = filepath.Join(f.root, "skift")
+		Expect(os.MkdirAll(f.config.SkiftCheckout, 0o755)).To(Succeed())
 		provision := func(granted bool) map[string]any {
 			GinkgoHelper()
 			ws := f.workspace()
@@ -614,7 +614,7 @@ var _ = Describe("The machine workspace", Label("unit"), func() {
 		Expect(granted["limits"]).To(Equal(ungranted["limits"]))
 		Expect(granted["binds"]).To(Equal(append(ungranted["binds"].([]any),
 			map[string]any{"source": f.machines, "target": "/var/lib/machines", "readonly": true},
-			map[string]any{"source": f.config.DaggerCheckout, "target": machine.DaggerCheckoutTarget, "readonly": true},
+			map[string]any{"source": f.config.SkiftCheckout, "target": machine.SkiftCheckoutTarget, "readonly": true},
 		)), "the ungranted binds in order, then the two read-only nested binds")
 		for key := range granted {
 			Expect([]string{"image", "binds", "limits", "nested"}).To(ContainElement(key), "no key beyond the helper's schema")
@@ -622,14 +622,14 @@ var _ = Describe("The machine workspace", Label("unit"), func() {
 		Expect(f.host.CallsTo(driver.BuildImageOnHost)).To(HaveLen(2), "one flat build, one nested build")
 	})
 
-	It("refuses a nested provision whose dagger checkout is not there, before the unit starts", func(ctx context.Context) {
+	It("refuses a nested provision whose skift checkout is not there, before the unit starts", func(ctx context.Context) {
 		f = newFixture(origin(map[string]string{"mill.toml": "[machine]\nnested = true\n"}))
 		spec.Origin = f.config.Origin
 		f.config.NestedRepos = []string{f.config.Origin}
-		f.config.DaggerCheckout = filepath.Join(f.root, "dagger")
+		f.config.SkiftCheckout = filepath.Join(f.root, "skift")
 		ws := f.workspace()
 		_, err := ws.Create(ctx, spec)
-		Expect(err).To(MatchError(ContainSubstring("dagger")))
+		Expect(err).To(MatchError(ContainSubstring("skift")))
 		Expect(f.host.CallsTo(driver.StartUnit)).To(BeEmpty())
 	})
 
@@ -728,7 +728,7 @@ var _ = Describe("Names and the preflight", Label("unit"), func() {
 		Expect(machine.DefaultRoot).To(Equal("/var/lib/mill"))
 		Expect(machine.DefaultMachines).To(Equal("/var/lib/machines"))
 		Expect(machine.DefaultRunState).To(Equal("/run/mill"))
-		Expect(machine.DefaultDaggerCheckout).To(Equal("/var/lib/mill/dagger"))
+		Expect(machine.DefaultSkiftCheckout).To(Equal("/var/lib/mill/skift"))
 		Expect(machine.NestedRoot).To(Equal("/home/agent/mill"))
 		Expect(machine.DefaultProxy).To(Equal("http://10.99.255.1:3128"))
 		Expect(machine.DefaultGateway).To(Equal("http://10.99.255.1:8080"))
