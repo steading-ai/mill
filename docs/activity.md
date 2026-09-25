@@ -4,7 +4,7 @@
 
 What a run did, kept whole: every event of every session, every verb the workspace ran, every check, in the order it happened, per attempt, for as long as the deployment chooses. `docs/ledger.md` is what the mill decided; this is what happened while it decided. The two never overlap: the ledger holds outcomes and evidence, the record holds activity, and each cites the other by `step_run_id`.
 
-Three readers are designed for, in this order. A web UI for dagger and mill, the primary one, which shows a run as a tree of folds — attempt, turn, tool call, subagent — filling in live and opened again a month later; the record is shaped so that every fold is a kind or an index column and the UI never parses text to find a boundary. `mill logs`, the way an agent inspects a run and the way a person does when a browser is more than the question deserves; it stays a line renderer over the same stream and grows nothing the UI does better. And queries nobody has written yet, which is why bodies are kept and an index is kept beside them.
+Three readers are designed for, in this order. A web UI for skift and mill, the primary one, which shows a run as a tree of folds — attempt, turn, tool call, subagent — filling in live and opened again a month later; the record is shaped so that every fold is a kind or an index column and the UI never parses text to find a boundary. `mill logs`, the way an agent inspects a run and the way a person does when a browser is more than the question deserves; it stays a line renderer over the same stream and grows nothing the UI does better. And queries nobody has written yet, which is why bodies are kept and an index is kept beside them.
 
 ## What exists today
 
@@ -269,7 +269,7 @@ Semantics:
 
 ### A web UI
 
-Consumes `Logs` from a Go service beside `mill serve` and `dg serve`, a client of both sockets with its own listener and its own idea of who is asking; the products grow no TCP listeners and no second identity. The fold hierarchy is run → attempt → turn → tool call (+ result, + subagent subtree) → thinking, and every level is an event kind or an index column, so the UI never parses text to find a boundary. A step page opens on `tail`, pages up with `before`, expands a cut body with `limit` 1, and resumes after a reconnect with `after`. The run ↔ node link is `runs.node_id`, so a node page's runs are a join; a gate's is `gate_filed` in the stream, so the fold links to it without one.
+Consumes `Logs` from a Go service beside `mill serve` and `skift serve`, a client of both sockets with its own listener and its own idea of who is asking; the products grow no TCP listeners and no second identity. The fold hierarchy is run → attempt → turn → tool call (+ result, + subagent subtree) → thinking, and every level is an event kind or an index column, so the UI never parses text to find a boundary. A step page opens on `tail`, pages up with `before`, expands a cut body with `limit` 1, and resumes after a reconnect with `after`. The run ↔ node link is `runs.node_id`, so a node page's runs are a join; a gate's is `gate_filed` in the stream, so the fold links to it without one.
 
 ## Sizing
 
@@ -321,7 +321,7 @@ The `machine` backend (`docs/sandbox.md`) writes the same live file from the hos
 
 ## Rollout
 
-Five nodes, filed in `mill`'s dagger from `patches/mill/activity-*.md` in the stead repository. Each is independently shippable and leaves `mill logs` working.
+Five nodes, filed in `mill`'s skift from `patches/mill/activity-*.md` in the stead repository. Each is independently shippable and leaves `mill logs` working.
 
 1. **The record's shape.** `Activity`, the writer with `seq`, `turn` and boundaries, redaction over bodies, the live file replacing the text file, `mill logs` rendering lines from it locally. No RPC yet. The text log is gone at the end of this node and nothing visible changed.
 2. **Logs over the socket.** `mill#7` as re-specified here: the RPC with its cursors and limit, the observer, `serve --log-dir`, the client and the MCP tool on the stream, the pager and the exit table.

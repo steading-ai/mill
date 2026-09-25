@@ -181,7 +181,7 @@ the main loop, with the entire Haiku bill missing.
 
 **Verdict (SDK 0.3.263 / CLI 2.1.263): confirmed.** `modelUsage: Record<string, ModelUsage>` is exactly the
 shape the architecture asks for: keyed by model, token counts by kind, no
-currency required. It maps onto dagger's `ReportUsage` per `(lease, model)` with
+currency required. It maps onto skift's `ReportUsage` per `(lease, model)` with
 `inputTokens→input`, `outputTokens→output`, `cacheReadInputTokens→cache_read`,
 `cacheCreationInputTokens→cache_write`.
 

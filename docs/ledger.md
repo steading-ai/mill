@@ -1,6 +1,6 @@
 # Ledger
 
-The mill's only durable state: what happened inside each run. This document specifies what the ledger records, what it refuses to record, the invariants that make resume correct, and the algorithm a worker follows to resume from it. PostgreSQL, goose migrations, sqlc queries — dagger's conventions, so the two repos read alike.
+The mill's only durable state: what happened inside each run. This document specifies what the ledger records, what it refuses to record, the invariants that make resume correct, and the algorithm a worker follows to resume from it. PostgreSQL, goose migrations, sqlc queries — skift's conventions, so the two repos read alike.
 
 The ledger exists for one reason: **a step is closed by evidence the mill verified, and a run resumes from the record of that evidence, never from a transcript.** Everything below serves that.
 
@@ -8,7 +8,7 @@ The ledger exists for one reason: **a step is closed by evidence the mill verifi
 
 **Is:** the record of selection, step runs, evidence, sessions, tokens, and usage for every run. Append-mostly. The truth about where a run is.
 
-**Is not:** a copy of dagger. Node bodies, results, artifacts, comments, leases, and the graph live in dagger and are read from it. The ledger stores dagger *identifiers* — node id, context id, lease id, gate node id — never dagger content. If the mill's database were lost, every run in flight could be re-derived from dagger's events plus a re-run of each open step; what would be lost is cost attribution per step and the record of which session produced which verdict.
+**Is not:** a copy of skift. Node bodies, results, artifacts, comments, leases, and the graph live in skift and are read from it. The ledger stores skift *identifiers* — node id, context id, lease id, gate node id — never skift content. If the mill's database were lost, every run in flight could be re-derived from skift's events plus a re-run of each open step; what would be lost is cost attribution per step and the record of which session produced which verdict.
 
 **Is not:** a session store. Transcripts live with the harness. The ledger knows a session's deterministic id and the adapter's reference to it; it cannot replay one.
 
@@ -52,13 +52,13 @@ A workflow step references a skill by `(name, digest)`. Two workflows sharing a 
 | Column                                 | Notes                                                                                                                                                      |
 | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `id`                                   | ULID                                                                                                                                                       |
-| `node_id`                              | Dagger node ULID. **Unique.** One run per node, ever<br>
+| `node_id`                              | Skift node ULID. **Unique.** One run per node, ever<br>
  |
-| `node_ref`                             | Display key, e.g. `dagger#18`                                                                                                                              |
+| `node_ref`                             | Display key, e.g. `skift#18`                                                                                                                              |
 | `context_id`                           | Copied from the node at creation                                                                                                                           |
 | `workflow_id`                          | Null while `selecting`; set once and never changed                                                                                                         |
 | `status`                               | `selecting`, `running`, `waiting`, `parked`, `done`, `failed`                                                                                              |
-| `lease_id`                             | Current dagger lease or null                                                                                                                               |
+| `lease_id`                             | Current skift lease or null                                                                                                                               |
 | `worker_ref`                           | Current or last worker                                                                                                                                     |
 | `gate_node_id`                         | Set while `waiting` or `parked`                                                                                                                            |
 | `parked_reason`                        | `retries`, `budget`, `denied`, `timeout`, `refused`                                                                                                        |
@@ -78,7 +78,7 @@ One row per attempt at a step. Append-only.
 | `attempt` | 1-based per `(run_id, step_name)` |
 | `kind` | `skill`, `check`, `gate`, `preparatory`, copied at start so the row reads alone |
 | `session_id` | Skill steps: the session this attempt ran in |
-| `lease_id` | The dagger lease held when this attempt ran |
+| `lease_id` | The skift lease held when this attempt ran |
 | `worker_ref` | |
 | `status` | `running`, `closed`, `failed`, `aborted`, `superseded` |
 | `session_started` | Skill steps: the harness produced at least one event in this attempt's session. What says the next attempt at that session resumes it rather than starts it |
@@ -98,7 +98,7 @@ The one case a `commit` step closes on a head equal to *its own* `base_commit` i
 
 `closed` means evidence exists for this row. `failed` means the attempt ended and `on_failure` applies. `aborted` means the worker stopped or was fenced out before the attempt ended; the next worker starts a new attempt. `superseded` means a later `revise` reopened this step; the row and its evidence stay as the record of pass one.
 
-The circuit breaker counts `attempt` on the **failing** step — `review` fails, and `review.retries` is what it compares against, spent on `review`'s own attempts before `revise implement` is consulted at all. This is a different counter from the run's derived `leases`, which counts dagger claims and moves on worker crashes, not on review rounds.
+The circuit breaker counts `attempt` on the **failing** step — `review` fails, and `review.retries` is what it compares against, spent on `review`'s own attempts before `revise implement` is consulted at all. This is a different counter from the run's derived `leases`, which counts skift claims and moves on worker crashes, not on review rounds.
 
 ### `evidence`
 
@@ -148,9 +148,9 @@ The workspace validates a presented bearer by hash and by `revoked_at IS NULL`. 
 | `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens` | Counts, never currency |
 | `source` | Who counted: `sdk`, the adapter's report of what the harness billed, or `gateway`, the credential gateway's count of the upstream's `usage` block on a response it forwarded |
 | `recorded_at` | |
-| `posted_at` | When this row's step totals were posted to dagger; null until then |
+| `posted_at` | When this row's step totals were posted to skift; null until then |
 
-One row per turn, per model, as the adapter reports — a turn that bills two models writes two rows — and, where the credential gateway sits in front of the session, one more per response it forwarded, with source `gateway` (`docs/sandbox.md` §Credentials). The adapter's rows are the step's cost: they are what `status` and `inspect` sum and what is posted to dagger. The gateway's are the count taken outside the session, carried beside them as the attempt's `gateway_totals` and listed by `cost` under their own source; they are never posted. Cost is a rate table applied at query time, in `internal/server`, never stored here: the worker's `rates` config names dollars-per-million-tokens by model, falling back to the packaged default at `/usr/share/mill/rates.yaml` when it names none, and a model absent from the table prices as unpriced rather than free. The step's totals are posted to dagger through `ReportUsage` as one record per `(lease, model)` **when the step run closes or fails**, and the rows are marked `posted_at`. Dagger sums records per attempt and each report renews the lease, so per-step posting is both the contract's intended shape and a heartbeat. A worker that dies mid-step loses only that step's usage from dagger's view; the ledger keeps it. There is no reconciliation job: dagger's per-lease total for an abandoned attempt is allowed to be short by one step, and the ledger is the complete record.
+One row per turn, per model, as the adapter reports — a turn that bills two models writes two rows — and, where the credential gateway sits in front of the session, one more per response it forwarded, with source `gateway` (`docs/sandbox.md` §Credentials). The adapter's rows are the step's cost: they are what `status` and `inspect` sum and what is posted to skift. The gateway's are the count taken outside the session, carried beside them as the attempt's `gateway_totals` and listed by `cost` under their own source; they are never posted. Cost is a rate table applied at query time, in `internal/server`, never stored here: the worker's `rates` config names dollars-per-million-tokens by model, falling back to the packaged default at `/usr/share/mill/rates.yaml` when it names none, and a model absent from the table prices as unpriced rather than free. The step's totals are posted to skift through `ReportUsage` as one record per `(lease, model)` **when the step run closes or fails**, and the rows are marked `posted_at`. Skift sums records per attempt and each report renews the lease, so per-step posting is both the contract's intended shape and a heartbeat. A worker that dies mid-step loses only that step's usage from skift's view; the ledger keeps it. There is no reconciliation job: skift's per-lease total for an abandoned attempt is allowed to be short by one step, and the ledger is the complete record.
 
 `cost`'s per-step funnel — `reached`, `passed`, `died`, `retried`, `revises`, `attempts` — is not derived from `usage` at all: a check or gate step never bills a model and so never has a `usage` row, and would otherwise be invisible to it. It is folded from `step_runs` in the same window instead, windowed on `started_at` rather than `recorded_at`. `reached` counts a run once it has opened at least one attempt of the step; `passed` once one of those attempts closed; `retried` once a run needed more than one; `attempts` is every attempt, closed or not. `died` counts a run against the step its *last-started* step run belongs to, when the run itself ended `failed` or `abandoned` — not the step whose last attempt failed, since an abandoned run's last attempt is aborted, not failed, and it died there regardless. `revises` counts against the step named by another step run's `feedback_from`: the verdict that sent the work back, not the step the work went back to.
 
@@ -185,13 +185,13 @@ A `machine` workspace's twin capture (`docs/activity.md` §Seal) reaches into th
 
 ### `reconciliations`
 
-One row per pass a worker ran: the host's, at start before its first claim (`docs/sandbox.md` §Reconciliation), and the sweep's, at start and between claims (§Sweep). The worker, when the pass began, and its findings as `[{kind, name, action, detail}]` — orphans stopped, lost sandboxes noted, slices reaped for resume, leftovers removed, scratch projects swept, stranded runs failed or caught up, failures. A record of the host and of the ledger against dagger rather than of a run: an orphan machine has no live run to hang an event on, so it is its own table and no lease fences it. Append-only.
+One row per pass a worker ran: the host's, at start before its first claim (`docs/sandbox.md` §Reconciliation), and the sweep's, at start and between claims (§Sweep). The worker, when the pass began, and its findings as `[{kind, name, action, detail}]` — orphans stopped, lost sandboxes noted, slices reaped for resume, leftovers removed, scratch projects swept, stranded runs failed or caught up, failures. A record of the host and of the ledger against skift rather than of a run: an orphan machine has no live run to hang an event on, so it is its own table and no lease fences it. Append-only.
 
 ### `events`
 
 Append-only. Every change to `runs.status`, every step run start and close, every token issue and revoke, every gate filed and every auto-approval, every attempt to carry a filed gate to a person (`notified`: the kind, the gate, the notify command's exit status and its diagnostic), and every package a session installed into its machine with the `dnf` shim (`installed`: the packages and the line "installed `<packages>`, not declared in `mill.toml`", against the attempt whose session made it — the run's provenance of an undeclared install, `docs/sandbox.md` §"The dnf shim"). Fields: `id` (ULID), `run_id`, `step_run_id` (nullable), `op`, `before`, `after`, `worker_ref`, `occurred_at`. This is the audit trail and what `mill status --history` reads. `WatchRuns` reads it too, as a change stream from a cursor of `(occurred_at, id)` (`events_occurred_at_id_idx`) — the stream `mill status --follow` follows (`docs/tools.md` §status).
 
-Not time-partitioned, unlike dagger's events. Dagger's are partitioned from the start because they are a change stream many consumers resume from at volume; this table is a change stream now too, but for one operator running tens of runs a day, not at a volume the machinery earns yet. Partitioning is a migration away if that changes.
+Not time-partitioned, unlike skift's events. Skift's are partitioned from the start because they are a change stream many consumers resume from at volume; this table is a change stream now too, but for one operator running tens of runs a day, not at a volume the machinery earns yet. Partitioning is a migration away if that changes.
 
 ## Invariants
 
@@ -205,22 +205,22 @@ The store enforces these with constraints or in the writing transaction. A viola
 6. **Evidence is never updated or deleted.** No `UPDATE` or `DELETE` grants on the table for the application role.
 7. **Attempts are contiguous.** `attempt` for `(run_id, step_name)` is `max + 1`, assigned in the insert.
 8. **A live token belongs to a `running` step run.** Revocation is written in the same transaction that moves the step run out of `running`.
-9. **Every store write is fenced by the lease, atomically.** Every statement that mutates `step_runs`, `evidence`, `step_tokens`, `usage`, or `runs` for a run takes the `runs` row lock (`SELECT … FOR UPDATE`), re-reads `lease_id` in a separate statement after the lock is granted — a locked row is not re-read, so a lease a concurrent claim committed while waiting would otherwise be missed, which is exactly the trap dagger's `fence()` comments on — compares it to the lease the worker presented, and rolls back on mismatch. This is the mechanism behind "a stale worker cannot corrupt the record," and it lives in the store, not in the worker's good behaviour. The one exception is `SetLease` itself, which is the write that changes what later writes compare against; it takes the same lock and requires the run's current status to be one a new claim may take over (`selecting`, `running` with an expired lease, `waiting`, `parked`, or `done` with the node still open). A terminal write that presents no lease — `Abandon` after a restart's release, and the sweep's `Fail` or `Done` on a run whose node dagger has closed (§Sweep) — takes the same lock, compares nothing, and nulls `lease_id` as it ends the run, so whatever still believed it held the run is fenced by its next write; it is admitted because dagger's own fence has already proved no live lease exists. `selecting` is among them for the same reason `running` is: a run created holding its claim's lease, whose worker then died before it chose a workflow, is otherwise a node no mill command can recover — and dagger, which grants a second lease only once the first is gone, has already decided who holds the node.
+9. **Every store write is fenced by the lease, atomically.** Every statement that mutates `step_runs`, `evidence`, `step_tokens`, `usage`, or `runs` for a run takes the `runs` row lock (`SELECT … FOR UPDATE`), re-reads `lease_id` in a separate statement after the lock is granted — a locked row is not re-read, so a lease a concurrent claim committed while waiting would otherwise be missed, which is exactly the trap skift's `fence()` comments on — compares it to the lease the worker presented, and rolls back on mismatch. This is the mechanism behind "a stale worker cannot corrupt the record," and it lives in the store, not in the worker's good behaviour. The one exception is `SetLease` itself, which is the write that changes what later writes compare against; it takes the same lock and requires the run's current status to be one a new claim may take over (`selecting`, `running` with an expired lease, `waiting`, `parked`, or `done` with the node still open). A terminal write that presents no lease — `Abandon` after a restart's release, and the sweep's `Fail` or `Done` on a run whose node skift has closed (§Sweep) — takes the same lock, compares nothing, and nulls `lease_id` as it ends the run, so whatever still believed it held the run is fenced by its next write; it is admitted because skift's own fence has already proved no live lease exists. `selecting` is among them for the same reason `running` is: a run created holding its claim's lease, whose worker then died before it chose a workflow, is otherwise a node no mill command can recover — and skift, which grants a second lease only once the first is gone, has already decided who holds the node.
 10. **`current_step` is derived.** There is no column to drift.
-11. **Dagger first, store second.** A run is marked `done` only after dagger has confirmed the completing patch; `gate_node_id` is recorded only after dagger has returned the gate's id and before the lease is released. The store never asserts a fact about dagger that dagger has not yet made true.
-12. **A gate is filed once per step run.** `gate_node_id` set and the current step a gate step means resume reads the gate; it never files another. Invariant 11's order leaves one window this cannot close on its own: the patch that files the gate lands and the process dies before the store write, so dagger has a gate the ledger knows nothing about. A worker therefore asks dagger before it files — the node's user-assigned children carrying the run's and the step's labels — and records what it finds instead of filing a second one. That is the only place in the loop where dagger's graph, rather than the ledger, decides what to write, and it is the only place it can be: the gate exists in exactly one of them.
+11. **Skift first, store second.** A run is marked `done` only after skift has confirmed the completing patch; `gate_node_id` is recorded only after skift has returned the gate's id and before the lease is released. The store never asserts a fact about skift that skift has not yet made true.
+12. **A gate is filed once per step run.** `gate_node_id` set and the current step a gate step means resume reads the gate; it never files another. Invariant 11's order leaves one window this cannot close on its own: the patch that files the gate lands and the process dies before the store write, so skift has a gate the ledger knows nothing about. A worker therefore asks skift before it files — the node's user-assigned children carrying the run's and the step's labels — and records what it finds instead of filing a second one. That is the only place in the loop where skift's graph, rather than the ledger, decides what to write, and it is the only place it can be: the gate exists in exactly one of them.
 
 ## Resume
 
-The worker's algorithm on receiving a node from `ClaimNext`. Every store call presents `node.lease_id` and is fenced by Invariant 9; every dagger call carries it too.
+The worker's algorithm on receiving a node from `ClaimNext`. Every store call presents `node.lease_id` and is fenced by Invariant 9; every skift call carries it too.
 
 ```
 run := store.RunByNode(node.id)                    # the live run, if any
 switch:
   run == nil:
       run = store.CreateRun(node, generation=1)    # status: selecting
-  run.status == done:                              # dagger confirmed Complete but the store missed it?
-      if dagger.Node(node.id).status == done: store.Done(run); return   # no — the node is done; nothing to do
+  run.status == done:                              # skift confirmed Complete but the store missed it?
+      if skift.Node(node.id).status == done: store.Done(run); return   # no — the node is done; nothing to do
       # else: a done run on an open node is Invariant 11 violated; park with reason `refused` and alert
   run.status in (running, selecting):
       store.AbortOpenStepRuns(run)                 # a 'running' row here belongs to a dead or fenced-out worker
@@ -248,17 +248,17 @@ if run.workflow_id == nil:                         # docs/domain-model.md §Sele
     store.Close(sr, evidence{kind: structured, value: {workflow, version, tier, basis, ...}}, workflow=w, tier=tier)
 
 if run was parked:                                 # the breaker stopped it and a human was asked
-    if gate(run.gate_node_id).status != done: dagger.Release(node.lease_id, GATE); return
+    if gate(run.gate_node_id).status != done: skift.Release(node.lease_id, GATE); return
     store.Resume(run)                              # gate cleared; attempts at the parked step start again
 
 for step in run.workflow.steps starting at run.current_step():
 
     if step.kind == gate and run.gate_node_id != nil:          # resume through a gate
-        g := gate(run.gate_node_id)                # by label among the node's children: dagger resolves refs, not ids
+        g := gate(run.gate_node_id)                # by label among the node's children: skift resolves refs, not ids
         sr := store.LatestStepRun(run, step)       # the attempt that filed it; there is no second one
         if g.status == done:     store.Close(sr, evidence{kind: gate, value: g.result}); run.gate_node_id = nil; continue
-        if g.status == open:     dagger.Release(node.lease_id, GATE); return   # nobody has answered yet
-        else:                    dagger.Complete(node, deny_result); store.Fail(run, denied); return  # dropped: a denial
+        if g.status == open:     skift.Release(node.lease_id, GATE); return   # nobody has answered yet
+        else:                    skift.Complete(node, deny_result); store.Fail(run, denied); return  # dropped: a denial
 
     sr := store.StartStepRun(run, step)            # attempt = max+1 for (run, step)
     tok := store.IssueToken(sr, step.capabilities)
@@ -268,16 +268,16 @@ for step in run.workflow.steps starting at run.current_step():
     #   The harness sets it on the session's first event, so an attempt that died before the
     #   harness spoke is started and one killed mid-turn is resumed
     store.RevokeToken(tok)
-    dagger.ReportUsage(node.lease_id, usage(sr))   # one record per model; renews the lease
+    skift.ReportUsage(node.lease_id, usage(sr))   # one record per model; renews the lease
 
     switch:
       evidence verified:
           store.Close(sr, evidence)                # one transaction; sr -> closed
       gate to file:                                # step.kind == gate, auto did not hold
-          gate := dagger.Gates(node, labels(run, step))                      # 0. a gate a crash left behind
-          gate ?= dagger.ApplyPatch(create gate + blocks edge, request_id)   # 1. dagger
+          gate := skift.Gates(node, labels(run, step))                      # 0. a gate a crash left behind
+          gate ?= skift.ApplyPatch(create gate + blocks edge, request_id)   # 1. skift
           store.MarkWaiting(run, gate.id)          # 2. store, before the release
-          dagger.Release(node.lease_id, GATE)      # 3. dagger
+          skift.Release(node.lease_id, GATE)      # 3. skift
           return                                   # the attempt stays open: the answer closes it
       failed:
           store.Fail(sr, exit)
@@ -291,15 +291,15 @@ for step in run.workflow.steps starting at run.current_step():
               store.Supersede(run, from=target, through=step)   # their latest rows -> superseded
               feedback = result.feedback; continue            # loop recomputes current_step() == target
           else:
-              dagger.Comment(node, last findings)
-              gate := dagger.ApplyPatch(create park gate, request_id)   # body: every attempt in the span
+              skift.Comment(node, last findings)
+              gate := skift.ApplyPatch(create park gate, request_id)   # body: every attempt in the span
               store.Park(run, gate.id, reason)
-              dagger.Release(node.lease_id, BUDGET)
+              skift.Release(node.lease_id, BUDGET)
               return
 
 # terminal step closed
 run.complete_request_id = store.SetCompleteRequestId(run)      # idempotency key, durable before use
-dagger.ApplyPatch(complete_node(result, artifacts), lease, run.complete_request_id)   # releases the lease as part of the patch
+skift.ApplyPatch(complete_node(result, artifacts), lease, run.complete_request_id)   # releases the lease as part of the patch
 store.Done(run)                                    # only now
 ws.Destroy()                                       # stops the machine and promotes the last evidence-closed step's candidate
 store.FinishWorkspace(run, ws.promoted())          # the row destroyed, and each lineage's promoted generation; admitted after Done because the run has ended
@@ -309,16 +309,16 @@ Three properties fall out:
 
 - **Steps are re-run, sessions are resumed.** An interrupted step starts a new attempt from the top; the session it runs in is the same one, found by its deterministic id, so the model picks up its own prior context. A step is never resumed mid-flight — there is no mid-flight state to resume into. Whether the session is resumed or started is `session_started`'s answer and not the attempt number's: the id is deterministic, so a session that was never begun has an id and no conversation. On the `machine` backend the transcript `sessions.adapter_ref` names lives in the machine's ephemeral `~/.claude`, so a session resumes while its machine lives and a machine that is gone is a lost sandbox, not a resumable session (`docs/sandbox.md` §Reconciliation); the transcript is not exported.
 - **Resume is the same code as a first run.** There is no separate recovery path except the gate branch at the top of the loop. `current_step()` is derived from step-run status, and a fresh run's `current_step()` is simply the first step.
-- **A stale worker cannot corrupt the record.** Its dagger writes are fenced out by dagger; its store writes are rejected by Invariant 9. Its heartbeat fails first, which is how it learns.
+- **A stale worker cannot corrupt the record.** Its skift writes are fenced out by skift; its store writes are rejected by Invariant 9. Its heartbeat fails first, which is how it learns.
 - **`revise` actually revises.** Superseding every step from the target through the failure means the revised work is re-simplified, re-committed, re-pushed, and re-reviewed; the ledger never claims pass-one evidence closed pass-two work.
 
 A graceful stop (`docs/architecture.md` §"Failure and stop", "Stop.") leaves exactly the runs the `run.status in (running, selecting)` branch above resumes — this worker's own `worker_ref`, an aborted attempt — so a restarted worker does not have to wait for `ClaimNext` to hand them back one at a time. Before its first `ClaimNext`, it lists them itself (`Runner.Resumable`) and claims each by name (`Worker.reclaim`), oldest abort first, up to its concurrency; only the slots left over go to `ClaimNext` (mill#44). A run a crash left `running` is not among them — nothing yet tells a live crash apart from a dead one without the sweep's own TTL guard, so that case still waits for an ordinary claim.
 
-`Complete` is not an RPC. It is `ApplyPatch` with a `complete_node` operation, and dagger releases the lease inside that same patch — which is why `ReportUsage` for the final step must precede it, why there is no separate `Release` on the done path, and why `store.Done` comes last.
+`Complete` is not an RPC. It is `ApplyPatch` with a `complete_node` operation, and skift releases the lease inside that same patch — which is why `ReportUsage` for the final step must precede it, why there is no separate `Release` on the done path, and why `store.Done` comes last.
 
 ## Sweep
 
-Every way a run ends in §Resume happens inside a claim. A node dagger has closed — dropped, or completed by someone other than the run — never enters the ready set again, so no claim ever comes to end the run it strands: the run stays live in the ledger, its workspace retained, its branch on the forge, for as long as the ledger exists. The host's reconciliation (`docs/sandbox.md` §Reconciliation) cannot help; it compares machines with live runs and never asks dagger what became of a run's node. The sweep is that missing axis: the ledger reconciled against dagger.
+Every way a run ends in §Resume happens inside a claim. A node skift has closed — dropped, or completed by someone other than the run — never enters the ready set again, so no claim ever comes to end the run it strands: the run stays live in the ledger, its workspace retained, its branch on the forge, for as long as the ledger exists. The host's reconciliation (`docs/sandbox.md` §Reconciliation) cannot help; it compares machines with live runs and never asks skift what became of a run's node. The sweep is that missing axis: the ledger reconciled against skift.
 
 The worker runs it before its first claim, ahead of the host's pass, and again at the top of its claim loop whenever `sweep-interval` has elapsed — a busy worker between runs, an idle one every `wait` — with no timer and no goroutine of its own. A second process sweeping the same ledger would race the live worker, which is why it is the worker's and not a unit's.
 
@@ -327,7 +327,7 @@ for run in store.Status(live):                     # selecting, running, waiting
     if run.worker_ref != self: continue            # cleanup is host-local; another host's run is its own
     if driving(run.node_id): continue              # this process is on it; its own goroutine writes its ending
     if run.updated_at > now - TTL: continue        # another process on this host may be mid-write; by age, never by "not in the ledger" (mill#49)
-    node := dagger.Node(run.node_ref)              # the reference is stored qualified; any project's client reads it
+    node := skift.Node(run.node_ref)              # the reference is stored qualified; any project's client reads it
     error?             -> finding{failure}; continue
     node.status open   -> continue                 # whatever its readiness: a parked run's node is blocked by its own gate
     store.AbortOpenStepRuns(run)                   # no token outlives the run
@@ -342,13 +342,13 @@ for run in store.Status(live):                     # selecting, running, waiting
 store.RecordReconciliation(findings)
 ```
 
-Two things make this safe to write under no lease. Dagger refuses `drop_node` and a user's `complete_node` on a node with a live lease, so a run whose node is closed is provably unleased there: nothing is driving it. And the store's terminal write with no lease presented takes the row lock alone and nulls `lease_id` as it ends the run (Invariant 9's leaseless door, the one Abandon uses), so a worker that still believed it held the run is fenced on its next write. No dagger write is made: a closed node is outside every ready set, nothing is held, and the ledger row with its `failed` event and the `reconciliations` row are the record. `mill run` on a closed node resolves its run the same way, through the same code, so the two cannot disagree; `mill restart` refuses a node that is not open, because a restart of one would open a run nothing can claim.
+Two things make this safe to write under no lease. Skift refuses `drop_node` and a user's `complete_node` on a node with a live lease, so a run whose node is closed is provably unleased there: nothing is driving it. And the store's terminal write with no lease presented takes the row lock alone and nulls `lease_id` as it ends the run (Invariant 9's leaseless door, the one Abandon uses), so a worker that still believed it held the run is fenced on its next write. No skift write is made: a closed node is outside every ready set, nothing is held, and the ledger row with its `failed` event and the `reconciliations` row are the record. `mill run` on a closed node resolves its run the same way, through the same code, so the two cannot disagree; `mill restart` refuses a node that is not open, because a restart of one would open a run nothing can claim.
 
-What the sweep does not reach, and says so: a run whose `worker_ref` names a host that no longer exists stays until a person acts, and a `waiting` run whose node a person completed leaves its gate open in dagger, because the sweep writes nothing there.
+What the sweep does not reach, and says so: a run whose `worker_ref` names a host that no longer exists stays until a person acts, and a `waiting` run whose node a person completed leaves its gate open in skift, because the sweep writes nothing there.
 
-## What goes to dagger, and when
+## What goes to skift, and when
 
-| To dagger | When | As |
+| To skift | When | As |
 |---|---|---|
 | The run's branch and PR | PR opened | Artifact `reference`, scheme `git`, on the result |
 | The merge commit | Merged | Artifact `reference` |
@@ -358,7 +358,7 @@ What the sweep does not reach, and says so: a run whose `worker_ref` names a hos
 | The last findings on a park | Park | Comment |
 | A gate | Gate step or breaker | Node, `assignee_kind: user`, child of and blocking this node; `ApplyPatch`, then the store, then `Release` |
 
-Every artifact's metadata carries `run_id`. Every `ApplyPatch` mill sends uses `request_id = mill-<run_id>-<step>-<attempt>`; it is the idempotency key and, for writes with no lease, the only thing in dagger's event log that says mill did it. Nothing else the ledger holds is dagger's business: step attempts, session ids, tokens, per-step usage, workspace state.
+Every artifact's metadata carries `run_id`. Every `ApplyPatch` mill sends uses `request_id = mill-<run_id>-<step>-<attempt>`; it is the idempotency key and, for writes with no lease, the only thing in skift's event log that says mill did it. Nothing else the ledger holds is skift's business: step attempts, session ids, tokens, per-step usage, workspace state.
 
 ## Retention
 
@@ -370,18 +370,18 @@ Every artifact's metadata carries `run_id`. Every `ApplyPatch` mill sends uses `
 
 ## Queries the CLI needs
 
-- `status`: runs by state with `current_step`, elapsed, cost, and gate node for waiting ones — one query over `runs` joined to the latest `step_runs` and a usage rollup. The same query, unfiltered, is what the sweep reads, so a run `status` lists as live is one the sweep will ask dagger about.
+- `status`: runs by state with `current_step`, elapsed, cost, and gate node for waiting ones — one query over `runs` joined to the latest `step_runs` and a usage rollup. The same query, unfiltered, is what the sweep reads, so a run `status` lists as live is one the sweep will ask skift about.
 - `status --ended` (`ListRuns`): ended runs by status, project, `node_ref`, `worker_ref`, `workflow_id` and an `ended_at` window, in keyset pages ordered `(ended_at desc, id desc)` — `(updated_at desc, id desc)` if a requested status is not terminal, since a live run has no `ended_at`. `RunSummary` here, and in `status` and `inspect` since all three share it, also carries `last_step` and `last_step_status` (the step run with the latest `started_at`) and `rounds`, one plus the count of step runs with `feedback_from` set — steading's round derivation restated in the query, kept in this one place so the two do not drift.
 - `inspect <run>`: every step run in order with its evidence, exit, session, and usage.
 - `history <run>`: the `events` rows.
 - `cost --since`: usage rolled up by run, by workflow, by step name (keyed by workflow version too, since a step's shape can change between them), by model, and — `--bucket day` — by UTC calendar day, priced by the rate table. The by-step rows also carry the funnel: how many runs reached the step, passed it, died there, needed more than one attempt, and how many revise rounds it answered.
-- `restart <node>`: release, abandon, destroy, create the next generation — one transaction on the store side, with the dagger release first. A lease dagger says is not live is skipped rather than fatal: the run a human restarts is usually the one whose worker died holding it, and there is nothing to take back.
+- `restart <node>`: release, abandon, destroy, create the next generation — one transaction on the store side, with the skift release first. A lease skift says is not live is skipped rather than fatal: the run a human restarts is usually the one whose worker died holding it, and there is nothing to take back.
 - `explain <run>`: current step, its latest step run's status and exit, the evidence kind that would close it, the gate it waits on if any, the attempts used against `retries`.
 - `logs <run> [--step]`: the per-step-run log files, redacted at write time; `--follow` tails the running one.
 - `cancel <run>`, `rerun <run> --from <step>`: set `cancel_requested`; `rerun` also supersedes from the step once the worker has released. A run that ended `failed` is reopened by the same transaction — status back to `running`, no lease, `ended_at`, gate and park reason cleared — because the supersede is worth nothing on a run Invariant 9 admits no claim on. `abandoned` is refused: Invariant 1 allows one live run per node.
 - `workspace show|clean <run>`: the retained workspace's location and state; `clean` destroys one a resumed run no longer needs.
-- `doctor`: no store query — probes the socket, migrations, dagger as the mill principal, the sidecar, the signing key, the forge credential.
+- `doctor`: no store query — probes the socket, migrations, skift as the mill principal, the sidecar, the signing key, the forge credential.
 
 ## Open questions
 
-- Whether `skills.files` bytes belong in this database or in dagger's blob store by digest. Leaning here: a workflow must be loadable without dagger.
+- Whether `skills.files` bytes belong in this database or in skift's blob store by digest. Leaning here: a workflow must be loadable without skift.

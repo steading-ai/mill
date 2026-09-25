@@ -86,7 +86,7 @@ Plug-in today:
 - **Agent types**: `plan:118-122` "Project-specific agents — check pre-computed context" (also not injected).
 - **Model routing**: `bedrock-model` chezmoi template per skill tier (opus/sonnet).
 
-Hardcoded: the five tiers and their step lists; GitHub/`gh` as the only tracker (no Linear, no dagger, no beads); the sub-skill names; task-naming rules; the Doc Refresh heuristic; `/tmp` paths; the assumption of one issue → one branch → one PR (epics excepted). No per-task-type workflows (docs-only, dependency bump, incident) — issue #323 wants `/doc` added, #286 wants `/checkout` to assign + move status; both would be more prose in the same file.
+Hardcoded: the five tiers and their step lists; GitHub/`gh` as the only tracker (no Linear, no skift, no beads); the sub-skill names; task-naming rules; the Doc Refresh heuristic; `/tmp` paths; the assumption of one issue → one branch → one PR (epics excepted). No per-task-type workflows (docs-only, dependency bump, incident) — issue #323 wants `/doc` added, #286 wants `/checkout` to assign + move status; both would be more prose in the same file.
 
 ## 7. Delivery gap
 
@@ -103,9 +103,9 @@ Hardcoded: the five tiers and their step lists; GitHub/`gh` as the only tracker 
 
 **Headless Claude Code sessions** (one per step, fresh context, artifacts in/out): `/gather-context` (already read-only), `/think` in non-interactive mode (decision + open questions as output, not chat), `/plan` with `ExitPlanMode` replaced by writing the plan artifact, `/review-plan` (already forked), implement, `/simplify`, `/commit`, `/pr --draft`. Each step's `allowed-tools` becomes the sandbox capability set — the structural gate ADR 007 prefers.
 
-**Approval surface**: plan approval for Medium+ (or auto when Approve + tier ≤ Medium — a policy knob), `/think` open questions that cannot be resolved from the codebase, blocker escalations, ready-for-review/merge. Each is a node state in dagger, not a chat pause.
+**Approval surface**: plan approval for Medium+ (or auto when Approve + tier ≤ Medium — a policy knob), `/think` open questions that cannot be resolved from the codebase, blocker escalations, ready-for-review/merge. Each is a node state in skift, not a chat pause.
 
-**Single-run mode** lives at the orchestrator CLI: `orchestrator run --issue N --tier medium --approve=auto --sandbox=local` executes one node end-to-end with the same step ledger, streaming each headless session's output, and stops at the same gates — the same code path the daemon uses when it claims from dagger, minus the claim. That is also the test harness for new workflow definitions.
+**Single-run mode** lives at the orchestrator CLI: `orchestrator run --issue N --tier medium --approve=auto --sandbox=local` executes one node end-to-end with the same step ledger, streaming each headless session's output, and stops at the same gates — the same code path the daemon uses when it claims from skift, minus the claim. That is also the test harness for new workflow definitions.
 
 ## 9. Why it's unreliable — per the docs
 

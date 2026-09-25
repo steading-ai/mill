@@ -9,7 +9,7 @@ Release assets on a private repository need a credential to fetch; GHCR is
 the one place on GitHub where another repository's workflow can read with
 nothing but its own `GITHUB_TOKEN` — a package grants a repository Actions
 access with the read role, and that grant is enough. steading#6's browser
-suite starts a real `dg serve` and `mill serve` in its own CI and needs both
+suite starts a real `skift serve` and `mill serve` in its own CI and needs both
 binaries this way, so mill publishes what it builds as an image and
 steading pulls it.
 

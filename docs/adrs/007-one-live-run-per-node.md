@@ -11,7 +11,7 @@ A node can be claimed more than once: a worker crashes, a lease expires, a gate 
 
 ## Decision Drivers
 
-- Dagger's rule that every attempt shares the node's context id, so a retry resumes the prior session
+- Skift's rule that every attempt shares the node's context id, so a retry resumes the prior session
 - A run that restarts itself burns budget invisibly and hides the failure from a human
 - [Core principle 4](../core-principles.md): *"Asking a human costs three real attempts"* — escalation has a price, and so should starting over
 - The record of a failed attempt must survive whatever replaces it
@@ -47,7 +47,7 @@ Chosen option: **one live run per node, resumed by every claim, with restart a d
 A claim always creates a run; the ledger accumulates one per attempt.
 
 - **Good**: No resume algorithm and no takeover predicate on `SetLease`.
-- **Bad**: A crash mid-`implement` would discard every closed step's evidence and re-run the workflow at full cost, and discard the session — the opposite of dagger's retry rule.
+- **Bad**: A crash mid-`implement` would discard every closed step's evidence and re-run the workflow at full cost, and discard the session — the opposite of skift's retry rule.
 
 ### Automatic restart after repeated failure
 

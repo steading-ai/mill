@@ -1,16 +1,16 @@
 # Mill (PRD)
 
-**Mill** — the piece of the factory that consumes dagger tickets and delivers running software.
+**Mill** — the piece of the factory that consumes skift tickets and delivers running software.
 
-**Status:** draft for review. Numbered requirements (`R-n`) are meant to be cited from ADRs and dagger nodes.
+**Status:** draft for review. Numbered requirements (`R-n`) are meant to be cited from ADRs and skift nodes.
 
 ---
 
 ## 1. Problem
 
-> I discuss some things with a thicket agent, they put tickets into dagger, and they're immediately worked on and delivered — *running*. Without that, I might as well just use Claude Code directly.
+> I discuss some things with a thicket agent, they put tickets into skift, and they're immediately worked on and delivered — *running*. Without that, I might as well just use Claude Code directly.
 
-Every other layer of the factory exists. Thicket makes agents reachable; dagger holds the plan and computes what is ready; homestead runs it all. Nothing consumes a ready node and turns it into a running change without a human starting it, scoping it, and babysitting it. The backlog is growing faster than it drains.
+Every other layer of the factory exists. Thicket makes agents reachable; skift holds the plan and computes what is ready; homestead runs it all. Nothing consumes a ready node and turns it into a running change without a human starting it, scoping it, and babysitting it. The backlog is growing faster than it drains.
 
 Three attempts have been made at this layer. Each failed at the same place, and the failures are the specification:
 
@@ -18,7 +18,7 @@ Three attempts have been made at this layer. Each failed at the same place, and 
 |---|---|---|
 | hive | GitHub Projects → sandboxed agent → PR | Wrong backlog (no graph, no readiness), agents carried the human's identity |
 | work-on (Go) | Read GitHub issues, "shaped" them, drove a fleet | Had to be its own planner; never trusted; never used |
-| Reference harness (Python) | Claims from dagger by epic label; implementer → reviewer → commit → push → complete | Works, ~5× hands-on throughput, unattended once started — but one epic in one project, manually launched, reviewer has never rejected anything in 59 nodes, zero design attention |
+| Reference harness (Python) | Claims from skift by epic label; implementer → reviewer → commit → push → complete | Works, ~5× hands-on throughput, unattended once started — but one epic in one project, manually launched, reviewer has never rejected anything in 59 nodes, zero design attention |
 
 And the `/work-on` Claude Code skill encodes the *right* workflow — tiers, gather-context, plan, review-plan, implement, simplify, commit, PR — but every guardrail in it is prose the model is asked to police itself. Steps get skipped. Nothing records which step ran. When it works it is almost perfect; it cannot be trusted to work.
 
@@ -27,16 +27,16 @@ The gap is not "we need a loop." The loop has been written three times. The gap 
 ## 2. Who it is for
 
 - **The operator** (one person today). Files or discusses work, approves gates from Slack or a phone, reads results. Never sits in a session for work to progress.
-- **Zone agents** (thicket). File nodes in dagger from conversations. Do not run the mill; are notified by it.
+- **Zone agents** (thicket). File nodes in skift from conversations. Do not run the mill; are notified by it.
 - **The factory's future departments** (Janitor, SRE, …). Each is a workflow definition plus an account. The mill is what makes "adding a department" configuration instead of code.
 
-Not for: other operators, teams, or products. One deployment, one operator, until dagger has a second tenant (dagger roadmap M4).
+Not for: other operators, teams, or products. One deployment, one operator, until skift has a second tenant (skift roadmap M4).
 
 ## 3. Goals and non-goals
 
 ### Goals
 
-1. **Drain the backlog unattended.** A node that becomes ready in dagger is claimed and worked with no human action, across every project the mill is configured for.
+1. **Drain the backlog unattended.** A node that becomes ready in skift is claimed and worked with no human action, across every project the mill is configured for.
 2. **Enforce the workflow.** Every step's completion is proven by evidence the mill checks, never by an agent reporting it did the step.
 3. **Deliver running software**, not PRs. The workflow does not end until the change is merged, deployed where applicable, and verified — or a gate is waiting on a human with the reason attached.
 
@@ -46,13 +46,13 @@ Not for: other operators, teams, or products. One deployment, one operator, unti
 
 ### Non-goals
 
-The mill is **just a workflow runner**, scoped the way dagger was scoped to just project management. It does not:
+The mill is **just a workflow runner**, scoped the way skift was scoped to just project management. It does not:
 
-- **Plan, decompose, or prioritize.** Dagger holds the plan. If a node needs decomposition, the workflow files child nodes in dagger and stops; it does not decide what runs next.
-- **Hold a backlog.** No local queue, no shadow state of what is ready. `dg ready` is the truth.
+- **Plan, decompose, or prioritize.** Skift holds the plan. If a node needs decomposition, the workflow files child nodes in skift and stops; it does not decide what runs next.
+- **Hold a backlog.** No local queue, no shadow state of what is ready. `skift ready` is the truth.
 - **Sandbox.** It hands each step a workspace handle; what enforces isolation behind that handle is homestead's job. (It is designed so that sandboxing can be added without rewriting — see §6.8.)
 
-- **Converse.** No chat surface, no personas. Questions and approvals become dagger gates that thicket carries to a human.
+- **Converse.** No chat surface, no personas. Questions and approvals become skift gates that thicket carries to a human.
 - **Be a general workflow engine.** It runs software-delivery workflows for one operator. Not Airflow, not Temporal, not a DAG scheduler for arbitrary jobs.
 - **Be an interactive coding assistant.** Claude Code is that.
 
@@ -66,7 +66,7 @@ The mill has succeeded when all of the following are true on the homestead deplo
 - **M.2** The acceptance suite includes a seeded bad implementation and the pipeline rejects it. The reviewer has said no, on record, on purpose.
 - **M.3** A second workflow type (docs-only or dependency-bump) has shipped as a workflow definition with no change to the mill's code.
 - **M.4** The reference harness is retired because this runs its epics better.
-- **M.5** Usage and cost per node are in dagger, posted by the mill under its own principal.
+- **M.5** Usage and cost per node are in skift, posted by the mill under its own principal.
 
 Nothing moves to a later milestone until the current one is used daily. A milestone that is not in use has not removed anything.
 
@@ -74,7 +74,7 @@ Nothing moves to a later milestone until the current one is used daily. A milest
 
 | Term          | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Node**      | A unit of work in dagger. Has a body, acceptance criteria, Gherkin scenarios, labels, inputs (results of the nodes that block it), and an `assignee_kind` (`agent` or `user`).                                                                                                                                                                                                                                                                             |
+| **Node**      | A unit of work in skift. Has a body, acceptance criteria, Gherkin scenarios, labels, inputs (results of the nodes that block it), and an `assignee_kind` (`agent` or `user`).                                                                                                                                                                                                                                                                             |
 | **Gate**      | A node with `assignee_kind: user`. Only a person completes it. The mill never claims one; it creates them.                                                                                                                                                                                                                                                                                                                                         |
 | **Workflow**  | A named, versioned definition: an ordered list of steps, the gates between them, and the evidence each step must produce. Selected per node. Data, not code.                                                                                                                                                                                                                                                                                               |
 | **Step**      | One unit of a workflow. Either a **model step** (a headless Claude Code session with a fresh context) or a **check** (a deterministic command with an exit code).<br>                                                                                                                                                                                                                                                          |
@@ -82,18 +82,18 @@ Nothing moves to a later milestone until the current one is used daily. A milest
 | **Evidence**  | An externally checkable fact that closes a step: a commit SHA that exists, a test exit code, a parsed structured verdict, a PR URL from `gh`, a CI status, a deploy healthcheck. An agent's own statement is never evidence.<br>                                                           |
 | **Verdict**   | A reviewer's structured output: `approve` / `revise` / `needs-human`, with findings tied to acceptance criteria. Parsed, not read.<br>                                                                                |
 | **Workspace** | A handle a step receives: a checkout at a known ref, with a capability set (read, write, network, `gh`, deploy). The step never sees a path or a credential directly.<br> |
-| **Principal** | The mill's own identity in dagger, git, and the tailnet. It claims, completes, commits, and signs as itself.<br>                                                                                                                                     |
+| **Principal** | The mill's own identity in skift, git, and the tailnet. It claims, completes, commits, and signs as itself.<br>                                                                                                                                     |
 | **Run**       | One node worked end to end through one workflow. Single-run mode executes exactly one; daemon mode executes runs as nodes become ready.<br>                                                                                                                                                                                       |
 
 ## 6. Requirements
 
 ### 6.1 Claiming
 
-- **R-1** Claim ready nodes from dagger with `ClaimNext` under a fenced lease, filtered by the projects and labels the mill is configured for. Heartbeat the lease; release it with a reason on failure.
+- **R-1** Claim ready nodes from skift with `ClaimNext` under a fenced lease, filtered by the projects and labels the mill is configured for. Heartbeat the lease; release it with a reason on failure.
 - **R-2** Claim across projects. The unit of configuration is "which projects and label filters," not "which epic."
 - **R-3** Concurrency is a cap, not a mode. Concurrency one is a valid configuration; the design assumes N.
-- **R-4** Never claim, complete, drop, reclassify, or unlink a gate — including one mill filed. Dagger will not stop mill from doing so while mill runs as the operator's principal (every gate veto in `policy/dagger.rego` is scoped to non-user principals, by design — ADR-009); this is mill's own discipline, enforced in mill's code and tested. Prepare a gate with a node it depends on; never touch the gate.
-- **R-5** Grouping nodes (children, no criteria) are closed as bookkeeping when dagger makes them ready — as the harness does today.
+- **R-4** Never claim, complete, drop, reclassify, or unlink a gate — including one mill filed. Skift will not stop mill from doing so while mill runs as the operator's principal (every gate veto in `policy/skift.rego` is scoped to non-user principals, by design — ADR-009); this is mill's own discipline, enforced in mill's code and tested. Prepare a gate with a node it depends on; never touch the gate.
+- **R-5** Grouping nodes (children, no criteria) are closed as bookkeeping when skift makes them ready — as the harness does today.
 
 ### 6.2 Workflow selection
 
@@ -115,11 +115,11 @@ Nothing moves to a later milestone until the current one is used daily. A milest
 
 - **R-13** Checks are commands with exit codes: build, test, lint, executable acceptance scenarios, `gh pr view`, CI status. A check's evidence is its exit code and captured output.
 
-- **R-14** Every step has a timeout and a retry cap from the workflow definition. Exhausting either parks the node with the last output as a comment and a `needs-human` gate, and releases the lease — the harness's `harness-blocked` behaviour, made a state in dagger rather than a label.
+- **R-14** Every step has a timeout and a retry cap from the workflow definition. Exhausting either parks the node with the last output as a comment and a `needs-human` gate, and releases the lease — the harness's `harness-blocked` behaviour, made a state in skift rather than a label.
 
 ### 6.4 Ledger and evidence
 
-- **R-15** The ledger is the mill's only state. PostgreSQL, alongside dagger's, under the mill's own schema. Nothing in `state.json`, nothing in a transcript.
+- **R-15** The ledger is the mill's only state. PostgreSQL, alongside skift's, under the mill's own schema. Nothing in `state.json`, nothing in a transcript.
 - **R-16** A step is closed only by the evidence its definition names. "The agent said it committed" does not close `commit`; a SHA that `git cat-file` resolves does.
 
 - **R-17** Resume from the ledger after a crash: the same node, the same workflow, the next unclosed step, with prior artifacts. A resumed run is indistinguishable in the ledger from an uninterrupted one except for the gap.
@@ -128,8 +128,8 @@ Nothing moves to a later milestone until the current one is used daily. A milest
 
 ### 6.5 Gates and approvals
 
-- **R-19** Every human decision is a dagger gate the mill files, blocking the node's next step: plan approval, an open question `/think` could not resolve, merge, deploy, and any `needs-human` verdict.
-- **R-20** The mill does not notify. It files the gate; dagger's notifier (thicket, to Slack or a phone) carries it. The answer arrives as the gate's completion in dagger, and the run continues from the ledger.
+- **R-19** Every human decision is a skift gate the mill files, blocking the node's next step: plan approval, an open question `/think` could not resolve, merge, deploy, and any `needs-human` verdict.
+- **R-20** The mill does not notify. It files the gate; skift's notifier (thicket, to Slack or a phone) carries it. The answer arrives as the gate's completion in skift, and the run continues from the ledger.
 - **R-21** Auto-approval is a workflow policy, per gate, stated in the definition: e.g. plan approval is automatic when `review-plan` returns `approve` and the tier is at most `feature`. Every auto-approval is recorded as such.
 - **R-22** A gate that is denied ends the run with the reason as the node's result. The workflow may define a `revise` branch for plan denial; it may not loop unbounded.
 
@@ -158,7 +158,7 @@ Nothing moves to a later milestone until the current one is used daily. A milest
 
 ### 6.9 Identity and credentials
 
-- **R-35** The mill is its own dagger principal, its own unix account on the host, and its own tailnet identity. It never runs as the operator.
+- **R-35** The mill is its own skift principal, its own unix account on the host, and its own tailnet identity. It never runs as the operator.
 - **R-36** It signs its own commits with its own key. Commit signing must not depend on an interactive credential (dotfiles #344 is the failure mode).
 - **R-37** Credentials a step needs (`gh`, registry, deploy) are scoped to the step's capability set and injected by the workspace, not held by the session. Until a secrets service exists, the minimum is: per-step environment assembled by the mill from its own store, never inherited from the account's shell.
 - **R-38** The reviewer's session and the implementer's session hold different credentials; the reviewer holds none that can write.
@@ -166,15 +166,15 @@ Nothing moves to a later milestone until the current one is used daily. A milest
 
 ### 6.10 Usage and cost
 
-- **R-39** Per step, record model, effort, tokens, cache reads, and cost from the session's terminal result. Post per-node usage to dagger through `ReportUsage` under the mill's principal.
-- **R-40** Model and effort per step come from the workflow definition, overridable by a node's estimate band from dagger. Static defaults are acceptable in the first cut; the seam must exist.
+- **R-39** Per step, record model, effort, tokens, cache reads, and cost from the session's terminal result. Post per-node usage to skift through `ReportUsage` under the mill's principal.
+- **R-40** Model and effort per step come from the workflow definition, overridable by a node's estimate band from skift. Static defaults are acceptable in the first cut; the seam must exist.
 - **R-41** A per-run and per-day cost cap, configurable, that parks work with a gate when reached.
 
 ### 6.11 Observability
 
 - **R-42** Every step streams its session events to a log the operator can tail, and to the ledger as a summary. Full tool output is never logged.
 - **R-43** `status` shows: running nodes, current step, elapsed, cost so far, gates waiting on humans. Readable from a terminal; a Slack rendering is thicket's job.
-- **R-44** A run's artifacts (plan, verdicts, PR body, logs) are stored as dagger artifacts on the node's result, so the record lives with the work and not with the mill.
+- **R-44** A run's artifacts (plan, verdicts, PR body, logs) are stored as skift artifacts on the node's result, so the record lives with the work and not with the mill.
 
 ### 6.12 Single-run mode
 
@@ -186,36 +186,36 @@ Nothing moves to a later milestone until the current one is used daily. A milest
 
 - **R-48** Runs as a systemd unit on the host under its own account, started by homestead like every other service. Manual start is a defect, not a mode.
 - **R-49** Deployed by repin from an attested release, like thicket. Migrations run on deploy.
-- **R-50** Stop is safe at any time: leases are released with reason `preempted` and detail `shutdown` (dagger's `ReleaseReason` has no shutdown value; preempted is the honest one — an operator took the lease away), the ledger has enough to resume, workspaces are left intact for inspection and cleaned on the next start.
+- **R-50** Stop is safe at any time: leases are released with reason `preempted` and detail `shutdown` (skift's `ReleaseReason` has no shutdown value; preempted is the honest one — an operator took the lease away), the ledger has enough to resume, workspaces are left intact for inspection and cleaned on the next start.
 
 ### 6.14 Operator tools
 
-- **R-51** `mill mcp` is a stdio MCP server exposing the same client the CLI uses — dagger's pattern — so an operator's Claude Code session or a thicket agent can read and operate the mill on the operator's behalf.
-- **R-52** Read tools, CLI and MCP alike: `status`, `inspect <run>`, `explain <run>` (what step it is on, why that step is open, what evidence would close it, what it is waiting on), `logs <run> [--step] [--follow]` (the redacted per-step logs), `history <run>`, `cost`, `workflow list|show`, `workspace show <run>` (where a retained workspace is), `doctor` (socket, database, dagger reachable as the mill principal, sidecar runnable, signing key, forge credential).
+- **R-51** `mill mcp` is a stdio MCP server exposing the same client the CLI uses — skift's pattern — so an operator's Claude Code session or a thicket agent can read and operate the mill on the operator's behalf.
+- **R-52** Read tools, CLI and MCP alike: `status`, `inspect <run>`, `explain <run>` (what step it is on, why that step is open, what evidence would close it, what it is waiting on), `logs <run> [--step] [--follow]` (the redacted per-step logs), `history <run>`, `cost`, `workflow list|show`, `workspace show <run>` (where a retained workspace is), `doctor` (socket, database, skift reachable as the mill principal, sidecar runnable, signing key, forge credential).
 - **R-53** Operate tools: `cancel <run>` (stop the current step cleanly, release with `preempted`, leave the run resumable), `rerun <run> --from <step>` (supersede from that step, as `revise` does, without a human round), `restart <node>`, `workflow push|pull`, `workspace clean <run>`.
 - **R-54** Identity on the store's socket is the peer uid, mapped by configuration to a role: the mill's own account may do everything; `operator` uids may read and operate; `reader` uids may read. Anything else is rejected. No token scheme.
-- **R-55** `run` — single-run mode — executes in the calling process and is therefore local to the mill's host and account. A remote session that wants work done files a dagger node; it does not invoke `run` over MCP.
-- **R-56** A Claude Code plugin (`plugin/mill`: skill plus `.mcp.json` registering `mill mcp`) ships with the repo, so thicket agents and the operator's sessions pick the tools up the way they pick up dagger's.
+- **R-55** `run` — single-run mode — executes in the calling process and is therefore local to the mill's host and account. A remote session that wants work done files a skift node; it does not invoke `run` over MCP.
+- **R-56** A Claude Code plugin (`plugin/mill`: skill plus `.mcp.json` registering `mill mcp`) ships with the repo, so thicket agents and the operator's sessions pick the tools up the way they pick up skift's.
 
 ## 7. Constraints
 
-- **Stack:** Go; PostgreSQL via sqlc + goose + pgx; Connect-RPC for its own API; Ginkgo/Gomega. The same conventions as dagger, so the two repos read alike.
-- **Backlog:** dagger, only. No GitHub Projects, no issues, no files.
-- **Surface:** thicket, only, via dagger gates. The mill has no user-facing channel of its own.
+- **Stack:** Go; PostgreSQL via sqlc + goose + pgx; Connect-RPC for its own API; Ginkgo/Gomega. The same conventions as skift, so the two repos read alike.
+- **Backlog:** skift, only. No GitHub Projects, no issues, no files.
+- **Surface:** thicket, only, via skift gates. The mill has no user-facing channel of its own.
 - **Agent substrate:** Claude Code, headless. Design for the CLI's contract (session id, structured output, hooks via settings, permission mode, terminal result with cost). Do not depend on a language SDK that may not exist for Go.
 
-- **Deployment:** homestead, as a zone or platform service. Reaches dagger over the unix socket on the same host.
+- **Deployment:** homestead, as a zone or platform service. Reaches skift over the unix socket on the same host.
 
 - **Philosophy:** small composable units; boring and robust over clever; the domain model is the authority and code follows it.
 
 ## 8. Milestones
 
-Dependency order, not dates. Each is defined by what becomes possible. The full plan — every post-MVP item, where it was decided, and what mill needs from dagger, thicket, and homestead — is [Roadmap](roadmap.md); this section is the summary.
+Dependency order, not dates. Each is defined by what becomes possible. The full plan — every post-MVP item, where it was decided, and what mill needs from skift, thicket, and homestead — is [Roadmap](roadmap.md); this section is the summary.
 
 ### O0 — Walking skeleton
 One workflow (`quick-fix`), `mill run` and the `work` daemon at concurrency one, local workspace, ledger in Postgres, evidence-based step closure, deployed through homestead on the operator's account. `mill run` takes a node id and ends with a merged change or a parked gate; `mill.service` claims the next ready node on its own.
 
-**Done when:** a real quick-fix node in dagger's own project is delivered by `mill run` on the host, the ledger shows every step's evidence, and the daemon claims the next one — the `prove` gate in `Patch/`.
+**Done when:** a real quick-fix node in skift's own project is delivered by `mill run` on the host, the ledger shows every step's evidence, and the daemon claims the next one — the `prove` gate in `Patch/`.
 
 ### O1 — Trusted
 The `feature` workflow with plan approval as a gate; the reviewer with a structured verdict; the seeded-bad-implementation test passing; CI watch and merge gate. Still single-run.
@@ -233,7 +233,7 @@ The `docs` workflow as a definition; capability sets enforced by the workspace; 
 **Done when:** M.3 holds and the third workflow costs less to add than the second.
 
 ### O4 — Isolated
-A container workspace behind the same handle; capabilities enforced by the workspace; credentials minted per step from a secrets service; mill as its own principal once dagger admits one.
+A container workspace behind the same handle; capabilities enforced by the workspace; credentials minted per step from a secrets service; mill as its own principal once skift admits one.
 
 **Done when:** a workflow runs identically on local and container workspaces, no long-lived credential exists in mill's account, and mill is its own principal with `ReportUsage` still accepted.
 
@@ -256,13 +256,13 @@ Decisions the PRD does not make. Each wants an ADR.
 
 5. **Where CI runs.** The delivery workflow watches CI — GitLab's runner today, Buildkite if that bet lands. The mill should not care, but the check step has to talk to one of them.
 
-6. **Notifier ownership.** Dagger's plan puts the notifier as a dagger consumer. The mill files gates; who wakes thicket — dagger's change stream, or the mill calling `thicket send` directly as a stopgap?
+6. **Notifier ownership.** Skift's plan puts the notifier as a skift consumer. The mill files gates; who wakes thicket — skift's change stream, or the mill calling `thicket send` directly as a stopgap?
 
 7. **Session substrate.** CLI (`claude -p`) or the Agent SDK via a sidecar? CLI keeps the mill a single Go binary; the SDK is what the harness uses today.
 
 ## 10. Risks
 
-- **It grows a planner.** The first time a node is "too big," the temptation is to decompose inside the mill. The answer is a workflow whose terminal step files child nodes in dagger and closes. Watch for this in every review.
+- **It grows a planner.** The first time a node is "too big," the temptation is to decompose inside the mill. The answer is a workflow whose terminal step files child nodes in skift and closes. Watch for this in every review.
 
 - **The reviewer stays a rubber stamp.** R-25 exists because 59 approvals in a row proved nothing. If the seeded-bad test is deferred, this project has the harness's flaw in Go.
 
@@ -278,6 +278,6 @@ Decisions the PRD does not make. Each wants an ADR.
 
 - [The bet](research/the-bet.md) — why this shape
 - [The skill analysis](research/work-on-skill-analysis.md) — the workflow being enforced, and every way it currently fails
-- `dagger/docs/retrospectives/2026-09-05-first-build.md` and `dagger/harness/README.md` — what the reference harness does and learned
-- `dagger/docs/domain-model.md` — nodes, leases, gates, events, the contract this consumes
+- `skift/docs/retrospectives/2026-09-05-first-build.md` and `skift/harness/README.md` — what the reference harness does and learned
+- `skift/docs/domain-model.md` — nodes, leases, gates, events, the contract this consumes
 - Prior-art research — run it before the ADRs

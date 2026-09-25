@@ -1,7 +1,7 @@
 # Runbook — the acceptance suite
 
 `tests/acceptance` drives the whole mill against real dependencies: a real
-dagger, a real GitLab, the real sidecar, and a real Claude account.
+skift, a real GitLab, the real sidecar, and a real Claude account.
 It is the executable form of O0's done-when — a quick-fix node delivered by
 `mill run`, with every step's evidence in the ledger ([prd.md](prd.md) §8) —
 and of O1's: a `feature` node the run sized for itself, delivered through a
@@ -37,8 +37,8 @@ in. If it starts, it has what it needs.
 | `MILL_ACCEPTANCE_FORGE_NAMESPACE` | Required when the forge URL is set. The group scratch projects are created in, by numeric id or by full path. Nothing but the suite should live in it. |
 | `MILL_ACCEPTANCE_FORGE_USER` | The GitLab username the token belongs to. It is both the basic-auth username git is given and the identity the suite expects to see on `merged_by`. Defaults to `mill`. |
 | `MILL_ACCEPTANCE_DATABASE_URL` | PostgreSQL for the `mill serve` the suite starts. `make db-up` and the `DATABASE_URL` from `.env` will do on a development host. Migrations are applied by `mill serve` itself. |
-| `MILL_ACCEPTANCE_DAGGER_SOCKET` | Optional. An external dagger to file nodes in, for the deliberate case of exercising the deployed service. Unset, the suite starts a dagger of its own and files there; see [Which dagger](#which-dagger). `$DG_SOCKET` is not consulted: it names the operator's dagger, which the suite never files in unless told to. |
-| `MILL_ACCEPTANCE_SECOND_DAGGER_CONFIG` | Optional, and read only with `MILL_ACCEPTANCE_DAGGER_SOCKET`. A `dg --config` file for a second principal of that dagger, used by the fencing scenario to take a node's lease. Without it the second claim is made by the same principal under a second agent ref, which fences the running worker just the same. |
+| `MILL_ACCEPTANCE_SKIFT_SOCKET` | Optional. An external skift to file nodes in, for the deliberate case of exercising the deployed service. Unset, the suite starts a skift of its own and files there; see [Which skift](#which-skift). `$SKIFT_SOCKET` is not consulted: it names the operator's skift, which the suite never files in unless told to. |
+| `MILL_ACCEPTANCE_SECOND_SKIFT_CONFIG` | Optional, and read only with `MILL_ACCEPTANCE_SKIFT_SOCKET`. A `skift --config` file for a second principal of that skift, used by the fencing scenario to take a node's lease. Without it the second claim is made by the same principal under a second agent ref, which fences the running worker just the same. |
 | — | The sessions run on the account's own Claude Code login, `~/.claude/.credentials.json`. `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` are on the harness adapter's deny list and never reach a sidecar, so setting one does nothing; the preflight checks for the login instead. |
 
 `MILL_FORGE_TOKEN` and `MILL_FORGE_USER` are what `mill run` itself reads;
@@ -52,54 +52,54 @@ is `set -a; . ~/.config/mill/acceptance.env; set +a` and then
 
 ### On the host
 
-- `dg`, `git`, `node` and `go` on `PATH`.
+- `skift`, `git`, `node` and `go` on `PATH`.
 - A Claude Code login for the account running the suite, under `$HOME`.
 - `sidecar/dist/main.js` built. `make test-acceptance` builds it; by hand it
   is `make sidecar-build`.
-- For the suite's own dagger, the default: podman, for the PostgreSQL its
-  database lives in; `goose`, for dagger's migrations; and dagger's checkout
-  at `~/src/github.com/ivy/dagger` or wherever `MILL_DAGGER_REPO` points,
-  which is where the migrations are read from. `dg` itself is the one on
+- For the suite's own skift, the default: podman, for the PostgreSQL its
+  database lives in; `goose`, for skift's migrations; and skift's checkout
+  at `~/src/github.com/steading-ai/skift` or wherever `MILL_SKIFT_REPO` points,
+  which is where the migrations are read from. `skift` itself is the one on
   `PATH`. These are what `internal/testsupport` asks for, and the preflight
   names whichever is missing.
-- With `MILL_ACCEPTANCE_DAGGER_SOCKET` set, something listening on it, and
+- With `MILL_ACCEPTANCE_SKIFT_SOCKET` set, something listening on it, and
   none of the above: the ledger's database is the one the environment
   names, so nothing needs a container.
 
 The `mill` binary is built by the suite from this checkout. It never reaches
 for one that happens to be installed.
 
-## Which dagger
+## Which skift
 
-By default the suite files into a dagger it started for itself: one
-instance for the whole suite, `dg serve` from the `dg` on `PATH` against a
+By default the suite files into a skift it started for itself: one
+instance for the whole suite, `skift serve` from the `skift` on `PATH` against a
 database of its own in a testcontainers PostgreSQL, on a socket in a
 temporary directory, seeded with one principal — the account running the
 suite — and torn down when the suite ends. It is the same fixture the run
-loop's own specs use (`internal/testsupport/dagger.go`), for the same
+loop's own specs use (`internal/testsupport/skift.go`), for the same
 reason: fencing, leases and patches only behave like production against
 the real service, and the real service is cheap to start.
 
-The default is the disposable one because dagger has no delete. A project
+The default is the disposable one because skift has no delete. A project
 is archived, never removed, so every scratch project the suite ever made in
-the operator's dagger would be there for good, and a suite killed before
+the operator's skift would be there for good, and a suite killed before
 its cleanup — a `SIGKILL`, a lost session, a host going down — would leave
 an unarchived one in the graph the operator and the harness read. A suite
 that misbehaves would be writing into that graph too. Against its own
 instance the suite can be killed at any point and the deployed graph is
 exactly as it was: the leftover is a row in a database the container takes
-with it. Two scenarios assert this — *The suite owns the dagger it files
+with it. Two scenarios assert this — *The suite owns the skift it files
 into* and *A killed suite leaves the operator's graph alone* — by reading
-the deployed dagger's project list before and after filing.
+the deployed skift's project list before and after filing.
 
-`MILL_ACCEPTANCE_DAGGER_SOCKET` points the suite at an external dagger
+`MILL_ACCEPTANCE_SKIFT_SOCKET` points the suite at an external skift
 instead, for the deliberate case of exercising the deployed service — its
 version, its policy, its principals. Everything the suite does is the same;
 only the socket changes, and with it who cleans up: the suite archives its
 scratch projects at the end of each scenario, and a killed run leaves
 whichever it had not reached. The fencing scenario's second principal,
-`MILL_ACCEPTANCE_SECOND_DAGGER_CONFIG`, is a principal of that dagger and
-is read only in this mode; the suite's own dagger has one principal, and
+`MILL_ACCEPTANCE_SECOND_SKIFT_CONFIG`, is a principal of that skift and
+is read only in this mode; the suite's own skift has one principal, and
 the scenario claims as it under a second agent ref.
 
 ## What it does
@@ -110,11 +110,11 @@ Each scenario stages a fixture and then drives it:
    the scratch namespace, merge method `merge` and squash disabled — or, for
    a fixture that never reaches a forge, a bare repository in a temporary
    directory ([Without a forge](#without-a-forge)).
-2. A scratch dagger project in the suite's own dagger — or in the one
-   `MILL_ACCEPTANCE_DAGGER_SOCKET` named — and the fixture's node filed in
+2. A scratch skift project in the suite's own skift — or in the one
+   `MILL_ACCEPTANCE_SKIFT_SOCKET` named — and the fixture's node filed in
    it.
 3. One `mill run` per attempt, as a subprocess, with that repository as the
-   dagger project's `vcs_url` and its `--origin`, and a workspace root and
+   skift project's `vcs_url` and its `--origin`, and a workspace root and
    log directory of the scenario's own. The environment mode is the default, `inherit`, which is
    what a person at a shell gets; a deployment runs `--env-mode strict`, as
    `contrib/systemd/mill.service` does (docs/architecture.md §"Skill steps:
@@ -127,7 +127,7 @@ when there is none:
   the node `done` with a merge-commit artifact on the default branch, six
   closed step runs each with the evidence its step names, the merge by the
   mill's forge identity, the commit verified with `git verify-commit` against
-  the mill's `allowed_signers`, and the run's cost in dagger's usage rollup.
+  the mill's `allowed_signers`, and the run's cost in skift's usage rollup.
 - **A killed worker's node is resumed by the next run.** The first run is
   killed during `implement` — the ledger, not the log, says when — its lease
   taken from it, and a second run invoked. The second reattaches rather than
@@ -158,12 +158,12 @@ Four need no forge and run on every host that can start the suite:
   forge-dependent scenario's skip names `MILL_ACCEPTANCE_FORGE_URL` and
   points at this document, and the reviewer scenario stages without
   reaching for a forge at all. It costs no session and no merge request.
-- **The suite owns the dagger it files into** and **A killed suite leaves
+- **The suite owns the skift it files into** and **A killed suite leaves
   the operator's graph alone.** The suite's own discipline: with no socket
-  named, a scratch project lands in the dagger the suite started, and the
-  deployed dagger's project list is the same before and after — including
+  named, a scratch project lands in the skift the suite started, and the
+  deployed skift's project list is the same before and after — including
   for a project whose archive never runs, which is what a kill leaves.
-  Both skip when `MILL_ACCEPTANCE_DAGGER_SOCKET` is set, because filing
+  Both skip when `MILL_ACCEPTANCE_SKIFT_SOCKET` is set, because filing
   there was the operator's decision. They cost no session and no merge
   request.
 
@@ -183,11 +183,11 @@ against the homestead GitLab and one Claude account.
 | The reviewer says no | 6 min 33 s | $2.44 |
 | A feature is delivered through the gate | 9 min 11 s over its two passes | $2.22 |
 | The suite is honest about what it could not run | under a second | nothing |
-| The suite owns the dagger it files into | under a second | nothing |
+| The suite owns the skift it files into | under a second | nothing |
 | A killed suite leaves the operator's graph alone | under a second | nothing |
 | **The whole suite** | **9–10 min** | **$6.85** |
 
-The suite's own dagger adds its container's start to the setup, before any
+The suite's own skift adds its container's start to the setup, before any
 scenario runs: a few seconds with the image pulled, up to the fixture's
 three-minute allowance without it.
 
@@ -212,11 +212,11 @@ models a workflow pins; the shape of the bill is Opus output and Sonnet
 cache reads, and nothing else comes close.
 
 The two lease scenarios take the lease away rather than waiting it out,
-because killing a worker releases nothing and dagger hands a node to nobody
+because killing a worker releases nothing and skift hands a node to nobody
 while its lease is live: the next claim would be refused until the TTL had
 passed, which is longer than either scenario's patience. The reason is
 `preempted` — an operator taking a lease from a worker that is not coming
-back — and it is the only one dagger accepts here: `expired` is the server's
+back — and it is the only one skift accepts here: `expired` is the server's
 own, set by its expiry timer and refused from a client. Nothing about the
 resume turns on it: the next worker reads the ledger, not the release reason
 ([ledger.md](ledger.md) §Resume).
@@ -237,25 +237,25 @@ the worker starts.
 | Made | Cleaned up | How |
 |---|---|---|
 | Scratch GitLab project | Deleted | `DELETE /projects/:id` at the end of the scenario; a stale one, by the worker's sweep of `scratch-namespace` through the forge adapter |
-| The suite's own dagger | Removed | `dg serve` killed, its database dropped and its socket's directory removed at the end of the suite; the PostgreSQL container terminated after them. Nothing of it is on the host afterwards. |
-| Scratch dagger project | Archived | `dg project archive` at the end of the scenario; a stale one, by the worker's sweep of the dagger it is configured for. In the suite's own dagger this is a courtesy, since the instance goes with the suite. Against an external dagger it is the only cleanup there is: dagger has no delete, and archiving — read-only, every node out of every ready set — is as gone as dagger goes. The sweep calls delete when the service offers it, archives when it does not, and its report says which. |
+| The suite's own skift | Removed | `skift serve` killed, its database dropped and its socket's directory removed at the end of the suite; the PostgreSQL container terminated after them. Nothing of it is on the host afterwards. |
+| Scratch skift project | Archived | `skift project archive` at the end of the scenario; a stale one, by the worker's sweep of the skift it is configured for. In the suite's own skift this is a courtesy, since the instance goes with the suite. Against an external skift it is the only cleanup there is: skift has no delete, and archiving — read-only, every node out of every ready set — is as gone as skift goes. The sweep calls delete when the service offers it, archives when it does not, and its report says which. |
 | A live suite's machines | Stopped, run directory removed | Every machine is `mill-<run-id>`, the `mill run` or `mill work` subprocess's own; a delivered run destroys its machine and removes `/var/lib/mill/runs/<id>` and `/run/mill/<id>` itself, the scenarios that kill a run sweep theirs at teardown, and the worker's reconciliation takes the rest: a `mill-*` machine with no live run is an orphan, whatever made it |
 | Promoted cache generations | **Kept** | `gen-<n>` under `/var/lib/mill/cache/<scope>/<name>`, earned by an evidence-closed step and the point of the warm scenario; eviction takes repo lineages by expiry and by watermark, `mill cache prune` on demand |
 | Derived image subvolumes | **Kept** | `/var/lib/machines/mill-image-<digest>`, one per package list the fixtures declare; image expiry takes them, `mill image prune` on demand |
 | Workspaces, clones, step logs, bare local origins, the built binary | Removed | Temporary directories the suite owns |
 | `mill serve` | Killed | Its process group, at the end of the suite |
 | Rows in `MILL_ACCEPTANCE_DATABASE_URL` | **Kept** | The ledger is the record of the run and is worth reading after a failure |
-| Workflow versions a scenario derived | **Kept**, at project scope | A workflow is immutable and `mill workflow` has no unpush, so a derived definition is pushed into the scenario's own dagger project — where the next suite run's assessment cannot see it. The suite refuses to push one anywhere else: `stageWorkflow` fails the scenario that asks for org scope |
+| Workflow versions a scenario derived | **Kept**, at project scope | A workflow is immutable and `mill workflow` has no unpush, so a derived definition is pushed into the scenario's own skift project — where the next suite run's assessment cannot see it. The suite refuses to push one anywhere else: `stageWorkflow` fails the scenario that asks for org scope |
 
 A `SIGKILL` to the suite itself skips all of it, with one exception that
-is the point of the suite's own dagger: its scratch projects are in a
+is the point of the suite's own skift: its scratch projects are in a
 database of a container testcontainers' reaper removes a few minutes after
 the suite's process is gone. Nothing a killed run made reaches the
-operator's dagger; `dg project list` there is what it was before the run.
+operator's skift; `skift project list` there is what it was before the run.
 What a kill does leave on this host is two orphaned servers — the suite's
-`dg serve` and its `mill serve`, each in a process group of its own so that
+`skift serve` and its `mill serve`, each in a process group of its own so that
 a scenario's kill of a `mill run` cannot reach them — and the temporary
-directories. Scratch projects on the forge, and in an external dagger, wait
+directories. Scratch projects on the forge, and in an external skift, wait
 for the next worker start; to clean up by hand before then:
 
 ```sh
@@ -263,17 +263,17 @@ for the next worker start; to clean up by hand before then:
 curl -sH "PRIVATE-TOKEN: $MILL_ACCEPTANCE_FORGE_TOKEN" \
   "$MILL_ACCEPTANCE_FORGE_URL/api/v4/groups/$MILL_ACCEPTANCE_FORGE_NAMESPACE/projects?search=mill-acceptance"
 
-# Scratch projects in an external dagger, when MILL_ACCEPTANCE_DAGGER_SOCKET
-# pointed the run at one. The suite's own dagger needs nothing here.
-dg --socket "$MILL_ACCEPTANCE_DAGGER_SOCKET" project list \
+# Scratch projects in an external skift, when MILL_ACCEPTANCE_SKIFT_SOCKET
+# pointed the run at one. The suite's own skift needs nothing here.
+skift --socket "$MILL_ACCEPTANCE_SKIFT_SOCKET" project list \
   | jq '.projects[] | select(.slug | startswith("mill-acceptance"))'
-dg --socket "$MILL_ACCEPTANCE_DAGGER_SOCKET" project archive <slug>
+skift --socket "$MILL_ACCEPTANCE_SKIFT_SOCKET" project archive <slug>
 
 # The servers a killed run orphaned, then whatever else it left on this
-# host: workspaces, the binary, and the suite's dagger socket directory.
-pkill -f 'dg serve --socket /tmp/mill-dagger-'
+# host: workspaces, the binary, and the suite's skift socket directory.
+pkill -f 'skift serve --socket /tmp/mill-skift-'
 pkill -f 'mill serve --socket /tmp/mill-acceptance-svc-'
-rm -rf /tmp/mill-acceptance-* /tmp/mill-dagger-*
+rm -rf /tmp/mill-acceptance-* /tmp/mill-skift-*
 
 # Workflows at org scope, which is what every assessment chooses between.
 mill workflow list --socket <socket>
@@ -319,12 +319,12 @@ leftover rather than the wrong workflow it caused to be chosen.
   reclaimed.** Selection ending in a bad config (an unknown workflow, a
   missing or malformed `build-workflow` definition, an assessment that
   exhausted its retries) or the run's machine going missing (a lost
-  sandbox) leaves the run `failed` and holds the node in dagger under the
-  failure's own reason — `dg node show <node>` says why. Holding is
+  sandbox) leaves the run `failed` and holds the node in skift under the
+  failure's own reason — `skift node show <node>` says why. Holding is
   independent of a node's open/closed status, so `mill restart <node>` (a
   fresh generation) or `mill rerun <run> --from <step>` (retrying this one)
   do not by themselves make the node claimable again; a person clears the
-  hold first, with `dg unhold <node> --reason ...`.
+  hold first, with `skift unhold <node> --reason ...`.
 
 ## A feature is delivered through the gate
 
@@ -358,7 +358,7 @@ tier is `feature`, and puts the whole assessment in its report.
 
 **The gate is not automatic.** `feature`'s `plan-approval` auto-approves an
 approved plan at this tier, which is the right default and the wrong thing
-to test with, so the scenario pushes `feature` **into its own dagger
+to test with, so the scenario pushes `feature` **into its own skift
 project** with the `auto` key removed and nothing else changed. A project
 definition shadows an org one of the same name, so the run resolves
 `feature` to that definition and every scenario beside it still resolves the
@@ -370,21 +370,21 @@ exits `0`, the run is `waiting`, and one gate node hangs off the fixture's
 node with the plan's first forty lines quoted in its ask. The suite asserts
 the notify command was handed it — `--notify-command` points at a script
 that keeps the notice, and the spec decodes the JSON and checks the kind,
-the gate, the node and the run — then completes the gate with `dg complete`,
+the gate, the node and the run — then completes the gate with `skift complete`,
 under the operator's own configuration and with no lease, which is what a
-person answering in dagger does. The second pass is `mill run` again: it
+person answering in skift does. The second pass is `mill run` again: it
 resumes at the gate, reads the answer, and delivers.
 
 **What is asserted at the end**: the node is `done`; the merge-commit
 artifact is a SHA on the default branch; the reviewer's last verdict on the
 node is `approve`; every step of the run — `assess` and `select` included —
 closed on the evidence its definition names; `mill inspect` shows no closed
-attempt with `unspecified` evidence; and dagger's usage rollup carries at
+attempt with `unspecified` evidence; and skift's usage rollup carries at
 least three models. The assessment, the gate and its notify payload, the
 verdict and the merge SHA all go into the spec's report.
 
 **Answering the gate from Slack** is the person's part of `prove-o1` and not
-this suite's: the suite answers in dagger, which is where the answer is
+this suite's: the suite answers in skift, which is where the answer is
 written either way.
 
 ## The reviewer says no
@@ -481,7 +481,7 @@ temporary directory, which `mill run --origin` points a workspace at. It is
 a real repository cloned by real git; the only thing missing is the API no
 step in that scenario calls.
 
-The dagger project still has to name a repository — a run resolves its
+The skift project still has to name a repository — a run resolves its
 project's forge after the claim and before the clone, so a project with none
 fails before it has spent a session — and the suite creates the scratch
 project with a placeholder pointing at a host that does not exist. The
@@ -522,14 +522,14 @@ root-owned helper at `/usr/libexec/mill-machine`, its policy and its polkit
 and sudoers rules; `mill_egress` for the nftables table and squid on the
 `mill-host` link; `mill_selinux` for the file context; and `mill` for
 `/run/mill`, the base image in Harbor (`mill-image.timer`, or
-`systemctl --user start mill-image.service` once) and `/var/lib/mill/dagger`
-— a clone of dagger's `main`, which nothing pins: mill's `go.mod` has no
-dagger dependency and dagger has no tags, so a dagger change can fail the
+`systemctl --user start mill-image.service` once) and `/var/lib/mill/skift`
+— a clone of skift's `main`, which nothing pins: mill's `go.mod` has no
+skift dependency and skift has no tags, so a skift change can fail the
 fixture inside a machine before mill changes at all, and a pin is a roadmap
 item ([roadmap.md](roadmap.md) §"What mill needs from the neighbours"). The
 configuration file the deployed worker reads is the one `mill doctor`
 reads: keys in their long-flag spelling, and `nested_repos`,
-`dagger_checkout` and `model_credential_minted` with underscores — a
+`skift_checkout` and `model_credential_minted` with underscores — a
 hyphenated one sets nothing ([tools.md](tools.md) §Configuration). On top
 of the ordinary suite's variables:
 
@@ -549,14 +549,14 @@ the same way ([tools.md](tools.md) §status). The row stays until something
 removes it, and `make db-reset` is the answer; it is the throwaway
 development database and nothing else.
 
-The live tier **refuses** to file into the deployed dagger. It boots real
+The live tier **refuses** to file into the deployed skift. It boots real
 machines and drives real `mill run` subprocesses, and `mill#49` already showed
 a test process becoming a worker against the operator's graph; so a
-`MILL_ACCEPTANCE_DAGGER_SOCKET` — or a `DG_SOCKET` — that names
-`/run/dagger/dg.sock` fails the tier before anything boots, naming the socket
-and telling you to unset it and let the suite start its own throwaway dagger
-from `internal/testsupport` ([Which dagger](#which-dagger)). The live tier
-runs on that same disposable dagger `mill#51` gave the suite.
+`MILL_ACCEPTANCE_SKIFT_SOCKET` — or a `SKIFT_SOCKET` — that names
+`/run/skift/skift.sock` fails the tier before anything boots, naming the socket
+and telling you to unset it and let the suite start its own throwaway skift
+from `internal/testsupport` ([Which skift](#which-skift)). The live tier
+runs on that same disposable skift `mill#51` gave the suite.
 
 **Run it one scenario at a time.** The first host run is debugged scenario by
 scenario, because a machine that will not boot, an image that will not build,
@@ -583,11 +583,11 @@ the proxy the only way out, no login in the machine, nothing outliving its
 step, `machinectl list` empty after, the gateway's log naming the step token
 and never its value); *The second run is warm* (the go-build lineage
 restored from a promoted generation and the build step faster off the
-ledger's durations); *The live tier refuses the deployed dagger* (the
+ledger's durations); *The live tier refuses the deployed skift* (the
 refusal, which needs no host); and *A killed suite leaves no machine, run
 directory, or project after reconciliation* (a run killed mid-flight, the
 lease taken back, and a `mill work --workspace machine` started against the
-suite's own service and dagger, whose startup reconciliation sweeps what the
+suite's own service and skift, whose startup reconciliation sweeps what the
 kill left).
 
 Every network assertion runs from *inside* the machine, through the helper,
@@ -606,7 +606,7 @@ scenario times.
 **What it creates, and what it leaves behind.** One machine per run, named
 `mill-<run-id>` (every machine here is `mill run`'s or the worker's; the
 `mill-acceptance-<scenario>-<nonce>` name is the scratch project's and the
-dagger project's, which is what the sweep by name matches), on the btrfs
+skift project's, which is what the sweep by name matches), on the btrfs
 volume; a run directory under `/var/lib/mill/runs`; cache copies restored
 from the worker's lineages; a derived image with `btrfs-progs` for the db
 suite's machine; and, for the delivering scenarios, a scratch project and a
@@ -616,7 +616,7 @@ step earns, which are the point of the warm run and which eviction reclaims
 under its watermarks ([sandbox.md](sandbox.md) §Eviction) — and the derived
 image, which image expiry takes. Everything else is swept **by name**: a
 `mill-*` machine with no live run, its run directory, and stale scratch
-projects on the forge and in dagger are taken by the next worker's
+projects on the forge and in skift are taken by the next worker's
 reconciliation pass ([sandbox.md](sandbox.md) §"External state",
 §Reconciliation), which the killed scenario exercises on purpose. The two
 scenarios that kill their own run — the db suite's, and the boundaries when

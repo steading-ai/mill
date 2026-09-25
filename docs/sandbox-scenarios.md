@@ -734,34 +734,34 @@ Feature: External state
   A machine may only create external state that is swept by name from the host side.
 
   @live
-  Scenario: The live suite refuses the deployed dagger
-    Given MILL_ACCEPTANCE_DAGGER_SOCKET names /run/dagger/dg.sock
+  Scenario: The live suite refuses the deployed skift
+    Given MILL_ACCEPTANCE_SKIFT_SOCKET names /run/skift/skift.sock
     When the live suite starts
     Then it refuses before booting anything
-    And the refusal names the socket and the testsupport dagger fixture to use instead
+    And the refusal names the socket and the testsupport skift fixture to use instead
 
   @live
-  Scenario: The live suite files into a throwaway dagger
+  Scenario: The live suite files into a throwaway skift
     When the live suite starts
-    Then a `dg serve` from internal/testsupport is listening on a temporary socket
+    Then a `skift serve` from internal/testsupport is listening on a temporary socket
     And every node the suite files is in a project on that socket
 
   @db
-  Scenario: The acceptance suite creates nothing in the deployed dagger by default
-    Given MILL_ACCEPTANCE_DAGGER_SOCKET is unset
+  Scenario: The acceptance suite creates nothing in the deployed skift by default
+    Given MILL_ACCEPTANCE_SKIFT_SOCKET is unset
     When make test-acceptance runs
-    Then `dg project list` on the deployed dagger is unchanged before and after
+    Then `skift project list` on the deployed skift is unchanged before and after
 
   @db
-  Scenario: Fencing and resume pass against the throwaway dagger
-    Given the suite's dagger is the testsupport instance
+  Scenario: Fencing and resume pass against the throwaway skift
+    Given the suite's skift is the testsupport instance
     When the fencing and resume scenarios run
     Then both pass
     And the second claim was a second client under the same principal
 
   @unit
-  Scenario: The deployed-dagger flag is honoured on the local workspace and refused in a machine
-    Given MILL_ACCEPTANCE_DAGGER_SOCKET names the deployed dagger
+  Scenario: The deployed-skift flag is honoured on the local workspace and refused in a machine
+    Given MILL_ACCEPTANCE_SKIFT_SOCKET names the deployed skift
     When the suite runs on the local workspace
     Then it uses that socket and the runbook says so
     When the live tier runs inside a machine
@@ -770,8 +770,8 @@ Feature: External state
   @live
   Scenario: The fixture's prerequisites are present in the mill repo's machine
     Given the mill repo's machine
-    When a session checks for `dg`, `goose`, and the dagger migrations
-    Then all three are present, from the read-only dagger checkout bind or the published image
+    When a session checks for `skift`, `goose`, and the skift migrations
+    Then all three are present, from the read-only skift checkout bind or the published image
 
   @live
   Scenario: A suite's machines are swept after a kill
@@ -780,7 +780,7 @@ Feature: External state
     Then the machine is stopped and its run directory removed
 
   @db
-  Scenario: Stale scratch dagger projects are archived by name
+  Scenario: Stale scratch skift projects are archived by name
     Given a project "mill-acceptance-x-<nonce>" older than the suite's budget with no live run
     When the worker reconciles
     Then the project is archived
@@ -799,7 +799,7 @@ Feature: External state
 
   @unit
   Scenario: A suite's external state is prefix-named
-    When a scenario creates a machine, a dagger project, or a forge project
+    When a scenario creates a machine, a skift project, or a forge project
     Then each name begins with "mill-acceptance-" and ends with the scenario's nonce
 ```
 

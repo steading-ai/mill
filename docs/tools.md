@@ -2,7 +2,7 @@
 
 What to run when a run misbehaves on the host, and what each answer means.
 The same tools are one client with two framings: the CLI for a shell, `mill
-mcp` for a session, exactly as `dg` and `dg mcp` are ([architecture.md](architecture.md)
+mcp` for a session, exactly as `skift` and `skift mcp` are ([architecture.md](architecture.md)
 §"One binary, two faces"). An operator in a Claude Code session and a thicket
 agent asked to look are reading the same fields.
 
@@ -18,7 +18,7 @@ already wrote.
 to the mill's host and account. If the socket it dials belongs to a worker
 running on a different host, it refuses rather than execute there under this
 host's files and login, and names the worker's host instead. A session
-elsewhere that wants work done files a dagger node ([prd.md](prd.md) R-55),
+elsewhere that wants work done files a skift node ([prd.md](prd.md) R-55),
 or drives that worker's own `mill run` through `mill work` on its host.
 
 Every tool takes `--socket`; the readers take `--view`; the two `workspace`
@@ -60,7 +60,7 @@ silence.
 
 ## Views
 
-The readers size their answer with `--view`, as dagger's tools do, so an
+The readers size their answer with `--view`, as skift's tools do, so an
 agent that starts narrow does not fill its context with a backlog.
 
 | View | What it is |
@@ -75,7 +75,7 @@ Runs by state, with the step each is on, how long it has been going, what it
 has cost, and the gate a waiting one is blocked on. With no `--status`
 filter this is every run that has not ended.
 
-A run listed here whose node dagger has since closed — dropped, or completed
+A run listed here whose node skift has since closed — dropped, or completed
 by a person — does not stay: the worker's sweep fails it within a sweep
 interval (`--sweep-interval`, fifteen minutes by default) of noticing, and
 `history` then shows the `failed` event with the reason
@@ -222,7 +222,7 @@ review          2        closed         verdict      approve (AC-2: the assertio
 
 A `revise` closes nothing, so the attempt it failed has no evidence and no
 value: that is the empty row above. The verdict behind it is on the node in
-dagger, as a text artifact named `<step>-<generation>.<attempt>.md` carrying the decision,
+skift, as a text artifact named `<step>-<generation>.<attempt>.md` carrying the decision,
 every finding, and the id of the session that reviewed
 ([domain-model.md](domain-model.md) §Verdict). The same findings are the next
 attempt's prompt, and `mill logs --step review` is the session that wrote
@@ -243,7 +243,7 @@ millcli#1 run 01M20W6CBS8NX5QRG9XPYTD21P is running
   waiting   step implement to produce artifact evidence
 ```
 
-A run that is `waiting` or `parked` is blocked on a dagger gate, and only a
+A run that is `waiting` or `parked` is blocked on a skift gate, and only a
 person can answer it. `explain` names the gate node and its ask, which is
 what somebody needs in order to go and answer it:
 
@@ -258,8 +258,8 @@ millcli#1 run 01M20W6CBS8NX5QRG9XPYTD21P is waiting
   waiting   a human to answer gate millcli#2
 ```
 
-Resolving the gate's reference and title needs dagger: `--dagger-socket` and
-`--project`, or `$DG_SOCKET` and `$DG_PROJECT`. Without them the gate's id is
+Resolving the gate's reference and title needs skift: `--skift-socket` and
+`--project`, or `$SKIFT_SOCKET` and `$SKIFT_PROJECT`. Without them the gate's id is
 printed and nothing else is lost.
 
 ## logs
@@ -400,7 +400,7 @@ billed, and `gateway` is the credential gateway's own count of the upstream's
 (`docs/sandbox.md` §Credentials). A run with no gateway in front of it has
 `sdk` rows alone. The two are listed beside each other and never summed into
 one: the adapter's rows are what `status` and `inspect` call the cost and
-what is posted to dagger, and the gateway's are the check on them — the
+what is posted to skift, and the gateway's are the check on them — the
 gateway sees the CLI's side requests the SDK does not report, and names the
 model by its resolved id.
 
@@ -558,13 +558,13 @@ $ mill doctor
 claims from: every project
 pass  socket     /run/user/1000/mill/mill.sock answers; mill 0.0.0-dev
 pass  schema     migration 18, current
-pass  dagger     /run/dagger/dg.sock answers; this account is a principal on mill, 1 node(s) ready for an agent
+pass  skift     /run/skift/skift.sock answers; this account is a principal on mill, 1 node(s) ready for an agent
 fail  sidecar    sidecar/dist/main.js did not answer: claude: the sidecar answered nothing before it exited
 fail  signing    no signing key under ~/.local/state/mill/workspaces/signing
 pass  forge      https://github.com/octo-org/thing.git accepts the credential store's forge-token ($CREDENTIALS_DIRECTORY/forge-token) as octocat
 pass  notify     contrib/notify/thicket-send.sh accepts a probe notice
 pass  workspace  local: a clone under the mill's account
-pass  isolation  DG_SOCKET and MILL_SOCKET are dead paths, neither /run/dagger/dg.sock nor /run/user/1000/mill/mill.sock
+pass  isolation  SKIFT_SOCKET and MILL_SOCKET are dead paths, neither /run/skift/skift.sock nor /run/user/1000/mill/mill.sock
 pass  space      local: no sandbox volume to watch
 pass  activity   /var/lib/mill/logs: 214 frame(s), 37 twin(s), 106M, oldest 42 day(s) old; policy twin_days=7
 warn  gateway    https://api.anthropic.com answers a token count through the gateway with credential:774fdbe2; the credential was minted 2025-09-30, more than 11 months ago; a setup-token lasts a year — mint a new one
@@ -576,13 +576,13 @@ pass  workflows  feature: store matches disk at 6415ee6fe810
 |---|---|
 | `socket` | `mill serve` answers on its unix socket, and which version |
 | `schema` | The database is migrated to the schema this binary carries |
-| `dagger` | Dagger answers, and this account resolves to a principal that may read the project |
+| `skift` | Skift answers, and this account resolves to a principal that may read the project |
 | `sidecar` | The harness sidecar starts, parses one frame, and answers |
 | `signing` | The commit signing key exists and some project's `allowed_signers` names it — a checkout's, or the project's repository directly when no checkout exists yet |
 | `forge` | The forge accepts the credential the mill holds — the credential store's `forge-token`, else `$MILL_FORGE_TOKEN` (§Forges) — through the adapter a run would deliver with. The line names where the credential came from. On GitHub it names the account the token authenticates as, and a token that has expired, or lacks one of the permissions §Forges lists, fails naming the credential and what it lacks. A `forge` setting that names no adapter fails here too |
 | `notify` | The configured notify command runs and accepts a probe notice |
 | `workspace` | Which workspace backend a run works in, and for `machine` whether the sandbox root is btrfs |
-| `isolation` | A session's own tools never see the production dagger or mill socket: a throwaway workspace is attached and its environment checked for `DG_SOCKET`/`MILL_SOCKET` naming a dead path, not the socket this host actually serves (docs/sandbox.md §Credentials) |
+| `isolation` | A session's own tools never see the production skift or mill socket: a throwaway workspace is attached and its environment checked for `SKIFT_SOCKET`/`MILL_SOCKET` naming a dead path, not the socket this host actually serves (docs/sandbox.md §Credentials) |
 | `space` | For `machine`, free space on the sandbox volume against the eviction watermarks (`cache-high-watermark`, `cache-low-watermark`): pass above the low one, warn between, fail below the high one — eviction runs at every promotion and the host is short of space |
 | `activity` | The frames and twins held under `--log-dir`: the count of each, their bytes, the oldest one's age, and the retention policy in force for `--project` (`retention`, `retention-projects`; docs/activity.md §Lifecycle "Retention"). A host with no `--log-dir` configured reports one line saying so |
 | `gateway` | The credential gateway's upstream answers one token count through it with the configured credential, and the credential's age against `model_credential_minted` |
@@ -606,10 +606,10 @@ Either way the reported line does not say which path answered it: the two
 are meant to agree, since the RPC runs the same checks below in the worker's
 own process.
 
-The probes take the worker's own flags for what they check — `--dagger-socket`
-and `--project` for dagger, `--sidecar` and `--env-mode` for the sidecar,
+The probes take the worker's own flags for what they check — `--skift-socket`
+and `--project` for skift, `--sidecar` and `--env-mode` for the sidecar,
 `--workspace-dir`, `--identity` and `--name` for the signing key, `--project`
-and `--forge` for the forge — the repository is the dagger project's
+and `--forge` for the forge — the repository is the skift project's
 `vcs_url`, the adapter is the file's `forge` or the host's — `--notify-command`, `--workspace` and `--sandbox-root`, and the
 gateway's — so a host is probed as its worker is configured, or as a flag
 says to try it. The deployment's configuration file (§Configuration) fills
@@ -618,12 +618,12 @@ there and nowhere else: `sidecar`, `env_mode` and `workspace-dir`, so a
 packaged host's installed sidecar and state directory are what is probed;
 `workspace` and `sandbox-root`; `notify_command`; and the gateway's. The
 sockets resolve as they do for every face — `--socket` and
-`--dagger-socket`, then `$MILL_SOCKET` and `$DG_SOCKET`, then the file's
-`socket` and `dagger-socket`, then the default — so a host whose file names
+`--skift-socket`, then `$MILL_SOCKET` and `$SKIFT_SOCKET`, then the file's
+`socket` and `skift-socket`, then the default — so a host whose file names
 the paths is probed with no flag and no variable. `--project` resolves the
-same way — the flag, then `$DG_PROJECT`, then the file's `project` (its
+same way — the flag, then `$SKIFT_PROJECT`, then the file's `project` (its
 first entry, when the file names more than one) — so a host whose file
-names the project, and nothing else, still has `dagger`, `signing` and
+names the project, and nothing else, still has `skift`, `signing` and
 `forge` probed against it.
 
 The sidecar probe sends a `cancel` request on stdin. Cancellation reaches a
@@ -646,7 +646,7 @@ standard input and nothing else: no gate, no node, no run. A notifier that
 routes on `kind` can tell a health check from a person's decision and stay
 quiet, and the shipped example does. A host with no notify command configured
 passes and says so: filing a gate that reaches nobody is a supported choice,
-because the answer is written in dagger either way (docs/architecture.md
+because the answer is written in skift either way (docs/architecture.md
 §"Gate steps").
 
 The workspace probe reports the kind in effect — `--workspace`, else the
@@ -711,12 +711,12 @@ written down. The probe never prints the credential; the line names it by a
 fingerprint of its hash, as the gateway's log does. A host with no gateway
 configured passes and says so: its sessions run on the account's login.
 
-**What the dagger probe cannot check.** Dagger's API exposes no whoami and its
-principals carry no name ([dagger's domain model](https://github.com/ivy/dagger)
+**What the skift probe cannot check.** Skift's API exposes no whoami and its
+principals carry no name ([skift's domain model](https://github.com/steading-ai/skift)
 §Principal: a principal is an id, an org and a kind). A successful `Ready`
 proves the socket is there and that this account resolves to a principal that
 may read the project; that the principal is the one called `mill` is not a
-question dagger will answer today. Closing that gap is dagger's to do.
+question skift will answer today. Closing that gap is skift's to do.
 
 ## cancel
 
@@ -1011,7 +1011,7 @@ else `~/.config/mill/config.yaml`, else — when the account has none and the
 package installed one — `/etc/mill/config.yaml`, or whatever `--config`
 names. Its keys are
 the long flag names, with the exceptions the table spells — `env_mode`,
-`notify_command`, `nested_repos`, `dagger_checkout` and
+`notify_command`, `nested_repos`, `skift_checkout` and
 `model_credential_minted` are written the way the deployment that sets them
 writes them. A flag always wins: the file is consulted only for a flag the
 command line left alone. A file that is not there is not an error; a file
@@ -1019,7 +1019,7 @@ named by `--config` or `$MILL_CONFIG` and not there is.
 
 **A key the table does not list is ignored**, silently: the file is decoded
 into the settings the binary knows and nothing else is looked at. So
-`nested-repos`, `dagger-checkout` or `model-credential-minted` with hyphens
+`nested-repos`, `skift-checkout` or `model-credential-minted` with hyphens
 set nothing and say nothing — the underscore is the whole spelling of those
 three — and `mill doctor`'s gateway probe warning that
 `model_credential_minted` *is not set in the configuration file* under a
@@ -1034,13 +1034,13 @@ no `--config`: it reads the file for the two socket keys and nothing else.
 A key with no flag of its own — the machine backend's — is the file's alone,
 and is read whenever the file is.
 
-**`socket` and `dagger-socket` reach every command that dials.** The
+**`socket` and `skift-socket` reach every command that dials.** The
 readers, `doctor`, `run`, `cancel`, `rerun`, `restart`, `workspace`,
 `workflow`, `mcp`, `work` and `serve` resolve each socket through one
 resolver, in one order: the flag, then the variable (`$MILL_SOCKET`,
-`$DG_SOCKET`), then the file's key, then the default
+`$SKIFT_SOCKET`), then the file's key, then the default
 (`$XDG_RUNTIME_DIR/mill/mill.sock` or `/run/mill/mill.sock`, and
-`/run/dagger/dg.sock`). A command with no `--config` of its own reads the
+`/run/skift/skift.sock`). A command with no `--config` of its own reads the
 file at the default location. The file sits *below* the environment on
 purpose: a deployment that sets `MILL_SOCKET` on a unit or a plugin
 registration keeps reaching the service it named whatever a file on the host
@@ -1056,7 +1056,7 @@ flag added or removed without this table changing is a failing spec.
 | Key | `run` | `work` | `serve --work` |
 |---|---|---|---|
 | `socket` | yes | yes | yes |
-| `dagger-socket` | yes | yes | yes |
+| `skift-socket` | yes | yes | yes |
 | `project` | | yes | yes |
 | `label` | | yes | yes |
 | `concurrency` | | yes | yes |
@@ -1096,7 +1096,7 @@ flag added or removed without this table changing is a failing spec.
 | `proxy` | | yes | yes |
 | `no-proxy` | | yes | yes |
 | `nested_repos` | | yes | yes |
-| `dagger_checkout` | | yes | yes |
+| `skift_checkout` | | yes | yes |
 | `scratch-namespace` | | yes | yes |
 | `scratch-budget` | | yes | yes |
 | `log-dir` | | yes | yes |
@@ -1159,7 +1159,7 @@ priced.
 
 ## Forges
 
-A run delivers to the repository its dagger project names in `vcs_url`, and
+A run delivers to the repository its skift project names in `vcs_url`, and
 the forge is read off that URL's host: `github.com` is GitHub, and any other
 host is a GitLab, because a self-hosted GitLab has no name the mill could
 recognise. `forge` in the configuration file — `--forge` on `run`, `work`
@@ -1258,7 +1258,7 @@ every role holds — and applies the same answer: a `reader` calling
 ## mcp
 
 The same tools as a stdio MCP server, one JSON-RPC message per line, for a
-Claude Code session or a thicket agent. Registered the way dagger's is:
+Claude Code session or a thicket agent. Registered the way skift's is:
 
 ```json
 {
@@ -1338,12 +1338,12 @@ after the node has been claimed and its repository cloned.
 ## The plugin
 
 `plugin/mill` is how a session picks these tools up the way it picks up
-dagger's ([prd.md](prd.md) R-56). It carries three things:
+skift's ([prd.md](prd.md) R-56). It carries three things:
 
 | Path | What it is |
 |---|---|
 | `plugin/mill/.mcp.json` | the registration: a `mill` server, run as `mill mcp` over stdio |
-| `plugin/mill/skills/mill/SKILL.md` | when to reach for which tool, the role rules, and the rule that a session wanting work done files a dagger node |
+| `plugin/mill/skills/mill/SKILL.md` | when to reach for which tool, the role rules, and the rule that a session wanting work done files a skift node |
 | `plugin/mill/skills/mill/references/tools.md` | every tool with its arguments and an example response |
 
 The reference is checked against the binary rather than maintained beside it:
@@ -1395,5 +1395,5 @@ configurable from here:
   `$XDG_RUNTIME_DIR` is its own, not the mill's.
 
 An agent that reaches the tools should still not be asked to run work: `run`
-is not exposed, and a session that wants something built files a dagger node
+is not exposed, and a session that wants something built files a skift node
 ([prd.md](prd.md) R-55).

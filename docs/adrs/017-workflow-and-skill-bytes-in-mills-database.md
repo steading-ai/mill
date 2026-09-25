@@ -7,18 +7,18 @@ date: 2026-09-09
 
 ## Context and Problem Statement
 
-[ADR-010](010-workflows-in-the-store-skills-portable.md) put workflow definitions in the store and left one thing open, as [Ledger §Open questions](../ledger.md#open-questions) does: *"Whether `skills.files` bytes belong in this database or in dagger's blob store by digest."* [Roadmap §Decisions still open](../roadmap.md#decisions-still-open) carries the same question into O1 with the leaning *"mill's, so a workflow loads without dagger."* O0's `workflows` node built it that way; this record settles it.
+[ADR-010](010-workflows-in-the-store-skills-portable.md) put workflow definitions in the store and left one thing open, as [Ledger §Open questions](../ledger.md#open-questions) does: *"Whether `skills.files` bytes belong in this database or in skift's blob store by digest."* [Roadmap §Decisions still open](../roadmap.md#decisions-still-open) carries the same question into O1 with the leaning *"mill's, so a workflow loads without skift."* O0's `workflows` node built it that way; this record settles it.
 
 ## Decision Drivers
 
 - A run must be able to load its workflow without a second service being reachable
 - A ledger entry names one immutable version, so the bytes it names must not move ([Domain model §Workflow](../domain-model.md#workflow))
-- Dagger's blob store is dagger's; mill depends on dagger for the work graph, not for its own configuration
+- Skift's blob store is skift's; mill depends on skift for the work graph, not for its own configuration
 - Skill payloads are prompts, scripts and assets — kilobytes, not artifacts
 
 ## Considered Options
 
-1. Skill bytes in dagger's blob store, referenced by digest
+1. Skill bytes in skift's blob store, referenced by digest
 2. Workflow files read from disk at run time
 3. Definition and skill bytes in mill's own database, versioned by digest
 
@@ -30,20 +30,20 @@ The set of workflows is therefore **whatever has been pushed**, not a list mill 
 
 ### Consequences
 
-- **Good**: A worker that can reach its database can start a run. Dagger being down stops mill claiming work, not loading a workflow it already selected.
+- **Good**: A worker that can reach its database can start a run. Skift being down stops mill claiming work, not loading a workflow it already selected.
 - **Good**: One store, one transaction, one retention policy. `push` and `pull` round-trip without a second protocol.
 - **Bad**: Mill's database grows with every pushed version, and nothing garbage-collects a skill no live definition references.
 - **Bad**: Nothing detects a repository edit that was never pushed; `push` is the only reconciliation ([ADR-010](010-workflows-in-the-store-skills-portable.md)).
-- **Neutral**: Artifacts a *run* produces still go to dagger. This is about mill's own configuration, not about a run's output.
+- **Neutral**: Artifacts a *run* produces still go to skift. This is about mill's own configuration, not about a run's output.
 
 ## Rejected Options
 
-### Dagger's blob store
+### Skift's blob store
 
-Skill files stored in dagger by digest, mill holding references.
+Skill files stored in skift by digest, mill holding references.
 
 - **Good**: One content-addressed store for the whole system, already built, already backed up.
-- **Bad**: It makes dagger a dependency of loading a workflow, which is a dependency mill does not otherwise have, and it puts mill's configuration in a service whose retention is decided elsewhere. A digest mill cannot resolve is a run that cannot start.
+- **Bad**: It makes skift a dependency of loading a workflow, which is a dependency mill does not otherwise have, and it puts mill's configuration in a service whose retention is decided elsewhere. A digest mill cannot resolve is a run that cannot start.
 
 ### Files read from disk at run time
 

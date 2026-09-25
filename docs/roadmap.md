@@ -1,6 +1,6 @@
 # Roadmap
 
-Milestones in dependency order, not on a calendar. Each is defined by what becomes possible and closes on a done-when a person can check. The rule that keeps it honest, borrowed from dagger: **nothing moves to the next milestone until the current one is used daily.** A milestone that is not in use has not removed anything.
+Milestones in dependency order, not on a calendar. Each is defined by what becomes possible and closes on a done-when a person can check. The rule that keeps it honest, borrowed from skift: **nothing moves to the next milestone until the current one is used daily.** A milestone that is not in use has not removed anything.
 
 Every item below was decided somewhere in this project's record — the PRD's `R-n`, the review Responses' `A/B/C`, a spec's open questions, or a patch node's Notes — and says where. Nothing here is new.
 
@@ -8,7 +8,7 @@ Every item below was decided somewhere in this project's record — the PRD's `R
 
 `mill run <node>` delivers a real quick-fix node end to end; `mill.service` runs `serve` and `work` on the operator's account on core and claims the next ready node on its own. One workflow, no reviewer, local workspace, the operator's principal.
 
-The backlog is the O0 patch applied to dagger — twenty nodes in the mill project, one in homestead; its source is kept in the operator's vault. **Done when** the `prove` gate is completed with the retrospective's path as its result.
+The backlog is the O0 patch applied to skift — twenty nodes in the mill project, one in homestead; its source is kept in the operator's vault. **Done when** the `prove` gate is completed with the retrospective's path as its result.
 
 ## O1 — Trusted
 
@@ -20,12 +20,12 @@ The `feature` workflow with a reviewer that has demonstrably said no, and a plan
 | `/build-workflow` — the `/work-on` tier assessment as a skill step emitting `{workflow, tier, signals, reasoning}`; the schema is settled in Domain Model §Selection, "The assessment's schema" | B1, C4, Domain Model §Selection |
 | `/review` skill: `/simplify`'s reuse/quality/efficiency plus criteria met, encoded in tests, tests pass; structured verdict `approve \| revise` | B3, C10, Domain Model §Verdict |
 | Plan approval as a gate; `auto` when review-plan approves and tier ≤ feature | R-21, Domain Model §Gate |
-| Gate reaches Slack: `thicket send` from the gate step as the stopgap until the thicket bridge consumes dagger events | D1, B14, Architecture §Gate steps |
+| Gate reaches Slack: `thicket send` from the gate step as the stopgap until the thicket bridge consumes skift events | D1, B14, Architecture §Gate steps |
 | CI watch: `status` evidence polls the pipeline; failure returns the log to the implementer as `revise`, bounded | R-28, `evidence` node |
 | The seeded-bad-implementation acceptance test — a change that compiles, lints, and violates a criterion; the pipeline rejects it | R-25, M.2, `e2e` node Notes |
 | `rerun <run> --from <step>`, `workspace show\|clean`, `workflow show` | R-52, R-53, `tools` node Notes |
-| `plugin/mill` — skill plus `.mcp.json` so thicket agents pick up `mill mcp` like dagger's | R-56 |
-| ADR recording the reviewer-principal decision: same principal, read-only policy, revisit only if dagger policy demands | C2 |
+| `plugin/mill` — skill plus `.mcp.json` so thicket agents pick up `mill mcp` like skift's | R-56 |
+| ADR recording the reviewer-principal decision: same principal, read-only policy, revisit only if skift policy demands | C2 |
 
 **Done when** M.2 holds, and a feature node the reference harness would have worked is delivered with a plan gate answered from Slack.
 
@@ -41,7 +41,7 @@ A run's sessions execute inside a machine the worker started without root: an ep
 | Spike — egress through squid only, the db suite inside a machine, Harbor-proxied pulls, and the dnf shim | mill#75, Sandbox §Network, §The dnf shim |
 | Spike — a machine inside a machine, so the sandbox can test itself; then unprivileged nspawn and vmspawn as informants | mill#76, Sandbox §Self-hosting, §Privilege |
 | Spike — cache lineages restore and promote by snapshot in constant time, and a derived image builds, boots, and falls back | mill#77, Sandbox §Caching, §Images |
-| The acceptance suite runs against a disposable dagger, not the operator's deployed one | mill#51, Sandbox §Testing |
+| The acceptance suite runs against a disposable skift, not the operator's deployed one | mill#51, Sandbox §Testing |
 | The proxy and gateway variables cross both environment floors as workspace decisions | mill#54, Sandbox §Network, §Credentials |
 | The workspace backend is chosen by configuration, and the machine backend has a driver seam | mill#56, Sandbox §Self-hosting, Architecture §The workspace |
 | The credential gateway — the session holds the step token, the host holds the subscription | mill#57, Sandbox §Credentials, principle 9 |
@@ -72,14 +72,14 @@ Runs the operator does not think about. Concurrency above one, caps that park ra
 | Concurrency cap > 1: one workspace per run already; add the semaphore's specs and the cost of clones | R-3, B20, `work` node Notes |
 | Per-run and per-day cost caps that park with a gate when reached | R-41 |
 | Step tunables: token budgets, turn limits, effort per step, in the workflow record | R-14 (post-MVP), B17 |
-| Model and effort from dagger's estimate band, overriding the definition's default | R-40 |
+| Model and effort from skift's estimate band, overriding the definition's default | R-40 |
 | Usage-driven selection: a node class carries a model hint informed by what comparable work cost | Software Factory bet *Cost feedback* |
 | Attested release: tag push → per-platform archive → homestead repins; `mill doctor` green after every deploy; no build-from-checkout on the host | R-49, bet *Deploy is a repin*, `deploy` node Notes |
 | CI adapter beyond "GitLab pipeline status": status checks from Buildkite or others as the delivery bet chooses | C5 (Responses), R-27 |
 | The reference harness is reference only: documented as such, used for e2e verification, never for delivery | B11 |
-| `mill history --harness` — the join that answers "everything mill did today" from `harness: mill` leases and the `mill-` request-id prefix | Dagger principal check §3 |
+| `mill history --harness` — the join that answers "everything mill did today" from `harness: mill` leases and the `mill-` request-id prefix | Skift principal check §3 |
 
-**Done when** M.1, M.4, and M.5 hold: a node filed from a Slack conversation is delivered across two projects in one unattended run; the harness is retired from delivery; usage is in dagger under mill's leases.
+**Done when** M.1, M.4, and M.5 hold: a node filed from a Slack conversation is delivered across two projects in one unattended run; the harness is retired from delivery; usage is in skift under mill's leases.
 
 ## O4 — Pluggable
 
@@ -100,12 +100,12 @@ Parked here from the former O4 — *Isolated* — because O2 took its sandbox an
 | Item | Decided |
 |---|---|
 | Capability sets enforced by the workspace, not the adapter's tool policy; `exec` gated against `write`; reviewer genuinely read-only | R-32, C3, Domain Model §Capability set |
-| Reviewer end-to-end verification: runs the thing (e.g. dagger) to confirm the bug is fixed; needs the machine workspace first | B3 (post-MVP) |
+| Reviewer end-to-end verification: runs the thing (e.g. skift) to confirm the bug is fixed; needs the machine workspace first | B3 (post-MVP) |
 | Secrets service: step credentials minted from Vault per step, none on disk | R-37, bet *Agents hold no secrets* |
 | Per-run SSH certificates from a CA, principal `mill/<node>`, TTL = the run; `git verify-commit` as provenance | C1 |
-| Mill as its own account and `agent` principal — requires dagger's `onlyOrchestrators` to admit it or a stored delegation grant; every gate veto then applies | R-35, Dagger principal check §5–6 |
+| Mill as its own account and `agent` principal — requires skift's `onlyOrchestrators` to admit it or a stored delegation grant; every gate veto then applies | R-35, Skift principal check §5–6 |
 | microVM runtime for untrusted workloads and edge services: `systemd-vmspawn` boots the same tree, Sandbox §Scope | bet *The workspace seam is enough* |
-| Ephemeral sandbox uids mapped to a principal (dagger's open item) | Dagger principal check §6 |
+| Ephemeral sandbox uids mapped to a principal (skift's open item) | Skift principal check §6 |
 
 **Done when** M.3 holds, the third workflow costs less to add than the second, and Codex runs `quick-fix` unchanged.
 
@@ -117,7 +117,7 @@ More than one host, and the laptop as a client.
 |---|---|
 | `serve` and `work` as separate processes on separate hosts over the Connect boundary O0 drew | C7 |
 | `remote` workspace on another host over the tailnet | Architecture §The workspace |
-| Laptop as a client: `dg` over tsnet, `mill mcp` from a laptop session | bet *The laptop is a client* |
+| Laptop as a client: `skift` over tsnet, `mill mcp` from a laptop session | bet *The laptop is a client* |
 | `WatchRuns` stream for a thicket bridge that renders live status in Slack | Ledger open questions |
 | Native Go Claude Code adapter, no sidecar | B4 |
 | `events` time-partitioning when volume justifies it | Ledger open questions |
@@ -127,10 +127,10 @@ More than one host, and the laptop as a client.
 ## Deliberately unscheduled
 
 - **Planning inside mill.** Never. Decomposition is a workflow that files nodes and ends (A2, C5).
-- **A reviewer as a separate principal.** Dropped (C2). Revisit only when a dagger policy needs "completer ≠ reviewer" — which is the Renovate pipeline's rule, a delivery concern.
+- **A reviewer as a separate principal.** Dropped (C2). Revisit only when a skift policy needs "completer ≠ reviewer" — which is the Renovate pipeline's rule, a delivery concern.
 - **A chat surface, personas, a UI.** Thicket's. Mill has no user-facing channel of its own (R-20, §3 non-goals).
 - **A general workflow engine.** Not Airflow, not Temporal (§3).
-- **Metering-grade usage.** Estimate-grade by design, as dagger's is.
+- **Metering-grade usage.** Estimate-grade by design, as skift's is.
 
 ## Decisions still open
 
@@ -139,10 +139,10 @@ Each wants an ADR when its milestone starts. From the specs' open-question secti
 | Question | Leaning | Milestone |
 |---|---|---|
 | `workflow.yaml` per workflow or per step, given shared skills | per workflow, steps reference skills by name+digest | O1 |
-| `skills.files` bytes in mill's database or dagger's blob store | mill's, so a workflow loads without dagger | O1 |
-| Gate filed in dagger but not recorded in the store (crash between) — search open user-assigned children before filing | as `gates` node Notes | O0 |
+| `skills.files` bytes in mill's database or skift's blob store | mill's, so a workflow loads without skift | O1 |
+| Gate filed in skift but not recorded in the store (crash between) — search open user-assigned children before filing | as `gates` node Notes | O0 |
 | `revise` semantics when the target step is in a different session | supersede as usual; the target session resumes with feedback | O1 |
-| Stale-lease usage: reconcile abandoned attempts' usage into dagger, or accept the undercount | accept; the ledger is complete | O3 |
+| Stale-lease usage: reconcile abandoned attempts' usage into skift, or accept the undercount | accept; the ledger is complete | O3 |
 | Polling `status` vs a `WatchRuns` stream for thicket | polling until a consumer asks | O5 |
 
 ## What mill needs from the neighbours
@@ -151,13 +151,13 @@ Not mill's to build; mill's to wait on or work around.
 
 | Need | Where | Blocks |
 |---|---|---|
-| A notifier that carries gates to Slack (dagger plan nodes 11–12; thicket bridge consuming dagger events) | dagger, thicket | O1 — `thicket send` stopgap until then |
+| A notifier that carries gates to Slack (skift plan nodes 11–12; thicket bridge consuming skift events) | skift, thicket | O1 — `thicket send` stopgap until then |
 | Approvals from Slack (`AskUserQuestion` re-ask bug #105, approvals #10) | thicket | O1's plan gate |
-| VCS URL on dagger's project model | dagger | landed as `vcs_url` (dagger#23): a run delivers to its project's repository and the worker carries none of its own |
-| `dg admin` bootstrap so a second principal is not a `psql` job | dagger | O4 |
-| An orchestrator principal kind or stored delegation grants, and M2's "owns its own principal" wording reconciled with `onlyOrchestrators` | dagger | O4 |
-| tsnet enabled in dagger's deployment | dagger, homestead | O5 |
+| VCS URL on skift's project model | skift | landed as `vcs_url` (skift#23): a run delivers to its project's repository and the worker carries none of its own |
+| `skift admin` bootstrap so a second principal is not a `psql` job | skift | O4 |
+| An orchestrator principal kind or stored delegation grants, and M2's "owns its own principal" wording reconciled with `onlyOrchestrators` | skift | O4 |
+| tsnet enabled in skift's deployment | skift, homestead | O5 |
 | The `mill_storage`, `mill_machine`, `mill_egress`, `mill_selinux` and `mill` roles on `core`: the btrfs volume, `mill-machine@.service`, its helper and polkit rule, the nftables table, squid, the file context, the model credential by `LoadCredential` (Sandbox §"What the host provides") | homestead | O2 |
-| A dagger pin for the checkout a nested machine is given: mill's `go.mod` has no dagger dependency and dagger has no tags, so `/var/lib/mill/dagger` tracks `main` until dagger publishes a tag or the image `dagger#25` names (Sandbox §Testing) | dagger, homestead | O3 |
+| A skift pin for the checkout a nested machine is given: mill's `go.mod` has no skift dependency and skift has no tags, so `/var/lib/mill/skift` tracks `main` until skift publishes a tag or the image `skift#25` names (Sandbox §Testing) | skift, homestead | O3 |
 | Attested releases and a CI runner for mill's own repo | homestead, the delivery bet | O3 |
 | Vault | homestead, the identity bet | O4 |

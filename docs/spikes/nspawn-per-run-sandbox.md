@@ -2125,7 +2125,7 @@ configuration — `homestead#34` either binds a host address that always exists
 orders the unit after the link. Booted, addressed, then squid:
 
 ```
-$ /tmp/spike-out/boot.sh e1 14 --bind=$PWD:/work:idmap --bind-ro=/home/ivy/src/github.com/ivy/dagger:/opt/dagger:idmap --bind-ro=/tmp/spike-out/50-mill-proxy.conf:/etc/environment.d/50-mill-proxy.conf
+$ /tmp/spike-out/boot.sh e1 14 --bind=$PWD:/work:idmap --bind-ro=/home/ivy/src/github.com/steading-ai/skift:/opt/skift:idmap --bind-ro=/tmp/spike-out/50-mill-proxy.conf:/etc/environment.d/50-mill-proxy.conf
 Running as unit: mill-run-e1.service; invocation ID: 61017e58290843a48c5486845f55ae78
 running
                        State: routable (configured)
@@ -2143,7 +2143,7 @@ active
 LISTEN 0      4096                    10.99.14.1:3128       0.0.0.0:*    users:(("squid",pid=366853,fd=10))
 ```
 
-(The two extra binds are E6's: the checkout and the dagger checkout. The
+(The two extra binds are E6's: the checkout and the skift checkout. The
 `environment.d` file is E6's too — see there.) No capability was needed on
 the nspawn invocation for the veth: `--network-veth` under `sudo` brings the
 link up as it did in E1 and E14.
@@ -2243,11 +2243,11 @@ are set in every exec's environment" means both cases of all three names.
 
 ## E6 — The real test suite, inside
 
-Same machine as E5, booted with the checkout at `/work` and the dagger
-checkout at `/opt/dagger`, both `:idmap` (E4). The fixture in
-`internal/testsupport/dagger.go` finds dagger's migrations and `dg` through
-`MILL_DAGGER_REPO`, so that is set on the exec; `docs/sandbox.md` §Testing
-already says the mill repo's machine gets the dagger checkout bound
+Same machine as E5, booted with the checkout at `/work` and the skift
+checkout at `/opt/skift`, both `:idmap` (E4). The fixture in
+`internal/testsupport/skift.go` finds skift's migrations and `skift` through
+`MILL_SKIFT_REPO`, so that is set on the exec; `docs/sandbox.md` §Testing
+already says the mill repo's machine gets the skift checkout bound
 read-only.
 
 ### The checkout is writable as `agent`
@@ -2259,9 +2259,9 @@ operator is uid 1000 and `:idmap` makes the bind uid 1000 inside.
 $ ls -ld $PWD; id -u
 drwxr-xr-x. 17 ivy ivy 4096 Sep 11 02:53 /home/ivy/src/github.com/steading-ai/mill
 1000
-$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p WorkingDirectory=/work -- sh -c 'id; ls -ld /work /work/.git /opt/dagger; touch /work/.e6-probe && echo writable && rm /work/.e6-probe; ls -l /run/user/1000/podman/podman.sock /run/podman/podman.sock; cat /etc/environment.d/50-mill-proxy.conf'
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p WorkingDirectory=/work -- sh -c 'id; ls -ld /work /work/.git /opt/skift; touch /work/.e6-probe && echo writable && rm /work/.e6-probe; ls -l /run/user/1000/podman/podman.sock /run/podman/podman.sock; cat /etc/environment.d/50-mill-proxy.conf'
 uid=1000(agent) gid=1000(agent) groups=1000(agent)
-drwxr-xr-x. 16 agent agent 4096 Sep  8 02:05 /opt/dagger
+drwxr-xr-x. 16 agent agent 4096 Sep  8 02:05 /opt/skift
 drwxr-xr-x. 17 agent agent 4096 Sep 11 02:17 /work
 drwxr-xr-x.  8 agent agent 4096 Sep 11 02:48 /work/.git
 writable
@@ -2362,14 +2362,14 @@ answer; a preparatory step or the session's shell would have it from
 container store are all empty:
 
 ```
-$ date +%T; time sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p WorkingDirectory=/work -p Environment=HTTPS_PROXY=$P -p Environment=HTTP_PROXY=$P -p Environment=DOCKER_HOST=unix:///run/user/1000/podman/podman.sock -p Environment=MILL_DAGGER_REPO=/opt/dagger -- mise exec -- make test-db > /tmp/spike-out/e6-cold.log 2>&1; echo rc=$?; date +%T
+$ date +%T; time sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p WorkingDirectory=/work -p Environment=HTTPS_PROXY=$P -p Environment=HTTP_PROXY=$P -p Environment=DOCKER_HOST=unix:///run/user/1000/podman/podman.sock -p Environment=MILL_SKIFT_REPO=/opt/skift -- mise exec -- make test-db > /tmp/spike-out/e6-cold.log 2>&1; echo rc=$?; date +%T
 02:54:00
 sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p   0.01s user 0.00s system 0% cpu 43.875 total
 rc=0
 02:54:44
 $ sed 's/\x1b\[[0-9;]*m//g' /tmp/spike-out/e6-cold.log | grep -E 'specs - 15 procs' | grep -v ' 0/'
 [1789120440] cli - 65/107 specs - 15 procs … SUCCESS! 6.449760811s
-[1789120440] dagger - 12/12 specs - 15 procs … SUCCESS! 2.656700233s
+[1789120440] skift - 12/12 specs - 15 procs … SUCCESS! 2.656700233s
 [1789120440] run - 73/84 specs - 15 procs … SUCCESS! 8.622844905s
 [1789120440] server - 36/63 specs - 15 procs … SUCCESS! 1.896098607s
 [1789120440] store - 41/53 specs - 15 procs … SUCCESS! 2.448982571s
@@ -3412,7 +3412,7 @@ ID 257 gen 605 top level 5 path @machines
 ID 298 gen 566 top level 257 path mill-image-spike
 ID 395 gen 560 top level 256 path @mill/mill-image-e7
 ID 396 gen 577 top level 257 path mill-image-e8
-dagger
+skift
 mill-image-e7
 runs
 MACHINE        CLASS SERVICE      OS VERSION ADDRESSES
@@ -3427,7 +3427,7 @@ The same picture once more, at teardown: 2.3G used before and after the
 deletes and after `subvolume sync`, 1.4G after `filesystem sync`. No
 `cache-e9-*`, `run-e9-*` or `mill-image-599b…` subvolume, no lock, no
 `mill-e*` machine, no `mill-run-e*` unit. `mill-image-spike`,
-`mill-image-e7`, `mill-image-e8`, `/var/lib/mill/{dagger,runs}` and
+`mill-image-e7`, `mill-image-e8`, `/var/lib/mill/{skift,runs}` and
 homestead's unit are other nodes' and untouched. The `.cache` mount point
 created in the checkout for the bind is gone.
 
