@@ -71,6 +71,12 @@ service StoreService {
   // AbortOpenStepRuns marks any still-running attempt aborted. Called on
   // resume, when a running row belongs to a dead or fenced-out worker.
   rpc AbortOpenStepRuns(AbortOpenStepRunsRequest) returns (AbortOpenStepRunsResponse);
+  // ReleaseLease gives back the run's lease without ending it: the run stays
+  // running with no lease, resumable by this worker's own reclaim or by
+  // whichever worker's ClaimNext reaches it next (docs/ledger.md §Resume). A
+  // graceful drain calls this at a step boundary, where AbortOpenStepRuns
+  // would have nothing open to abort.
+  rpc ReleaseLease(ReleaseLeaseRequest) returns (ReleaseLeaseResponse);
   // SupersedeSteps marks the latest attempts of every step from a target
   // through a failing step superseded, which is what moves current_step
   // backwards for a revise.
@@ -291,6 +297,21 @@ message SetLeaseRequest {
 // SetLeaseResponse carries the run under its new lease.
 message SetLeaseResponse {
   // The run, now running under the presented lease.
+  Run run = 1;
+}
+
+// ReleaseLeaseRequest gives back a lease this worker currently holds.
+message ReleaseLeaseRequest {
+  // The lease the caller holds, compared against the run's current lease
+  // inside the writing transaction (Invariant 9, docs/ledger.md).
+  string lease_id = 1;
+  // The run to release.
+  string run_id = 2;
+}
+
+// ReleaseLeaseResponse carries the run, now holding no lease.
+message ReleaseLeaseResponse {
+  // The run, still running, with lease_id empty.
   Run run = 1;
 }
 

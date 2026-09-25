@@ -223,7 +223,10 @@ switch:
       if skift.Node(node.id).status == done: store.Done(run); return   # no — the node is done; nothing to do
       # else: a done run on an open node is Invariant 11 violated; park with reason `refused` and alert
   run.status in (running, selecting):
-      store.AbortOpenStepRuns(run)                 # a 'running' row here belongs to a dead or fenced-out worker
+      store.AbortOpenStepRuns(run)                 # a 'running' row here belongs to a dead or fenced-out worker,
+                                                    #   or was left here on purpose, by a drain — which leaves no
+                                                    #   step run open at all, so this is a no-op and SetLease below
+                                                    #   is what actually claims it
       # not when waiting: that open row is the gate step's own attempt, left open so the answer closes it
       # selecting: the worker died before the workflow was chosen. Nothing else is special —
       #   the lease is taken over below and the selection is made again: a project default
@@ -312,7 +315,7 @@ Three properties fall out:
 - **A stale worker cannot corrupt the record.** Its skift writes are fenced out by skift; its store writes are rejected by Invariant 9. Its heartbeat fails first, which is how it learns.
 - **`revise` actually revises.** Superseding every step from the target through the failure means the revised work is re-simplified, re-committed, re-pushed, and re-reviewed; the ledger never claims pass-one evidence closed pass-two work.
 
-A graceful stop (`docs/architecture.md` §"Failure and stop", "Stop.") leaves exactly the runs the `run.status in (running, selecting)` branch above resumes — this worker's own `worker_ref`, an aborted attempt — so a restarted worker does not have to wait for `ClaimNext` to hand them back one at a time. Before its first `ClaimNext`, it lists them itself (`Runner.Resumable`) and claims each by name (`Worker.reclaim`), oldest abort first, up to its concurrency; only the slots left over go to `ClaimNext` (mill#44). A run a crash left `running` is not among them — nothing yet tells a live crash apart from a dead one without the sweep's own TTL guard, so that case still waits for an ordinary claim.
+A graceful stop (`docs/architecture.md` §"Failure and stop", "Stop.") leaves exactly the runs the `run.status in (running, selecting)` branch above resumes — this worker's own `worker_ref`, either an aborted attempt (a kill: a second signal, or the grace window elapsing) or a `running` run with no lease at all (a drain that reached its boundary) — so a restarted worker does not have to wait for `ClaimNext` to hand them back one at a time. Before its first `ClaimNext`, it lists them itself (`Runner.Resumable`) and claims each by name (`Worker.reclaim`), oldest `updated_at` first, up to its concurrency; only the slots left over go to `ClaimNext` (mill#44). A run a crash left `running` is not among them — nothing yet tells a live crash apart from a dead one without the sweep's own TTL guard, so that case still waits for an ordinary claim.
 
 `Complete` is not an RPC. It is `ApplyPatch` with a `complete_node` operation, and skift releases the lease inside that same patch — which is why `ReportUsage` for the final step must precede it, why there is no separate `Release` on the done path, and why `store.Done` comes last.
 

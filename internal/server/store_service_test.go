@@ -54,6 +54,17 @@ var _ = Describe("The store's handlers", Label(testsupport.DBLabel), func() {
 		Expect(taken.Msg.GetRun().GetWorkerRef()).To(Equal("worker-2"))
 	})
 
+	It("ReleaseLease gives back a running run's lease and leaves it running", func(ctx SpecContext) {
+		f := newFixture(ctx, "mill#3b")
+		released, err := f.client().ReleaseLease(ctx, connect.NewRequest(&millv1.ReleaseLeaseRequest{
+			RunId:   f.run.GetId(),
+			LeaseId: lease,
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(released.Msg.GetRun().GetLeaseId()).To(BeEmpty())
+		Expect(released.Msg.GetRun().GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+	})
+
 	It("StartStepRun opens the next attempt at a step", func(ctx SpecContext) {
 		f := newFixture(ctx, "mill#4")
 		stepRun := f.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)

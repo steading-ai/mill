@@ -40,6 +40,7 @@ var permissions = map[string]interceptor.Permission{
 	millv1connect.StoreServiceAbandonProcedure:     interceptor.PermissionOperate,
 	millv1connect.StoreServicePutWorkflowProcedure: interceptor.PermissionOperate,
 	millv1connect.StoreServicePutSkillProcedure:    interceptor.PermissionOperate,
+	millv1connect.WorkerServiceDrainProcedure:      interceptor.PermissionOperate,
 }
 
 // Requirement is the table as the interceptor reads it.

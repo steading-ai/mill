@@ -403,10 +403,11 @@ type state struct {
 	harnesses *harness.Registry
 	// beat is the heartbeat, which owns the step's context.
 	beat *heartbeat
-	// stopping is closed when the process the run is in has been asked to
-	// stop. The heartbeat watches it alongside the lease, so a shutdown
-	// reaches a step exactly as a cancellation does. Nil never fires.
-	stopping <-chan struct{}
+	// draining is closed when the process the run is in has been asked to
+	// stop. walk() checks it at the top of its loop, before running the next
+	// step, so a drain is decided at a step boundary rather than by
+	// cancelling a step in flight. Nil never fires.
+	draining <-chan struct{}
 	// process is the context of the process the run is in, which a step
 	// stopping never cancels. Only a kill does — a worker signalled a
 	// second time inside its grace window (docs/architecture.md §"Failure
@@ -558,21 +559,21 @@ func (r *Runner) Execute(ctx context.Context, nodeRef string) error {
 // the lease itself. Everything after the claim is this same function, which
 // is what keeps single-run mode a real test of the daemon.
 //
-// stopping is closed when the process has been asked to shut down. The run
-// then stops at the first boundary it can reach, aborts the attempt in
-// flight, releases the lease `preempted`/`shutdown`, and stays resumable.
-// Nil never fires, which is what `mill run` passes.
-func (r *Runner) ExecuteClaimed(ctx context.Context, claimed *skift.Claimed, stopping <-chan struct{}) error {
-	return r.drive(ctx, claimed, stopping)
+// draining is closed when the process has been asked to shut down. The run
+// then releases the lease `preempted`/`drain` at the next step boundary with
+// no attempt aborted, and stays resumable. Nil never fires, which is what
+// `mill run` passes.
+func (r *Runner) ExecuteClaimed(ctx context.Context, claimed *skift.Claimed, draining <-chan struct{}) error {
+	return r.drive(ctx, claimed, draining)
 }
 
 // drive is the run loop proper: everything from a held lease to a result.
-func (r *Runner) drive(ctx context.Context, claimed *skift.Claimed, stopping <-chan struct{}) error {
+func (r *Runner) drive(ctx context.Context, claimed *skift.Claimed, draining <-chan struct{}) error {
 	s := &state{
 		node:     claimed.Node,
 		skift:    r.options.Skift,
 		retried:  map[string]int64{},
-		stopping: stopping,
+		draining: draining,
 		process:  ctx,
 	}
 	s.setLease(claimed.Lease.GetId())

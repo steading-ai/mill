@@ -10,6 +10,7 @@ import (
 
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
+	"github.com/steading-ai/mill/internal/run"
 	"github.com/steading-ai/mill/internal/server"
 )
 
@@ -45,6 +46,43 @@ var _ = Describe("WorkerService", Label("unit"), func() {
 
 		_, err := client.Probe(ctx, connect.NewRequest(&millv1.ProbeRequest{}))
 		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnimplemented))
+	})
+
+	It("reports State and InFlight from the worker's own configuration", func(ctx SpecContext) {
+		ts := httptest.NewServer(workerMux(server.NewWorkerService(server.WorkerServiceConfig{
+			State:    func() millv1.WorkerState { return millv1.WorkerState_WORKER_STATE_DRAINING },
+			InFlight: func() []run.RunningNode { return []run.RunningNode{{NodeRef: "millspec#1"}} },
+		})))
+		DeferCleanup(ts.Close)
+		client := millv1connect.NewWorkerServiceClient(ts.Client(), ts.URL)
+
+		res, err := client.Probe(ctx, connect.NewRequest(&millv1.ProbeRequest{}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.Msg.GetState()).To(Equal(millv1.WorkerState_WORKER_STATE_DRAINING))
+		Expect(res.Msg.GetInFlight()).To(HaveLen(1))
+		Expect(res.Msg.GetInFlight()[0].GetNodeRef()).To(Equal("millspec#1"))
+	})
+
+	It("Drain calls the worker's own Drain function exactly once", func(ctx SpecContext) {
+		calls := 0
+		ts := httptest.NewServer(workerMux(server.NewWorkerService(server.WorkerServiceConfig{
+			Drain: func() { calls++ },
+		})))
+		DeferCleanup(ts.Close)
+		client := millv1connect.NewWorkerServiceClient(ts.Client(), ts.URL)
+
+		_, err := client.Drain(ctx, connect.NewRequest(&millv1.DrainRequest{}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(calls).To(Equal(1))
+	})
+
+	It("Drain is CodeFailedPrecondition when this worker has nothing to drain", func(ctx SpecContext) {
+		ts := httptest.NewServer(workerMux(server.NewWorkerService(server.WorkerServiceConfig{})))
+		DeferCleanup(ts.Close)
+		client := millv1connect.NewWorkerServiceClient(ts.Client(), ts.URL)
+
+		_, err := client.Drain(ctx, connect.NewRequest(&millv1.DrainRequest{}))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
 	})
 
 	It("answers Claims from this process's own configuration, with no probe and no side effect", func(ctx SpecContext) {

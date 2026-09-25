@@ -69,6 +69,9 @@ const (
 	// StoreServiceAbortOpenStepRunsProcedure is the fully-qualified name of the StoreService's
 	// AbortOpenStepRuns RPC.
 	StoreServiceAbortOpenStepRunsProcedure = "/mill.v1.StoreService/AbortOpenStepRuns"
+	// StoreServiceReleaseLeaseProcedure is the fully-qualified name of the StoreService's ReleaseLease
+	// RPC.
+	StoreServiceReleaseLeaseProcedure = "/mill.v1.StoreService/ReleaseLease"
 	// StoreServiceSupersedeStepsProcedure is the fully-qualified name of the StoreService's
 	// SupersedeSteps RPC.
 	StoreServiceSupersedeStepsProcedure = "/mill.v1.StoreService/SupersedeSteps"
@@ -190,6 +193,12 @@ type StoreServiceClient interface {
 	// AbortOpenStepRuns marks any still-running attempt aborted. Called on
 	// resume, when a running row belongs to a dead or fenced-out worker.
 	AbortOpenStepRuns(context.Context, *connect.Request[v1.AbortOpenStepRunsRequest]) (*connect.Response[v1.AbortOpenStepRunsResponse], error)
+	// ReleaseLease gives back the run's lease without ending it: the run stays
+	// running with no lease, resumable by this worker's own reclaim or by
+	// whichever worker's ClaimNext reaches it next (docs/ledger.md §Resume). A
+	// graceful drain calls this at a step boundary, where AbortOpenStepRuns
+	// would have nothing open to abort.
+	ReleaseLease(context.Context, *connect.Request[v1.ReleaseLeaseRequest]) (*connect.Response[v1.ReleaseLeaseResponse], error)
 	// SupersedeSteps marks the latest attempts of every step from a target
 	// through a failing step superseded, which is what moves current_step
 	// backwards for a revise.
@@ -413,6 +422,12 @@ func NewStoreServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			httpClient,
 			baseURL+StoreServiceAbortOpenStepRunsProcedure,
 			connect.WithSchema(storeServiceMethods.ByName("AbortOpenStepRuns")),
+			connect.WithClientOptions(opts...),
+		),
+		releaseLease: connect.NewClient[v1.ReleaseLeaseRequest, v1.ReleaseLeaseResponse](
+			httpClient,
+			baseURL+StoreServiceReleaseLeaseProcedure,
+			connect.WithSchema(storeServiceMethods.ByName("ReleaseLease")),
 			connect.WithClientOptions(opts...),
 		),
 		supersedeSteps: connect.NewClient[v1.SupersedeStepsRequest, v1.SupersedeStepsResponse](
@@ -639,6 +654,7 @@ type storeServiceClient struct {
 	closeStepRun          *connect.Client[v1.CloseStepRunRequest, v1.CloseStepRunResponse]
 	failStepRun           *connect.Client[v1.FailStepRunRequest, v1.FailStepRunResponse]
 	abortOpenStepRuns     *connect.Client[v1.AbortOpenStepRunsRequest, v1.AbortOpenStepRunsResponse]
+	releaseLease          *connect.Client[v1.ReleaseLeaseRequest, v1.ReleaseLeaseResponse]
 	supersedeSteps        *connect.Client[v1.SupersedeStepsRequest, v1.SupersedeStepsResponse]
 	markWaiting           *connect.Client[v1.MarkWaitingRequest, v1.MarkWaitingResponse]
 	park                  *connect.Client[v1.ParkRequest, v1.ParkResponse]
@@ -719,6 +735,11 @@ func (c *storeServiceClient) FailStepRun(ctx context.Context, req *connect.Reque
 // AbortOpenStepRuns calls mill.v1.StoreService.AbortOpenStepRuns.
 func (c *storeServiceClient) AbortOpenStepRuns(ctx context.Context, req *connect.Request[v1.AbortOpenStepRunsRequest]) (*connect.Response[v1.AbortOpenStepRunsResponse], error) {
 	return c.abortOpenStepRuns.CallUnary(ctx, req)
+}
+
+// ReleaseLease calls mill.v1.StoreService.ReleaseLease.
+func (c *storeServiceClient) ReleaseLease(ctx context.Context, req *connect.Request[v1.ReleaseLeaseRequest]) (*connect.Response[v1.ReleaseLeaseResponse], error) {
+	return c.releaseLease.CallUnary(ctx, req)
 }
 
 // SupersedeSteps calls mill.v1.StoreService.SupersedeSteps.
@@ -928,6 +949,12 @@ type StoreServiceHandler interface {
 	// AbortOpenStepRuns marks any still-running attempt aborted. Called on
 	// resume, when a running row belongs to a dead or fenced-out worker.
 	AbortOpenStepRuns(context.Context, *connect.Request[v1.AbortOpenStepRunsRequest]) (*connect.Response[v1.AbortOpenStepRunsResponse], error)
+	// ReleaseLease gives back the run's lease without ending it: the run stays
+	// running with no lease, resumable by this worker's own reclaim or by
+	// whichever worker's ClaimNext reaches it next (docs/ledger.md §Resume). A
+	// graceful drain calls this at a step boundary, where AbortOpenStepRuns
+	// would have nothing open to abort.
+	ReleaseLease(context.Context, *connect.Request[v1.ReleaseLeaseRequest]) (*connect.Response[v1.ReleaseLeaseResponse], error)
 	// SupersedeSteps marks the latest attempts of every step from a target
 	// through a failing step superseded, which is what moves current_step
 	// backwards for a revise.
@@ -1147,6 +1174,12 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 		StoreServiceAbortOpenStepRunsProcedure,
 		svc.AbortOpenStepRuns,
 		connect.WithSchema(storeServiceMethods.ByName("AbortOpenStepRuns")),
+		connect.WithHandlerOptions(opts...),
+	)
+	storeServiceReleaseLeaseHandler := connect.NewUnaryHandler(
+		StoreServiceReleaseLeaseProcedure,
+		svc.ReleaseLease,
+		connect.WithSchema(storeServiceMethods.ByName("ReleaseLease")),
 		connect.WithHandlerOptions(opts...),
 	)
 	storeServiceSupersedeStepsHandler := connect.NewUnaryHandler(
@@ -1379,6 +1412,8 @@ func NewStoreServiceHandler(svc StoreServiceHandler, opts ...connect.HandlerOpti
 			storeServiceFailStepRunHandler.ServeHTTP(w, r)
 		case StoreServiceAbortOpenStepRunsProcedure:
 			storeServiceAbortOpenStepRunsHandler.ServeHTTP(w, r)
+		case StoreServiceReleaseLeaseProcedure:
+			storeServiceReleaseLeaseHandler.ServeHTTP(w, r)
 		case StoreServiceSupersedeStepsProcedure:
 			storeServiceSupersedeStepsHandler.ServeHTTP(w, r)
 		case StoreServiceMarkWaitingProcedure:
@@ -1492,6 +1527,10 @@ func (UnimplementedStoreServiceHandler) FailStepRun(context.Context, *connect.Re
 
 func (UnimplementedStoreServiceHandler) AbortOpenStepRuns(context.Context, *connect.Request[v1.AbortOpenStepRunsRequest]) (*connect.Response[v1.AbortOpenStepRunsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.AbortOpenStepRuns is not implemented"))
+}
+
+func (UnimplementedStoreServiceHandler) ReleaseLease(context.Context, *connect.Request[v1.ReleaseLeaseRequest]) (*connect.Response[v1.ReleaseLeaseResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.StoreService.ReleaseLease is not implemented"))
 }
 
 func (UnimplementedStoreServiceHandler) SupersedeSteps(context.Context, *connect.Request[v1.SupersedeStepsRequest]) (*connect.Response[v1.SupersedeStepsResponse], error) {

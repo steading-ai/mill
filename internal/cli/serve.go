@@ -16,6 +16,7 @@ import (
 	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
 	"github.com/steading-ai/mill/internal/domain"
 	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/run"
 	"github.com/steading-ai/mill/internal/sdnotify"
 	"github.com/steading-ai/mill/internal/server"
 	"github.com/steading-ai/mill/internal/server/interceptor"
@@ -166,11 +167,18 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 		return fmt.Errorf("mill serve: %w", err)
 	}
 
+	observer := server.NewObserver(server.DefaultObserverFallback)
+
 	// WorkerService is mounted only when a worker actually runs in this
-	// process: it answers the sidecar, signing and forge probes from this
-	// process's own settings, and a bare `serve` has none of those to
-	// answer from (docs/architecture.md §"One binary, two faces").
+	// process: it answers the sidecar, signing, forge, and drain-state probes
+	// from this process's own settings, and a bare `serve` has none of those
+	// to answer from (docs/architecture.md §"One binary, two faces"). The
+	// real worker is built here, before srv.Listen() below, rather than
+	// where it used to be constructed later: WorkerServiceConfig's Drain,
+	// State, and InFlight need the same worker `supervise` drives, not a
+	// second one.
 	var workerHandler millv1connect.WorkerServiceHandler
+	var worker *run.Worker
 	if opts.work {
 		identity := opts.worker.run.identity
 		if identity == "" {
@@ -181,6 +189,10 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 		// worker itself (resolveProjects).
 		projects := resolveProjects(opts.worker.projects)
 		host, _ := os.Hostname()
+		worker, err = newWorker(cmd, &opts.worker, observer.Signal)
+		if err != nil {
+			return fmt.Errorf("mill serve: %w", err)
+		}
 		workerHandler = server.NewWorkerService(server.WorkerServiceConfig{
 			SidecarEntrypoint: opts.worker.run.sidecar,
 			EnvMode:           opts.worker.run.envMode,
@@ -191,10 +203,13 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 			Host:              host,
 			Projects:          projects,
 			Labels:            opts.worker.labels,
+			Drain:             worker.Drain,
+			State:             worker.State,
+			InFlight:          worker.InFlight,
+			Store:             svc,
 		})
 	}
 
-	observer := server.NewObserver(server.DefaultObserverFallback)
 	// PutWorkflow refuses a workflow whose mcp-servers collides with a name
 	// this same process's worker already reserves — only meaningful when
 	// --work colocates one (docs/architecture.md §"One binary, two faces");
@@ -254,15 +269,11 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 	worked := make(chan error, 1)
 	stopped := make(chan struct{})
 	if opts.work {
-		worker, err := newWorker(cmd, &opts.worker, observer.Signal)
-		if err != nil {
-			return fmt.Errorf("mill serve: %w", err)
-		}
 		log.Info("worker starting in this process",
 			"projects", opts.worker.projects, "labels", opts.worker.labels, "concurrency", opts.worker.concurrency)
 		signals, stopSignalling := stopSignals()
 		defer stopSignalling()
-		go func() { worked <- supervise(ctx, worker, opts.worker.grace, signals) }()
+		go func() { worked <- supervise(cmd.Context(), worker, opts.worker.grace, signals) }()
 	} else {
 		worked <- nil
 	}

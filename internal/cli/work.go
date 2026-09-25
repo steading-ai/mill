@@ -52,10 +52,12 @@ a worker asking for work is the scheduling.
 release is built around. The filters are the whole of the selection a worker
 makes: a node outside them is never claimed.
 
-SIGTERM stops the worker: it claims nothing more, lets the run in flight
-reach a boundary, releases its lease as a preemption with detail "shutdown",
-and leaves the run resumable at that step. A second SIGTERM inside the grace
-window kills the sessions and exits non-zero.`,
+SIGTERM asks the worker to drain: it claims nothing more, and every run in
+flight finishes its current attempt and stops at its next step boundary,
+its lease released as a preemption with detail "drain", resumable there
+with no attempt aborted. A second SIGTERM inside the grace window kills
+whatever is still in flight, releases with detail "shutdown", and exits
+non-zero.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runWork(cmd, opts)
@@ -300,7 +302,7 @@ func newWorker(cmd *cobra.Command, opts *workOptions, onActivity func(string)) (
 // it is asked to stop, and something that can be asked.
 type stopper interface {
 	Run(ctx context.Context) error
-	Stop()
+	Drain()
 }
 
 // supervise turns signals into the two stops docs/architecture.md §"Failure
@@ -330,7 +332,7 @@ func supervise(ctx context.Context, worker stopper, grace time.Duration, signals
 		case <-done:
 			return
 		}
-		worker.Stop()
+		worker.Drain()
 		select {
 		case <-signals:
 		case <-time.After(grace):

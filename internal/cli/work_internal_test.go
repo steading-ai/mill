@@ -297,7 +297,7 @@ func (w *fakeWorker) Run(ctx context.Context) error {
 	}
 }
 
-func (w *fakeWorker) Stop() { w.once.Do(func() { close(w.asked) }) }
+func (w *fakeWorker) Drain() { w.once.Do(func() { close(w.asked) }) }
 
 // finish is the worker's runs reaching a boundary of their own accord.
 func (w *fakeWorker) finish(err error) { w.done <- err }

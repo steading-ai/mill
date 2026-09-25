@@ -404,6 +404,20 @@ line of reason. Takes no arguments; every probe is reported.
 A probe answers about **this host** — the one the server runs on, which is not
 necessarily the one that worked the run being read.
 
+## drain
+
+**Changes something.** Ask the local worker to stop claiming new work and let
+every run it already holds reach its next step boundary before releasing its
+lease, with no attempt aborted. Each run stays resumable at the step it was
+on.
+
+This does not block: it returns as soon as the worker has been asked, not
+once it is done. Takes no arguments.
+
+```json
+{}
+```
+
 ## cancel
 
 **Changes something.** Ask the worker holding a run to stop the step it is on.

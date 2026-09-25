@@ -42,8 +42,37 @@ var _ = Describe("Resumable", Label(testsupport.DBLabel), func() {
 		Expect(candidates[0].RunID).To(Equal(first.runID))
 		Expect(candidates[0].NodeRef).To(Equal(project + "#101"))
 		Expect(candidates[1].RunID).To(Equal(second.runID))
-		Expect(candidates[0].AbortedAt.Before(candidates[1].AbortedAt)).To(BeTrue(),
+		Expect(candidates[0].UpdatedAt.Before(candidates[1].UpdatedAt)).To(BeTrue(),
 			"the earlier abort sorts first")
+	})
+
+	It("lists a run this worker left running with no lease and no aborted step", func() {
+		drained := f.drainedRun(ctx, project+"#111", f.worker)
+
+		candidates, err := f.runner().Resumable(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(candidates).To(HaveLen(1))
+		Expect(candidates[0].RunID).To(Equal(drained.runID))
+		Expect(candidates[0].NodeRef).To(Equal(project + "#111"))
+	})
+
+	It("excludes a run left running by a crash: not aborted, lease still held", func() {
+		const lease = "spec-lease-crash"
+		created, err := f.store.CreateRun(ctx, connect.NewRequest(&millv1.CreateRunRequest{
+			LeaseId: lease, NodeId: "spec-node-501", NodeRef: project + "#501", ContextId: "spec-ctx",
+			WorkerRef: f.worker, Branch: "mill/crash",
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		runID := created.Msg.GetRun().GetId()
+		_, err = f.store.StartStepRun(ctx, connect.NewRequest(&millv1.StartStepRunRequest{
+			LeaseId: lease, RunId: runID, StepName: "implement",
+			Kind: millv1.StepKind_STEP_KIND_SKILL, WorkerRef: f.worker,
+		}))
+		Expect(err).NotTo(HaveOccurred())
+
+		candidates, err := f.runner().Resumable(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(candidates).To(BeEmpty())
 	})
 
 	It("excludes a run aborted under a different worker", func() {
@@ -154,4 +183,43 @@ func (f *fixture) abortedRun(ctx context.Context, nodeRef, workerRef string) abo
 	}))
 	Expect(err).NotTo(HaveOccurred())
 	return abortedRunResult{runID: runID, stepRunID: stepRunID, lease: lease}
+}
+
+// drainedRunResult is what [fixture.drainedRun] leaves behind.
+type drainedRunResult struct {
+	runID     string
+	stepRunID string
+}
+
+// drainedRun opens a run under workerRef with one step still open and
+// releases its lease, the shape drainStep (internal/run/shutdown.go) leaves
+// a graceful drain in: the step run left open, not aborted, and the run's
+// own lease_id cleared.
+func (f *fixture) drainedRun(ctx context.Context, nodeRef, workerRef string) drainedRunResult {
+	GinkgoHelper()
+	lease := "spec-lease-" + nodeRef
+	created, err := f.store.CreateRun(ctx, connect.NewRequest(&millv1.CreateRunRequest{
+		LeaseId: lease, NodeId: "spec-node-" + nodeRef, NodeRef: nodeRef, ContextId: "spec-ctx",
+		WorkerRef: workerRef, Branch: "mill/" + nodeRef,
+	}))
+	Expect(err).NotTo(HaveOccurred())
+	runID := created.Msg.GetRun().GetId()
+	// ReleaseLease only takes a running run, and CreateRun leaves a fresh run
+	// `selecting`; SetLease under the same lease is the store's own way to
+	// move it to `running`, same as a real claim would.
+	_, err = f.store.SetLease(ctx, connect.NewRequest(&millv1.SetLeaseRequest{
+		LeaseId: lease, RunId: runID, WorkerRef: workerRef,
+	}))
+	Expect(err).NotTo(HaveOccurred())
+	started, err := f.store.StartStepRun(ctx, connect.NewRequest(&millv1.StartStepRunRequest{
+		LeaseId: lease, RunId: runID, StepName: "implement",
+		Kind: millv1.StepKind_STEP_KIND_SKILL, WorkerRef: workerRef,
+	}))
+	Expect(err).NotTo(HaveOccurred())
+	stepRunID := started.Msg.GetStepRun().GetId()
+	_, err = f.store.ReleaseLease(ctx, connect.NewRequest(&millv1.ReleaseLeaseRequest{
+		LeaseId: lease, RunId: runID,
+	}))
+	Expect(err).NotTo(HaveOccurred())
+	return drainedRunResult{runID: runID, stepRunID: stepRunID}
 }

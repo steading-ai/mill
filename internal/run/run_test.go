@@ -240,7 +240,7 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 		})
 	})
 
-	Describe("Resuming after a crash", func() {
+	Describe("Resuming after a kill", func() {
 		It("aborts the first attempt, starts attempt 2 in the same session, and completes the run", func() {
 			f.node(ctx, "interrupted", "This run is killed mid-step.")
 			f.script(append([]fake.Script{{Hold: true, Cancelled: fake.Terminal("stopped", nil, nil)}},
@@ -255,10 +255,11 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 			stop()
 			Eventually(done, 30*time.Second).Should(Receive())
 
-			// The lease the dead worker held has to be gone before the node
-			// is claimable again, which is what a crash's expiry does.
-			f.expire(ctx, f.leaseOf(ctx).GetId())
-
+			// Cancelling the context passed to Execute is a kill (no second
+			// signal or grace window to model here, but the effect on the
+			// step is the same either way): shutdownStep already aborted the
+			// attempt and released the lease with reason shutdown, so the
+			// node is claimable again with no expiry needed.
 			f.script(f.quickFixScripts()...)
 			Expect(f.runner().Execute(ctx, f.nodeRef)).To(Succeed())
 

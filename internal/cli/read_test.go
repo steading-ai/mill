@@ -3,6 +3,7 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,9 +18,42 @@ import (
 	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 	"github.com/steading-ai/mill/internal/cli"
+	"github.com/steading-ai/mill/internal/domain"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/server"
 	"github.com/steading-ai/mill/internal/testsupport"
 	"github.com/steading-ai/mill/internal/workflow"
 )
+
+// workerSocket serves m's own database a second time, this time with a
+// WorkerService mounted, the way `mill serve --work` does but without
+// standing up a real worker — so a spec can drive Probe's State and
+// InFlight directly and check what `mill status` renders from them.
+func workerSocket(ctx context.Context, m mill, cfg server.WorkerServiceConfig) mill {
+	GinkgoHelper()
+	path := filepath.Join(GinkgoT().TempDir(), "worker.sock")
+	svc, err := domain.Open(ctx, m.databaseURL)
+	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(svc.Close)
+	srv := server.New(server.Config{
+		SocketPath: path,
+		Logger:     slog.New(slog.NewTextHandler(GinkgoWriter, nil)),
+	}, server.NewStoreService(svc, server.NewObserver(server.DefaultObserverFallback), GinkgoT().TempDir()),
+		server.NewWorkerService(cfg))
+	Expect(srv.Listen()).To(Succeed())
+
+	serveCtx, stop := context.WithCancel(ctx)
+	served := make(chan error, 1)
+	go func() {
+		defer GinkgoRecover()
+		served <- srv.Serve(serveCtx)
+	}()
+	DeferCleanup(func() {
+		stop()
+		Eventually(served, 10*time.Second).Should(Receive(BeNil()))
+	})
+	return mill{socket: path, databaseURL: m.databaseURL}
+}
 
 var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 	var ctx context.Context
@@ -181,6 +215,42 @@ var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 				return err
 			}, time.Minute, 100*time.Millisecond).Should(Succeed(), out)
 			Expect(lines(out)[0]).To(Equal("worker claims from: " + skiftProject + ", label worker-only-label"))
+		})
+
+		It("prints only the claims header when no worker answers this socket", func() {
+			m := serving(ctx)
+
+			out := m.run(ctx, "status")
+
+			Expect(lines(out)[0]).To(ContainSubstring("worker claims from:"))
+			Expect(out).NotTo(ContainSubstring("worker state:"))
+		})
+
+		It("prints the worker's state and no in-flight table while it is only claiming", func() {
+			m := serving(ctx)
+			w := workerSocket(ctx, m, server.WorkerServiceConfig{
+				State: func() millv1.WorkerState { return millv1.WorkerState_WORKER_STATE_CLAIMING },
+			})
+
+			out := w.run(ctx, "status")
+
+			Expect(out).To(ContainSubstring("worker state: claiming"))
+			Expect(out).NotTo(ContainSubstring("IN STEP"))
+		})
+
+		It("prints a RUN/NODE/STEP/IN STEP table for every run in flight while draining", func() {
+			m := serving(ctx)
+			w := workerSocket(ctx, m, server.WorkerServiceConfig{
+				State:    func() millv1.WorkerState { return millv1.WorkerState_WORKER_STATE_DRAINING },
+				InFlight: func() []run.RunningNode { return []run.RunningNode{{NodeRef: "millcli#70"}} },
+			})
+
+			out := w.run(ctx, "status")
+
+			Expect(out).To(ContainSubstring("worker state: draining"))
+			row := rowMatching(out, func(key string) bool { return key == "-" })
+			Expect(strings.Fields(row)).To(Equal([]string{"-", "millcli#70", "-", "0s"}),
+				"no store is configured on this fixture's WorkerService, so run id and step both stay unresolved: "+out)
 		})
 
 		It("--follow prints a line per event as it happens and exits cleanly on ctrl-C", func() {

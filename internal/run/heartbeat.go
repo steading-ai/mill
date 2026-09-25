@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
@@ -22,9 +23,11 @@ import (
 // The same tick reads `cancel_requested` off the run, which is the only
 // polling the design allows and the only place a cancellation is noticed.
 //
-// The goroutine also watches the run's stop channel, so a worker shutting
-// down reaches the step through the one seam that already stops it rather
-// than through a second path of its own.
+// Stopping is not the heartbeat's concern: a graceful stop is decided by
+// walk() at the next step boundary (internal/run/walk.go's stepAttempted
+// check), not by cancelling a step in flight. Only a kill — a second signal,
+// or the grace window elapsing, which cancels ctx, the step context's parent
+// — reaches the heartbeat, through stepCtx.Done() below.
 type heartbeat struct {
 	// ctx is the context every step runs under. Cancelling it is how a
 	// fenced or cancelled run stops what is in flight.
@@ -33,6 +36,11 @@ type heartbeat struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	once   sync.Once
+
+	// clean is set by stop() before it cancels stepCtx, so the
+	// stepCtx.Done() case below can tell a clean stop from an unclean
+	// cancellation (a kill) and leave h.reason nil for the former.
+	clean atomic.Bool
 
 	mu     sync.Mutex
 	reason error
@@ -50,14 +58,14 @@ func (r *Runner) startHeartbeat(ctx context.Context, s *state) *heartbeat {
 		for {
 			select {
 			case <-stepCtx.Done():
-				return
-			case <-s.stopping:
-				// The process is going away. It is the same shape as a
-				// cancellation — stop the step, abort the attempt, give the
-				// lease back — and differs only in the detail skift
-				// records and in nobody having asked for this run in
-				// particular (docs/architecture.md §"Failure and stop").
-				h.fail(errShutdown)
+				// A clean stop() already recorded nothing to fail: h.err()
+				// stays nil, as it does today. An unclean cancellation — the
+				// outer kill context, cancelled by a second signal or the
+				// grace window elapsing — resolves to errShutdown itself,
+				// since nothing upstream has set a reason for it.
+				if !h.clean.Load() {
+					h.fail(errShutdown)
+				}
 				return
 			case <-ticker.C:
 				if err := r.beat(stepCtx, s); err != nil {
@@ -132,9 +140,11 @@ func (h *heartbeat) fail(err error) {
 	h.cancel()
 }
 
-// stop ends the heartbeat and waits for its goroutine.
+// stop ends the heartbeat and waits for its goroutine. clean is set first, so
+// the stepCtx.Done() case this unblocks does not mistake it for a kill.
 func (h *heartbeat) stop() {
 	h.once.Do(func() {
+		h.clean.Store(true)
 		h.cancel()
 		<-h.done
 	})

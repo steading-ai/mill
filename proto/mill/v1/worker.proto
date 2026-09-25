@@ -7,6 +7,8 @@ syntax = "proto3";
 
 package mill.v1;
 
+import "google/protobuf/duration.proto";
+
 option go_package = "github.com/steading-ai/mill/gen/mill/v1;millv1";
 
 // WorkerService is the worker's own door, mounted only in a process
@@ -29,6 +31,11 @@ service WorkerService {
   // from its own already-resolved configuration: no probe, no side effect,
   // safe to call on every `status`, `doctor` or `run` invocation.
   rpc Claims(ClaimsRequest) returns (ClaimsResponse);
+  // Drain asks the worker to stop claiming and let every run in flight
+  // release at its next step boundary, the same request a SIGTERM makes
+  // locally. It returns at once; the caller polls Probe's state to learn
+  // when the worker has actually gone idle.
+  rpc Drain(DrainRequest) returns (DrainResponse);
 }
 
 // ProbeRequest asks the worker to run its own local-only probes. It takes
@@ -48,6 +55,39 @@ message ProbeResponse {
   ProbeResult signing = 2;
   // The forge probe, from the worker's own credential and project.
   ProbeResult forge = 3;
+  // The worker's own claim/drain state.
+  WorkerState state = 4;
+  // The runs this worker is driving right now. Non-empty only while state is
+  // draining or claiming; empty once idle.
+  repeated InFlightRun in_flight = 5;
+}
+
+// WorkerState is a worker's own claim/drain state, as `mill status` and
+// `mill drain --wait` read it from Probe.
+enum WorkerState {
+  // WORKER_STATE_UNSPECIFIED is the zero value and carries no meaning.
+  WORKER_STATE_UNSPECIFIED = 0;
+  // WORKER_STATE_CLAIMING means the worker asks skift for work as its runs
+  // in flight finish.
+  WORKER_STATE_CLAIMING = 1;
+  // WORKER_STATE_DRAINING means the worker has stopped claiming and is
+  // waiting for its runs in flight to reach a boundary.
+  WORKER_STATE_DRAINING = 2;
+  // WORKER_STATE_IDLE means a drain has finished: no runs in flight, and
+  // none will be claimed.
+  WORKER_STATE_IDLE = 3;
+}
+
+// InFlightRun is one run a worker is driving right now, as Probe reports it.
+message InFlightRun {
+  // The run's id.
+  string run_id = 1;
+  // The node it drives.
+  string node_ref = 2;
+  // The step currently running.
+  string current_step = 3;
+  // How long the current step has been running.
+  google.protobuf.Duration time_in_step = 4;
 }
 
 // ProbeResult is one probe's answer.
@@ -77,3 +117,14 @@ message ClaimsResponse {
   // The labels every claimed node must carry.
   repeated string labels = 3;
 }
+
+// DrainRequest asks the worker to drain. It takes nothing: the worker drains
+// itself, not a configuration the caller names.
+message DrainRequest {
+  // Reserved: the worker drains itself, not a configuration the caller
+  // names.
+}
+
+// DrainResponse is empty: Drain is fire-and-forget, and the caller polls
+// Probe to learn when the worker has actually gone idle.
+message DrainResponse {}
