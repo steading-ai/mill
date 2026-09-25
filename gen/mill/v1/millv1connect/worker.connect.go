@@ -13,7 +13,7 @@ import (
 	connect "connectrpc.com/connect"
 	context "context"
 	errors "errors"
-	v1 "github.com/ivy/mill/gen/mill/v1"
+	v1 "github.com/steading-ai/mill/gen/mill/v1"
 	http "net/http"
 	strings "strings"
 )

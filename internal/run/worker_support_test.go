@@ -13,10 +13,11 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/dagger"
-	"github.com/ivy/mill/internal/run"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/dagger"
+	"github.com/steading-ai/mill/internal/run"
 )
 
 // What the worker's specs need on top of the run loop's own fixture: nodes
@@ -53,7 +54,7 @@ func startWorker(ctx context.Context, worker *run.Worker) chan error {
 // filter selects on.
 func (f *fixture) labelledNode(ctx context.Context, title, body string, labels ...string) string {
 	GinkgoHelper()
-	return f.createNode(ctx, &daggerv1.CreateNodeOp{Title: title, Body: body, Labels: labels})
+	return f.createNode(ctx, &skiftv1.CreateNodeOp{Title: title, Body: body, Labels: labels})
 }
 
 // userNode files a node only a person may complete. To a worker it is
@@ -62,19 +63,19 @@ func (f *fixture) labelledNode(ctx context.Context, title, body string, labels .
 // with no ready work.
 func (f *fixture) userNode(ctx context.Context, title, body string) string {
 	GinkgoHelper()
-	return f.createNode(ctx, &daggerv1.CreateNodeOp{
-		Title: title, Body: body, AssigneeKind: daggerv1.AssigneeKind_ASSIGNEE_KIND_USER,
+	return f.createNode(ctx, &skiftv1.CreateNodeOp{
+		Title: title, Body: body, AssigneeKind: skiftv1.AssigneeKind_ASSIGNEE_KIND_USER,
 	})
 }
 
 // createNode files one node and remembers it as the fixture's, so the
 // helpers that read by reference read this one.
-func (f *fixture) createNode(ctx context.Context, op *daggerv1.CreateNodeOp) string {
+func (f *fixture) createNode(ctx context.Context, op *skiftv1.CreateNodeOp) string {
 	GinkgoHelper()
-	res, err := f.graph.ApplyPatch(ctx, connect.NewRequest(&daggerv1.ApplyPatchRequest{
+	res, err := f.graph.ApplyPatch(ctx, connect.NewRequest(&skiftv1.ApplyPatchRequest{
 		RequestId: "spec-node-" + op.GetTitle(),
 		Project:   project,
-		Ops:       []*daggerv1.PatchOp{{Op: &daggerv1.PatchOp_CreateNode{CreateNode: op}}},
+		Ops:       []*skiftv1.PatchOp{{Op: &skiftv1.PatchOp_CreateNode{CreateNode: op}}},
 	}))
 	Expect(err).NotTo(HaveOccurred())
 	f.nodeRef = res.Msg.GetNodes()[0].GetReference()
@@ -86,17 +87,17 @@ func (f *fixture) createNode(ctx context.Context, op *daggerv1.CreateNodeOp) str
 // It is how a spec makes a blocked node ready.
 func (f *fixture) complete(ctx context.Context, ref string) {
 	GinkgoHelper()
-	_, err := f.graph.ApplyPatch(ctx, connect.NewRequest(&daggerv1.ApplyPatchRequest{
+	_, err := f.graph.ApplyPatch(ctx, connect.NewRequest(&skiftv1.ApplyPatchRequest{
 		RequestId: "spec-complete-" + ref, Project: project,
-		Ops: []*daggerv1.PatchOp{{Op: &daggerv1.PatchOp_CompleteNode{CompleteNode: &daggerv1.CompleteNodeOp{
-			Node: ref, Result: &daggerv1.Result{Body: "the spec finished it"},
+		Ops: []*skiftv1.PatchOp{{Op: &skiftv1.PatchOp_CompleteNode{CompleteNode: &skiftv1.CompleteNodeOp{
+			Node: ref, Result: &skiftv1.Result{Body: "the spec finished it"},
 		}}}},
 	}))
 	Expect(err).NotTo(HaveOccurred())
 }
 
 // statusOf is what dagger says of one node.
-func (f *fixture) statusOf(ctx context.Context, ref string) daggerv1.Status {
+func (f *fixture) statusOf(ctx context.Context, ref string) skiftv1.Status {
 	GinkgoHelper()
 	node, err := f.client.Node(ctx, ref)
 	Expect(err).NotTo(HaveOccurred())

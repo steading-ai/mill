@@ -9,8 +9,8 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // Client is a caller of the workspace socket: the harness adapter, a check

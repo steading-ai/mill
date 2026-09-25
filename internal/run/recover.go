@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/workspace"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // SealOrphans seals every closed attempt's live activity file still on disk

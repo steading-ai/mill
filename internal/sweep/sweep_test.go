@@ -9,28 +9,29 @@ import (
 	. "github.com/onsi/gomega"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/sweep"
-	"github.com/ivy/mill/internal/workspace/machine"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/sweep"
+	"github.com/steading-ai/mill/internal/workspace/machine"
 )
 
 // fakeProjects is a dagger's project verbs: what it lists, whether it
 // offers a delete, and what it was asked to do.
 type fakeProjects struct {
-	projects []*daggerv1.Project
+	projects []*skiftv1.Project
 	deletes  bool
 	archived []string
 	deleted  []string
 }
 
-func (f *fakeProjects) ListProjects(context.Context) ([]*daggerv1.Project, error) {
+func (f *fakeProjects) ListProjects(context.Context) ([]*skiftv1.Project, error) {
 	return f.projects, nil
 }
 
-func (f *fakeProjects) ArchiveProject(_ context.Context, slug string) (*daggerv1.Project, error) {
+func (f *fakeProjects) ArchiveProject(_ context.Context, slug string) (*skiftv1.Project, error) {
 	f.archived = append(f.archived, slug)
-	return &daggerv1.Project{Slug: slug, ArchivedAt: timestamppb.Now()}, nil
+	return &skiftv1.Project{Slug: slug, ArchivedAt: timestamppb.Now()}, nil
 }
 
 func (f *fakeProjects) DeleteProject(_ context.Context, slug string) error {
@@ -65,7 +66,7 @@ var _ = Describe("The external state adapters", Label("unit"), func() {
 		var projects *fakeProjects
 
 		BeforeEach(func() {
-			projects = &fakeProjects{projects: []*daggerv1.Project{
+			projects = &fakeProjects{projects: []*skiftv1.Project{
 				{Slug: "mill-acceptance-x-0badcafe", CreatedAt: timestamppb.New(made)},
 				{Slug: "mill", CreatedAt: timestamppb.New(made)},
 				{Slug: "mill-acceptance-y-deadbeef", CreatedAt: timestamppb.New(made), ArchivedAt: timestamppb.New(made)},

@@ -8,12 +8,12 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/harness/scripted"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/local"
-	"github.com/ivy/mill/internal/workspace/redact"
-	"github.com/ivy/mill/internal/workspace/socket"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/harness/scripted"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/local"
+	"github.com/steading-ai/mill/internal/workspace/redact"
+	"github.com/steading-ai/mill/internal/workspace/socket"
 )
 
 // A prompt shaped like internal/run/artifact.go's artifactBrief: the one

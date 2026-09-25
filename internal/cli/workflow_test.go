@@ -11,9 +11,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/cli"
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/workflow"
+	"github.com/steading-ai/mill/internal/cli"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/workflow"
 )
 
 // quickFix is the workflow directory in this repository, which is what the

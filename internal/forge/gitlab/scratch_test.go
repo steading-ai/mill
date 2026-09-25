@@ -8,8 +8,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/forge/gitlab"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/forge/gitlab"
 )
 
 var _ = Describe("The GitLab scratch namespace", Label("unit"), func() {

@@ -11,13 +11,14 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/gen/mill/v1/millv1connect"
-	"github.com/ivy/mill/internal/dagger"
-	"github.com/ivy/mill/internal/harness/fake"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/testsupport"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
+	"github.com/steading-ai/mill/internal/dagger"
+	"github.com/steading-ai/mill/internal/harness/fake"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
@@ -44,7 +45,7 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 
 			node, err := f.client.Node(ctx, f.nodeRef)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(node.GetStatus()).To(Equal(daggerv1.Status_STATUS_DONE))
+			Expect(node.GetStatus()).To(Equal(skiftv1.Status_STATUS_DONE))
 
 			result, err := f.result(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -104,7 +105,7 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 			// The step sleeps past the TTL. If the heartbeat were not
 			// renewing, the lease would expire and the next write would be
 			// fenced; instead the lease stays live throughout.
-			var lease *daggerv1.Lease
+			var lease *skiftv1.Lease
 			Eventually(func() string {
 				lease = f.leaseOf(ctx)
 				return lease.GetId()
@@ -282,7 +283,7 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 
 			node, err := f.client.Node(ctx, f.nodeRef)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(node.GetStatus()).To(Equal(daggerv1.Status_STATUS_DONE))
+			Expect(node.GetStatus()).To(Equal(skiftv1.Status_STATUS_DONE))
 			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
 			recorded := f.runOf(ctx).GetCompleteRequestId()
 			Expect(recorded).To(HavePrefix(dagger.RequestIDPrefix))
@@ -321,7 +322,7 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 
 			node, err := f.client.Node(ctx, f.nodeRef)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(node.GetStatus()).To(Equal(daggerv1.Status_STATUS_OPEN))
+			Expect(node.GetStatus()).To(Equal(skiftv1.Status_STATUS_OPEN))
 
 			recorded := f.runOf(ctx).GetCompleteRequestId()
 			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
@@ -346,7 +347,7 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 			f.script(f.quickFixScripts()...)
 
 			err := f.runner(func(o *run.Options) {
-				o.Repositories = func(context.Context, *daggerv1.Project) (run.Repository, error) {
+				o.Repositories = func(context.Context, *skiftv1.Project) (run.Repository, error) {
 					return run.Repository{}, errors.New("the forge is unreachable")
 				}
 			}).Execute(ctx, f.nodeRef)
@@ -370,7 +371,7 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 
 			node, err := f.client.Node(ctx, f.nodeRef)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(node.GetStatus()).To(Equal(daggerv1.Status_STATUS_OPEN))
+			Expect(node.GetStatus()).To(Equal(skiftv1.Status_STATUS_OPEN))
 			Expect(closedSteps(f.inspect(ctx))).NotTo(HaveKey("gather-context"))
 		})
 	})

@@ -14,13 +14,13 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/evidence"
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/local"
-	"github.com/ivy/mill/internal/workspace/redact"
-	"github.com/ivy/mill/internal/workspace/socket"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/evidence"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/local"
+	"github.com/steading-ai/mill/internal/workspace/redact"
+	"github.com/steading-ai/mill/internal/workspace/socket"
 )
 
 var _ = Describe("The local workspace", Label("unit"), func() {

@@ -9,21 +9,21 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
 )
 
 // Claimed is a node and the lease fencing it.
 type Claimed struct {
 	// Node is the claimed node, in full.
-	Node *daggerv1.Node
+	Node *skiftv1.Node
 	// Lease is the claim. Its id is the fencing token every later write to
 	// the node carries.
-	Lease *daggerv1.Lease
+	Lease *skiftv1.Lease
 	// Project is the project the node was claimed in, as the claim
 	// response carried it: where the work delivers, read without a second
 	// call. Nil from a dagger older than the field, which [Client.GetProject]
 	// answers for.
-	Project *daggerv1.Project
+	Project *skiftv1.Project
 }
 
 // Claim takes a lease on one named node.
@@ -44,7 +44,7 @@ func (c *Client) Claim(ctx context.Context, ref string) (*Claimed, error) {
 	if err != nil {
 		return nil, err
 	}
-	if node.GetAssigneeKind() == daggerv1.AssigneeKind_ASSIGNEE_KIND_USER {
+	if node.GetAssigneeKind() == skiftv1.AssigneeKind_ASSIGNEE_KIND_USER {
 		return nil, &UserNodeError{Ref: ref, Verb: "claim"}
 	}
 	if !node.GetReady() {
@@ -81,9 +81,9 @@ func (c *Client) Claim(ctx context.Context, ref string) (*Claimed, error) {
 // claimLabelled asks for the next ready node carrying label and insists it is
 // the node the caller meant.
 func (c *Client) claimLabelled(ctx context.Context, label, nodeID string) (*Claimed, error) {
-	res, err := c.work.ClaimNext(ctx, connect.NewRequest(&daggerv1.ClaimNextRequest{
+	res, err := c.work.ClaimNext(ctx, connect.NewRequest(&skiftv1.ClaimNextRequest{
 		RequestId:  nonce("claim"),
-		Filter:     &daggerv1.NodeFilter{Projects: []string{c.project}, Labels: []string{label}},
+		Filter:     &skiftv1.NodeFilter{Projects: []string{c.project}, Labels: []string{label}},
 		Ttl:        durationOrNil(c.options.ttl),
 		Harness:    HarnessName,
 		AgentRef:   c.options.agentRef,
@@ -100,7 +100,7 @@ func (c *Client) claimLabelled(ctx context.Context, label, nodeID string) (*Clai
 		// A label only this claim knows cannot match another node, so this
 		// is a bug rather than a race. Give the lease back rather than hold
 		// one on work nobody asked for.
-		_ = c.Release(ctx, lease.GetId(), daggerv1.ReleaseReason_RELEASE_REASON_PREEMPTED, "mill: not the node asked for")
+		_ = c.Release(ctx, lease.GetId(), skiftv1.ReleaseReason_RELEASE_REASON_PREEMPTED, "mill: not the node asked for")
 		return nil, fmt.Errorf("dagger: claim returned %s, not the node asked for", node.GetReference())
 	}
 	return &Claimed{Node: node, Lease: lease, Project: res.Msg.GetProject()}, nil
@@ -108,8 +108,8 @@ func (c *Client) claimLabelled(ctx context.Context, label, nodeID string) (*Clai
 
 // Heartbeat renews a lease. A refusal is [ErrFenced]: the lease expired and
 // somebody else holds the node, which is the signal to stop.
-func (c *Client) Heartbeat(ctx context.Context, leaseID string, ttl time.Duration) (*daggerv1.Lease, error) {
-	res, err := c.work.Heartbeat(ctx, connect.NewRequest(&daggerv1.HeartbeatRequest{
+func (c *Client) Heartbeat(ctx context.Context, leaseID string, ttl time.Duration) (*skiftv1.Lease, error) {
+	res, err := c.work.Heartbeat(ctx, connect.NewRequest(&skiftv1.HeartbeatRequest{
 		RequestId: nonce("heartbeat"),
 		LeaseId:   leaseID,
 		Ttl:       durationOrNil(ttl),
@@ -122,8 +122,8 @@ func (c *Client) Heartbeat(ctx context.Context, leaseID string, ttl time.Duratio
 
 // Release ends a lease with a reason. There is no Release on the done path:
 // the completing patch releases the lease as part of itself.
-func (c *Client) Release(ctx context.Context, leaseID string, reason daggerv1.ReleaseReason, detail string) error {
-	_, err := c.work.Release(ctx, connect.NewRequest(&daggerv1.ReleaseRequest{
+func (c *Client) Release(ctx context.Context, leaseID string, reason skiftv1.ReleaseReason, detail string) error {
+	_, err := c.work.Release(ctx, connect.NewRequest(&skiftv1.ReleaseRequest{
 		RequestId: nonce("release"),
 		LeaseId:   leaseID,
 		Reason:    reason,
@@ -148,7 +148,7 @@ type TokenCounts struct {
 // under. Dagger sums records per attempt, and each report renews the lease,
 // so posting per step is both the contract's shape and a second heartbeat.
 func (c *Client) ReportUsage(ctx context.Context, leaseID, ref, model string, counts TokenCounts) error {
-	_, err := c.work.ReportUsage(ctx, connect.NewRequest(&daggerv1.ReportUsageRequest{
+	_, err := c.work.ReportUsage(ctx, connect.NewRequest(&skiftv1.ReportUsageRequest{
 		RequestId:        nonce("usage"),
 		Project:          c.project,
 		LeaseId:          leaseID,
@@ -179,10 +179,10 @@ func durationOrNil(d time.Duration) *durationpb.Duration {
 // principal from the transport and refuses a uid it does not know, so an
 // answer proves both that the service is there and that this account reaches
 // it as a principal.
-func (c *Client) Ready(ctx context.Context, projects []string, kind daggerv1.AssigneeKind) ([]*daggerv1.Node, error) {
-	res, err := c.work.Ready(ctx, connect.NewRequest(&daggerv1.ReadyRequest{
-		Filter: &daggerv1.NodeFilter{Projects: projects, AssigneeKind: kind},
-		View:   daggerv1.View_VIEW_REFS,
+func (c *Client) Ready(ctx context.Context, projects []string, kind skiftv1.AssigneeKind) ([]*skiftv1.Node, error) {
+	res, err := c.work.Ready(ctx, connect.NewRequest(&skiftv1.ReadyRequest{
+		Filter: &skiftv1.NodeFilter{Projects: projects, AssigneeKind: kind},
+		View:   skiftv1.View_VIEW_REFS,
 	}))
 	if err != nil {
 		return nil, fmt.Errorf("dagger: ready: %w", err)
@@ -216,11 +216,11 @@ func (c *Client) ClaimNext(ctx context.Context, projects, labels []string, wait 
 	requestID := nonce("claim")
 	deadline := time.Now().Add(wait)
 	for {
-		res, err := c.work.ClaimNext(ctx, connect.NewRequest(&daggerv1.ClaimNextRequest{
+		res, err := c.work.ClaimNext(ctx, connect.NewRequest(&skiftv1.ClaimNextRequest{
 			RequestId: requestID,
-			Filter: &daggerv1.NodeFilter{
+			Filter: &skiftv1.NodeFilter{
 				Projects:     projects,
-				AssigneeKind: daggerv1.AssigneeKind_ASSIGNEE_KIND_AGENT,
+				AssigneeKind: skiftv1.AssigneeKind_ASSIGNEE_KIND_AGENT,
 				Labels:       labels,
 			},
 			Wait:       durationpb.New(max(min(claimChunk, time.Until(deadline)), 0)),

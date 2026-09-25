@@ -8,14 +8,15 @@ import (
 	"text/template"
 	"time"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/check"
-	"github.com/ivy/mill/internal/dagger"
-	"github.com/ivy/mill/internal/evidence"
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/notify"
-	"github.com/ivy/mill/internal/workspace"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/check"
+	"github.com/steading-ai/mill/internal/dagger"
+	"github.com/steading-ai/mill/internal/evidence"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/notify"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // The gate branch of the loop: docs/architecture.md §"Gate steps" and
@@ -453,7 +454,7 @@ func (r *Runner) file(ctx context.Context, s *state, step *millv1.Step, sr *mill
 	if r.options.Answers != nil {
 		return r.askNow(ctx, s, gate)
 	}
-	if err := r.options.Dagger.Release(ctx, s.leaseID(), daggerv1.ReleaseReason_RELEASE_REASON_GATE, "gate "+gate.GetReference()); err != nil {
+	if err := r.options.Dagger.Release(ctx, s.leaseID(), skiftv1.ReleaseReason_RELEASE_REASON_GATE, "gate "+gate.GetReference()); err != nil {
 		return err
 	}
 	r.printf("  gate %s filed as %s; waiting on a human\n", step.GetName(), gate.GetReference())
@@ -473,7 +474,7 @@ func (r *Runner) file(ctx context.Context, s *state, step *millv1.Step, sr *mill
 // never satisfies the edge out of it, so a node whose gate was denied is
 // never ready again — a run that had released its lease could not be claimed
 // back to record the denial (dagger's docs/domain-model.md §Gates).
-func (r *Runner) askNow(ctx context.Context, s *state, gate *daggerv1.Node) error {
+func (r *Runner) askNow(ctx context.Context, s *state, gate *skiftv1.Node) error {
 	approved, err := r.options.Answers.Answer(ctx, Ask{
 		NodeRef: s.node.GetReference(),
 		GateRef: gate.GetReference(),
@@ -491,7 +492,7 @@ func (r *Runner) askNow(ctx context.Context, s *state, gate *daggerv1.Node) erro
 	// does not begin with mill's prefix (docs/domain-model.md §Principal).
 	if err := r.options.Dagger.AnswerGate(ctx,
 		dagger.UserRequestIDPrefix+gate.GetId(), gate.GetReference(), approved,
-		&daggerv1.Result{Body: answer}); err != nil {
+		&skiftv1.Result{Body: answer}); err != nil {
 		return err
 	}
 	// MarkWaiting took the lease off the run, because for a worker that is
@@ -532,7 +533,7 @@ var errAnswered = errors.New("run: the gate was answered")
 //
 // Nothing else in the loop reads dagger to decide what to write. This does,
 // and the reason is written into docs/ledger.md §Resume beside it.
-func (r *Runner) findFiledGate(ctx context.Context, s *state, step *millv1.Step) (*daggerv1.Node, error) {
+func (r *Runner) findFiledGate(ctx context.Context, s *state, step *millv1.Step) (*skiftv1.Node, error) {
 	gates, err := s.dagger.Gates(ctx, s.node.GetReference(),
 		dagger.GateLabels(s.run.GetId(), step.GetName())...)
 	if err != nil {
@@ -556,7 +557,7 @@ func (r *Runner) findFiledGate(ctx context.Context, s *state, step *millv1.Step)
 // API can be asked for — and what the ledger holds, correctly, is the id.
 // Mill's own labels narrow the node's children to this run's gates, and the
 // id picks the one out.
-func (r *Runner) gateByID(ctx context.Context, s *state, id string) (*daggerv1.Node, error) {
+func (r *Runner) gateByID(ctx context.Context, s *state, id string) (*skiftv1.Node, error) {
 	gates, err := s.dagger.Gates(ctx, s.node.GetReference(),
 		dagger.GateLabel, dagger.RunLabel(s.run.GetId()))
 	if err != nil {
@@ -583,12 +584,12 @@ func (r *Runner) resumeGate(ctx context.Context, s *state, step *millv1.Step, de
 	if sr == nil {
 		return fmt.Errorf("run %s: gate %s is filed but has no attempt", s.run.GetId(), step.GetName())
 	}
-	if gate.GetStatus() == daggerv1.Status_STATUS_OPEN {
+	if gate.GetStatus() == skiftv1.Status_STATUS_OPEN {
 		// Nobody has answered yet. A node blocked by an open gate is not in
 		// the ready set, so this is a `mill run` aimed at it by hand; give
 		// the lease back and leave the run exactly as it was.
 		if err := r.options.Dagger.Release(ctx, s.leaseID(),
-			daggerv1.ReleaseReason_RELEASE_REASON_GATE, "gate "+gate.GetReference()); err != nil {
+			skiftv1.ReleaseReason_RELEASE_REASON_GATE, "gate "+gate.GetReference()); err != nil {
 			return err
 		}
 		r.printf("  gate %s is still open; %s waits\n", gate.GetReference(), s.node.GetReference())
@@ -605,7 +606,7 @@ func (r *Runner) resumeGate(ctx context.Context, s *state, step *millv1.Step, de
 	defer abortActivity(s)
 
 	switch gate.GetStatus() {
-	case daggerv1.Status_STATUS_DONE:
+	case skiftv1.Status_STATUS_DONE:
 		verified, err := evidence.Verify(ctx, millv1.EvidenceKind_EVIDENCE_KIND_GATE, evidence.Step{
 			Name:       step.GetName(),
 			Definition: step,
@@ -631,14 +632,14 @@ func (r *Runner) resumeGate(ctx context.Context, s *state, step *millv1.Step, de
 // The node is completed with the step's deny_result, so whoever asked for
 // the work is told why it stopped, and only then is the run failed: dagger
 // first, store second, as everywhere else.
-func (r *Runner) denyGate(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, gate *daggerv1.Node) error {
+func (r *Runner) denyGate(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, gate *skiftv1.Node) error {
 	body := step.GetGate().GetDenyResult()
 	if body == "" {
 		body = fmt.Sprintf("The %s gate was not approved.", step.GetName())
 	}
 	if err := s.dagger.Complete(ctx,
 		dagger.RequestID(s.run.GetId(), step.GetName(), denialAttempt), s.leaseID(),
-		s.node.GetReference(), &daggerv1.Result{Body: body}); err != nil {
+		s.node.GetReference(), &skiftv1.Result{Body: body}); err != nil {
 		return err
 	}
 	if err := r.endActivity(ctx, s, step, sr, millv1.StepRunStatus_STEP_RUN_STATUS_FAILED, millv1.EvidenceKind_EVIDENCE_KIND_GATE, "gate denied"); err != nil {
@@ -794,13 +795,13 @@ func (g gates) Node(ctx context.Context, id string) (evidence.GateNode, error) {
 }
 
 // daggerStatus is a node status as the `gate` verifier reads it.
-func daggerStatus(status daggerv1.Status) string {
+func daggerStatus(status skiftv1.Status) string {
 	switch status {
-	case daggerv1.Status_STATUS_OPEN:
+	case skiftv1.Status_STATUS_OPEN:
 		return "open"
-	case daggerv1.Status_STATUS_DONE:
+	case skiftv1.Status_STATUS_DONE:
 		return "done"
-	case daggerv1.Status_STATUS_DROPPED:
+	case skiftv1.Status_STATUS_DROPPED:
 		return "dropped"
 	default:
 		return ""

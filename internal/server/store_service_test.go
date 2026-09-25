@@ -8,10 +8,10 @@ import (
 	. "github.com/onsi/gomega"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/server"
-	"github.com/ivy/mill/internal/testsupport"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/server"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 var _ = Describe("The store's handlers", Label(testsupport.DBLabel), func() {

@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"strings"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/dagger"
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/notify"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/dagger"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/notify"
 )
 
 // The circuit breaker: docs/architecture.md §"Failure and stop".
@@ -60,7 +61,7 @@ func (r *Runner) park(ctx context.Context, s *state, step *millv1.Step, sr *mill
 	}); err != nil {
 		return err
 	}
-	if err := r.options.Dagger.Release(ctx, s.leaseID(), daggerv1.ReleaseReason_RELEASE_REASON_BUDGET, "retries exhausted on "+step.GetName()); err != nil {
+	if err := r.options.Dagger.Release(ctx, s.leaseID(), skiftv1.ReleaseReason_RELEASE_REASON_BUDGET, "retries exhausted on "+step.GetName()); err != nil {
 		return err
 	}
 
@@ -240,9 +241,9 @@ func (r *Runner) resumePark(ctx context.Context, s *state) error {
 	if err != nil {
 		return err
 	}
-	if gate.GetStatus() != daggerv1.Status_STATUS_DONE {
+	if gate.GetStatus() != skiftv1.Status_STATUS_DONE {
 		if err := r.options.Dagger.Release(ctx, s.leaseID(),
-			daggerv1.ReleaseReason_RELEASE_REASON_GATE, "park gate "+gate.GetReference()); err != nil {
+			skiftv1.ReleaseReason_RELEASE_REASON_GATE, "park gate "+gate.GetReference()); err != nil {
 			return err
 		}
 		r.printf("park gate %s is unanswered; %s stays parked\n", gate.GetReference(), s.node.GetReference())

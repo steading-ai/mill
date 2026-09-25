@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // systemPrompt is what the adapter appends to the harness's own system

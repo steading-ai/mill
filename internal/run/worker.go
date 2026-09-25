@@ -11,9 +11,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	"github.com/ivy/mill/internal/dagger"
-	"github.com/ivy/mill/internal/forge"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	"github.com/steading-ai/mill/internal/dagger"
+	"github.com/steading-ai/mill/internal/forge"
 )
 
 // The daemon is the loop, not a scheduler.
@@ -393,7 +394,7 @@ func (w *Worker) claim(ctx context.Context, wg *sync.WaitGroup) error {
 		if wait, ok := w.backoffRemaining(nodeID); ok {
 			ref := claimed.Node.GetReference()
 			if err := runner.options.Dagger.Release(ctx, claimed.Lease.GetId(),
-				daggerv1.ReleaseReason_RELEASE_REASON_PREEMPTED,
+				skiftv1.ReleaseReason_RELEASE_REASON_PREEMPTED,
 				fmt.Sprintf("worker: backing off %s, %s left", ref, wait)); err != nil {
 				w.options.Log.Warn("releasing a node still backing off", "node", ref, "error", err)
 			}
@@ -428,7 +429,7 @@ func (w *Worker) releaseIfStopped(ctx context.Context, runner *Runner, claimed *
 		return false
 	}
 	if err := runner.options.Dagger.Release(ctx, claimed.Lease.GetId(),
-		daggerv1.ReleaseReason_RELEASE_REASON_PREEMPTED, "shutdown"); err != nil {
+		skiftv1.ReleaseReason_RELEASE_REASON_PREEMPTED, "shutdown"); err != nil {
 		w.options.Log.Warn("releasing a claim that landed as the worker stopped",
 			"node", claimed.Node.GetReference(), "error", err)
 	}

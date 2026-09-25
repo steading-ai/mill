@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // The environment a sidecar is spawned with.

@@ -10,7 +10,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // The variables the suite reads. Every one of them is documented in

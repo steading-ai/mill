@@ -6,7 +6,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 )
 
 // `mill cancel` is the one operate tool this milestone builds, and it is a

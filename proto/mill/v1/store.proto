@@ -17,7 +17,7 @@ import "google/protobuf/timestamp.proto";
 import "harness/v1/harness.proto";
 import "mill/v1/mill.proto";
 
-option go_package = "github.com/ivy/mill/gen/mill/v1;millv1";
+option go_package = "github.com/steading-ai/mill/gen/mill/v1;millv1";
 
 // StoreService is the ledger's one door. It reads and writes the record of
 // what happened inside a run: selection, step runs, evidence, sessions,

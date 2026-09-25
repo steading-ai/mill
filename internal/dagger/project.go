@@ -7,7 +7,7 @@ import (
 
 	"connectrpc.com/connect"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
 )
 
 // The project verbs the worker's reconciliation sweep uses (docs/sandbox.md
@@ -19,8 +19,8 @@ import (
 
 // GetProject reads this client's project in full: the slug a bare reference
 // resolves in, and the repository it delivers to.
-func (c *Client) GetProject(ctx context.Context) (*daggerv1.Project, error) {
-	res, err := c.graph.GetProject(ctx, connect.NewRequest(&daggerv1.GetProjectRequest{Project: c.project}))
+func (c *Client) GetProject(ctx context.Context) (*skiftv1.Project, error) {
+	res, err := c.graph.GetProject(ctx, connect.NewRequest(&skiftv1.GetProjectRequest{Project: c.project}))
 	if err != nil {
 		return nil, wrap("dagger: get project "+c.project, err)
 	}
@@ -31,8 +31,8 @@ func (c *Client) GetProject(ctx context.Context) (*daggerv1.Project, error) {
 // resolves bare references in. The stranded-run sweep reads it: a run's
 // node reference is stored qualified, and the repository its branch is
 // closed on is that project's, not the worker's (docs/ledger.md §Sweep).
-func (c *Client) ProjectNamed(ctx context.Context, slug string) (*daggerv1.Project, error) {
-	res, err := c.graph.GetProject(ctx, connect.NewRequest(&daggerv1.GetProjectRequest{Project: slug}))
+func (c *Client) ProjectNamed(ctx context.Context, slug string) (*skiftv1.Project, error) {
+	res, err := c.graph.GetProject(ctx, connect.NewRequest(&skiftv1.GetProjectRequest{Project: slug}))
 	if err != nil {
 		return nil, wrap("dagger: get project "+slug, err)
 	}
@@ -41,11 +41,11 @@ func (c *Client) ProjectNamed(ctx context.Context, slug string) (*daggerv1.Proje
 
 // ListProjects is every active project the principal can see, across every
 // page. Archived projects are not listed: they are already swept.
-func (c *Client) ListProjects(ctx context.Context) ([]*daggerv1.Project, error) {
-	var projects []*daggerv1.Project
+func (c *Client) ListProjects(ctx context.Context) ([]*skiftv1.Project, error) {
+	var projects []*skiftv1.Project
 	var token string
 	for {
-		res, err := c.graph.ListProjects(ctx, connect.NewRequest(&daggerv1.ListProjectsRequest{PageToken: token}))
+		res, err := c.graph.ListProjects(ctx, connect.NewRequest(&skiftv1.ListProjectsRequest{PageToken: token}))
 		if err != nil {
 			return nil, fmt.Errorf("dagger: list projects: %w", err)
 		}
@@ -59,8 +59,8 @@ func (c *Client) ListProjects(ctx context.Context) ([]*daggerv1.Project, error) 
 
 // ArchiveProject makes a project read-only, under a request id that begins
 // `mill-` like every other write mill makes.
-func (c *Client) ArchiveProject(ctx context.Context, slug string) (*daggerv1.Project, error) {
-	res, err := c.graph.ArchiveProject(ctx, connect.NewRequest(&daggerv1.ArchiveProjectRequest{
+func (c *Client) ArchiveProject(ctx context.Context, slug string) (*skiftv1.Project, error) {
+	res, err := c.graph.ArchiveProject(ctx, connect.NewRequest(&skiftv1.ArchiveProjectRequest{
 		RequestId: nonce("archive-" + slug),
 		Project:   slug,
 	}))
@@ -71,10 +71,10 @@ func (c *Client) ArchiveProject(ctx context.Context, slug string) (*daggerv1.Pro
 }
 
 // ErrNoProjectDelete is what DeleteProject answers while dagger offers no
-// such verb: the vendored contract (proto/dagger/v1) has ArchiveProject and
-// nothing that removes a project. The sweep archives instead and says so.
-// When dagger's project-delete lands, the vendored contract gains the RPC
-// and this becomes a call; nothing above it changes.
+// such verb: the skift.v1 contract has ArchiveProject and nothing that
+// removes a project. The sweep archives instead and says so. When dagger's
+// project-delete lands, the pinned contract gains the RPC and this becomes
+// a call; nothing above it changes.
 var ErrNoProjectDelete = fmt.Errorf("%w: dagger offers no project delete; archive is the most a sweep can do", errors.ErrUnsupported)
 
 // DeleteProject removes a project when the service offers a delete. It
@@ -92,8 +92,8 @@ func (c *Client) DeleteProject(context.Context, string) error {
 // (docs/sandbox.md §Reconciliation). The lease is the failed run's, still
 // held while this is written.
 func (c *Client) Hold(ctx context.Context, requestID, leaseID, ref, reason string) error {
-	_, err := c.ApplyPatch(ctx, requestID, leaseID, &daggerv1.PatchOp{
-		Op: &daggerv1.PatchOp_HoldNode{HoldNode: &daggerv1.HoldNodeOp{Node: ref, Reason: reason}},
+	_, err := c.ApplyPatch(ctx, requestID, leaseID, &skiftv1.PatchOp{
+		Op: &skiftv1.PatchOp_HoldNode{HoldNode: &skiftv1.HoldNodeOp{Node: ref, Reason: reason}},
 	})
 	return err
 }

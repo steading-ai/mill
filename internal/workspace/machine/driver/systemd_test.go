@@ -11,8 +11,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/machine/driver"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/machine/driver"
 )
 
 // floorMark is a variable only the spec's spawner carries on its floor. A

@@ -16,13 +16,13 @@ import (
 	. "github.com/onsi/gomega"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/gen/mill/v1/millv1connect"
-	"github.com/ivy/mill/internal/cli"
-	"github.com/ivy/mill/internal/sdnotify"
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/workflow"
-	"github.com/ivy/mill/internal/workspace/socket"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
+	"github.com/steading-ai/mill/internal/cli"
+	"github.com/steading-ai/mill/internal/sdnotify"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/workflow"
+	"github.com/steading-ai/mill/internal/workspace/socket"
 )
 
 // notifier stands in for systemd: a datagram socket named by NOTIFY_SOCKET,

@@ -20,7 +20,7 @@
 package millv1
 
 import (
-	v1 "github.com/ivy/mill/gen/harness/v1"
+	v1 "github.com/steading-ai/mill/gen/harness/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	durationpb "google.golang.org/protobuf/types/known/durationpb"
@@ -6620,7 +6620,7 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"\x17ACTIVITY_SOURCE_HARNESS\x10\x01\x12\x1d\n" +
 	"\x19ACTIVITY_SOURCE_WORKSPACE\x10\x02\x12\x19\n" +
 	"\x15ACTIVITY_SOURCE_CHECK\x10\x03\x12\x18\n" +
-	"\x14ACTIVITY_SOURCE_MILL\x10\x04B(Z&github.com/ivy/mill/gen/mill/v1;millv1b\x06proto3"
+	"\x14ACTIVITY_SOURCE_MILL\x10\x04B0Z.github.com/steading-ai/mill/gen/mill/v1;millv1b\x06proto3"
 
 var (
 	file_mill_v1_mill_proto_rawDescOnce sync.Once

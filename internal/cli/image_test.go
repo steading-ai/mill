@@ -11,9 +11,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/cli"
-	"github.com/ivy/mill/internal/workspace/machine/driver"
-	"github.com/ivy/mill/internal/workspace/machine/image"
+	"github.com/steading-ai/mill/internal/cli"
+	"github.com/steading-ai/mill/internal/workspace/machine/driver"
+	"github.com/steading-ai/mill/internal/workspace/machine/image"
 )
 
 // The image verbs run over the systemd driver with `--sudo none`, so a

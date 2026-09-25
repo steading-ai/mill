@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/store"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/store"
 )
 
 // EveryRunStatus is every status a run can hold, passed to Status in place

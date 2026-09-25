@@ -12,8 +12,8 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
 
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/workspace/machine"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/workspace/machine"
 )
 
 // The supervisor is the only place a signal becomes one of the two stops

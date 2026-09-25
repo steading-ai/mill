@@ -14,20 +14,21 @@ import (
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/dagger"
-	"github.com/ivy/mill/internal/doctor"
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/gateway"
-	"github.com/ivy/mill/internal/harness/claude"
-	"github.com/ivy/mill/internal/notify"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/workflow"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/machine"
-	"github.com/ivy/mill/internal/workspace/machine/cache"
-	"github.com/ivy/mill/internal/workspace/machine/driver"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/dagger"
+	"github.com/steading-ai/mill/internal/doctor"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/gateway"
+	"github.com/steading-ai/mill/internal/harness/claude"
+	"github.com/steading-ai/mill/internal/notify"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/workflow"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/machine"
+	"github.com/steading-ai/mill/internal/workspace/machine/cache"
+	"github.com/steading-ai/mill/internal/workspace/machine/driver"
 )
 
 // `mill doctor` is the one tool that asks whether the mill could work at
@@ -506,7 +507,7 @@ func probeDagger(ctx context.Context, opts doctorOptions) probe {
 	}
 	ctx, cancel := context.WithTimeout(ctx, doctor.ProbeTimeout)
 	defer cancel()
-	nodes, err := dagger.Dial(opts.daggerSocket, opts.project).Ready(ctx, []string{opts.project}, daggerv1.AssigneeKind_ASSIGNEE_KIND_AGENT)
+	nodes, err := dagger.Dial(opts.daggerSocket, opts.project).Ready(ctx, []string{opts.project}, skiftv1.AssigneeKind_ASSIGNEE_KIND_AGENT)
 	if err != nil {
 		return fail("dagger", "%s did not answer as this account: %v", opts.daggerSocket, err)
 	}

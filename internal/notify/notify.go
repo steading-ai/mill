@@ -29,7 +29,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ivy/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // Timeout bounds one notification. A notifier that has not answered in half

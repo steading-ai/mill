@@ -20,7 +20,7 @@ package harness.v1;
 
 import "google/protobuf/struct.proto";
 
-option go_package = "github.com/ivy/mill/gen/harness/v1;harnessv1";
+option go_package = "github.com/steading-ai/mill/gen/harness/v1;harnessv1";
 
 // ExitReason says why a session ended when the exit status alone does not.
 // It is the discriminator that keeps "never ran" apart from "ran and

@@ -46,9 +46,9 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/forge"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/forge"
 )
 
 // How a `status` step watches the forge's checks when the workflow does not
@@ -73,7 +73,7 @@ type Git interface {
 }
 
 // Forge is what the `url` and `status` verifiers need of the project's
-// forge. It is the read half of [github.com/ivy/mill/internal/forge.Forge],
+// forge. It is the read half of [github.com/steading-ai/mill/internal/forge.Forge],
 // which satisfies it.
 type Forge interface {
 	// PR is the pull request for a branch, forge.ErrNoPullRequest when the
@@ -85,7 +85,7 @@ type Forge interface {
 
 // Committer is the identity the mill's own commits carry: the name and
 // address git is given in the run's checkout. It is
-// [github.com/ivy/mill/internal/workspace.Committer] as this package needs
+// [github.com/steading-ai/mill/internal/workspace.Committer] as this package needs
 // it, restated rather than imported so that verification depends on nothing
 // but the fact it is checking.
 type Committer struct {
@@ -216,7 +216,7 @@ type Step struct {
 // Evidence is what a verifier established.
 type Evidence struct {
 	// Value is the row the ledger writes, in the shape
-	// [github.com/ivy/mill/internal/domain.ValidateEvidence] accepts. Nil
+	// [github.com/steading-ai/mill/internal/domain.ValidateEvidence] accepts. Nil
 	// when nothing was verified.
 	Value *millv1.Evidence
 	// Warnings are what the ledger records beside the row: a verdict that
@@ -799,7 +799,7 @@ func (s Step) now() time.Time {
 }
 
 // kindName is the evidence kind as the model spells it, which is also how
-// [github.com/ivy/mill/internal/domain] spells it in the ledger.
+// [github.com/steading-ai/mill/internal/domain] spells it in the ledger.
 func kindName(kind millv1.EvidenceKind) string {
 	return strings.ToLower(strings.TrimPrefix(kind.String(), "EVIDENCE_KIND_"))
 }

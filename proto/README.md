@@ -1,10 +1,17 @@
 # The proto contracts
 
 `proto/` holds the contracts mill is built from: `mill.v1`, the store API its
-two faces speak; `harness.v1`, the sidecar wire; and `dagger.v1`, vendored
-from dagger so mill can call the service it works for. `buf` owns the
-generated code in `gen/` and `sidecar/gen`, and `make generate` writes it.
-See `docs/architecture.md` for what each contract carries.
+two faces speak, and `harness.v1`, the sidecar wire. `buf` owns the generated
+code in `gen/` and `sidecar/gen`, and `make generate` writes it. See
+`docs/architecture.md` for what each contract carries.
+
+The contract mill consumes, `skift.v1`, is not here. Mill imports skift's
+own generated Go package, `github.com/steading-ai/skift/gen/skift/v1`, and
+carries it under `vendor/` with `go mod vendor`, so a build inside a machine
+fetches nothing and the client mill calls with is the one skift generated
+for itself. Skift has no tagged release, so `go.mod` pins a commit; moving it
+is `go get github.com/steading-ai/skift@<commit>` followed by `go mod vendor`,
+and the vendored tree is committed with it.
 
 ## When a breaking change is allowed
 
@@ -17,8 +24,8 @@ is named in the commit that lands it, and the implementer names the contract
 change in the result it hands back, so the reviewer judges the change rather
 than discovering it.
 
-`dagger.v1` is not mill's to move. It is vendored, and a change to it is a
-resync with dagger's copy, not a design decision taken here.
+`skift.v1` is not mill's to move. A change to it is a bump of the pinned
+commit, not a design decision taken here.
 
 Once a release is tagged, that ends. From the first tag, a breaking change to
 `mill.v1` or `harness.v1` needs a new package version — `mill.v2` beside

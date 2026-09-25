@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"strings"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/dagger"
-	"github.com/ivy/mill/internal/evidence"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/dagger"
+	"github.com/steading-ai/mill/internal/evidence"
 )
 
 // verify asks the verifier for the step's declared evidence kind whether the
@@ -122,7 +123,7 @@ func (r *Runner) attachArtifact(ctx context.Context, s *state, step *millv1.Step
 func attachStep(step string) string { return step + "-artifact" }
 
 // artifactDigest reads the digest mill recorded on an artifact's metadata.
-func artifactDigest(artifact *daggerv1.Artifact) string {
+func artifactDigest(artifact *skiftv1.Artifact) string {
 	value, ok := artifact.GetMetadata().GetFields()["digest"]
 	if !ok {
 		return ""

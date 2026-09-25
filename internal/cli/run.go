@@ -20,29 +20,30 @@ import (
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/gen/mill/v1/millv1connect"
-	"github.com/ivy/mill/internal/dagger"
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/forge/github"
-	"github.com/ivy/mill/internal/forge/gitlab"
-	"github.com/ivy/mill/internal/gateway"
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/harness/claude"
-	"github.com/ivy/mill/internal/harness/scripted"
-	"github.com/ivy/mill/internal/notify"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/skill"
-	"github.com/ivy/mill/internal/version"
-	"github.com/ivy/mill/internal/workflow"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/local"
-	"github.com/ivy/mill/internal/workspace/machine"
-	"github.com/ivy/mill/internal/workspace/machine/cache"
-	"github.com/ivy/mill/internal/workspace/machine/driver"
-	"github.com/ivy/mill/internal/workspace/machine/image"
-	"github.com/ivy/mill/internal/workspace/redact"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
+	"github.com/steading-ai/mill/internal/dagger"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/forge/github"
+	"github.com/steading-ai/mill/internal/forge/gitlab"
+	"github.com/steading-ai/mill/internal/gateway"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/harness/claude"
+	"github.com/steading-ai/mill/internal/harness/scripted"
+	"github.com/steading-ai/mill/internal/notify"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/skill"
+	"github.com/steading-ai/mill/internal/version"
+	"github.com/steading-ai/mill/internal/workflow"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/local"
+	"github.com/steading-ai/mill/internal/workspace/machine"
+	"github.com/steading-ai/mill/internal/workspace/machine/cache"
+	"github.com/steading-ai/mill/internal/workspace/machine/driver"
+	"github.com/steading-ai/mill/internal/workspace/machine/image"
+	"github.com/steading-ai/mill/internal/workspace/redact"
 )
 
 // ExitFenced is the status `mill run` exits with when another worker took
@@ -1045,7 +1046,7 @@ var forgeHTTP *http.Client
 // one. A configured kind that names no adapter is refused here, which is
 // the first thing `run`, `work` and `doctor` do with a project, so a
 // misspelt `forge:` stops the worker at startup naming what it found.
-func forgeProject(project *daggerv1.Project, configured string) (forge.Project, error) {
+func forgeProject(project *skiftv1.Project, configured string) (forge.Project, error) {
 	kind, err := forge.ParseKind(configured)
 	if err != nil {
 		return forge.Project{}, fmt.Errorf("mill: --forge: %w", err)
@@ -1097,7 +1098,7 @@ func forgeMinter() forge.Minter {
 // *forge.NoVCSURLError. `--origin` overrides the clone URL and nothing else.
 // The credential is the one the mill account holds, handed out per request
 // by [forge.Static].
-func repositoryFor(project *daggerv1.Project, opts runOptions) (run.Repository, error) {
+func repositoryFor(project *skiftv1.Project, opts runOptions) (run.Repository, error) {
 	p, err := forgeProject(project, opts.forge)
 	if err != nil {
 		return run.Repository{}, err
@@ -1119,7 +1120,7 @@ func repositoryFor(project *daggerv1.Project, opts runOptions) (run.Repository, 
 
 // repositories is the seam a runner resolves each run's repository through.
 func repositories(opts runOptions) run.Repositories {
-	return func(_ context.Context, project *daggerv1.Project) (run.Repository, error) {
+	return func(_ context.Context, project *skiftv1.Project) (run.Repository, error) {
 		return repositoryFor(project, opts)
 	}
 }

@@ -34,8 +34,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/redact"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/redact"
 )
 
 // Verbs is what the socket exposes: the workspace's verbs without its

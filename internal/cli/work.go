@@ -11,11 +11,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/harness/claude"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/machine"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/harness/claude"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/machine"
 )
 
 // workOptions is what the daemon needs on top of a run's own settings.

@@ -20,11 +20,11 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/gen/mill/v1/millv1connect"
-	"github.com/ivy/mill/internal/dagger"
-	runpkg "github.com/ivy/mill/internal/run"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
+	"github.com/steading-ai/mill/internal/dagger"
+	runpkg "github.com/steading-ai/mill/internal/run"
 )
 
 // The read tools. Every one is a thin call on the Connect client and a

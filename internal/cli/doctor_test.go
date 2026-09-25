@@ -13,9 +13,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/cli"
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/workflow"
+	"github.com/steading-ai/mill/internal/cli"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/workflow"
 )
 
 var _ = Describe("mill doctor", Label(testsupport.DBLabel), func() {

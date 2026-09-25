@@ -26,22 +26,23 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	"github.com/ivy/mill/gen/dagger/v1/daggerv1connect"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/gen/mill/v1/millv1connect"
-	"github.com/ivy/mill/internal/dagger"
-	"github.com/ivy/mill/internal/domain"
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/harness/fake"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/server"
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/workflow"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/local"
-	"github.com/ivy/mill/internal/workspace/redact"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+	"github.com/steading-ai/skift/gen/skift/v1/skiftv1connect"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
+	"github.com/steading-ai/mill/internal/dagger"
+	"github.com/steading-ai/mill/internal/domain"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/harness/fake"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/server"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/workflow"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/local"
+	"github.com/steading-ai/mill/internal/workspace/redact"
 )
 
 // The run loop is specified end to end, because that is what it is: the only
@@ -68,7 +69,7 @@ type fixture struct {
 	// does not offer.
 	db        *pgxpool.Pool
 	client    *dagger.Client
-	graph     daggerv1connect.GraphServiceClient
+	graph     skiftv1connect.GraphServiceClient
 	store     millv1connect.StoreServiceClient
 	workflow  *millv1.Workflow
 	harness   *fake.Harness
@@ -164,13 +165,13 @@ func start(ctx context.Context) *fixture {
 	f := &fixture{
 		dagger:   service,
 		client:   dagger.New(httpClient, service.BaseURL(), project, dagger.WithAgentRef("spec@host"), dagger.WithSessionRef("spec")),
-		graph:    daggerv1connect.NewGraphServiceClient(httpClient, service.BaseURL()),
+		graph:    skiftv1connect.NewGraphServiceClient(httpClient, service.BaseURL()),
 		forge:    &fixtureForge{},
 		worker:   "spec@host",
 		redactor: redact.New(),
 	}
 
-	_, err := f.graph.CreateProject(ctx, connect.NewRequest(&daggerv1.CreateProjectRequest{
+	_, err := f.graph.CreateProject(ctx, connect.NewRequest(&skiftv1.CreateProjectRequest{
 		RequestId: "mill-spec-project", Title: "mill specs", Slug: project,
 	}))
 	Expect(err).NotTo(HaveOccurred())
@@ -213,10 +214,10 @@ func (f *fixture) pushWorkflowFrom(ctx context.Context, dir string) *millv1.Work
 // node files the work the run is for and remembers its reference.
 func (f *fixture) node(ctx context.Context, title, body string) string {
 	GinkgoHelper()
-	res, err := f.graph.ApplyPatch(ctx, connect.NewRequest(&daggerv1.ApplyPatchRequest{
+	res, err := f.graph.ApplyPatch(ctx, connect.NewRequest(&skiftv1.ApplyPatchRequest{
 		RequestId: "spec-node-" + title,
 		Project:   project,
-		Ops: []*daggerv1.PatchOp{{Op: &daggerv1.PatchOp_CreateNode{CreateNode: &daggerv1.CreateNodeOp{
+		Ops: []*skiftv1.PatchOp{{Op: &skiftv1.PatchOp_CreateNode{CreateNode: &skiftv1.CreateNodeOp{
 			Title: title, Body: body,
 		}}}},
 	}))
@@ -231,11 +232,11 @@ func (f *fixture) node(ctx context.Context, title, body string) string {
 func (f *fixture) input(ctx context.Context, title, result string) string {
 	GinkgoHelper()
 	ref := f.node(ctx, title, "the predecessor's work order")
-	_, err := f.graph.ApplyPatch(ctx, connect.NewRequest(&daggerv1.ApplyPatchRequest{
+	_, err := f.graph.ApplyPatch(ctx, connect.NewRequest(&skiftv1.ApplyPatchRequest{
 		RequestId: "spec-done-" + title,
 		Project:   project,
-		Ops: []*daggerv1.PatchOp{{Op: &daggerv1.PatchOp_CompleteNode{CompleteNode: &daggerv1.CompleteNodeOp{
-			Node: ref, Result: &daggerv1.Result{Body: result},
+		Ops: []*skiftv1.PatchOp{{Op: &skiftv1.PatchOp_CompleteNode{CompleteNode: &skiftv1.CompleteNodeOp{
+			Node: ref, Result: &skiftv1.Result{Body: result},
 		}}}},
 	}))
 	Expect(err).NotTo(HaveOccurred())
@@ -245,11 +246,11 @@ func (f *fixture) input(ctx context.Context, title, result string) string {
 // blocks makes from a blocking predecessor of to.
 func (f *fixture) blocks(ctx context.Context, from, to string) {
 	GinkgoHelper()
-	_, err := f.graph.ApplyPatch(ctx, connect.NewRequest(&daggerv1.ApplyPatchRequest{
+	_, err := f.graph.ApplyPatch(ctx, connect.NewRequest(&skiftv1.ApplyPatchRequest{
 		RequestId: "spec-edge-" + from + to,
 		Project:   project,
-		Ops: []*daggerv1.PatchOp{{Op: &daggerv1.PatchOp_AddEdge{AddEdge: &daggerv1.AddEdgeOp{
-			From: from, To: to, Kind: daggerv1.EdgeKind_EDGE_KIND_BLOCKS,
+		Ops: []*skiftv1.PatchOp{{Op: &skiftv1.PatchOp_AddEdge{AddEdge: &skiftv1.AddEdgeOp{
+			From: from, To: to, Kind: skiftv1.EdgeKind_EDGE_KIND_BLOCKS,
 		}}}},
 	}))
 	Expect(err).NotTo(HaveOccurred())
@@ -269,7 +270,7 @@ func (f *fixture) runner(options ...func(*run.Options)) *run.Runner {
 		Dagger:     f.client,
 		Workspaces: f.workspaces(),
 		Attach:     f.attached(),
-		Repositories: func(context.Context, *daggerv1.Project) (run.Repository, error) {
+		Repositories: func(context.Context, *skiftv1.Project) (run.Repository, error) {
 			return run.Repository{Forge: f.forge, Origin: f.origin}, nil
 		},
 		Harnesses:   func(run.Workspace) (*harness.Registry, error) { return registry, nil },
@@ -337,10 +338,10 @@ func (f *fixture) attached() run.Workspaces {
 // claim it to end the run underneath.
 func (f *fixture) drop(ctx context.Context, ref string) {
 	GinkgoHelper()
-	_, err := f.graph.ApplyPatch(ctx, connect.NewRequest(&daggerv1.ApplyPatchRequest{
+	_, err := f.graph.ApplyPatch(ctx, connect.NewRequest(&skiftv1.ApplyPatchRequest{
 		RequestId: "spec-drop-" + ref, Project: project,
-		Ops: []*daggerv1.PatchOp{{Op: &daggerv1.PatchOp_DropNode{DropNode: &daggerv1.DropNodeOp{
-			Node: ref, Reason: daggerv1.DropReason_DROP_REASON_SUPERSEDED, Detail: "the spec filed it again",
+		Ops: []*skiftv1.PatchOp{{Op: &skiftv1.PatchOp_DropNode{DropNode: &skiftv1.DropNodeOp{
+			Node: ref, Reason: skiftv1.DropReason_DROP_REASON_SUPERSEDED, Detail: "the spec filed it again",
 		}}}},
 	}))
 	Expect(err).NotTo(HaveOccurred())
@@ -660,9 +661,9 @@ func mustAbs(path string) string {
 }
 
 // result is the node's result once dagger says it is done.
-func (f *fixture) result(ctx context.Context) (*daggerv1.Result, error) {
-	res, err := f.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{
-		Project: project, Node: f.nodeRef, View: daggerv1.View_VIEW_FULL,
+func (f *fixture) result(ctx context.Context) (*skiftv1.Result, error) {
+	res, err := f.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{
+		Project: project, Node: f.nodeRef, View: skiftv1.View_VIEW_FULL,
 	}))
 	if err != nil {
 		return nil, err
@@ -671,10 +672,10 @@ func (f *fixture) result(ctx context.Context) (*daggerv1.Result, error) {
 }
 
 // leaseOf is the live lease on the node, or nothing.
-func (f *fixture) leaseOf(ctx context.Context) *daggerv1.Lease {
+func (f *fixture) leaseOf(ctx context.Context) *skiftv1.Lease {
 	GinkgoHelper()
-	res, err := f.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{
-		Project: project, Node: f.nodeRef, View: daggerv1.View_VIEW_FULL,
+	res, err := f.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{
+		Project: project, Node: f.nodeRef, View: skiftv1.View_VIEW_FULL,
 	}))
 	Expect(err).NotTo(HaveOccurred())
 	return res.Msg.GetLease()
@@ -686,7 +687,7 @@ func (f *fixture) leaseOf(ctx context.Context) *daggerv1.Lease {
 func (f *fixture) expire(ctx context.Context, leaseID string) {
 	GinkgoHelper()
 	Expect(f.client.Release(ctx, leaseID,
-		daggerv1.ReleaseReason_RELEASE_REASON_PREEMPTED, "spec: forcing expiry")).To(Succeed())
+		skiftv1.ReleaseReason_RELEASE_REASON_PREEMPTED, "spec: forcing expiry")).To(Succeed())
 }
 
 // reclaim is a second client taking the node, and returns its lease id.
@@ -713,8 +714,8 @@ func (f *fixture) cancelRun(ctx context.Context) error {
 // double what this returns.
 func (f *fixture) daggerUsage(ctx context.Context) map[string]int64 {
 	GinkgoHelper()
-	res, err := f.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{
-		Project: project, Node: f.nodeRef, View: daggerv1.View_VIEW_FULL,
+	res, err := f.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{
+		Project: project, Node: f.nodeRef, View: skiftv1.View_VIEW_FULL,
 	}))
 	Expect(err).NotTo(HaveOccurred())
 	totals := map[string]int64{}
@@ -736,7 +737,7 @@ func ledgerUsage(detail *millv1.InspectResponse) map[string]int64 {
 }
 
 // artifactNames is what a result carries.
-func artifactNames(result *daggerv1.Result) []string {
+func artifactNames(result *skiftv1.Result) []string {
 	names := make([]string, 0, len(result.GetArtifacts()))
 	for _, artifact := range result.GetArtifacts() {
 		names = append(names, artifact.GetName())
@@ -745,7 +746,7 @@ func artifactNames(result *daggerv1.Result) []string {
 }
 
 // referenceOf is the URI of a result's named reference artifact.
-func referenceOf(result *daggerv1.Result, name string) string {
+func referenceOf(result *skiftv1.Result, name string) string {
 	for _, artifact := range result.GetArtifacts() {
 		if artifact.GetName() != name {
 			continue
@@ -913,14 +914,14 @@ func refused(final string) fake.Script {
 
 // gatesOn is every user-assigned child of the node: the gates, and nothing
 // else, because nothing else in these specs is assigned to a person.
-func (f *fixture) gatesOn(ctx context.Context) []*daggerv1.Node {
+func (f *fixture) gatesOn(ctx context.Context) []*skiftv1.Node {
 	GinkgoHelper()
 	return f.gatesOnNode(ctx, f.nodeRef)
 }
 
 // theGate is the node's one gate, and fails the spec when there is not
 // exactly one.
-func (f *fixture) theGate(ctx context.Context) *daggerv1.Node {
+func (f *fixture) theGate(ctx context.Context) *skiftv1.Node {
 	GinkgoHelper()
 	gates := f.gatesOn(ctx)
 	Expect(gates).To(HaveLen(1), "exactly one gate is filed")
@@ -930,8 +931,8 @@ func (f *fixture) theGate(ctx context.Context) *daggerv1.Node {
 // comments are what the node carries, oldest first.
 func (f *fixture) comments(ctx context.Context) []string {
 	GinkgoHelper()
-	res, err := f.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{
-		Project: project, Node: f.nodeRef, View: daggerv1.View_VIEW_FULL,
+	res, err := f.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{
+		Project: project, Node: f.nodeRef, View: skiftv1.View_VIEW_FULL,
 	}))
 	Expect(err).NotTo(HaveOccurred())
 	bodies := make([]string, 0, len(res.Msg.GetComments()))
@@ -952,10 +953,10 @@ func (f *fixture) comments(ctx context.Context) []string {
 // an [answerer] at the terminal.
 func (f *fixture) approveGate(ctx context.Context, ref string) {
 	GinkgoHelper()
-	_, err := f.graph.ApplyPatch(ctx, connect.NewRequest(&daggerv1.ApplyPatchRequest{
+	_, err := f.graph.ApplyPatch(ctx, connect.NewRequest(&skiftv1.ApplyPatchRequest{
 		RequestId: "spec-answer-" + ref, Project: project,
-		Ops: []*daggerv1.PatchOp{{Op: &daggerv1.PatchOp_CompleteNode{CompleteNode: &daggerv1.CompleteNodeOp{
-			Node: ref, Result: &daggerv1.Result{Body: "the spec says yes"},
+		Ops: []*skiftv1.PatchOp{{Op: &skiftv1.PatchOp_CompleteNode{CompleteNode: &skiftv1.CompleteNodeOp{
+			Node: ref, Result: &skiftv1.Result{Body: "the spec says yes"},
 		}}}},
 	}))
 	Expect(err).NotTo(HaveOccurred())
@@ -969,10 +970,10 @@ func (f *fixture) approveGate(ctx context.Context, ref string) {
 // resumeGate's evidence.Verify call without reaching inside dagger (mill#30).
 func (f *fixture) approveGateEmpty(ctx context.Context, ref string) {
 	GinkgoHelper()
-	_, err := f.graph.ApplyPatch(ctx, connect.NewRequest(&daggerv1.ApplyPatchRequest{
+	_, err := f.graph.ApplyPatch(ctx, connect.NewRequest(&skiftv1.ApplyPatchRequest{
 		RequestId: "spec-answer-empty-" + ref, Project: project,
-		Ops: []*daggerv1.PatchOp{{Op: &daggerv1.PatchOp_CompleteNode{CompleteNode: &daggerv1.CompleteNodeOp{
-			Node: ref, Result: &daggerv1.Result{Body: "   "},
+		Ops: []*skiftv1.PatchOp{{Op: &skiftv1.PatchOp_CompleteNode{CompleteNode: &skiftv1.CompleteNodeOp{
+			Node: ref, Result: &skiftv1.Result{Body: "   "},
 		}}}},
 	}))
 	Expect(err).NotTo(HaveOccurred())
@@ -1157,7 +1158,7 @@ var (
 type releases struct {
 	socket string
 	mu     sync.Mutex
-	seen   []daggerv1.ReleaseReason
+	seen   []skiftv1.ReleaseReason
 }
 
 func (r *releases) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -1167,7 +1168,7 @@ func (r *releases) RoundTrip(req *http.Request) (*http.Response, error) {
 			return nil, err
 		}
 		_ = req.Body.Close()
-		var release daggerv1.ReleaseRequest
+		var release skiftv1.ReleaseRequest
 		if err := proto.Unmarshal(body, &release); err == nil {
 			r.mu.Lock()
 			r.seen = append(r.seen, release.GetReason())
@@ -1185,10 +1186,10 @@ func (r *releases) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // reasons is what has been released so far.
-func (r *releases) reasons() []daggerv1.ReleaseReason {
+func (r *releases) reasons() []skiftv1.ReleaseReason {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]daggerv1.ReleaseReason{}, r.seen...)
+	return append([]skiftv1.ReleaseReason{}, r.seen...)
 }
 
 // watching builds a dagger client whose releases this spec can read.
@@ -1205,7 +1206,7 @@ func (f *fixture) watching() (*dagger.Client, *releases) {
 // client (mill#30).
 type patchFailure struct {
 	socket string
-	match  func(*daggerv1.PatchOp) bool
+	match  func(*skiftv1.PatchOp) bool
 }
 
 func (p *patchFailure) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -1215,7 +1216,7 @@ func (p *patchFailure) RoundTrip(req *http.Request) (*http.Response, error) {
 			return nil, err
 		}
 		_ = req.Body.Close()
-		var patch daggerv1.ApplyPatchRequest
+		var patch skiftv1.ApplyPatchRequest
 		if err := proto.Unmarshal(body, &patch); err == nil {
 			for _, op := range patch.GetOps() {
 				if p.match(op) {
@@ -1237,7 +1238,7 @@ func (p *patchFailure) RoundTrip(req *http.Request) (*http.Response, error) {
 // failingPatches builds a dagger client whose ApplyPatch this spec can fail
 // selectively, by op, rather than for every patch the way [fixture.breaking]
 // does.
-func (f *fixture) failingPatches(match func(*daggerv1.PatchOp) bool) *dagger.Client {
+func (f *fixture) failingPatches(match func(*skiftv1.PatchOp) bool) *dagger.Client {
 	return dagger.New(&http.Client{Transport: &patchFailure{socket: f.dagger.Socket, match: match}}, f.dagger.BaseURL(), project)
 }
 
@@ -1357,15 +1358,15 @@ func (f *fixture) reviewedFix(ctx context.Context, model string) string {
 }
 
 // gatesOnNode is every user-assigned child of a named node.
-func (f *fixture) gatesOnNode(ctx context.Context, ref string) []*daggerv1.Node {
+func (f *fixture) gatesOnNode(ctx context.Context, ref string) []*skiftv1.Node {
 	GinkgoHelper()
-	res, err := f.graph.ListNodes(ctx, connect.NewRequest(&daggerv1.ListNodesRequest{
-		Filter: &daggerv1.NodeFilter{
+	res, err := f.graph.ListNodes(ctx, connect.NewRequest(&skiftv1.ListNodesRequest{
+		Filter: &skiftv1.NodeFilter{
 			Projects:     []string{project},
 			Parent:       ref,
-			AssigneeKind: daggerv1.AssigneeKind_ASSIGNEE_KIND_USER,
+			AssigneeKind: skiftv1.AssigneeKind_ASSIGNEE_KIND_USER,
 		},
-		View: daggerv1.View_VIEW_FULL,
+		View: skiftv1.View_VIEW_FULL,
 	}))
 	Expect(err).NotTo(HaveOccurred())
 	return res.Msg.GetNodes()
@@ -1374,13 +1375,13 @@ func (f *fixture) gatesOnNode(ctx context.Context, ref string) []*daggerv1.Node 
 // blockedBy is the id of every node with a blocks edge into the run's node.
 func (f *fixture) blockedBy(ctx context.Context) []string {
 	GinkgoHelper()
-	res, err := f.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{
-		Project: project, Node: f.nodeRef, View: daggerv1.View_VIEW_FULL,
+	res, err := f.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{
+		Project: project, Node: f.nodeRef, View: skiftv1.View_VIEW_FULL,
 	}))
 	Expect(err).NotTo(HaveOccurred())
 	var blockers []string
 	for _, edge := range res.Msg.GetEdges() {
-		if edge.GetKind() == daggerv1.EdgeKind_EDGE_KIND_BLOCKS && edge.GetTo() == res.Msg.GetNode().GetId() {
+		if edge.GetKind() == skiftv1.EdgeKind_EDGE_KIND_BLOCKS && edge.GetTo() == res.Msg.GetNode().GetId() {
 			blockers = append(blockers, edge.GetFrom())
 		}
 	}

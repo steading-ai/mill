@@ -7,7 +7,7 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
 )
 
 // ApplyPatch is the one door to every graph mutation mill makes. Before the
@@ -17,16 +17,16 @@ import (
 // (docs/domain-model.md §Principal). The check is a read per named node,
 // which is the price of the guarantee being in mill's code rather than in
 // dagger's policy — dagger permits all five to the principal mill runs as.
-func (c *Client) ApplyPatch(ctx context.Context, requestID, leaseID string, ops ...*daggerv1.PatchOp) (*daggerv1.ApplyPatchResponse, error) {
+func (c *Client) ApplyPatch(ctx context.Context, requestID, leaseID string, ops ...*skiftv1.PatchOp) (*skiftv1.ApplyPatchResponse, error) {
 	if err := c.refuseGateWrites(ctx, ops); err != nil {
 		return nil, err
 	}
-	res, err := c.graph.ApplyPatch(ctx, connect.NewRequest(&daggerv1.ApplyPatchRequest{
+	res, err := c.graph.ApplyPatch(ctx, connect.NewRequest(&skiftv1.ApplyPatchRequest{
 		RequestId: requestID,
 		Project:   c.project,
 		LeaseId:   leaseID,
 		Ops:       ops,
-		View:      daggerv1.View_VIEW_REFS,
+		View:      skiftv1.View_VIEW_REFS,
 	}))
 	if err != nil {
 		return nil, wrap("dagger: apply patch", err)
@@ -36,22 +36,22 @@ func (c *Client) ApplyPatch(ctx context.Context, requestID, leaseID string, ops 
 
 // refuseGateWrites is the enforcement of mill's five refusals. Each verb is
 // named so the error says which one was attempted.
-func (c *Client) refuseGateWrites(ctx context.Context, ops []*daggerv1.PatchOp) error {
+func (c *Client) refuseGateWrites(ctx context.Context, ops []*skiftv1.PatchOp) error {
 	for _, op := range ops {
 		var ref, verb string
 		switch o := op.GetOp().(type) {
-		case *daggerv1.PatchOp_CompleteNode:
+		case *skiftv1.PatchOp_CompleteNode:
 			ref, verb = o.CompleteNode.GetNode(), "complete"
-		case *daggerv1.PatchOp_DropNode:
+		case *skiftv1.PatchOp_DropNode:
 			ref, verb = o.DropNode.GetNode(), "drop"
-		case *daggerv1.PatchOp_UpdateNode:
+		case *skiftv1.PatchOp_UpdateNode:
 			// Reclassifying is changing who may finish a node. Every other
 			// field of an update leaves the gate a gate.
 			if o.UpdateNode.AssigneeKind == nil && o.UpdateNode.Assignee == nil {
 				continue
 			}
 			ref, verb = o.UpdateNode.GetNode(), "reclassify"
-		case *daggerv1.PatchOp_RemoveEdge:
+		case *skiftv1.PatchOp_RemoveEdge:
 			// Unlinking a gate is removing the edge by which it blocks. Both
 			// ends are checked: the gate is the `from` of a blocks edge, and
 			// a gate that contains something is the `to`.
@@ -82,7 +82,7 @@ func (c *Client) refuseIfUser(ctx context.Context, ref, verb string) error {
 	if err != nil {
 		return nil //nolint:nilerr // an unresolvable reference is an alias, not a gate
 	}
-	if node.GetAssigneeKind() == daggerv1.AssigneeKind_ASSIGNEE_KIND_USER {
+	if node.GetAssigneeKind() == skiftv1.AssigneeKind_ASSIGNEE_KIND_USER {
 		return &UserNodeError{Ref: ref, Verb: verb}
 	}
 	return nil
@@ -93,9 +93,9 @@ func (c *Client) refuseIfUser(ctx context.Context, ref, verb string) error {
 // dagger releases the lease inside that same patch — which is why the final
 // step's usage is posted before this, why there is no Release on the done
 // path, and why store.Done comes after it (docs/ledger.md §Resume).
-func (c *Client) Complete(ctx context.Context, requestID, leaseID, ref string, result *daggerv1.Result) error {
-	_, err := c.ApplyPatch(ctx, requestID, leaseID, &daggerv1.PatchOp{
-		Op: &daggerv1.PatchOp_CompleteNode{CompleteNode: &daggerv1.CompleteNodeOp{
+func (c *Client) Complete(ctx context.Context, requestID, leaseID, ref string, result *skiftv1.Result) error {
+	_, err := c.ApplyPatch(ctx, requestID, leaseID, &skiftv1.PatchOp{
+		Op: &skiftv1.PatchOp_CompleteNode{CompleteNode: &skiftv1.CompleteNodeOp{
 			Node:   ref,
 			Result: result,
 		}},
@@ -105,8 +105,8 @@ func (c *Client) Complete(ctx context.Context, requestID, leaseID, ref string, r
 
 // Comment adds a comment to a node: the last findings on a park.
 func (c *Client) Comment(ctx context.Context, requestID, leaseID, ref, body string) error {
-	_, err := c.ApplyPatch(ctx, requestID, leaseID, &daggerv1.PatchOp{
-		Op: &daggerv1.PatchOp_AddComment{AddComment: &daggerv1.AddCommentOp{
+	_, err := c.ApplyPatch(ctx, requestID, leaseID, &skiftv1.PatchOp{
+		Op: &skiftv1.PatchOp_AddComment{AddComment: &skiftv1.AddCommentOp{
 			Node: ref,
 			Body: body,
 		}},
@@ -134,21 +134,21 @@ const gateAlias = "gate"
 // it. One patch, so the gate and the edge that makes it block arrive
 // together; the store records the id it returns before the lease is
 // released (docs/architecture.md §"Gate steps").
-func (c *Client) CreateGate(ctx context.Context, requestID, leaseID string, gate Gate) (*daggerv1.Node, error) {
+func (c *Client) CreateGate(ctx context.Context, requestID, leaseID string, gate Gate) (*skiftv1.Node, error) {
 	res, err := c.ApplyPatch(ctx, requestID, leaseID,
-		&daggerv1.PatchOp{Op: &daggerv1.PatchOp_CreateNode{CreateNode: &daggerv1.CreateNodeOp{
+		&skiftv1.PatchOp{Op: &skiftv1.PatchOp_CreateNode{CreateNode: &skiftv1.CreateNodeOp{
 			Alias:        gateAlias,
 			Parent:       gate.Blocks,
 			Kind:         "chore",
 			Title:        gate.Title,
 			Body:         gate.Body,
-			AssigneeKind: daggerv1.AssigneeKind_ASSIGNEE_KIND_USER,
+			AssigneeKind: skiftv1.AssigneeKind_ASSIGNEE_KIND_USER,
 			Labels:       gate.Labels,
 		}}},
-		&daggerv1.PatchOp{Op: &daggerv1.PatchOp_AddEdge{AddEdge: &daggerv1.AddEdgeOp{
+		&skiftv1.PatchOp{Op: &skiftv1.PatchOp_AddEdge{AddEdge: &skiftv1.AddEdgeOp{
 			From: gateAlias,
 			To:   gate.Blocks,
-			Kind: daggerv1.EdgeKind_EDGE_KIND_BLOCKS,
+			Kind: skiftv1.EdgeKind_EDGE_KIND_BLOCKS,
 		}}},
 	)
 	if err != nil {
@@ -164,10 +164,10 @@ func (c *Client) CreateGate(ctx context.Context, requestID, leaseID string, gate
 // setLabels replaces a node's label set. It is the half of [Client.Claim]
 // that names the node the claim filter will match.
 func (c *Client) setLabels(ctx context.Context, leaseID, requestID, ref string, labels []string) error {
-	_, err := c.ApplyPatch(ctx, requestID, leaseID, &daggerv1.PatchOp{
-		Op: &daggerv1.PatchOp_UpdateNode{UpdateNode: &daggerv1.UpdateNodeOp{
+	_, err := c.ApplyPatch(ctx, requestID, leaseID, &skiftv1.PatchOp{
+		Op: &skiftv1.PatchOp_UpdateNode{UpdateNode: &skiftv1.UpdateNodeOp{
 			Node:   ref,
-			Labels: &daggerv1.Labels{Values: labels},
+			Labels: &skiftv1.Labels{Values: labels},
 		}},
 	})
 	return err
@@ -182,14 +182,14 @@ func (c *Client) AttachText(ctx context.Context, requestID, leaseID, ref, name, 
 	if err != nil {
 		return fmt.Errorf("dagger: artifact %s metadata: %w", name, err)
 	}
-	_, err = c.ApplyPatch(ctx, requestID, leaseID, &daggerv1.PatchOp{
-		Op: &daggerv1.PatchOp_AttachArtifact{AttachArtifact: &daggerv1.AttachArtifactOp{
+	_, err = c.ApplyPatch(ctx, requestID, leaseID, &skiftv1.PatchOp{
+		Op: &skiftv1.PatchOp_AttachArtifact{AttachArtifact: &skiftv1.AttachArtifactOp{
 			Node: ref,
-			Artifact: &daggerv1.Artifact{
+			Artifact: &skiftv1.Artifact{
 				Name:        name,
 				Description: description,
-				Parts: []*daggerv1.Part{{
-					Content: &daggerv1.Part_Text{Text: &daggerv1.TextPart{
+				Parts: []*skiftv1.Part{{
+					Content: &skiftv1.Part_Text{Text: &skiftv1.TextPart{
 						Text:      body,
 						MediaType: "text/markdown",
 					}},
@@ -203,11 +203,11 @@ func (c *Client) AttachText(ctx context.Context, requestID, leaseID, ref, name, 
 
 // Artifacts are what a node carries. The `artifact` verifier reads them:
 // evidence of that kind is a digest dagger accepted, so dagger is asked.
-func (c *Client) Artifacts(ctx context.Context, ref string) ([]*daggerv1.Artifact, error) {
-	res, err := c.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{
+func (c *Client) Artifacts(ctx context.Context, ref string) ([]*skiftv1.Artifact, error) {
+	res, err := c.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{
 		Project: c.project,
 		Node:    ref,
-		View:    daggerv1.View_VIEW_FULL,
+		View:    skiftv1.View_VIEW_FULL,
 	}))
 	if err != nil {
 		return nil, fmt.Errorf("dagger: get artifacts of %s: %w", ref, err)
@@ -253,15 +253,15 @@ const GateLabel = "mill-gate"
 // until somebody answers it, so the rerun that finds it is often the one
 // that follows the answer, and a search for open gates alone would miss the
 // gate precisely when it is about to file a second.
-func (c *Client) Gates(ctx context.Context, parent string, labels ...string) ([]*daggerv1.Node, error) {
-	res, err := c.graph.ListNodes(ctx, connect.NewRequest(&daggerv1.ListNodesRequest{
-		Filter: &daggerv1.NodeFilter{
+func (c *Client) Gates(ctx context.Context, parent string, labels ...string) ([]*skiftv1.Node, error) {
+	res, err := c.graph.ListNodes(ctx, connect.NewRequest(&skiftv1.ListNodesRequest{
+		Filter: &skiftv1.NodeFilter{
 			Projects:     []string{c.project},
 			Parent:       parent,
-			AssigneeKind: daggerv1.AssigneeKind_ASSIGNEE_KIND_USER,
+			AssigneeKind: skiftv1.AssigneeKind_ASSIGNEE_KIND_USER,
 			Labels:       labels,
 		},
-		View: daggerv1.View_VIEW_FULL,
+		View: skiftv1.View_VIEW_FULL,
 	}))
 	if err != nil {
 		return nil, wrap("dagger: list the gates on "+parent, err)

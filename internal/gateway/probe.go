@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/ivy/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // ProbeModel is the model `mill doctor`'s request names. Counting tokens

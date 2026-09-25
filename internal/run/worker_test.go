@@ -15,15 +15,16 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/dagger"
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/harness/fake"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/workspace"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/dagger"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/harness/fake"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
@@ -59,7 +60,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			// The only open node is one a person must complete, and the
 			// only other is blocked by it. A worker sees nothing.
 			blocker := f.userNode(ctx, "a decision only a person can make", "Say yes or no.")
-			node := f.createNode(ctx, &daggerv1.CreateNodeOp{
+			node := f.createNode(ctx, &skiftv1.CreateNodeOp{
 				Title: "the work behind the decision", Body: "Change the README's first line.",
 				BlockedBy: []string{blocker},
 			})
@@ -92,7 +93,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 
 		It("blocks with no ready work and returns within a second of a node becoming ready", func() {
 			blocker := f.userNode(ctx, "a decision only a person can make", "Say yes or no.")
-			node := f.createNode(ctx, &daggerv1.CreateNodeOp{
+			node := f.createNode(ctx, &skiftv1.CreateNodeOp{
 				Title: "the work behind the decision", Body: "Change the README's first line.",
 				BlockedBy: []string{blocker},
 			})
@@ -139,12 +140,12 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 
 			worker := f.workerOver(f.runner(quick), func(o *run.WorkerOptions) { o.Labels = []string{"mill"} })
 			done := startWorker(ctx, worker)
-			Eventually(func() daggerv1.Status { return f.statusOf(ctx, mine) }, 2*time.Minute, 200*time.Millisecond).
-				Should(Equal(daggerv1.Status_STATUS_DONE))
+			Eventually(func() skiftv1.Status { return f.statusOf(ctx, mine) }, 2*time.Minute, 200*time.Millisecond).
+				Should(Equal(skiftv1.Status_STATUS_DONE))
 			worker.Stop()
 			Eventually(done, time.Minute).Should(Receive(BeNil()))
 
-			Expect(f.statusOf(ctx, theirs)).To(Equal(daggerv1.Status_STATUS_OPEN))
+			Expect(f.statusOf(ctx, theirs)).To(Equal(skiftv1.Status_STATUS_OPEN))
 			Expect(f.runOfRef(ctx, theirs)).To(BeNil(), "the unlabelled node was never claimed")
 		})
 	})
@@ -158,10 +159,10 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			worker := f.workerOver(f.runner(quick), func(o *run.WorkerOptions) { o.Concurrency = 1 })
 			done := startWorker(ctx, worker)
 
-			Eventually(func() []daggerv1.Status {
-				return []daggerv1.Status{f.statusOf(ctx, first), f.statusOf(ctx, second)}
-			}, 3*time.Minute, 200*time.Millisecond).Should(Equal([]daggerv1.Status{
-				daggerv1.Status_STATUS_DONE, daggerv1.Status_STATUS_DONE,
+			Eventually(func() []skiftv1.Status {
+				return []skiftv1.Status{f.statusOf(ctx, first), f.statusOf(ctx, second)}
+			}, 3*time.Minute, 200*time.Millisecond).Should(Equal([]skiftv1.Status{
+				skiftv1.Status_STATUS_DONE, skiftv1.Status_STATUS_DONE,
 			}))
 			Consistently(done, time.Second).ShouldNot(Receive(), "the loop asks for more work rather than ending")
 
@@ -216,8 +217,8 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			f.script(f.quickFixScripts()...)
 			next := f.workerOver(f.runner(quick))
 			resumed := startWorker(ctx, next)
-			Eventually(func() daggerv1.Status { return f.statusOf(ctx, node) }, 3*time.Minute, 200*time.Millisecond).
-				Should(Equal(daggerv1.Status_STATUS_DONE))
+			Eventually(func() skiftv1.Status { return f.statusOf(ctx, node) }, 3*time.Minute, 200*time.Millisecond).
+				Should(Equal(skiftv1.Status_STATUS_DONE))
 			next.Stop()
 			Eventually(resumed, time.Minute).Should(Receive(BeNil()))
 
@@ -290,7 +291,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 
 	Describe("A claim it cannot open, for a reason it did not choose", func() {
 		It("waits before reclaiming, with a bound that grows, and logs once per attempt rather than per cycle", func() {
-			f.createNode(ctx, &daggerv1.CreateNodeOp{Title: "a workspace that never opens", Body: "body"})
+			f.createNode(ctx, &skiftv1.CreateNodeOp{Title: "a workspace that never opens", Body: "body"})
 
 			boom := errors.New("workspace: the sandbox host is unreachable")
 
@@ -331,8 +332,8 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 
 	Describe("A project with no repository", func() {
 		It("holds each node it claims there, and warns once rather than once per node", func() {
-			first := f.createNode(ctx, &daggerv1.CreateNodeOp{Title: "first with no repository", Body: "body"})
-			second := f.createNode(ctx, &daggerv1.CreateNodeOp{Title: "second with no repository", Body: "body"})
+			first := f.createNode(ctx, &skiftv1.CreateNodeOp{Title: "first with no repository", Body: "body"})
+			second := f.createNode(ctx, &skiftv1.CreateNodeOp{Title: "second with no repository", Body: "body"})
 
 			// Repositories is resolved once per claim, from the project the
 			// claim carried, before either node is known apart: the project
@@ -344,7 +345,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			var calls atomic.Int64
 			warnings := &warnCounter{message: "a project has no repository; nodes there are held rather than claimed"}
 			worker := f.workerOver(f.runner(quick, func(o *run.Options) {
-				o.Repositories = func(context.Context, *daggerv1.Project) (run.Repository, error) {
+				o.Repositories = func(context.Context, *skiftv1.Project) (run.Repository, error) {
 					calls.Add(1)
 					return run.Repository{}, &forge.NoVCSURLError{Project: project}
 				}
@@ -402,7 +403,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			Eventually(setupDone, time.Minute).Should(Receive(BeNil()))
 
 			By("and a third, unrelated node ready but with no free slot at that concurrency")
-			third := f.createNode(ctx, &daggerv1.CreateNodeOp{
+			third := f.createNode(ctx, &skiftv1.CreateNodeOp{
 				Title: "a third fix with no free slot", Body: "Change the README's third line.",
 			})
 
@@ -428,8 +429,8 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			Expect(journal.String()).To(ContainSubstring("resumed " + second + ", aborted at"))
 
 			By("and no new node is claimed until one of them frees a slot")
-			Consistently(func() daggerv1.Status { return f.statusOf(ctx, third) }, 2*time.Second, 100*time.Millisecond).
-				Should(Equal(daggerv1.Status_STATUS_OPEN))
+			Consistently(func() skiftv1.Status { return f.statusOf(ctx, third) }, 2*time.Second, 100*time.Millisecond).
+				Should(Equal(skiftv1.Status_STATUS_OPEN))
 			Consistently(func() int64 { return counter.claims.Load() }, 2*time.Second, 100*time.Millisecond).
 				Should(Equal(int64(2)), "the third slot never opens because nothing frees the two reclaim took")
 		})

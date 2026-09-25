@@ -7,9 +7,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/store"
-	"github.com/ivy/mill/internal/testsupport"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/store"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // The twelve invariants of docs/ledger.md, one spec each. Each is enforced

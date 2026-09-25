@@ -23,12 +23,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/redact"
-	"github.com/ivy/mill/internal/workspace/signing"
-	"github.com/ivy/mill/internal/workspace/socket"
-	"github.com/ivy/mill/internal/workspace/verbs"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/redact"
+	"github.com/steading-ai/mill/internal/workspace/signing"
+	"github.com/steading-ai/mill/internal/workspace/socket"
+	"github.com/steading-ai/mill/internal/workspace/verbs"
 )
 
 // Names inside a run's directory. The socket and the signing material sit

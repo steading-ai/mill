@@ -16,11 +16,11 @@ import (
 	. "github.com/onsi/gomega"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/gen/mill/v1/millv1connect"
-	"github.com/ivy/mill/internal/domain"
-	"github.com/ivy/mill/internal/server"
-	"github.com/ivy/mill/internal/server/interceptor"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
+	"github.com/steading-ai/mill/internal/domain"
+	"github.com/steading-ai/mill/internal/server"
+	"github.com/steading-ai/mill/internal/server/interceptor"
 )
 
 // The uids the specs' role map names. They are invented rather than read

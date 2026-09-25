@@ -11,9 +11,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/workspace/machine/cache"
-	"github.com/ivy/mill/internal/workspace/machine/driver"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/workspace/machine/cache"
+	"github.com/steading-ai/mill/internal/workspace/machine/driver"
 )
 
 var _ = Describe("The doctor's workspace probe", Label("unit"), func() {

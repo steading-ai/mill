@@ -8,7 +8,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/workspace/machine/config"
+	"github.com/steading-ai/mill/internal/workspace/machine/config"
 )
 
 // checkout writes the named files into a fresh checkout root.

@@ -11,13 +11,13 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/harness/claude"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/skill"
-	"github.com/ivy/mill/internal/version"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/local"
-	"github.com/ivy/mill/internal/workspace/redact"
+	"github.com/steading-ai/mill/internal/harness/claude"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/skill"
+	"github.com/steading-ai/mill/internal/version"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/local"
+	"github.com/steading-ai/mill/internal/workspace/redact"
 )
 
 // The selector is where the backend is chosen, so its specs are written

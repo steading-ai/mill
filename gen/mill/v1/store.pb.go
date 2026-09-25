@@ -18,7 +18,7 @@
 package millv1
 
 import (
-	v1 "github.com/ivy/mill/gen/harness/v1"
+	v1 "github.com/steading-ai/mill/gen/harness/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
@@ -6261,7 +6261,7 @@ const file_mill_v1_store_proto_rawDesc = "" +
 	"\x06WhoAmI\x12\x16.mill.v1.WhoAmIRequest\x1a\x17.mill.v1.WhoAmIResponse\x125\n" +
 	"\x04Logs\x12\x14.mill.v1.LogsRequest\x1a\x15.mill.v1.LogsResponse0\x01\x12H\n" +
 	"\vSealAttempt\x12\x1b.mill.v1.SealAttemptRequest\x1a\x1c.mill.v1.SealAttemptResponse\x12D\n" +
-	"\tWatchRuns\x12\x19.mill.v1.WatchRunsRequest\x1a\x1a.mill.v1.WatchRunsResponse0\x01B(Z&github.com/ivy/mill/gen/mill/v1;millv1b\x06proto3"
+	"\tWatchRuns\x12\x19.mill.v1.WatchRunsRequest\x1a\x1a.mill.v1.WatchRunsResponse0\x01B0Z.github.com/steading-ai/mill/gen/mill/v1;millv1b\x06proto3"
 
 var (
 	file_mill_v1_store_proto_rawDescOnce sync.Once

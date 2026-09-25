@@ -15,11 +15,11 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/cli"
-	"github.com/ivy/mill/internal/forge/github"
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/signing"
+	"github.com/steading-ai/mill/internal/cli"
+	"github.com/steading-ai/mill/internal/forge/github"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/signing"
 )
 
 // The GitHub forge as the mill reaches it: selected from the project's

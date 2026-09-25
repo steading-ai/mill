@@ -14,11 +14,11 @@ import (
 
 	"connectrpc.com/connect"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/cli"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/testsupport"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/cli"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // appendActivity and textActivity are internal/testsupport's, shared with

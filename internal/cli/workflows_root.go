@@ -7,9 +7,9 @@ import (
 	"os"
 	"path/filepath"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/domain"
-	"github.com/ivy/mill/internal/workflow"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/domain"
+	"github.com/steading-ai/mill/internal/workflow"
 )
 
 // pushWorkflowsRoot pushes every workflow directory under root — one

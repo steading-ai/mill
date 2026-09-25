@@ -15,16 +15,17 @@ import (
 	"errors"
 	"fmt"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/workspace/machine"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/workspace/machine"
 )
 
 // Projects is what the dagger adapter needs of a client: the three project
 // verbs of internal/dagger's [dagger.Client].
 type Projects interface {
-	ListProjects(ctx context.Context) ([]*daggerv1.Project, error)
-	ArchiveProject(ctx context.Context, slug string) (*daggerv1.Project, error)
+	ListProjects(ctx context.Context) ([]*skiftv1.Project, error)
+	ArchiveProject(ctx context.Context, slug string) (*skiftv1.Project, error)
 	DeleteProject(ctx context.Context, slug string) error
 }
 

@@ -13,12 +13,12 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/machine"
-	"github.com/ivy/mill/internal/workspace/machine/cache"
-	"github.com/ivy/mill/internal/workspace/machine/driver"
-	"github.com/ivy/mill/internal/workspace/machine/image"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/machine"
+	"github.com/steading-ai/mill/internal/workspace/machine/cache"
+	"github.com/steading-ai/mill/internal/workspace/machine/driver"
+	"github.com/steading-ai/mill/internal/workspace/machine/image"
 )
 
 // The nested live tier: a machine granted `[machine].nested` on `core`,

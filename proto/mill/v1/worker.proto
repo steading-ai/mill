@@ -7,7 +7,7 @@ syntax = "proto3";
 
 package mill.v1;
 
-option go_package = "github.com/ivy/mill/gen/mill/v1;millv1";
+option go_package = "github.com/steading-ai/mill/gen/mill/v1;millv1";
 
 // WorkerService is the worker's own door, mounted only in a process
 // actually running one (`mill serve --work`; docs/architecture.md §"One

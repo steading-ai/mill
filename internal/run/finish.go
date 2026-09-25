@@ -9,12 +9,13 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/dagger"
-	"github.com/ivy/mill/internal/gateway"
-	"github.com/ivy/mill/internal/harness"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/dagger"
+	"github.com/steading-ai/mill/internal/gateway"
+	"github.com/steading-ai/mill/internal/harness"
 )
 
 // recordUsage appends what an attempt billed to the ledger, one row per
@@ -162,8 +163,8 @@ const completeStep = "complete"
 // the body, and the run's references and usage as artifacts. Every
 // artifact's metadata carries the run id (docs/ledger.md §"What goes to
 // dagger, and when").
-func (r *Runner) result(s *state, detail *millv1.InspectResponse) *daggerv1.Result {
-	result := &daggerv1.Result{Body: s.summary}
+func (r *Runner) result(s *state, detail *millv1.InspectResponse) *skiftv1.Result {
+	result := &skiftv1.Result{Body: s.summary}
 	if result.Body == "" {
 		result.Body = fmt.Sprintf("Run %s of %s completed every step of workflow %s.",
 			s.run.GetId(), s.node.GetReference(), s.workflow.GetName())
@@ -190,12 +191,12 @@ func (r *Runner) result(s *state, detail *millv1.InspectResponse) *daggerv1.Resu
 // the digest is over the reference itself. It identifies what was recorded,
 // which is the fact mill is attesting to; byte integrity of the referenced
 // content is the forge's claim and not mill's.
-func reference(s *state, name, description, value string) *daggerv1.Artifact {
-	return &daggerv1.Artifact{
+func reference(s *state, name, description, value string) *skiftv1.Artifact {
+	return &skiftv1.Artifact{
 		Name:        name,
 		Description: description,
-		Parts: []*daggerv1.Part{{
-			Content: &daggerv1.Part_Reference{Reference: &daggerv1.ReferencePart{
+		Parts: []*skiftv1.Part{{
+			Content: &skiftv1.Part_Reference{Reference: &skiftv1.ReferencePart{
 				Uri:       value,
 				Digest:    digest(value),
 				MediaType: "text/plain",
@@ -208,12 +209,12 @@ func reference(s *state, name, description, value string) *daggerv1.Artifact {
 
 // text is an artifact carrying its own content: the usage summary, and the
 // plan and verdicts a longer workflow produces.
-func text(s *state, name, description, body string) *daggerv1.Artifact {
-	return &daggerv1.Artifact{
+func text(s *state, name, description, body string) *skiftv1.Artifact {
+	return &skiftv1.Artifact{
 		Name:        name,
 		Description: description,
-		Parts: []*daggerv1.Part{{
-			Content: &daggerv1.Part_Text{Text: &daggerv1.TextPart{
+		Parts: []*skiftv1.Part{{
+			Content: &skiftv1.Part_Text{Text: &skiftv1.TextPart{
 				Text:      body,
 				MediaType: "text/markdown",
 			}},

@@ -12,11 +12,11 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/gateway"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/server/interceptor"
-	"github.com/ivy/mill/internal/workspace/local"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/gateway"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/server/interceptor"
+	"github.com/steading-ai/mill/internal/workspace/local"
 )
 
 // The tools `mill mcp` offers. Each is one CLI command with its flags as

@@ -8,7 +8,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/forge"
 )
 
 // stubForge is a forge that does nothing, for the specs about resolution and
@@ -78,7 +78,7 @@ var _ = Describe("The forge registry", Label("unit"), func() {
 	It("names the forge it has no adapter for", func() {
 		_, err := registry.For(forge.Project{
 			Slug:   "elsewhere",
-			VCSURL: "https://github.com/ivy/mill.git",
+			VCSURL: "https://github.com/steading-ai/mill.git",
 		}, nil)
 
 		var unsupported *forge.UnsupportedError
@@ -107,9 +107,9 @@ var _ = Describe("The forge registry", Label("unit"), func() {
 			Kind: forge.KindGitLab, BaseURL: "https://gitlab.example.test",
 			Path: "group/thing", CloneURL: "https://gitlab.example.test/group/thing.git",
 		}),
-		Entry("github, which is a kind and not an implementation", "https://github.com/ivy/mill.git", forge.Repo{
+		Entry("github, which is a kind and not an implementation", "https://github.com/steading-ai/mill.git", forge.Repo{
 			Kind: forge.KindGitHub, BaseURL: "https://github.com",
-			Path: "ivy/mill", CloneURL: "https://github.com/ivy/mill.git",
+			Path: "steading-ai/mill", CloneURL: "https://github.com/steading-ai/mill.git",
 		}),
 	)
 

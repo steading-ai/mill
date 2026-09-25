@@ -11,10 +11,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/machine"
-	"github.com/ivy/mill/internal/workspace/machine/driver"
-	"github.com/ivy/mill/internal/workspace/machine/image"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/machine"
+	"github.com/steading-ai/mill/internal/workspace/machine/driver"
+	"github.com/steading-ai/mill/internal/workspace/machine/image"
 )
 
 // fakeLedger is the store as reconciliation sees it: the live runs a spec

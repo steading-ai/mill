@@ -5,7 +5,7 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/ivy/mill/gen/mill/v1/millv1connect"
+	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
 )
 
 // socketURL is the base every request is made against. The host is never

@@ -10,8 +10,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/forge/github"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/forge/github"
 )
 
 var _ = Describe("The GitHub forge adapter", Label("unit"), func() {

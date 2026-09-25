@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/server"
+	"github.com/steading-ai/mill/internal/server"
 )
 
 var _ = Describe("The observer", Label("unit"), func() {

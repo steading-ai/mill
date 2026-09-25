@@ -15,12 +15,12 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/forge/gitlab"
-	"github.com/ivy/mill/internal/sweep"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/machine"
-	"github.com/ivy/mill/internal/workspace/signing"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/forge/gitlab"
+	"github.com/steading-ai/mill/internal/sweep"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/machine"
+	"github.com/steading-ai/mill/internal/workspace/signing"
 )
 
 // The forge half of the live tier, as the acceptance suite names it

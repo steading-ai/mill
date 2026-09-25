@@ -15,7 +15,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
 
-	"github.com/ivy/mill/internal/workspace/machine/config"
+	"github.com/steading-ai/mill/internal/workspace/machine/config"
 )
 
 // The Claude Code plugin: the `.mcp.json` that starts `mill mcp` and the
@@ -47,7 +47,7 @@ type describedTool struct {
 // millBinary builds the binary once for the specs that drive it.
 func millBinary() string {
 	GinkgoHelper()
-	path, err := gexec.Build("github.com/ivy/mill/cmd/mill")
+	path, err := gexec.Build("github.com/steading-ai/mill/cmd/mill")
 	Expect(err).NotTo(HaveOccurred())
 	DeferCleanup(gexec.CleanupBuildArtifacts)
 	return path

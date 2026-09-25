@@ -1,6 +1,6 @@
 package server
 
-import millv1 "github.com/ivy/mill/gen/mill/v1"
+import millv1 "github.com/steading-ai/mill/gen/mill/v1"
 
 // Rate is what a model costs, in dollars per million tokens, split by how a
 // token was spent.

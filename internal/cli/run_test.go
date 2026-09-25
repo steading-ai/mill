@@ -14,11 +14,12 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	"github.com/ivy/mill/internal/cli"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/workspace/socket"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	"github.com/steading-ai/mill/internal/cli"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/workspace/socket"
 )
 
 var _ = Describe("mill run", func() {
@@ -465,7 +466,7 @@ var _ = Describe("mill run", func() {
 			Expect(stderr.String()).To(ContainSubstring("dg project update " + daggerProject + " --vcs-url"))
 			Expect(stderr.String()).NotTo(ContainSubstring("label"))
 			Expect(filepath.Glob(filepath.Join(workspaces, "*", "*"))).To(BeEmpty(), "nothing was cloned")
-			res, err := g.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{Project: daggerProject, Node: g.nodeRef}))
+			res, err := g.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{Project: daggerProject, Node: g.nodeRef}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(res.Msg.GetNode().GetClaimed()).To(BeTrue(), "the failed run's lease is still held, so the node is not reclaimed into the same refusal")
 			Expect(res.Msg.GetNode().GetHold().GetReason()).To(HavePrefix("no repository"))

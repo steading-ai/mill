@@ -3,7 +3,7 @@ package config
 import (
 	"path/filepath"
 
-	"github.com/ivy/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // Bind is one bind mount into the machine, host side to machine side

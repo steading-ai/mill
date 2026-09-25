@@ -7,8 +7,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/cli"
-	"github.com/ivy/mill/internal/run"
+	"github.com/steading-ai/mill/internal/cli"
+	"github.com/steading-ai/mill/internal/run"
 )
 
 // ask is a filed gate as the terminal is asked to render it.

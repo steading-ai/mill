@@ -22,16 +22,16 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
 
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/forge/gitlab"
-	"github.com/ivy/mill/internal/skill"
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/version"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/machine"
-	machineconfig "github.com/ivy/mill/internal/workspace/machine/config"
-	"github.com/ivy/mill/internal/workspace/machine/driver"
-	"github.com/ivy/mill/internal/workspace/machine/image"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/forge/gitlab"
+	"github.com/steading-ai/mill/internal/skill"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/version"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/machine"
+	machineconfig "github.com/steading-ai/mill/internal/workspace/machine/config"
+	"github.com/steading-ai/mill/internal/workspace/machine/driver"
+	"github.com/steading-ai/mill/internal/workspace/machine/image"
 )
 
 // The live tier: a real machine on `core` through the real driver, as the
@@ -410,7 +410,7 @@ var _ = Describe("A machine on a real host", Label("live"), Serial, Ordered, fun
 		By("and the breadcrumb beside SKILL.md is what mill version prints")
 		out, status = inMachine(name, "agent", "cat", machineconfig.SkillPath+"/"+skill.VersionFile)
 		Expect(status).To(BeZero(), out)
-		binary, err := gexec.Build("github.com/ivy/mill/cmd/mill")
+		binary, err := gexec.Build("github.com/steading-ai/mill/cmd/mill")
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(gexec.CleanupBuildArtifacts)
 		Expect(strings.TrimSpace(must(binary, "version"))).To(Equal("mill version " + strings.TrimSpace(out)))

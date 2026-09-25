@@ -16,13 +16,13 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/cli"
-	"github.com/ivy/mill/internal/domain"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/server"
-	"github.com/ivy/mill/internal/server/interceptor"
-	"github.com/ivy/mill/internal/testsupport"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/cli"
+	"github.com/steading-ai/mill/internal/domain"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/server"
+	"github.com/steading-ai/mill/internal/server/interceptor"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // session is `mill mcp` running over a pair of pipes, spoken to the way a

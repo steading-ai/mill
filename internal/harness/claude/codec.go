@@ -5,7 +5,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
 )
 
 // The wire is newline-delimited protojson: one harness.v1 message per line,

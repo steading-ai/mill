@@ -12,8 +12,8 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"gopkg.in/yaml.v3"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/evidence"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/evidence"
 )
 
 // document is `workflow.yaml`: the mill record for one workflow, mapping
@@ -243,7 +243,7 @@ func (d document) toProto() (*millv1.Workflow, error) {
 
 // toProto fills the documented defaults for a `status` step's watch — the
 // interval it asks on and the cap it gives up at — so that what is stored is
-// what a run reads. [github.com/ivy/mill/internal/evidence] owns the
+// what a run reads. [github.com/steading-ai/mill/internal/evidence] owns the
 // numbers; the loader only writes them down.
 func (s *statusYAML) toProto() (*millv1.StatusPolicy, error) {
 	policy := &millv1.StatusPolicy{

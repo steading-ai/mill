@@ -169,7 +169,7 @@ func (p *Postgres) Database(ctx context.Context) *pgxpool.Pool {
 // Blank hands the running spec its own empty database and returns its
 // connection URL, dropping it when the spec ends. It is what a fixture that
 // brings its own migrations needs — the dagger service in
-// [github.com/ivy/mill/internal/testsupport.Dagger] — where [Postgres.Database]
+// [github.com/steading-ai/mill/internal/testsupport.Dagger] — where [Postgres.Database]
 // hands out a clone of mill's own schema.
 func (p *Postgres) Blank(ctx context.Context) string {
 	ginkgo.GinkgoHelper()

@@ -4,7 +4,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/workspace/machine/config"
+	"github.com/steading-ai/mill/internal/workspace/machine/config"
 )
 
 // The repository's own declaration (docs/sandbox.md §Self-hosting, step 3):

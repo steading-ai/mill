@@ -26,7 +26,7 @@ linters:
             - "!**/internal/domain/**"
             - "!**/internal/store/**"
           deny:
-            - pkg: github.com/ivy/mill/internal/store
+            - pkg: github.com/steading-ai/mill/internal/store
               desc: only the domain layer may import the store
     forbidigo:
       analyze-types: true
@@ -79,4 +79,4 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - github.com/ivy/mill
+        - github.com/steading-ai/mill

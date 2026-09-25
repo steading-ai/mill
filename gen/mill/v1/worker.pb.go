@@ -310,7 +310,7 @@ const file_mill_v1_worker_proto_rawDesc = "" +
 	"\x06labels\x18\x03 \x03(\tR\x06labels2\x82\x01\n" +
 	"\rWorkerService\x126\n" +
 	"\x05Probe\x12\x15.mill.v1.ProbeRequest\x1a\x16.mill.v1.ProbeResponse\x129\n" +
-	"\x06Claims\x12\x16.mill.v1.ClaimsRequest\x1a\x17.mill.v1.ClaimsResponseB(Z&github.com/ivy/mill/gen/mill/v1;millv1b\x06proto3"
+	"\x06Claims\x12\x16.mill.v1.ClaimsRequest\x1a\x17.mill.v1.ClaimsResponseB0Z.github.com/steading-ai/mill/gen/mill/v1;millv1b\x06proto3"
 
 var (
 	file_mill_v1_worker_proto_rawDescOnce sync.Once

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 )
 
 // Lookup is what resolving a name needs of the store: the newest version of

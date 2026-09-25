@@ -29,16 +29,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/machine/cache"
-	"github.com/ivy/mill/internal/workspace/machine/config"
-	"github.com/ivy/mill/internal/workspace/machine/driver"
-	"github.com/ivy/mill/internal/workspace/machine/image"
-	"github.com/ivy/mill/internal/workspace/redact"
-	"github.com/ivy/mill/internal/workspace/signing"
-	"github.com/ivy/mill/internal/workspace/socket"
-	"github.com/ivy/mill/internal/workspace/verbs"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/machine/cache"
+	"github.com/steading-ai/mill/internal/workspace/machine/config"
+	"github.com/steading-ai/mill/internal/workspace/machine/driver"
+	"github.com/steading-ai/mill/internal/workspace/machine/image"
+	"github.com/steading-ai/mill/internal/workspace/redact"
+	"github.com/steading-ai/mill/internal/workspace/signing"
+	"github.com/steading-ai/mill/internal/workspace/socket"
+	"github.com/steading-ai/mill/internal/workspace/verbs"
 )
 
 // The host's layout, as the driver names it (docs/sandbox.md §Storage).

@@ -12,9 +12,9 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/domain"
-	"github.com/ivy/mill/internal/run"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/domain"
+	"github.com/steading-ai/mill/internal/run"
 )
 
 // truncatedLimit is how large a followed record's body may be before Logs

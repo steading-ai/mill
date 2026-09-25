@@ -13,8 +13,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/workspace/machine/driver"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/workspace/machine/driver"
 )
 
 // gitEnv is what the specs' own git invocations run with.

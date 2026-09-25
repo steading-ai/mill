@@ -5,7 +5,7 @@ import (
 
 	"connectrpc.com/connect"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
 )
 
 // AnswerGate is the one write in this package that is not mill's. It is the
@@ -24,26 +24,26 @@ import (
 //
 // It is called from one place — `mill run`'s terminal prompt — and never
 // from the run loop.
-func (c *Client) AnswerGate(ctx context.Context, requestID, ref string, approve bool, result *daggerv1.Result) error {
+func (c *Client) AnswerGate(ctx context.Context, requestID, ref string, approve bool, result *skiftv1.Result) error {
 	// A denial is a drop with no cascade: the gate goes and the node it
 	// blocked stays, so the run can complete that node with the gate's
 	// deny_result and say why.
-	op := &daggerv1.PatchOp{Op: &daggerv1.PatchOp_DropNode{DropNode: &daggerv1.DropNodeOp{
+	op := &skiftv1.PatchOp{Op: &skiftv1.PatchOp_DropNode{DropNode: &skiftv1.DropNodeOp{
 		Node:   ref,
-		Reason: daggerv1.DropReason_DROP_REASON_OTHER,
+		Reason: skiftv1.DropReason_DROP_REASON_OTHER,
 		Detail: result.GetBody(),
 	}}}
 	if approve {
-		op = &daggerv1.PatchOp{Op: &daggerv1.PatchOp_CompleteNode{CompleteNode: &daggerv1.CompleteNodeOp{
+		op = &skiftv1.PatchOp{Op: &skiftv1.PatchOp_CompleteNode{CompleteNode: &skiftv1.CompleteNodeOp{
 			Node:   ref,
 			Result: result,
 		}}}
 	}
-	_, err := c.graph.ApplyPatch(ctx, connect.NewRequest(&daggerv1.ApplyPatchRequest{
+	_, err := c.graph.ApplyPatch(ctx, connect.NewRequest(&skiftv1.ApplyPatchRequest{
 		RequestId: requestID,
 		Project:   c.project,
-		Ops:       []*daggerv1.PatchOp{op},
-		View:      daggerv1.View_VIEW_REFS,
+		Ops:       []*skiftv1.PatchOp{op},
+		View:      skiftv1.View_VIEW_REFS,
 	}))
 	return wrap("dagger: answer gate "+ref, err)
 }

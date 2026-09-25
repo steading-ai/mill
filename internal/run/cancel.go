@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 )
 
 // Cancellation is what `mill cancel` asks of a running worker, and the whole
@@ -49,7 +50,7 @@ func (r *Runner) cancelStep(ctx context.Context, s *state) error {
 	}); err != nil {
 		return err
 	}
-	if err := r.options.Dagger.Release(ctx, s.leaseID(), daggerv1.ReleaseReason_RELEASE_REASON_PREEMPTED, "cancel"); err != nil {
+	if err := r.options.Dagger.Release(ctx, s.leaseID(), skiftv1.ReleaseReason_RELEASE_REASON_PREEMPTED, "cancel"); err != nil {
 		return err
 	}
 	r.printf("cancelled; run %s stays resumable\n", s.run.GetId())

@@ -11,6 +11,6 @@ import (
 
 var _ = Describe("cwdSlug", Label("unit"), func() {
 	It("matches the one example docs/spikes/sdk-sessions.md recorded (§Q1)", func() {
-		Expect(cwdSlug("/home/ivy/src/github.com/ivy/mill")).To(Equal("-home-ivy-src-github-com-ivy-mill"))
+		Expect(cwdSlug("/home/ivy/src/github.com/steading-ai/mill")).To(Equal("-home-ivy-src-github-com-ivy-mill"))
 	})
 })

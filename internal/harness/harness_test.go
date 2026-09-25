@@ -9,9 +9,9 @@ import (
 	. "github.com/onsi/gomega"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/harness/fake"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/harness/fake"
 )
 
 var _ = Describe("The harness interface", Label("unit"), func() {

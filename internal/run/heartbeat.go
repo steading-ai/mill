@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 )
 
 // heartbeat holds the lease for the whole run, in a goroutine independent of

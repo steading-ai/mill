@@ -6,13 +6,14 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/harness/fake"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/testsupport"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/harness/fake"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // knownOptions are the keys the harness in these specs has. It stands in for
@@ -125,6 +126,6 @@ var _ = Describe("A step's harness options", Label(testsupport.DBLabel), func() 
 		node, err := f.client.Node(ctx, f.nodeRef)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(node.GetHold().GetReason()).To(And(ContainSubstring("other"), ContainSubstring("pr")))
-		Expect(node.GetStatus()).To(Equal(daggerv1.Status_STATUS_OPEN))
+		Expect(node.GetStatus()).To(Equal(skiftv1.Status_STATUS_OPEN))
 	})
 })

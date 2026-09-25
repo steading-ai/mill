@@ -8,7 +8,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/store/migrations"
+	"github.com/steading-ai/mill/internal/store/migrations"
 )
 
 // 00001 creates the mill_app role with a check-then-create that is not

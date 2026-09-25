@@ -9,9 +9,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	"github.com/ivy/mill/internal/dagger"
-	"github.com/ivy/mill/internal/testsupport"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	"github.com/steading-ai/mill/internal/dagger"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // errNotYetExpired keeps a poll going until the lease's own expiry has
@@ -33,7 +34,7 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 
 	Describe("Claiming a named node", func() {
 		It("takes a lease carrying harness, agent and session references", func() {
-			ref := f.node(ctx, "one line change", "Change the README.", daggerv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
+			ref := f.node(ctx, "one line change", "Change the README.", skiftv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
 
 			claimed, err := f.mill.Claim(ctx, ref)
 			Expect(err).NotTo(HaveOccurred())
@@ -44,11 +45,11 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 		})
 
 		It("carries the project the node was claimed in, with the repository it delivers to", func() {
-			_, err := f.graph.UpdateProject(ctx, connect.NewRequest(&daggerv1.UpdateProjectRequest{
+			_, err := f.graph.UpdateProject(ctx, connect.NewRequest(&skiftv1.UpdateProjectRequest{
 				RequestId: "mill-spec-vcs-url", Project: projectSlug, VcsUrl: ptr("https://gitlab.example.test/group/thing.git"),
 			}))
 			Expect(err).NotTo(HaveOccurred())
-			ref := f.node(ctx, "delivered", "body", daggerv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
+			ref := f.node(ctx, "delivered", "body", skiftv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
 
 			claimed, err := f.mill.Claim(ctx, ref)
 			Expect(err).NotTo(HaveOccurred())
@@ -57,7 +58,7 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 		})
 
 		It("leaves the node's labels as it found them", func() {
-			ref := f.node(ctx, "labelled", "body", daggerv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
+			ref := f.node(ctx, "labelled", "body", skiftv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
 
 			_, err := f.mill.Claim(ctx, ref)
 			Expect(err).NotTo(HaveOccurred())
@@ -68,8 +69,8 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 		})
 
 		It("explains a node that is not ready rather than waiting for it", func() {
-			blocker := f.node(ctx, "first", "body", daggerv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
-			blocked := f.node(ctx, "second", "body", daggerv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
+			blocker := f.node(ctx, "first", "body", skiftv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
+			blocked := f.node(ctx, "second", "body", skiftv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
 			f.link(ctx, blocker, blocked)
 
 			_, err := f.mill.Claim(ctx, blocked)
@@ -83,7 +84,7 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 		var gate string
 
 		BeforeEach(func() {
-			gate = f.node(ctx, "merge?", "Approve the merge.", daggerv1.AssigneeKind_ASSIGNEE_KIND_USER)
+			gate = f.node(ctx, "merge?", "Approve the merge.", skiftv1.AssigneeKind_ASSIGNEE_KIND_USER)
 		})
 
 		It("refuses to claim it", func() {
@@ -93,15 +94,15 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 		})
 
 		It("refuses to complete it", func() {
-			err := f.mill.Complete(ctx, "mill-spec-complete", "", gate, &daggerv1.Result{Body: "approved"})
+			err := f.mill.Complete(ctx, "mill-spec-complete", "", gate, &skiftv1.Result{Body: "approved"})
 			Expect(err).To(MatchError(dagger.ErrUserNode))
 			Expect(err.Error()).To(ContainSubstring("refusing to complete"))
 		})
 
 		It("refuses to drop it", func() {
-			_, err := f.mill.ApplyPatch(ctx, "mill-spec-drop", "", &daggerv1.PatchOp{
-				Op: &daggerv1.PatchOp_DropNode{DropNode: &daggerv1.DropNodeOp{
-					Node: gate, Reason: daggerv1.DropReason_DROP_REASON_NO_LONGER_RELEVANT,
+			_, err := f.mill.ApplyPatch(ctx, "mill-spec-drop", "", &skiftv1.PatchOp{
+				Op: &skiftv1.PatchOp_DropNode{DropNode: &skiftv1.DropNodeOp{
+					Node: gate, Reason: skiftv1.DropReason_DROP_REASON_NO_LONGER_RELEVANT,
 				}},
 			})
 			Expect(err).To(MatchError(dagger.ErrUserNode))
@@ -109,9 +110,9 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 		})
 
 		It("refuses to reclassify it", func() {
-			agent := daggerv1.AssigneeKind_ASSIGNEE_KIND_AGENT
-			_, err := f.mill.ApplyPatch(ctx, "mill-spec-reclassify", "", &daggerv1.PatchOp{
-				Op: &daggerv1.PatchOp_UpdateNode{UpdateNode: &daggerv1.UpdateNodeOp{
+			agent := skiftv1.AssigneeKind_ASSIGNEE_KIND_AGENT
+			_, err := f.mill.ApplyPatch(ctx, "mill-spec-reclassify", "", &skiftv1.PatchOp{
+				Op: &skiftv1.PatchOp_UpdateNode{UpdateNode: &skiftv1.UpdateNodeOp{
 					Node: gate, AssigneeKind: &agent,
 				}},
 			})
@@ -120,12 +121,12 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 		})
 
 		It("refuses to unlink it", func() {
-			work := f.node(ctx, "the work", "body", daggerv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
+			work := f.node(ctx, "the work", "body", skiftv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
 			f.link(ctx, gate, work)
 
-			_, err := f.mill.ApplyPatch(ctx, "mill-spec-unlink", "", &daggerv1.PatchOp{
-				Op: &daggerv1.PatchOp_RemoveEdge{RemoveEdge: &daggerv1.RemoveEdgeOp{
-					From: gate, To: work, Kind: daggerv1.EdgeKind_EDGE_KIND_BLOCKS,
+			_, err := f.mill.ApplyPatch(ctx, "mill-spec-unlink", "", &skiftv1.PatchOp{
+				Op: &skiftv1.PatchOp_RemoveEdge{RemoveEdge: &skiftv1.RemoveEdgeOp{
+					From: gate, To: work, Kind: skiftv1.EdgeKind_EDGE_KIND_BLOCKS,
 				}},
 			})
 			Expect(err).To(MatchError(dagger.ErrUserNode))
@@ -133,7 +134,7 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 		})
 
 		It("refuses one it filed itself", func() {
-			work := f.node(ctx, "the work", "body", daggerv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
+			work := f.node(ctx, "the work", "body", skiftv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
 			claimed, err := f.mill.Claim(ctx, work)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -143,10 +144,10 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 				Blocks: work,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(filed.GetAssigneeKind()).To(Equal(daggerv1.AssigneeKind_ASSIGNEE_KIND_USER))
+			Expect(filed.GetAssigneeKind()).To(Equal(skiftv1.AssigneeKind_ASSIGNEE_KIND_USER))
 
 			err = f.mill.Complete(ctx, "mill-spec-complete-own", claimed.Lease.GetId(),
-				filed.GetReference(), &daggerv1.Result{Body: "approved"})
+				filed.GetReference(), &skiftv1.Result{Body: "approved"})
 			Expect(err).To(MatchError(dagger.ErrUserNode))
 		})
 
@@ -155,12 +156,12 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 			// applies no gate veto to a user. The refusal above is
 			// therefore mill's own discipline, which is only worth
 			// asserting beside the proof that dagger permits the act.
-			_, err := f.graph.ApplyPatch(ctx, connect.NewRequest(&daggerv1.ApplyPatchRequest{
+			_, err := f.graph.ApplyPatch(ctx, connect.NewRequest(&skiftv1.ApplyPatchRequest{
 				RequestId: "spec-complete-gate",
 				Project:   f.project,
-				Ops: []*daggerv1.PatchOp{{Op: &daggerv1.PatchOp_CompleteNode{CompleteNode: &daggerv1.CompleteNodeOp{
+				Ops: []*skiftv1.PatchOp{{Op: &skiftv1.PatchOp_CompleteNode{CompleteNode: &skiftv1.CompleteNodeOp{
 					Node:   gate,
-					Result: &daggerv1.Result{Body: "approved"},
+					Result: &skiftv1.Result{Body: "approved"},
 				}}}},
 			}))
 			Expect(err).NotTo(HaveOccurred())
@@ -170,8 +171,8 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 	Describe("Claiming across projects", func() {
 		It("an unscoped client claims a ready node from either project", func() {
 			second := f.secondProject(ctx)
-			refA := f.node(ctx, "in the first project", "body", daggerv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
-			refB := f.nodeIn(ctx, second, "in the second project", "body", daggerv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
+			refA := f.node(ctx, "in the first project", "body", skiftv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
+			refB := f.nodeIn(ctx, second, "in the second project", "body", skiftv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
 
 			unscoped := f.unscoped()
 			first, err := unscoped.ClaimNext(ctx, nil, nil, time.Second)
@@ -188,7 +189,7 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 
 		It("a client scoped to one project does not see the other's ready node", func() {
 			second := f.secondProject(ctx)
-			f.nodeIn(ctx, second, "only in the second project", "body", daggerv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
+			f.nodeIn(ctx, second, "only in the second project", "body", skiftv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
 
 			claimed, err := f.mill.ClaimNext(ctx, []string{f.project}, nil, time.Second)
 			Expect(err).NotTo(HaveOccurred())
@@ -199,8 +200,8 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 	Describe("Scoped", func() {
 		It("carries every post-claim write and gate read for the project the claim landed in", func() {
 			second := f.secondProject(ctx)
-			ref := f.nodeIn(ctx, second, "elsewhere", "body", daggerv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
-			lost := f.nodeIn(ctx, second, "elsewhere too", "body", daggerv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
+			ref := f.nodeIn(ctx, second, "elsewhere", "body", skiftv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
+			lost := f.nodeIn(ctx, second, "elsewhere too", "body", skiftv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
 
 			unscoped := f.unscoped()
 			claimed, err := unscoped.ClaimNext(ctx, []string{second}, nil, time.Second)
@@ -233,7 +234,7 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 			Expect(artifacts).To(HaveLen(1))
 
 			Expect(scoped.Complete(ctx, "mill-spec-scoped-complete", claimed.Lease.GetId(), ref,
-				&daggerv1.Result{Body: "done"})).To(Succeed())
+				&skiftv1.Result{Body: "done"})).To(Succeed())
 
 			// Hold's own lease: it fences lost, not ref, and a lease is only
 			// live for the node it was taken on.
@@ -249,7 +250,7 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 
 	Describe("Fencing", func() {
 		It("reports a heartbeat on an expired lease as fenced", func() {
-			ref := f.node(ctx, "short lease", "body", daggerv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
+			ref := f.node(ctx, "short lease", "body", skiftv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
 
 			claimed, err := f.mill.Claim(ctx, ref)
 			Expect(err).NotTo(HaveOccurred())
@@ -280,7 +281,7 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 
 	Describe("Projects, for the reconciliation sweep", func() {
 		It("reads its own project by slug, with the repository it delivers to", func() {
-			_, err := f.graph.UpdateProject(ctx, connect.NewRequest(&daggerv1.UpdateProjectRequest{
+			_, err := f.graph.UpdateProject(ctx, connect.NewRequest(&skiftv1.UpdateProjectRequest{
 				RequestId: "mill-spec-vcs-url-get", Project: projectSlug, VcsUrl: ptr("https://gitlab.example.test/group/own.git"),
 			}))
 			Expect(err).NotTo(HaveOccurred())
@@ -292,7 +293,7 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 		})
 
 		It("lists the active projects, archives one by slug, and says delete is not offered", func() {
-			_, err := f.graph.CreateProject(ctx, connect.NewRequest(&daggerv1.CreateProjectRequest{
+			_, err := f.graph.CreateProject(ctx, connect.NewRequest(&skiftv1.CreateProjectRequest{
 				RequestId: "mill-spec-scratch", Title: "scratch", Slug: "mill-acceptance-x-0badcafe",
 			}))
 			Expect(err).NotTo(HaveOccurred())
@@ -314,12 +315,12 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 		})
 
 		It("holds a node with a reason, so it leaves the ready set until a person releases it", func() {
-			ref := f.node(ctx, "lost", "body", daggerv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
+			ref := f.node(ctx, "lost", "body", skiftv1.AssigneeKind_ASSIGNEE_KIND_UNSPECIFIED)
 			claimed, err := f.mill.Claim(ctx, ref)
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(f.mill.Hold(ctx, "mill-spec-hold", claimed.Lease.GetId(), ref, "lost sandbox: mill-x is gone")).To(Succeed())
-			Expect(f.mill.Release(ctx, claimed.Lease.GetId(), daggerv1.ReleaseReason_RELEASE_REASON_CRASH, "lost sandbox")).To(Succeed())
+			Expect(f.mill.Release(ctx, claimed.Lease.GetId(), skiftv1.ReleaseReason_RELEASE_REASON_CRASH, "lost sandbox")).To(Succeed())
 
 			reasons, err := f.mill.Explain(ctx, ref)
 			Expect(err).NotTo(HaveOccurred())
@@ -332,7 +333,7 @@ var _ = Describe("The dagger client", Label(testsupport.DBLabel), func() {
 })
 
 // slugsOf is the slugs of a project list.
-func slugsOf(projects []*daggerv1.Project) []string {
+func slugsOf(projects []*skiftv1.Project) []string {
 	slugs := make([]string, 0, len(projects))
 	for _, project := range projects {
 		slugs = append(slugs, project.GetSlug())

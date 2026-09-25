@@ -5,11 +5,12 @@ import (
 	"errors"
 	"fmt"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/dagger"
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/workspace"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/dagger"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // Restart is docs/domain-model.md §Restart, step for step. It is never
@@ -30,14 +31,14 @@ func (r *Runner) Restart(ctx context.Context, nodeRef, reason string) (*millv1.R
 	if err != nil {
 		return nil, err
 	}
-	if node.GetAssigneeKind() == daggerv1.AssigneeKind_ASSIGNEE_KIND_USER {
+	if node.GetAssigneeKind() == skiftv1.AssigneeKind_ASSIGNEE_KIND_USER {
 		return nil, &dagger.UserNodeError{Ref: nodeRef, Verb: "restart"}
 	}
 	// A closed node has no next generation to start: a restart of a
 	// dropped node would open a run nothing can ever claim, which is
 	// exactly the stranded run the sweep exists to end (docs/ledger.md
 	// §Sweep).
-	if node.GetStatus() != daggerv1.Status_STATUS_OPEN {
+	if node.GetStatus() != skiftv1.Status_STATUS_OPEN {
 		return nil, fmt.Errorf("%w: %s is %s, not open; nothing to restart",
 			ErrRefused, nodeRef, daggerStatus(node.GetStatus()))
 	}
@@ -121,7 +122,7 @@ func (r *Runner) preempt(ctx context.Context, old *millv1.Run, reason string) er
 		return err
 	}
 	switch err := r.options.Dagger.Release(ctx, lease,
-		daggerv1.ReleaseReason_RELEASE_REASON_PREEMPTED, reason); {
+		skiftv1.ReleaseReason_RELEASE_REASON_PREEMPTED, reason); {
 	case errors.Is(err, dagger.ErrFenced):
 		r.printf("lease %s is no longer live in dagger; skipped the release\n", lease)
 	case err != nil:

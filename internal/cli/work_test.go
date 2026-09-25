@@ -12,9 +12,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	"github.com/ivy/mill/internal/cli"
-	"github.com/ivy/mill/internal/testsupport"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	"github.com/steading-ai/mill/internal/cli"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // `mill serve --work` is the deployed shape: one process, both faces
@@ -140,7 +141,7 @@ var _ = Describe("mill serve --work", Label(testsupport.DBLabel), func() {
 
 		By("it claims the node, fails the run, and dagger holds the node with a reason naming the missing repository")
 		Eventually(func() string {
-			res, err := g.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{Project: daggerProject, Node: g.nodeRef}))
+			res, err := g.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{Project: daggerProject, Node: g.nodeRef}))
 			Expect(err).NotTo(HaveOccurred())
 			return res.Msg.GetNode().GetHold().GetReason()
 		}, time.Minute, 100*time.Millisecond).Should(HavePrefix("no repository"), stderr.String())
@@ -208,7 +209,7 @@ var _ = Describe("mill serve --work", Label(testsupport.DBLabel), func() {
 			Should(ContainSubstring("projects=[]"), "an unconfigured worker's filter is empty, not defaulted to one project")
 
 		Eventually(func() string {
-			res, err := g.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{Project: other, Node: otherRef}))
+			res, err := g.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{Project: other, Node: otherRef}))
 			Expect(err).NotTo(HaveOccurred())
 			return res.Msg.GetNode().GetHold().GetReason()
 		}, time.Minute, 100*time.Millisecond).Should(HavePrefix("no repository"),
@@ -252,13 +253,13 @@ var _ = Describe("mill serve --work", Label(testsupport.DBLabel), func() {
 		}, time.Minute, 50*time.Millisecond).Should(Succeed(), stderr.String())
 
 		Eventually(func() string {
-			res, err := g.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{Project: daggerProject, Node: g.nodeRef}))
+			res, err := g.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{Project: daggerProject, Node: g.nodeRef}))
 			Expect(err).NotTo(HaveOccurred())
 			return res.Msg.GetNode().GetHold().GetReason()
 		}, time.Minute, 100*time.Millisecond).Should(HavePrefix("no repository"), "the configured project's own node is claimed")
 
 		Consistently(func() bool {
-			res, err := g.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{Project: other, Node: otherRef}))
+			res, err := g.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{Project: other, Node: otherRef}))
 			Expect(err).NotTo(HaveOccurred())
 			return res.Msg.GetNode().GetClaimed()
 		}, 3*time.Second, 250*time.Millisecond).Should(BeFalse(), "the filter names only "+daggerProject+"; the second project's node is never claimed")

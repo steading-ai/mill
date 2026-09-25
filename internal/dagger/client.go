@@ -1,8 +1,8 @@
 // Package dagger is mill's client for dagger's dagger.v1 Connect API: the
 // only place in the mill that talks to the work graph.
 //
-// The generated client is dagger's own — proto/dagger/v1 is dagger's
-// contract, vendored — so nothing here re-describes the wire. What it adds
+// The generated client is dagger's own — the skift.v1 package is imported
+// from dagger's module and vendored — so nothing here re-describes the wire. What it adds
 // is the discipline docs/domain-model.md §Principal puts on mill and dagger
 // does not enforce, because mill runs as the operator's `user` principal and
 // dagger applies no gate veto to a user:
@@ -28,8 +28,8 @@ import (
 
 	"connectrpc.com/connect"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	"github.com/ivy/mill/gen/dagger/v1/daggerv1connect"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+	"github.com/steading-ai/skift/gen/skift/v1/skiftv1connect"
 )
 
 // socketURL is the base every request is made against. The host is never
@@ -47,8 +47,8 @@ const RequestIDPrefix = "mill-"
 
 // Client is the mill's view of one dagger service.
 type Client struct {
-	graph   daggerv1connect.GraphServiceClient
-	work    daggerv1connect.WorkServiceClient
+	graph   skiftv1connect.GraphServiceClient
+	work    skiftv1connect.WorkServiceClient
 	project string
 	options options
 }
@@ -87,8 +87,8 @@ func Dial(socket, project string, opts ...Option) *Client {
 // choosing, which is how a spec points it at a service it started itself.
 func New(httpClient connect.HTTPClient, baseURL, project string, opts ...Option) *Client {
 	c := &Client{
-		graph:   daggerv1connect.NewGraphServiceClient(httpClient, baseURL),
-		work:    daggerv1connect.NewWorkServiceClient(httpClient, baseURL),
+		graph:   skiftv1connect.NewGraphServiceClient(httpClient, baseURL),
+		work:    skiftv1connect.NewWorkServiceClient(httpClient, baseURL),
 		project: project,
 	}
 	for _, opt := range opts {
@@ -112,11 +112,11 @@ func (c *Client) Scoped(project string) *Client {
 
 // Node reads one node in full: the body is the prompt a step is built from,
 // so VIEW_FULL is the only view worth asking for here.
-func (c *Client) Node(ctx context.Context, ref string) (*daggerv1.Node, error) {
-	res, err := c.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{
+func (c *Client) Node(ctx context.Context, ref string) (*skiftv1.Node, error) {
+	res, err := c.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{
 		Project: c.project,
 		Node:    ref,
-		View:    daggerv1.View_VIEW_FULL,
+		View:    skiftv1.View_VIEW_FULL,
 	}))
 	if err != nil {
 		return nil, fmt.Errorf("dagger: get node %s: %w", ref, err)
@@ -127,11 +127,11 @@ func (c *Client) Node(ctx context.Context, ref string) (*daggerv1.Node, error) {
 // Result is what a node was completed with, or nil while it is open. It is
 // read by reference like every other node read, and it is separate from
 // [Client.Node] because the node message carries no result of its own.
-func (c *Client) Result(ctx context.Context, ref string) (*daggerv1.Result, error) {
-	res, err := c.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{
+func (c *Client) Result(ctx context.Context, ref string) (*skiftv1.Result, error) {
+	res, err := c.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{
 		Project: c.project,
 		Node:    ref,
-		View:    daggerv1.View_VIEW_FULL,
+		View:    skiftv1.View_VIEW_FULL,
 	}))
 	if err != nil {
 		return nil, wrap("dagger: get result of "+ref, err)
@@ -142,11 +142,11 @@ func (c *Client) Result(ctx context.Context, ref string) (*daggerv1.Result, erro
 // Inputs are the results of the predecessors that satisfy a node. They are
 // other principals' claims and are rendered into a prompt as attributed
 // data, never as instructions (docs/architecture.md §"Trust boundaries").
-func (c *Client) Inputs(ctx context.Context, ref string) ([]*daggerv1.Input, error) {
-	res, err := c.graph.GetInputs(ctx, connect.NewRequest(&daggerv1.GetInputsRequest{
+func (c *Client) Inputs(ctx context.Context, ref string) ([]*skiftv1.Input, error) {
+	res, err := c.graph.GetInputs(ctx, connect.NewRequest(&skiftv1.GetInputsRequest{
 		Project: c.project,
 		Node:    ref,
-		View:    daggerv1.View_VIEW_FULL,
+		View:    skiftv1.View_VIEW_FULL,
 	}))
 	if err != nil {
 		return nil, fmt.Errorf("dagger: get inputs of %s: %w", ref, err)
@@ -157,7 +157,7 @@ func (c *Client) Inputs(ctx context.Context, ref string) ([]*daggerv1.Input, err
 // Explain says why a node is not ready, one sentence per condition that does
 // not hold. An empty slice means it is ready.
 func (c *Client) Explain(ctx context.Context, ref string) ([]string, error) {
-	res, err := c.graph.Explain(ctx, connect.NewRequest(&daggerv1.ExplainRequest{
+	res, err := c.graph.Explain(ctx, connect.NewRequest(&skiftv1.ExplainRequest{
 		Project: c.project,
 		Node:    ref,
 	}))
@@ -172,28 +172,28 @@ func (c *Client) Explain(ctx context.Context, ref string) ([]string, error) {
 }
 
 // describe renders one readiness reason as a sentence.
-func describe(reason *daggerv1.Reason) string {
+func describe(reason *skiftv1.Reason) string {
 	switch r := reason.GetReason().(type) {
-	case *daggerv1.Reason_NotOpen:
+	case *skiftv1.Reason_NotOpen:
 		return fmt.Sprintf("the node is %s, not open", statusName(r.NotOpen.GetStatus()))
-	case *daggerv1.Reason_Blocked:
+	case *skiftv1.Reason_Blocked:
 		what := "predecessor"
 		if r.Blocked.GetGate() {
 			what = "gate"
 		}
 		return fmt.Sprintf("blocked by %s %s", what, r.Blocked.GetBlocker().GetReference())
-	case *daggerv1.Reason_Leased:
+	case *skiftv1.Reason_Leased:
 		return fmt.Sprintf("leased until %s", r.Leased.GetLease().GetExpiresAt().AsTime().Format(time.RFC3339))
-	case *daggerv1.Reason_OpenChild:
+	case *skiftv1.Reason_OpenChild:
 		return fmt.Sprintf("open child %s", r.OpenChild.GetChild().GetReference())
-	case *daggerv1.Reason_Archived:
+	case *skiftv1.Reason_Archived:
 		return fmt.Sprintf("project %s is archived", r.Archived.GetProject().GetSlug())
-	case *daggerv1.Reason_Held:
+	case *skiftv1.Reason_Held:
 		if r.Held.GetSelf() {
 			return "the node is held"
 		}
 		return fmt.Sprintf("held by #%d %s", r.Held.GetNumber(), r.Held.GetTitle())
-	case *daggerv1.Reason_ProjectHeld:
+	case *skiftv1.Reason_ProjectHeld:
 		return fmt.Sprintf("project %s is held", r.ProjectHeld.GetProject().GetSlug())
 	default:
 		return "not ready"
@@ -201,13 +201,13 @@ func describe(reason *daggerv1.Reason) string {
 }
 
 // statusName is a dagger status without its enum prefix.
-func statusName(status daggerv1.Status) string {
+func statusName(status skiftv1.Status) string {
 	switch status {
-	case daggerv1.Status_STATUS_OPEN:
+	case skiftv1.Status_STATUS_OPEN:
 		return "open"
-	case daggerv1.Status_STATUS_DONE:
+	case skiftv1.Status_STATUS_DONE:
 		return "done"
-	case daggerv1.Status_STATUS_DROPPED:
+	case skiftv1.Status_STATUS_DROPPED:
 		return "dropped"
 	default:
 		return "unspecified"

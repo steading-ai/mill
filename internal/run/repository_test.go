@@ -7,12 +7,13 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/workspace"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // The repository a run delivers to is the dagger project's, read from the
@@ -36,7 +37,7 @@ var _ = Describe("The run's repository", Label(testsupport.DBLabel), func() {
 		inner := f.workspaces()
 		var seen run.Repository
 		runner := f.runner(func(o *run.Options) {
-			o.Repositories = func(_ context.Context, project *daggerv1.Project) (run.Repository, error) {
+			o.Repositories = func(_ context.Context, project *skiftv1.Project) (run.Repository, error) {
 				resolved.Add(1)
 				slug = project.GetSlug()
 				return run.Repository{Forge: f.forge, Origin: f.origin}, nil
@@ -58,7 +59,7 @@ var _ = Describe("The run's repository", Label(testsupport.DBLabel), func() {
 	It("fails the run before a clone when the project has no repository, and holds the node rather than releasing it", func() {
 		var opened atomic.Int64
 		runner := f.runner(func(o *run.Options) {
-			o.Repositories = func(context.Context, *daggerv1.Project) (run.Repository, error) {
+			o.Repositories = func(context.Context, *skiftv1.Project) (run.Repository, error) {
 				return run.Repository{}, &forge.NoVCSURLError{Project: project}
 			}
 			o.Workspaces = func(context.Context, workspace.Spec, run.Repository) (run.Workspace, error) {
@@ -76,13 +77,13 @@ var _ = Describe("The run's repository", Label(testsupport.DBLabel), func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(node.GetHold().GetReason()).To(HavePrefix("no repository"),
 			"held under the same reason rather than reclaimed into the same refusal")
-		Expect(node.GetStatus()).To(Equal(daggerv1.Status_STATUS_OPEN))
+		Expect(node.GetStatus()).To(Equal(skiftv1.Status_STATUS_OPEN))
 	})
 
 	It("reads the project from dagger when the claim carries none", func() {
 		var slug string
 		runner := f.runner(func(o *run.Options) {
-			o.Repositories = func(_ context.Context, project *daggerv1.Project) (run.Repository, error) {
+			o.Repositories = func(_ context.Context, project *skiftv1.Project) (run.Repository, error) {
 				slug = project.GetSlug()
 				return run.Repository{Forge: f.forge, Origin: f.origin}, nil
 			}

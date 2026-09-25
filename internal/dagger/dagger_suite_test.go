@@ -8,8 +8,8 @@ import (
 	"github.com/onsi/ginkgo/v2/types"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/domain"
-	"github.com/ivy/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/domain"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // The dagger client is specified against a real dagger and, where it writes them,

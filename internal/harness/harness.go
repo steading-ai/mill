@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
 )
 
 // Workspace is the entire environment a session is given: a unix socket and

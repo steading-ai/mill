@@ -11,8 +11,8 @@ import (
 	"net/url"
 	"strings"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/forge"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/forge"
 )
 
 // Kind is which implementation is behind a workspace. The interface does not
@@ -572,7 +572,7 @@ type CatchUpResult struct {
 //
 // Merging is not here. A merge is the mill's own act at the end of a run,
 // not something a session asks for, so it is reached through
-// [github.com/ivy/mill/internal/forge.Forge] directly and has no verb.
+// [github.com/steading-ai/mill/internal/forge.Forge] directly and has no verb.
 type ForgeVerbs interface {
 	// Push puts the run's branch on the forge and returns what landed.
 	Push(ctx context.Context, request PushRequest) (PushResult, error)

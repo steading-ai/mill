@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/workspace/machine"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/workspace/machine"
 )
 
 // The sweep: the ledger reconciled against dagger (docs/ledger.md §Sweep).
@@ -84,7 +85,7 @@ func (r *Runner) sweepOne(ctx context.Context, report *machine.Report, summary *
 		})
 		return
 	}
-	if node.GetStatus() == daggerv1.Status_STATUS_OPEN {
+	if node.GetStatus() == skiftv1.Status_STATUS_OPEN {
 		return
 	}
 	action, err := r.reconcileClosed(ctx, run, node)

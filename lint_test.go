@@ -104,7 +104,7 @@ var _ = Describe("Lint and package boundaries", Label("unit", "slow"), func() {
 		By(`given a file under "internal/worker" importing "internal/store"`)
 		dir := checkout()
 		writeFile(dir, "internal/worker/worker.go",
-			"package worker\n\nimport \"github.com/ivy/mill/internal/store\"\n\n// Fenced reaches the store directly.\nvar Fenced = store.ErrFenced\n")
+			"package worker\n\nimport \"github.com/steading-ai/mill/internal/store\"\n\n// Fenced reaches the store directly.\nvar Fenced = store.ErrFenced\n")
 
 		By("when make lint runs")
 		session := makeTarget(dir, "lint")

@@ -17,11 +17,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/harness/claude"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/local"
-	"github.com/ivy/mill/internal/workspace/signing"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/harness/claude"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/local"
+	"github.com/steading-ai/mill/internal/workspace/signing"
 )
 
 // ProbeTimeout bounds one probe, wherever it runs: a probe that hangs is a

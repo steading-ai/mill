@@ -14,13 +14,14 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/harness/fake"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/machine"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/harness/fake"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/machine"
 )
 
 // The loop's half of docs/sandbox.md §Reconciliation: what a worker does
@@ -176,7 +177,7 @@ var _ = Describe("Reconciliation on resume, in the loop", Label(testsupport.DBLa
 		Expect(opened.Load()).To(Equal(int64(1)), "one attach, which refused; nothing after it")
 		node, err := f.client.Node(ctx, f.nodeRef)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(node.GetStatus()).To(Equal(daggerv1.Status_STATUS_OPEN), "the work is not done")
+		Expect(node.GetStatus()).To(Equal(skiftv1.Status_STATUS_OPEN), "the work is not done")
 		Expect(node.GetHold().GetReason()).To(HavePrefix("lost sandbox"))
 		Expect(f.leaseOf(ctx).GetId()).To(BeEmpty(), "the lease was given back")
 		Consistently(opened.Load, 3*time.Second, 250*time.Millisecond).Should(Equal(int64(1)))
@@ -195,9 +196,9 @@ var _ = Describe("Reconciliation on resume, in the loop", Label(testsupport.DBLa
 		Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_FAILED))
 
 		By("a person releases the hold without restarting, and the next claim is refused, not driven")
-		_, err = f.graph.ApplyPatch(ctx, connect.NewRequest(&daggerv1.ApplyPatchRequest{
+		_, err = f.graph.ApplyPatch(ctx, connect.NewRequest(&skiftv1.ApplyPatchRequest{
 			RequestId: "spec-unhold", Project: project,
-			Ops: []*daggerv1.PatchOp{{Op: &daggerv1.PatchOp_UnholdNode{UnholdNode: &daggerv1.UnholdNodeOp{Node: f.nodeRef, Reason: "the spec releases it"}}}},
+			Ops: []*skiftv1.PatchOp{{Op: &skiftv1.PatchOp_UnholdNode{UnholdNode: &skiftv1.UnholdNodeOp{Node: f.nodeRef, Reason: "the spec releases it"}}}},
 		}))
 		Expect(err).NotTo(HaveOccurred())
 		err = f.runner(quick).Execute(ctx, f.nodeRef)
@@ -241,7 +242,7 @@ var _ = Describe("Reconciliation on resume, in the loop", Label(testsupport.DBLa
 		node, err := f.client.Node(ctx, f.nodeRef)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(node.GetHold().GetReason()).To(ContainSubstring("is done but"))
-		Expect(node.GetStatus()).To(Equal(daggerv1.Status_STATUS_OPEN))
+		Expect(node.GetStatus()).To(Equal(skiftv1.Status_STATUS_OPEN))
 	})
 
 	// Scenario: A live run resumes at its step with a fresh slice

@@ -27,7 +27,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ivy/mill/internal/workspace/machine/driver"
+	"github.com/steading-ai/mill/internal/workspace/machine/driver"
 )
 
 // Defaults for what the worker's configuration leaves unsaid.

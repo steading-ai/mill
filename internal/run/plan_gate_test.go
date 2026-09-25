@@ -12,13 +12,14 @@ import (
 
 	"connectrpc.com/connect"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/harness/fake"
-	"github.com/ivy/mill/internal/notify"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/testsupport"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/harness/fake"
+	"github.com/steading-ai/mill/internal/notify"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // Plan approval, and the notifier that carries a filed gate to a person.
@@ -257,7 +258,7 @@ var _ = Describe("Plan approval", Label(testsupport.DBLabel), func() {
 
 			Expect(person.answered()).To(HaveLen(1))
 			Expect(person.answered()[0].Title).To(Equal("Approve the plan for " + f.nodeRef + "?"))
-			Expect(f.theGate(ctx).GetStatus()).To(Equal(daggerv1.Status_STATUS_DROPPED))
+			Expect(f.theGate(ctx).GetStatus()).To(Equal(skiftv1.Status_STATUS_DROPPED))
 
 			result, err := f.result(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -282,7 +283,7 @@ var _ = Describe("Plan approval", Label(testsupport.DBLabel), func() {
 
 				By("then the gate exists in dagger")
 				gate := f.theGate(ctx)
-				Expect(gate.GetStatus()).To(Equal(daggerv1.Status_STATUS_OPEN))
+				Expect(gate.GetStatus()).To(Equal(skiftv1.Status_STATUS_OPEN))
 				Expect(f.blockedBy(ctx)).To(ContainElement(gate.GetId()))
 				Expect(notices(noticePath)).To(HaveLen(1))
 
@@ -310,7 +311,7 @@ var _ = Describe("Plan approval", Label(testsupport.DBLabel), func() {
 				Expect(time.Since(started)).To(BeNumerically("<", notify.Timeout),
 					"the run did not wait on the command longer than the bound")
 
-				Expect(f.theGate(ctx).GetStatus()).To(Equal(daggerv1.Status_STATUS_OPEN))
+				Expect(f.theGate(ctx).GetStatus()).To(Equal(skiftv1.Status_STATUS_OPEN))
 				Expect(f.notified(ctx)).To(HaveLen(1))
 				Expect(f.notified(ctx)[0]).To(HaveKeyWithValue("exit_code", BeNumerically("==", -1)))
 				Expect(f.notified(ctx)[0]["detail"]).To(ContainSubstring("did not answer in time"))

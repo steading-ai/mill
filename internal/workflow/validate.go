@@ -9,8 +9,8 @@ import (
 	"slices"
 	"strings"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/evidence"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/evidence"
 )
 
 // Validate refuses a definition the design cannot execute. Each rule is one

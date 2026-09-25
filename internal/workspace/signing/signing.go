@@ -39,7 +39,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ivy/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // generateMu serialises Generate: two runs starting at once under one

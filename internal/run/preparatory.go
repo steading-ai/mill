@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/check"
-	"github.com/ivy/mill/internal/workspace"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/check"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // A preparatory step readies the machine for the sessions: the toolchain

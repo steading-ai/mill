@@ -33,18 +33,19 @@ import (
 
 	"connectrpc.com/connect"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/gen/mill/v1/millv1connect"
-	"github.com/ivy/mill/internal/dagger"
-	"github.com/ivy/mill/internal/domain"
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/gateway"
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/notify"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/redact"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
+	"github.com/steading-ai/mill/internal/dagger"
+	"github.com/steading-ai/mill/internal/domain"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/gateway"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/notify"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/redact"
 )
 
 // Defaults from docs/architecture.md §Heartbeat: dagger's lease TTL is
@@ -139,7 +140,7 @@ type Repository struct {
 // called once per run, after the run exists in the ledger and before its
 // workspace is cloned, so a project with no repository fails before it has
 // spent anything.
-type Repositories func(ctx context.Context, project *daggerv1.Project) (Repository, error)
+type Repositories func(ctx context.Context, project *skiftv1.Project) (Repository, error)
 
 // inMachineSession is a workspace whose sessions run inside a sandbox, so
 // the paths a session's sidecar uses are the sandbox's and not the host's:
@@ -377,7 +378,7 @@ func (r *Runner) Dagger() *dagger.Client { return r.options.Dagger }
 
 // state is one run in flight: what the loop carries between its stages.
 type state struct {
-	node *daggerv1.Node
+	node *skiftv1.Node
 	// lease is the fencing token every write this run makes presents. The
 	// run-loop goroutine reads it on every write; the heartbeat's own
 	// goroutine writes it when a fenced heartbeat wins the node back. Both
@@ -521,7 +522,7 @@ func (r *Runner) Execute(ctx context.Context, nodeRef string) error {
 	if err != nil {
 		return err
 	}
-	if node.GetAssigneeKind() == daggerv1.AssigneeKind_ASSIGNEE_KIND_USER {
+	if node.GetAssigneeKind() == skiftv1.AssigneeKind_ASSIGNEE_KIND_USER {
 		return &dagger.UserNodeError{Ref: nodeRef, Verb: "claim"}
 	}
 
@@ -531,7 +532,7 @@ func (r *Runner) Execute(ctx context.Context, nodeRef string) error {
 	// one had its run stranded underneath it. Either way the run is caught
 	// up with what dagger already says, exactly as the sweep would catch it
 	// up (docs/ledger.md §Sweep).
-	if node.GetStatus() != daggerv1.Status_STATUS_OPEN {
+	if node.GetStatus() != skiftv1.Status_STATUS_OPEN {
 		run, _, err := r.runByNode(ctx, node.GetId())
 		if err != nil {
 			return err
@@ -645,7 +646,7 @@ func (r *Runner) drive(ctx context.Context, claimed *dagger.Claimed, stopping <-
 // alone, and a run that never chose a workflow pushed nothing. Neither
 // cleanup failing fails the reconciliation: the ledger is right, and the
 // host's reconciliation pass finishes what this could not.
-func (r *Runner) reconcileClosed(ctx context.Context, run *millv1.Run, node *daggerv1.Node) (string, error) {
+func (r *Runner) reconcileClosed(ctx context.Context, run *millv1.Run, node *skiftv1.Node) (string, error) {
 	ref := node.GetReference()
 	switch run.GetStatus() {
 	case millv1.RunStatus_RUN_STATUS_DONE, millv1.RunStatus_RUN_STATUS_FAILED, millv1.RunStatus_RUN_STATUS_ABANDONED:
@@ -655,7 +656,7 @@ func (r *Runner) reconcileClosed(ctx context.Context, run *millv1.Run, node *dag
 
 	var action, reason string
 	switch {
-	case node.GetStatus() == daggerv1.Status_STATUS_DONE && run.GetCompleteRequestId() != "":
+	case node.GetStatus() == skiftv1.Status_STATUS_DONE && run.GetCompleteRequestId() != "":
 		if _, err := call(ctx, r.options.Store.Done, &millv1.DoneRequest{
 			LeaseId: run.GetLeaseId(),
 			RunId:   run.GetId(),
@@ -664,9 +665,9 @@ func (r *Runner) reconcileClosed(ctx context.Context, run *millv1.Run, node *dag
 		}
 		action = "done"
 		r.printf("%s was completed in dagger; run %s marked done\n", ref, run.GetId())
-	case node.GetStatus() == daggerv1.Status_STATUS_DONE:
+	case node.GetStatus() == skiftv1.Status_STATUS_DONE:
 		action, reason = "failed", "node completed outside the run"
-	case node.GetStatus() == daggerv1.Status_STATUS_DROPPED:
+	case node.GetStatus() == skiftv1.Status_STATUS_DROPPED:
 		action, reason = "failed", "node dropped underneath the run"
 	default:
 		return "", fmt.Errorf("%w: %s is open; nothing to reconcile", ErrRefused, ref)
@@ -945,7 +946,7 @@ func (r *Runner) hold(ctx context.Context, s *state, requestKey, reason string) 
 // repository resolves the run's repository: from the project the claim
 // carried, or from dagger when the claim carried none (a dagger older than
 // `vcs_url`).
-func (r *Runner) repository(ctx context.Context, project *daggerv1.Project) (Repository, error) {
+func (r *Runner) repository(ctx context.Context, project *skiftv1.Project) (Repository, error) {
 	if project == nil {
 		p, err := r.options.Dagger.GetProject(ctx)
 		if err != nil {
@@ -1002,7 +1003,7 @@ func (r *Runner) stop(ctx context.Context, s *state, err error) error {
 		return err
 	}
 	if lease := s.leaseID(); lease != "" {
-		if releaseErr := r.options.Dagger.Release(ctx, lease, daggerv1.ReleaseReason_RELEASE_REASON_CRASH, err.Error()); releaseErr != nil {
+		if releaseErr := r.options.Dagger.Release(ctx, lease, skiftv1.ReleaseReason_RELEASE_REASON_CRASH, err.Error()); releaseErr != nil {
 			r.options.Log.Warn("releasing the lease after a failure", "error", releaseErr)
 		}
 	}

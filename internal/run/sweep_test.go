@@ -8,12 +8,13 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/harness/fake"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/workspace/machine"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/harness/fake"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/workspace/machine"
 )
 
 // docs/ledger.md §Sweep: the ledger reconciled against dagger. A run whose
@@ -101,7 +102,7 @@ var _ = Describe("The stranded-run sweep", Label(testsupport.DBLabel), func() {
 		atStepTwo()
 		first := f.runOf(ctx)
 		f.drop(ctx, f.nodeRef)
-		Expect(f.statusOf(ctx, f.nodeRef)).To(Equal(daggerv1.Status_STATUS_DROPPED))
+		Expect(f.statusOf(ctx, f.nodeRef)).To(Equal(skiftv1.Status_STATUS_DROPPED))
 
 		By("when the worker sweeps")
 		report := sweep()

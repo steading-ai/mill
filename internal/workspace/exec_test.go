@@ -15,7 +15,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // script writes a shell script into a temporary directory and returns its

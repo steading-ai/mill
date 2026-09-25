@@ -14,8 +14,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/gateway"
-	"github.com/ivy/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/gateway"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // The live scenario: a real Claude Code session in a real machine with no

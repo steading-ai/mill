@@ -8,7 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 )
 
 // WorkspaceParams is what RecordWorkspace writes: the workspace as the run

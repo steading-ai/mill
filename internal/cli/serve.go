@@ -13,14 +13,14 @@ import (
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
-	"github.com/ivy/mill/gen/mill/v1/millv1connect"
-	"github.com/ivy/mill/internal/domain"
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/sdnotify"
-	"github.com/ivy/mill/internal/server"
-	"github.com/ivy/mill/internal/server/interceptor"
-	"github.com/ivy/mill/internal/version"
-	"github.com/ivy/mill/internal/workspace/socket"
+	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
+	"github.com/steading-ai/mill/internal/domain"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/sdnotify"
+	"github.com/steading-ai/mill/internal/server"
+	"github.com/steading-ai/mill/internal/server/interceptor"
+	"github.com/steading-ai/mill/internal/version"
+	"github.com/steading-ai/mill/internal/workspace/socket"
 )
 
 // databaseURLEnv is the variable the service reads its connection string

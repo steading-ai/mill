@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/machine/config"
-	"github.com/ivy/mill/internal/workspace/machine/driver"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/machine/config"
+	"github.com/steading-ai/mill/internal/workspace/machine/driver"
 )
 
 // SessionUser is who every process a step runs enters the machine as:

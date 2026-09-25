@@ -14,8 +14,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/gateway"
-	"github.com/ivy/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/gateway"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // The credentials the specs hand around. Long enough for a grep of every

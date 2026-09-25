@@ -18,7 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	mill "github.com/ivy/mill"
+	mill "github.com/steading-ai/mill"
 )
 
 // What the materialised directory holds beside the plugin's own files.

@@ -4,7 +4,7 @@
 # used below on PATH. The only system package assumed is podman, which
 # testcontainers and the development stack use.
 
-MODULE  := github.com/ivy/mill
+MODULE  := github.com/steading-ai/mill
 BINARY  := mill
 
 # Version is the nearest v-prefixed tag. A build from exactly that tag on a

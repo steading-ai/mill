@@ -16,7 +16,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
-	"github.com/ivy/mill/internal/version"
+	"github.com/steading-ai/mill/internal/version"
 )
 
 // `mill mcp` is the CLI's client wrapped for a session: an MCP server on

@@ -2043,7 +2043,7 @@ const file_harness_v1_harness_proto_rawDesc = "" +
 	"\x13EXIT_REASON_TIMEOUT\x10\x03\x12\x19\n" +
 	"\x15EXIT_REASON_CANCELLED\x10\x04\x12\x17\n" +
 	"\x13EXIT_REASON_STALLED\x10\x05\x12 \n" +
-	"\x1cEXIT_REASON_UPSTREAM_REFUSED\x10\x06B.Z,github.com/ivy/mill/gen/harness/v1;harnessv1b\x06proto3"
+	"\x1cEXIT_REASON_UPSTREAM_REFUSED\x10\x06B6Z4github.com/steading-ai/mill/gen/harness/v1;harnessv1b\x06proto3"
 
 var (
 	file_harness_v1_harness_proto_rawDescOnce sync.Once

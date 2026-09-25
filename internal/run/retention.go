@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 )
 
 // Policy is one deployment's or project's retention setting: after

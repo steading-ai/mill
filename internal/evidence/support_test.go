@@ -12,10 +12,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/evidence"
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/harness/fake"
+	"github.com/steading-ai/mill/internal/evidence"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/harness/fake"
 )
 
 // repository is a real git repository the commit verifier is pointed at.

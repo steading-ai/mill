@@ -43,8 +43,9 @@ internal/gateway/     the credential gateway: the session's step token in, the s
 internal/skill/       the mill skill and the sidecar copy the worker mounts read-only into every machine; docs/sandbox.md §"Skill mount"
 internal/testsupport/ the testcontainers PostgreSQL fixture db-labelled specs use, and a real `dg serve` for the run loop
 internal/version/     the version injected at link time by the Makefile
-proto/                the contracts: mill.v1 the store API, harness.v1 the sidecar wire, dagger.v1 vendored from dagger; README.md is the compatibility policy
+proto/                the contracts: mill.v1 the store API, harness.v1 the sidecar wire; README.md is the compatibility policy and says where skift.v1 comes from
 gen/                  generated Go, committed. buf owns it; `make generate` writes it
+vendor/               every Go dependency, committed by `go mod vendor`; skift's generated skift.v1 client comes from here, pinned to a commit in go.mod
 sidecar/              the TypeScript harness adapter; sidecar/gen is harness.v1 in TypeScript
 workflows/            the workflow definitions this repo seeds the store with; `mill workflow push` loads them. mill-quick-fix and mill-feature are the mill project's own: the org definitions plus the live tier as a check step
 contrib/systemd/      the user units a deployment runs: mill.service, the image-build and cache-prune timers; docs/architecture.md §Deployment

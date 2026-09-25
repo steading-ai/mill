@@ -15,15 +15,16 @@ import (
 	. "github.com/onsi/gomega"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	"github.com/ivy/mill/gen/dagger/v1/daggerv1connect"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/gen/mill/v1/millv1connect"
-	"github.com/ivy/mill/internal/cli"
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/workflow"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+	"github.com/steading-ai/skift/gen/skift/v1/skiftv1connect"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
+	"github.com/steading-ai/mill/internal/cli"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/workflow"
 )
 
 // The operator tools are specified against a real service over a real
@@ -214,7 +215,7 @@ func (r *runs) cli(ctx context.Context, args ...string) string {
 // a gate node id to a reference and a title.
 type gateFixture struct {
 	service *testsupport.Dagger
-	graph   daggerv1connect.GraphServiceClient
+	graph   skiftv1connect.GraphServiceClient
 	nodeRef string
 	nodeID  string
 	gateRef string
@@ -235,15 +236,15 @@ func daggerNode(ctx context.Context) *gateFixture {
 func daggerNodeWith(ctx context.Context, vcsURL string) *gateFixture {
 	GinkgoHelper()
 	service := pg.StartDagger(ctx)
-	graph := daggerv1connect.NewGraphServiceClient(service.HTTPClient(), service.BaseURL())
-	_, err := graph.CreateProject(ctx, connect.NewRequest(&daggerv1.CreateProjectRequest{
+	graph := skiftv1connect.NewGraphServiceClient(service.HTTPClient(), service.BaseURL())
+	_, err := graph.CreateProject(ctx, connect.NewRequest(&skiftv1.CreateProjectRequest{
 		RequestId: "cli-spec-project", Title: "mill cli specs", Slug: daggerProject, VcsUrl: vcsURL,
 	}))
 	Expect(err).NotTo(HaveOccurred())
 
-	created, err := graph.ApplyPatch(ctx, connect.NewRequest(&daggerv1.ApplyPatchRequest{
+	created, err := graph.ApplyPatch(ctx, connect.NewRequest(&skiftv1.ApplyPatchRequest{
 		RequestId: "cli-spec-node", Project: daggerProject,
-		Ops: []*daggerv1.PatchOp{{Op: &daggerv1.PatchOp_CreateNode{CreateNode: &daggerv1.CreateNodeOp{
+		Ops: []*skiftv1.PatchOp{{Op: &skiftv1.PatchOp_CreateNode{CreateNode: &skiftv1.CreateNodeOp{
 			Title: "the work the run is for", Body: "a node with a gate on it",
 		}}}},
 	}))
@@ -258,13 +259,13 @@ func daggerNodeWith(ctx context.Context, vcsURL string) *gateFixture {
 // proving a worker's claim reaches across projects or stays confined to one.
 func (g *gateFixture) secondProject(ctx context.Context, slug, vcsURL string) (project, nodeRef string) {
 	GinkgoHelper()
-	_, err := g.graph.CreateProject(ctx, connect.NewRequest(&daggerv1.CreateProjectRequest{
+	_, err := g.graph.CreateProject(ctx, connect.NewRequest(&skiftv1.CreateProjectRequest{
 		RequestId: "cli-spec-second-project", Title: "mill cli specs (second)", Slug: slug, VcsUrl: vcsURL,
 	}))
 	Expect(err).NotTo(HaveOccurred())
-	created, err := g.graph.ApplyPatch(ctx, connect.NewRequest(&daggerv1.ApplyPatchRequest{
+	created, err := g.graph.ApplyPatch(ctx, connect.NewRequest(&skiftv1.ApplyPatchRequest{
 		RequestId: "cli-spec-second-node", Project: slug,
-		Ops: []*daggerv1.PatchOp{{Op: &daggerv1.PatchOp_CreateNode{CreateNode: &daggerv1.CreateNodeOp{
+		Ops: []*skiftv1.PatchOp{{Op: &skiftv1.PatchOp_CreateNode{CreateNode: &skiftv1.CreateNodeOp{
 			Title: "the work in the second project", Body: "a node with no gate on it",
 		}}}},
 	}))
@@ -276,8 +277,8 @@ func (g *gateFixture) secondProject(ctx context.Context, slug, vcsURL string) (p
 // does not carry.
 func (g *gateFixture) idOf(ctx context.Context, ref string) string {
 	GinkgoHelper()
-	res, err := g.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{
-		Project: daggerProject, Node: ref, View: daggerv1.View_VIEW_FULL,
+	res, err := g.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{
+		Project: daggerProject, Node: ref, View: skiftv1.View_VIEW_FULL,
 	}))
 	Expect(err).NotTo(HaveOccurred())
 	return res.Msg.GetNode().GetId()
@@ -288,20 +289,20 @@ func (g *gateFixture) idOf(ctx context.Context, ref string) string {
 // into it, labelled with the run and the step.
 func (g *gateFixture) fileGate(ctx context.Context, runID, step, title string) {
 	GinkgoHelper()
-	filed, err := g.graph.ApplyPatch(ctx, connect.NewRequest(&daggerv1.ApplyPatchRequest{
+	filed, err := g.graph.ApplyPatch(ctx, connect.NewRequest(&skiftv1.ApplyPatchRequest{
 		RequestId: "cli-spec-gate-" + step, Project: daggerProject,
-		Ops: []*daggerv1.PatchOp{
-			{Op: &daggerv1.PatchOp_CreateNode{CreateNode: &daggerv1.CreateNodeOp{
+		Ops: []*skiftv1.PatchOp{
+			{Op: &skiftv1.PatchOp_CreateNode{CreateNode: &skiftv1.CreateNodeOp{
 				Alias:        "gate",
 				Title:        title,
 				Body:         "the ask a person answers",
 				Parent:       g.nodeRef,
 				Kind:         "chore",
-				AssigneeKind: daggerv1.AssigneeKind_ASSIGNEE_KIND_USER,
+				AssigneeKind: skiftv1.AssigneeKind_ASSIGNEE_KIND_USER,
 				Labels:       []string{"mill-gate", "mill-run-" + runID, "mill-step-" + step},
 			}}},
-			{Op: &daggerv1.PatchOp_AddEdge{AddEdge: &daggerv1.AddEdgeOp{
-				From: "gate", To: g.nodeRef, Kind: daggerv1.EdgeKind_EDGE_KIND_BLOCKS,
+			{Op: &skiftv1.PatchOp_AddEdge{AddEdge: &skiftv1.AddEdgeOp{
+				From: "gate", To: g.nodeRef, Kind: skiftv1.EdgeKind_EDGE_KIND_BLOCKS,
 			}}},
 		},
 	}))

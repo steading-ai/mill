@@ -7,9 +7,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ivy/mill/internal/gateway"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/gateway"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // The credential gateway's settings (docs/sandbox.md §Credentials). Off, a

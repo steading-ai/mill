@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 )
 
 // Load reads a workflow directory into the definition the store holds and

@@ -6,10 +6,11 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/testsupport"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 var _ = Describe("The circuit breaker", Label(testsupport.DBLabel), func() {
@@ -66,7 +67,7 @@ var _ = Describe("The circuit breaker", Label(testsupport.DBLabel), func() {
 			Expect(parked.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_PARKED))
 			Expect(parked.GetParkedReason()).To(Equal(millv1.ParkedReason_PARKED_REASON_RETRIES))
 			Expect(parked.GetGateNodeId()).To(Equal(f.theGate(ctx).GetId()))
-			Expect(watcher.reasons()).To(ContainElement(daggerv1.ReleaseReason_RELEASE_REASON_BUDGET))
+			Expect(watcher.reasons()).To(ContainElement(skiftv1.ReleaseReason_RELEASE_REASON_BUDGET))
 
 			// And the human sees the rounds of findings in one comment.
 			comments := f.comments(ctx)

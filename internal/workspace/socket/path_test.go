@@ -9,7 +9,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/workspace/socket"
+	"github.com/steading-ai/mill/internal/workspace/socket"
 )
 
 var _ = Describe("A socket path the kernel cannot hold", Label("unit"), func() {

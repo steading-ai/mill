@@ -14,8 +14,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/version"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/version"
 )
 
 // Run executes the binary with args and returns its exit status. main is a

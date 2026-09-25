@@ -20,7 +20,7 @@ import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 import "harness/v1/harness.proto";
 
-option go_package = "github.com/ivy/mill/gen/mill/v1;millv1";
+option go_package = "github.com/steading-ai/mill/gen/mill/v1;millv1";
 
 // RunStatus is where a run is. The states and the transitions between them
 // are docs/domain-model.md §"Run states".

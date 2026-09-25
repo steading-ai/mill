@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/machine/cache"
-	"github.com/ivy/mill/internal/workspace/machine/config"
-	"github.com/ivy/mill/internal/workspace/machine/driver"
-	"github.com/ivy/mill/internal/workspace/machine/image"
-	"github.com/ivy/mill/internal/workspace/socket"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/machine/cache"
+	"github.com/steading-ai/mill/internal/workspace/machine/config"
+	"github.com/steading-ai/mill/internal/workspace/machine/driver"
+	"github.com/steading-ai/mill/internal/workspace/machine/image"
+	"github.com/steading-ai/mill/internal/workspace/socket"
 )
 
 // Names inside a run's directory (docs/sandbox.md §Naming, §Filesystem).

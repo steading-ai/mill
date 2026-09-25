@@ -21,10 +21,10 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/harness/fake"
-	"github.com/ivy/mill/internal/workspace/socket"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/harness/fake"
+	"github.com/steading-ai/mill/internal/workspace/socket"
 )
 
 // Name is what a step's `harness` table calls this adapter.

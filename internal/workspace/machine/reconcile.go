@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ivy/mill/internal/workspace/machine/driver"
-	"github.com/ivy/mill/internal/workspace/machine/image"
+	"github.com/steading-ai/mill/internal/workspace/machine/driver"
+	"github.com/steading-ai/mill/internal/workspace/machine/image"
 )
 
 // DefaultScratchBudget is how old a scratch project must be before the sweep

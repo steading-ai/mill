@@ -7,11 +7,12 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/harness/fake"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/testsupport"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/harness/fake"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // mill#30: an error returned between an attempt's writer opening
@@ -126,7 +127,7 @@ var _ = Describe("An attempt's writer and sink on a failed write", Label(testsup
 				review.Evidence = millv1.EvidenceKind_EVIDENCE_KIND_VERDICT
 				insertAfter(definition, "pr", review)
 			})
-			client := f.failingPatches(func(op *daggerv1.PatchOp) bool {
+			client := f.failingPatches(func(op *skiftv1.PatchOp) bool {
 				name := op.GetAttachArtifact().GetArtifact().GetName()
 				return strings.HasPrefix(name, "review-") && !strings.HasPrefix(name, "review-plan-")
 			})

@@ -3,7 +3,7 @@ package store
 import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 )
 
 // RunState is a run together with the latest attempt at each of its steps:

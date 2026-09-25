@@ -11,7 +11,7 @@ import (
 	"github.com/onsi/gomega"
 	"google.golang.org/protobuf/proto"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 )
 
 // AppendActivity writes one or more activity records to path, length-prefixed

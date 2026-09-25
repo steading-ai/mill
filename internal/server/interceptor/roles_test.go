@@ -8,7 +8,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/server/interceptor"
+	"github.com/steading-ai/mill/internal/server/interceptor"
 )
 
 // write puts content in a file of the spec's own directory and returns its

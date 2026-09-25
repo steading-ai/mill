@@ -33,10 +33,10 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/redact"
-	"github.com/ivy/mill/internal/workspace/signing"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/redact"
+	"github.com/steading-ai/mill/internal/workspace/signing"
 )
 
 // Host is git on the host: the binary, the chokepoint it is spawned through,

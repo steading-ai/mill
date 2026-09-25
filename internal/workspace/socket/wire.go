@@ -1,6 +1,6 @@
 package socket
 
-import "github.com/ivy/mill/internal/workspace"
+import "github.com/steading-ai/mill/internal/workspace"
 
 // The request and response bodies of every verb. JSON over HTTP, one POST to
 // /v1/<verb> per call, the bearer in the Authorization header.

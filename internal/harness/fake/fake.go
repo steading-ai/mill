@@ -14,8 +14,8 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	"github.com/ivy/mill/internal/harness"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	"github.com/steading-ai/mill/internal/harness"
 )
 
 // Name is what a step's `harness` table calls this adapter in a spec.

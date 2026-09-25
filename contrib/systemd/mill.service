@@ -36,7 +36,7 @@
 
 [Unit]
 Description=mill: a workflow runner over dagger's work graph
-Documentation=https://github.com/ivy/mill
+Documentation=https://github.com/steading-ai/mill
 After=network.target dagger.service
 
 [Service]
