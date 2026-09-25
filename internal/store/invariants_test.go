@@ -7,9 +7,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/store"
-	"github.com/ivy/mill/internal/testsupport"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/store"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // The twelve invariants of docs/ledger.md, one spec each. Each is enforced
@@ -257,7 +257,7 @@ var _ = Describe("Invariants", Label(testsupport.DBLabel), func() {
 		Expect(l.currentStep(ctx, run.GetId(), workflow)).To(Equal("simplify"))
 	}, SpecTimeout(time.Minute))
 
-	It(`Invariant 11: "Dagger first, store second." gate_node_id is recorded only after dagger has returned the gate's id; the store never asserts a fact about dagger that dagger has not yet made true`, func(ctx SpecContext) {
+	It(`Invariant 11: "Skift first, store second." gate_node_id is recorded only after skift has returned the gate's id; the store never asserts a fact about skift that skift has not yet made true`, func(ctx SpecContext) {
 		l := newLedger(ctx)
 		run, _ := l.runWithWorkflow(ctx, "mill#8")
 		open := l.start(ctx, run.GetId(), "implement")

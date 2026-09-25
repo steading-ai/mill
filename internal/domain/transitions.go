@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 )
 
 // runTransitions is the state diagram in docs/domain-model.md §"Run states",

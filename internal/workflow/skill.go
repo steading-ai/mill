@@ -10,7 +10,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 )
 
 // frontmatterFields is the whole normative surface of the agent-skills

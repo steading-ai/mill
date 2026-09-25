@@ -7,13 +7,13 @@ import (
 	"sync"
 	"time"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 )
 
 // heartbeat holds the lease for the whole run, in a goroutine independent of
 // any step.
 //
-// docs/architecture.md §Heartbeat: dagger's TTL is fifteen minutes and a
+// docs/architecture.md §Heartbeat: skift's TTL is fifteen minutes and a
 // single implement step can run an hour, so the worker — not the session —
 // renews, for as long as any step runs. A renewal refused is the signal to
 // stop: the step's context is cancelled, the run is abandoned locally, and
@@ -54,7 +54,7 @@ func (r *Runner) startHeartbeat(ctx context.Context, s *state) *heartbeat {
 			case <-s.stopping:
 				// The process is going away. It is the same shape as a
 				// cancellation — stop the step, abort the attempt, give the
-				// lease back — and differs only in the detail dagger
+				// lease back — and differs only in the detail skift
 				// records and in nobody having asked for this run in
 				// particular (docs/architecture.md §"Failure and stop").
 				h.fail(errShutdown)
@@ -72,7 +72,7 @@ func (r *Runner) startHeartbeat(ctx context.Context, s *state) *heartbeat {
 
 // beat is one tick: renew the lease, then read the cancel flag.
 func (r *Runner) beat(ctx context.Context, s *state) error {
-	if _, err := r.options.Dagger.Heartbeat(ctx, s.leaseID(), r.options.TTL); err != nil {
+	if _, err := r.options.Skift.Heartbeat(ctx, s.leaseID(), r.options.TTL); err != nil {
 		if !isFenced(err) {
 			return err
 		}
@@ -85,7 +85,7 @@ func (r *Runner) beat(ctx context.Context, s *state) error {
 	run, _, err := r.runByNode(ctx, s.node.GetId())
 	if err != nil {
 		// A store that cannot be read is not a reason to drop a lease that
-		// dagger just renewed. The next tick asks again.
+		// skift just renewed. The next tick asks again.
 		r.options.Log.Warn("reading the run at a heartbeat", "error", err)
 		return nil
 	}
@@ -101,7 +101,7 @@ func (r *Runner) beat(ctx context.Context, s *state) error {
 // refused because another holder has it is left to the caller to fence on,
 // exactly as an unreclaimed fenced heartbeat does today.
 func (r *Runner) reclaim(ctx context.Context, s *state) error {
-	claimed, err := s.dagger.Claim(ctx, s.node.GetReference())
+	claimed, err := s.skift.Claim(ctx, s.node.GetReference())
 	if err != nil {
 		r.options.Log.Warn("reclaiming a fenced node: claim refused",
 			"node", s.node.GetReference(), "run", s.run.GetId(), "error", err)

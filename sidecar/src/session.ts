@@ -45,7 +45,7 @@ import { fromModelUsage, fromTurn, type UsageAccumulator } from "./usage.js";
 // besides what the workspace decided: enough for a process to start, and
 // nothing that authenticates the mill to anything else. The SDK does not
 // merge this with `process.env`, so what is not listed here is not present —
-// no ANTHROPIC key, no forge token, no dagger socket. HOME is here for the
+// no ANTHROPIC key, no forge token, no skift socket. HOME is here for the
 // shell, the SDK's transcripts and the harness's own state, not for a login:
 // the model is reached on the account's login where there is one and through
 // the workspace's gateway where there is not.
@@ -100,10 +100,10 @@ const WORKSPACE_GIT_ENVIRONMENT = [
 // so what is copied here is the token the gateway is checking against.
 // ENABLE_TOOL_SEARCH travels with the gateway: the CLI turns tool search off
 // when ANTHROPIC_BASE_URL is not a first-party host, and the workspace turns
-// it back on because the gateway forwards bodies unchanged. DG_SOCKET and
+// it back on because the gateway forwards bodies unchanged. SKIFT_SOCKET and
 // MILL_SOCKET are the workspace's decision the same way: dead paths under the
 // run's own directory (internal/workspace.DeadSockets), so a session's own
-// tools find neither the host's dagger socket nor its mill socket, whatever
+// tools find neither the host's skift socket nor its mill socket, whatever
 // the sidecar's process happened to be carrying.
 const WORKSPACE_EGRESS_ENVIRONMENT = [
   "HTTPS_PROXY",
@@ -112,7 +112,7 @@ const WORKSPACE_EGRESS_ENVIRONMENT = [
   "ANTHROPIC_BASE_URL",
   "ANTHROPIC_AUTH_TOKEN",
   "ENABLE_TOOL_SEARCH",
-  "DG_SOCKET",
+  "SKIFT_SOCKET",
   "MILL_SOCKET",
 ];
 

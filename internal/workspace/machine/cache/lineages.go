@@ -1,7 +1,7 @@
 package cache
 
 import (
-	"github.com/ivy/mill/internal/workspace/machine/config"
+	"github.com/steading-ai/mill/internal/workspace/machine/config"
 )
 
 // Lineages is what a run restores, from the caches its configuration

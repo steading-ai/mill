@@ -6,8 +6,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/harness/scripted"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/harness/scripted"
 )
 
 var _ = Describe("The scripted adapter", Label("unit"), func() {

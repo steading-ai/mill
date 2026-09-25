@@ -14,11 +14,11 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/cli"
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/workflow"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/cli"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/workflow"
 )
 
 var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
@@ -133,7 +133,7 @@ var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 		})
 
 		It("when a worker shares this process, its own claim is what's printed, not a client's local --config", func(ctx SpecContext) {
-			g := daggerNodeWith(ctx, "https://forge.test/mill/mill.git")
+			g := skiftNodeWith(ctx, "https://forge.test/mill/mill.git")
 			databaseURL := pg.Database(ctx).Config().ConnString()
 			socket := filepath.Join(GinkgoT().TempDir(), "mill.sock")
 			workerConfig := filepath.Join(GinkgoT().TempDir(), "empty.yaml")
@@ -146,9 +146,9 @@ var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 				"--socket", socket,
 				"--database-url", databaseURL,
 				"--config", workerConfig,
-				"--project", daggerProject,
+				"--project", skiftProject,
 				"--label", "worker-only-label",
-				"--dagger-socket", g.service.Socket,
+				"--skift-socket", g.service.Socket,
 				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 				"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
 			})
@@ -180,7 +180,7 @@ var _ = Describe("The read tools", Label(testsupport.DBLabel), func() {
 				out, err = runCLI(ctx, socket, "status", "--config", localConfig)
 				return err
 			}, time.Minute, 100*time.Millisecond).Should(Succeed(), out)
-			Expect(lines(out)[0]).To(Equal("worker claims from: " + daggerProject + ", label worker-only-label"))
+			Expect(lines(out)[0]).To(Equal("worker claims from: " + skiftProject + ", label worker-only-label"))
 		})
 
 		It("--follow prints a line per event as it happens and exits cleanly on ctrl-C", func() {

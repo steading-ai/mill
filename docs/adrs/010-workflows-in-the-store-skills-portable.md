@@ -33,7 +33,7 @@ The split is [core principle 6](../core-principles.md): the **skill** is the por
 - **Good**: A ledger entry names one immutable version, so what ran is reconstructable from the store.
 - **Good**: `workflow push`/`pull` and a definition authored outside the repo work identically.
 - **Bad**: A definition now exists twice — in the repo and in the store — and `push` is what reconciles them. Nothing detects a repo edit that was never pushed.
-- **Neutral**: [Ledger §Open questions](../ledger.md#open-questions) leaves it undecided whether `skills.files` bytes belong in mill's database or dagger's blob store, leaning the former so a workflow loads without dagger.
+- **Neutral**: [Ledger §Open questions](../ledger.md#open-questions) leaves it undecided whether `skills.files` bytes belong in mill's database or skift's blob store, leaning the former so a workflow loads without skift.
 - **Neutral**: A project-scoped definition shadows an org one with a warning at load; nothing prevents accidental shadowing.
 
 ## Rejected Options

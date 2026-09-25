@@ -22,16 +22,16 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
 
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/forge/gitlab"
-	"github.com/ivy/mill/internal/skill"
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/version"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/machine"
-	machineconfig "github.com/ivy/mill/internal/workspace/machine/config"
-	"github.com/ivy/mill/internal/workspace/machine/driver"
-	"github.com/ivy/mill/internal/workspace/machine/image"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/forge/gitlab"
+	"github.com/steading-ai/mill/internal/skill"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/version"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/machine"
+	machineconfig "github.com/steading-ai/mill/internal/workspace/machine/config"
+	"github.com/steading-ai/mill/internal/workspace/machine/driver"
+	"github.com/steading-ai/mill/internal/workspace/machine/image"
 )
 
 // The live tier: a real machine on `core` through the real driver, as the
@@ -280,11 +280,11 @@ var _ = Describe("A machine on a real host", Label("live"), Serial, Ordered, fun
 	// Scenario: The production sockets never reach the machine
 	//   Given a machine has booted
 	//   When a session execs inside it
-	//   Then /run/dagger does not exist and /run/mill holds only the workspace socket
+	//   Then /run/skift does not exist and /run/mill holds only the workspace socket
 	//
 	// docs/sandbox.md §Credentials: the model credential never enters the
-	// machine, and neither does a path to the host's own dagger or mill
-	// socket — DG_SOCKET and MILL_SOCKET point at dead paths under the run's
+	// machine, and neither does a path to the host's own skift or mill
+	// socket — SKIFT_SOCKET and MILL_SOCKET point at dead paths under the run's
 	// own directory instead (internal/workspace.DeadSockets).
 	It("The production sockets never reach the machine", func(ctx context.Context) {
 		id := "acceptance-nosocket-" + nonce
@@ -295,8 +295,8 @@ var _ = Describe("A machine on a real host", Label("live"), Serial, Ordered, fun
 		DeferCleanup(func(ctx context.Context) { Expect(ws.Destroy(ctx)).To(Succeed()) })
 		name := "mill-" + id
 
-		By("then /run/dagger does not exist inside the machine")
-		out, status := inMachine(name, "", "test", "-e", "/run/dagger")
+		By("then /run/skift does not exist inside the machine")
+		out, status := inMachine(name, "", "test", "-e", "/run/skift")
 		Expect(status).NotTo(BeZero(), out)
 
 		By("and /run/mill holds only the workspace socket")
@@ -410,7 +410,7 @@ var _ = Describe("A machine on a real host", Label("live"), Serial, Ordered, fun
 		By("and the breadcrumb beside SKILL.md is what mill version prints")
 		out, status = inMachine(name, "agent", "cat", machineconfig.SkillPath+"/"+skill.VersionFile)
 		Expect(status).To(BeZero(), out)
-		binary, err := gexec.Build("github.com/ivy/mill/cmd/mill")
+		binary, err := gexec.Build("github.com/steading-ai/mill/cmd/mill")
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(gexec.CleanupBuildArtifacts)
 		Expect(strings.TrimSpace(must(binary, "version"))).To(Equal("mill version " + strings.TrimSpace(out)))

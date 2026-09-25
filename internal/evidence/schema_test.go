@@ -6,7 +6,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/evidence"
+	"github.com/steading-ai/mill/internal/evidence"
 )
 
 var _ = Describe("JSON Schema validation", Label("unit"), func() {

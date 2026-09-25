@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/store"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/store"
 )
 
 // StartStepRunParams opens the next attempt at a step.
@@ -151,7 +151,7 @@ func (s *Service) RecordUsage(ctx context.Context, leaseID, stepRunID string, us
 	return s.store.RecordUsage(ctx, leaseID, stepRunID, usage)
 }
 
-// MarkUsagePosted marks a step run's usage rows as posted to dagger.
+// MarkUsagePosted marks a step run's usage rows as posted to skift.
 func (s *Service) MarkUsagePosted(ctx context.Context, leaseID, stepRunID string) (int64, error) {
 	return s.store.MarkUsagePosted(ctx, leaseID, stepRunID)
 }

@@ -14,12 +14,12 @@
 
 [Unit]
 Description=mill: build and publish the base image
-Documentation=https://github.com/ivy/mill
+Documentation=https://github.com/steading-ai/mill
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=%h/src/github.com/ivy/mill
+WorkingDirectory=%h/src/github.com/steading-ai/mill
 LoadCredential=harbor-robot:%E/mill/harbor-robot
 ExecStart=mill image build-base --push

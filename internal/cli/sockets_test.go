@@ -10,11 +10,11 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/cli"
-	"github.com/ivy/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/cli"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
-// The configuration file's `socket` and `dagger-socket` reach every face
+// The configuration file's `socket` and `skift-socket` reach every face
 // that dials: a person whose file names the paths types no flag and exports
 // no variable.
 var _ = Describe("The configuration file's sockets", Label(testsupport.DBLabel), func() {
@@ -38,20 +38,20 @@ var _ = Describe("The configuration file's sockets", Label(testsupport.DBLabel),
 
 	// Scenario: The Mac-side CLI needs no environment
 	//   Given mill's config file on the Mac names the forwarded socket paths
-	//   And no MILL_SOCKET or DG_SOCKET variable is set
+	//   And no MILL_SOCKET or SKIFT_SOCKET variable is set
 	//   When "mill doctor" runs
 	//   Then it connects to the socket named in the file
 	It("The Mac-side CLI needs no environment", func() {
-		By("given mill's config file names the forwarded socket paths, and no MILL_SOCKET or DG_SOCKET is set")
+		By("given mill's config file names the forwarded socket paths, and no MILL_SOCKET or SKIFT_SOCKET is set")
 		m := serving(ctx)
-		daggerSocket := filepath.Join(GinkgoT().TempDir(), "forwarded-dg.sock")
+		skiftSocket := filepath.Join(GinkgoT().TempDir(), "forwarded-skift.sock")
 		home := GinkgoT().TempDir()
 		Expect(os.MkdirAll(filepath.Join(home, "mill"), 0o750)).To(Succeed())
 		Expect(os.WriteFile(filepath.Join(home, "mill", "config.yaml"),
-			[]byte("socket: "+m.socket+"\ndagger-socket: "+daggerSocket+"\n"), 0o600)).To(Succeed())
+			[]byte("socket: "+m.socket+"\nskift-socket: "+skiftSocket+"\n"), 0o600)).To(Succeed())
 		GinkgoT().Setenv("XDG_CONFIG_HOME", home)
 		Expect(os.Getenv("MILL_SOCKET")).To(BeEmpty())
-		Expect(os.Getenv("DG_SOCKET")).To(BeEmpty())
+		Expect(os.Getenv("SKIFT_SOCKET")).To(BeEmpty())
 
 		By("when mill doctor runs with no flag naming either socket")
 		out, _ := bare("doctor",
@@ -59,10 +59,10 @@ var _ = Describe("The configuration file's sockets", Label(testsupport.DBLabel),
 			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 			"--project", "millspec")
 
-		By("then it connects to the socket named in the file, and asks dagger at the file's path")
+		By("then it connects to the socket named in the file, and asks skift at the file's path")
 		Expect(probeLine(out, "socket")).To(Equal("pass"), out)
 		Expect(probeReason(out, "socket")).To(ContainSubstring(m.socket))
-		Expect(probeReason(out, "dagger")).To(ContainSubstring(daggerSocket), "dagger was asked at the file's path")
+		Expect(probeReason(out, "skift")).To(ContainSubstring(skiftSocket), "skift was asked at the file's path")
 
 		By("and mill status reaches the same service")
 		out, err := bare("status")

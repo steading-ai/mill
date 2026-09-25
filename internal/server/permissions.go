@@ -1,8 +1,8 @@
 package server
 
 import (
-	millv1connect "github.com/ivy/mill/gen/mill/v1/millv1connect"
-	"github.com/ivy/mill/internal/server/interceptor"
+	millv1connect "github.com/steading-ai/mill/gen/mill/v1/millv1connect"
+	"github.com/steading-ai/mill/internal/server/interceptor"
 )
 
 // permissions is how much authority each RPC needs, and the whole of what

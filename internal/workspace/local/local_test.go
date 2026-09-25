@@ -14,13 +14,13 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/evidence"
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/local"
-	"github.com/ivy/mill/internal/workspace/redact"
-	"github.com/ivy/mill/internal/workspace/socket"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/evidence"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/local"
+	"github.com/steading-ai/mill/internal/workspace/redact"
+	"github.com/steading-ai/mill/internal/workspace/socket"
 )
 
 var _ = Describe("The local workspace", Label("unit"), func() {
@@ -258,23 +258,23 @@ var _ = Describe("The local workspace", Label("unit"), func() {
 			Expect(err).To(MatchError(local.ErrNotCreated))
 		})
 
-		// A child that finds no DG_SOCKET/MILL_SOCKET in its environment
+		// A child that finds no SKIFT_SOCKET/MILL_SOCKET in its environment
 		// falls back to the compiled-in production sockets, which the local
 		// backend's shared filesystem and uid make reachable. Handing every
 		// child a real, dead path instead closes that fallback.
-		It("hands every child a dead DG_SOCKET and MILL_SOCKET, not the production ones", func(ctx context.Context) {
+		It("hands every child a dead SKIFT_SOCKET and MILL_SOCKET, not the production ones", func(ctx context.Context) {
 			dead := workspace.DeadSockets(filepath.Dir(handle.Socket))
-			Expect(ws.Environment()).To(HaveKeyWithValue("DG_SOCKET", dead["DG_SOCKET"]))
+			Expect(ws.Environment()).To(HaveKeyWithValue("SKIFT_SOCKET", dead["SKIFT_SOCKET"]))
 			Expect(ws.Environment()).To(HaveKeyWithValue("MILL_SOCKET", dead["MILL_SOCKET"]))
-			Expect(dead["DG_SOCKET"]).NotTo(BeAnExistingFile())
+			Expect(dead["SKIFT_SOCKET"]).NotTo(BeAnExistingFile())
 			Expect(dead["MILL_SOCKET"]).NotTo(BeAnExistingFile())
 
 			session := step(ctx, workspace.Exec)
 			environment, err := session.Exec(ctx, socket.ExecRequest{Path: "/usr/bin/env"})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(lines(environment.Stdout)).To(ContainElements(
-				"DG_SOCKET="+dead["DG_SOCKET"], "MILL_SOCKET="+dead["MILL_SOCKET"]))
-			Expect(environment.Stdout).NotTo(ContainSubstring("/run/dagger/dg.sock"))
+				"SKIFT_SOCKET="+dead["SKIFT_SOCKET"], "MILL_SOCKET="+dead["MILL_SOCKET"]))
+			Expect(environment.Stdout).NotTo(ContainSubstring("/run/skift/skift.sock"))
 			Expect(environment.Stdout).NotTo(ContainSubstring("/run/mill/mill.sock"))
 		})
 	})

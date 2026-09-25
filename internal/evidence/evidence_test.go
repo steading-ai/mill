@@ -10,10 +10,10 @@ import (
 	. "github.com/onsi/gomega"
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/evidence"
-	"github.com/ivy/mill/internal/forge"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/evidence"
+	"github.com/steading-ai/mill/internal/forge"
 )
 
 // branch is the run's working branch, as workspace.BranchFor derives it from
@@ -543,7 +543,7 @@ var _ = Describe("The status verifier", Label("unit"), func() {
 var _ = Describe("The artifact verifier", Label("unit"), func() {
 	const digest = "sha256:9f2c"
 
-	It("closes the step with a digest dagger accepted", func() {
+	It("closes the step with a digest skift accepted", func() {
 		result, err := evidence.Verify(context.Background(), millv1.EvidenceKind_EVIDENCE_KIND_ARTIFACT,
 			evidence.Step{Name: "gather-context", Claim: digest, Artifacts: fixtureArtifacts{held: digest}})
 
@@ -551,7 +551,7 @@ var _ = Describe("The artifact verifier", Label("unit"), func() {
 		Expect(result.Value.GetArtifact()).To(Equal(digest))
 	})
 
-	It("refuses a digest dagger does not hold", func() {
+	It("refuses a digest skift does not hold", func() {
 		result, err := evidence.Verify(context.Background(), millv1.EvidenceKind_EVIDENCE_KIND_ARTIFACT,
 			evidence.Step{Name: "gather-context", Claim: digest, Artifacts: fixtureArtifacts{held: "sha256:0000"},
 				Session: session("I attached the context as "+digest, nil)})

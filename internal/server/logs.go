@@ -12,9 +12,9 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/domain"
-	"github.com/ivy/mill/internal/run"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/domain"
+	"github.com/steading-ai/mill/internal/run"
 )
 
 // truncatedLimit is how large a followed record's body may be before Logs
@@ -332,7 +332,7 @@ func latestStepRun(detail *domain.RunDetail, step string, attempt int64) *millv1
 // gateRef reads a's gate_filed body, when it has one, into the shape
 // RunEnd.gate carries. docs/activity.md's Decisions: RunEnd's gate is built
 // from the gate_filed record already in the stream being followed, not a
-// fresh call to dagger.
+// fresh call to skift.
 func gateRef(a *millv1.Activity) *millv1.GateRef {
 	filed := a.GetGateFiled()
 	if filed == nil {

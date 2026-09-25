@@ -7,8 +7,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/cli"
-	"github.com/ivy/mill/internal/version"
+	"github.com/steading-ai/mill/internal/cli"
+	"github.com/steading-ai/mill/internal/version"
 )
 
 var _ = Describe("The command tree", Label("unit"), func() {
@@ -102,9 +102,9 @@ var _ = Describe("The command tree", Label("unit"), func() {
 		Expect(run("logs", "one", "two")).NotTo(BeZero(), "at most one run may be named")
 	})
 
-	It("explain reaches dagger for the gate a run is blocked on", func() {
+	It("explain reaches skift for the gate a run is blocked on", func() {
 		Expect(run("explain", "--help")).To(BeZero(), stderr.String())
-		Expect(stdout.String()).To(ContainSubstring("--dagger-socket"))
+		Expect(stdout.String()).To(ContainSubstring("--skift-socket"))
 		Expect(run("explain")).NotTo(BeZero())
 	})
 
@@ -116,7 +116,7 @@ var _ = Describe("The command tree", Label("unit"), func() {
 
 	It("doctor takes what it probes and needs no argument", func() {
 		Expect(run("doctor", "--help")).To(BeZero(), stderr.String())
-		for _, flag := range []string{"--dagger-socket", "--sidecar", "--project", "--workspace-dir"} {
+		for _, flag := range []string{"--skift-socket", "--sidecar", "--project", "--workspace-dir"} {
 			Expect(stdout.String()).To(ContainSubstring(flag))
 		}
 	})

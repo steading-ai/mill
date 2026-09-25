@@ -3,7 +3,7 @@
 //
 // The package owns the transport and nothing else. The service
 // implementation is injected, the handlers never reach the store — only
-// [github.com/ivy/mill/internal/domain] may, and depguard enforces it — and
+// [github.com/steading-ai/mill/internal/domain] may, and depguard enforces it — and
 // a caller is whatever the connection says it is. In O0 the only caller is
 // the worker face of this same process, and it speaks Connect over the
 // socket like anything else: the boundary exists from the first commit so
@@ -23,8 +23,8 @@ import (
 
 	"connectrpc.com/connect"
 
-	"github.com/ivy/mill/gen/mill/v1/millv1connect"
-	"github.com/ivy/mill/internal/server/interceptor"
+	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
+	"github.com/steading-ai/mill/internal/server/interceptor"
 )
 
 // Defaults for the fields of Config that may be left zero.

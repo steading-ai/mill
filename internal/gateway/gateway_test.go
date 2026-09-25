@@ -9,7 +9,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/gateway"
+	"github.com/steading-ai/mill/internal/gateway"
 )
 
 // The credential gateway of docs/sandbox.md §Credentials: the session holds

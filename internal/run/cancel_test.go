@@ -7,10 +7,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/harness/fake"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/testsupport"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/harness/fake"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 var _ = Describe("Cancelling a run", Label(testsupport.DBLabel), func() {
@@ -60,7 +60,7 @@ var _ = Describe("Cancelling a run", Label(testsupport.DBLabel), func() {
 		Eventually(done, interval+grace).Should(Receive(BeNil()))
 
 		By("and the run is resumable at that step")
-		// Resumable means three things, and the ledger and dagger hold all
+		// Resumable means three things, and the ledger and skift hold all
 		// three: the attempt is aborted rather than left running, the lease
 		// is given back as a preemption rather than a crash, and the run
 		// keeps its workflow and its status.

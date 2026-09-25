@@ -6,15 +6,15 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/store"
-	"github.com/ivy/mill/internal/testsupport"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/store"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 var _ = Describe("SetLease", Label(testsupport.DBLabel), func() {
 	// The statuses a new claim may take over, from Invariant 9. Whether a
-	// running run's lease has expired is dagger's judgement: it hands out a
+	// running run's lease has expired is skift's judgement: it hands out a
 	// second lease only once the first is gone.
 	DescribeTable("takes a run over only from a status a new claim may take",
 		func(ctx SpecContext, reach func(*ledger, SpecContext) *millv1.Run, accepted bool) {
@@ -32,7 +32,7 @@ var _ = Describe("SetLease", Label(testsupport.DBLabel), func() {
 			Expect(claimed.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
 			Expect(claimed.GetWorkerRef()).To(Equal("worker-2"))
 		},
-		Entry("running, whose lease dagger has already replaced", func(l *ledger, ctx SpecContext) *millv1.Run {
+		Entry("running, whose lease skift has already replaced", func(l *ledger, ctx SpecContext) *millv1.Run {
 			run, _ := l.runWithWorkflow(ctx, "mill#8")
 			return run
 		}, true),
@@ -314,7 +314,7 @@ var _ = Describe("The catalog", Label(testsupport.DBLabel), func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resolved.GetId()).To(Equal(project.GetId()))
 
-		resolved, err = l.store.GetWorkflow(ctx, store.GetWorkflowParams{Name: "feature", Project: "dagger"})
+		resolved, err = l.store.GetWorkflow(ctx, store.GetWorkflowParams{Name: "feature", Project: "skift"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resolved.GetId()).To(Equal(org.GetId()))
 
@@ -373,7 +373,7 @@ var _ = Describe("The reads the CLI needs", Label(testsupport.DBLabel), func() {
 		Expect(summaries[0].GetLeases()).To(Equal(int64(1)))
 
 		// A project the node does not belong to sees nothing.
-		summaries, _, err = l.store.Status(ctx, nil, "dagger")
+		summaries, _, err = l.store.Status(ctx, nil, "skift")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(summaries).To(BeEmpty())
 	}, SpecTimeout(time.Minute))
@@ -631,7 +631,7 @@ var _ = Describe("Reconciliations", Label(testsupport.DBLabel), func() {
 
 		Expect(l.store.RecordReconciliation(ctx, "mill@core", started, []store.ReconciliationFinding{
 			{Kind: "orphan", Name: "mill-x", Action: "stopped; run directory removed", Detail: "unit mill-machine@x.service"},
-			{Kind: "swept", Name: "mill-acceptance-x-0badcafe", Action: "archived (dagger offers no project delete)"},
+			{Kind: "swept", Name: "mill-acceptance-x-0badcafe", Action: "archived (skift offers no project delete)"},
 		})).To(Succeed())
 		Expect(l.store.RecordReconciliation(ctx, "mill@core", started.Add(time.Hour), nil)).To(Succeed(),
 			"a pass that found nothing is still a record")

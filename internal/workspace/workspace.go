@@ -11,8 +11,8 @@ import (
 	"net/url"
 	"strings"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/forge"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/forge"
 )
 
 // Kind is which implementation is behind a workspace. The interface does not
@@ -193,7 +193,7 @@ type Spec struct {
 	// RunID is the run the workspace belongs to. It names the workspace's
 	// directory, so two runs can never be given the same one.
 	RunID string
-	// NodeRef is the dagger node the run is working, such as `mill#12`. The
+	// NodeRef is the skift node the run is working, such as `mill#12`. The
 	// branch is derived from it; see [BranchFor].
 	NodeRef string
 	// Origin is the repository to clone.
@@ -572,7 +572,7 @@ type CatchUpResult struct {
 //
 // Merging is not here. A merge is the mill's own act at the end of a run,
 // not something a session asks for, so it is reached through
-// [github.com/ivy/mill/internal/forge.Forge] directly and has no verb.
+// [github.com/steading-ai/mill/internal/forge.Forge] directly and has no verb.
 type ForgeVerbs interface {
 	// Push puts the run's branch on the forge and returns what landed.
 	Push(ctx context.Context, request PushRequest) (PushResult, error)
@@ -827,7 +827,7 @@ var ErrNotImplemented = errors.New("workspace: not implemented")
 // rotated away, or never issued.
 var ErrUnauthorized = errors.New("workspace: unauthorized")
 
-// ErrNoForge is a forge verb on a workspace whose run has no forge: a dagger
+// ErrNoForge is a forge verb on a workspace whose run has no forge: a skift
 // project with no repository, or a workspace built without one.
 var ErrNoForge = errors.New("workspace: no forge is configured for this run")
 

@@ -4,7 +4,7 @@ package main
 import (
 	"os"
 
-	"github.com/ivy/mill/internal/cli"
+	"github.com/steading-ai/mill/internal/cli"
 )
 
 func main() {

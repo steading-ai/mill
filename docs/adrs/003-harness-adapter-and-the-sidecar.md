@@ -13,7 +13,7 @@ A skill step is a headless agent session. Mill is Go; the harness with the riche
 
 - Codex, Pi, and a native Go adapter are foreseen; the workflow definition must not change when the harness does ([Architecture §Skill steps](../architecture.md#skill-steps-the-harness-adapter))
 - [PRD §7](../prd.md#7-constraints): design for the CLI's contract, and *"do not depend on a language SDK that may not exist for Go"*
-- Usage numbers are only visible to whatever talks to the harness, and dagger needs them per model
+- Usage numbers are only visible to whatever talks to the harness, and skift needs them per model
 - A step must be cancellable, and "never ran" must be distinguishable from "ran and failed"
 
 ## Considered Options
@@ -27,7 +27,7 @@ A skill step is a headless agent session. Mill is Go; the harness with the riche
 
 Chosen option: a **`Harness` interface** (`Start`, `Resume`, `Cancel`) whose first implementation is a **TypeScript sidecar over the Claude Agent SDK**, spawned per step and spoken to over **newline-delimited JSON on stdio**, with the message types defined once in `harness.v1` proto and generated to both Go and TypeScript by buf.
 
-Usage is part of the interface's contract, not an optional event: the adapter returns per-turn and terminal totals keyed by model, in dagger's shape. A `Turn` ends with `ProcessExit{Status, Signal, Reason}`, `Status = -1` meaning the session never ran. A skill is used as a *prompt*, never installed as a harness-native skill, so no harness's discovery rules reach a workflow.
+Usage is part of the interface's contract, not an optional event: the adapter returns per-turn and terminal totals keyed by model, in skift's shape. A `Turn` ends with `ProcessExit{Status, Signal, Reason}`, `Status = -1` meaning the session never ran. A skill is used as a *prompt*, never installed as a harness-native skill, so no harness's discovery rules reach a workflow.
 
 ### Consequences
 

@@ -143,7 +143,7 @@ WHERE (cardinality(sqlc.arg('statuses')::text[]) = 0 OR status = ANY(sqlc.arg('s
 ORDER BY updated_at DESC, id DESC
 LIMIT sqlc.arg('lim');
 
--- How many dagger leases this run has held, counted from the event log
+-- How many skift leases this run has held, counted from the event log
 -- rather than stored: every SetLease writes one. Distinct from a step's
 -- attempt, which counts review rounds.
 -- name: CountRunLeases :one

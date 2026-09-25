@@ -24,7 +24,7 @@ Mill's first workspace is a local clone under the operator's account; containers
 
 ## Decision Outcome
 
-Chosen option: **one chokepoint, enforced by lint**. [Core principle 3](../core-principles.md): *"`Workspace.Exec` is the single chokepoint for anything a step runs — it sets cwd, uid, and environment. `exec.Command` is forbidden outside the workspace package."* The rule is golangci-lint's forbidigo, scoped to `internal/workspace`, the same depguard/forbidigo pattern dagger uses to keep `internal/store` out of handlers. Checks are `Workspace.Exec` calls with a contract ([Domain model §Check](../domain-model.md#check)).
+Chosen option: **one chokepoint, enforced by lint**. [Core principle 3](../core-principles.md): *"`Workspace.Exec` is the single chokepoint for anything a step runs — it sets cwd, uid, and environment. `exec.Command` is forbidden outside the workspace package."* The rule is golangci-lint's forbidigo, scoped to `internal/workspace`, the same depguard/forbidigo pattern skift uses to keep `internal/store` out of handlers. Checks are `Workspace.Exec` calls with a contract ([Domain model §Check](../domain-model.md#check)).
 
 Enforcement is the process boundary `Exec` establishes, not the tool the session was offered: *"a command run through `exec` is bounded by the process it spawns, not by the tool that spawned it"* ([Architecture §The workspace](../architecture.md#the-workspace)).
 

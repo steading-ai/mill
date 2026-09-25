@@ -19,7 +19,7 @@ import (
 	connect "connectrpc.com/connect"
 	context "context"
 	errors "errors"
-	v1 "github.com/ivy/mill/gen/mill/v1"
+	v1 "github.com/steading-ai/mill/gen/mill/v1"
 	http "net/http"
 	strings "strings"
 )
@@ -160,7 +160,7 @@ const (
 
 // StoreServiceClient is a client for the mill.v1.StoreService service.
 type StoreServiceClient interface {
-	// GetRunByNode returns the live run for a dagger node, or nothing. The
+	// GetRunByNode returns the live run for a skift node, or nothing. The
 	// first call a worker makes after a claim.
 	GetRunByNode(context.Context, *connect.Request[v1.GetRunByNodeRequest]) (*connect.Response[v1.GetRunByNodeResponse], error)
 	// CreateRun opens a run on a node in status selecting. At most one live
@@ -224,9 +224,9 @@ type StoreServiceClient interface {
 	// orphans stopped, lost sandboxes noted, slices reaped for resume — the
 	// leftovers it removed, and the scratch projects it swept by name
 	// (docs/sandbox.md §Reconciliation, §"External state"); at start and
-	// between claims, the runs it found stranded under a node dagger had
+	// between claims, the runs it found stranded under a node skift had
 	// closed (docs/ledger.md §Sweep). It is a record of the host and of the
-	// ledger against dagger, not of a run: no lease fences it, because the
+	// ledger against skift, not of a run: no lease fences it, because the
 	// pass runs while the worker holds none on what it touches.
 	RecordReconciliation(context.Context, *connect.Request[v1.RecordReconciliationRequest]) (*connect.Response[v1.RecordReconciliationResponse], error)
 	// RecordWorkspace records the run's workspace once it is open: its kind,
@@ -244,7 +244,7 @@ type StoreServiceClient interface {
 	// a run whose completing patch may have landed retries the same patch
 	// rather than sending a second one.
 	SetCompleteRequestId(context.Context, *connect.Request[v1.SetCompleteRequestIdRequest]) (*connect.Response[v1.SetCompleteRequestIdResponse], error)
-	// Done marks a run done. Called only after dagger has confirmed the
+	// Done marks a run done. Called only after skift has confirmed the
 	// completing patch: a run marked done before that would strand a node
 	// nothing can claim.
 	Done(context.Context, *connect.Request[v1.DoneRequest]) (*connect.Response[v1.DoneResponse], error)
@@ -281,7 +281,7 @@ type StoreServiceClient interface {
 	RevokeStepToken(context.Context, *connect.Request[v1.RevokeStepTokenRequest]) (*connect.Response[v1.RevokeStepTokenResponse], error)
 	// RecordUsage appends what a turn cost, per model, to the ledger.
 	RecordUsage(context.Context, *connect.Request[v1.RecordUsageRequest]) (*connect.Response[v1.RecordUsageResponse], error)
-	// MarkUsagePosted marks a step run's usage rows as posted to dagger, after
+	// MarkUsagePosted marks a step run's usage rows as posted to skift, after
 	// ReportUsage has accepted them.
 	MarkUsagePosted(context.Context, *connect.Request[v1.MarkUsagePostedRequest]) (*connect.Response[v1.MarkUsagePostedResponse], error)
 	// GetWorkflow returns one workflow version, by id or by name in a scope.
@@ -898,7 +898,7 @@ func (c *storeServiceClient) WatchRuns(ctx context.Context, req *connect.Request
 
 // StoreServiceHandler is an implementation of the mill.v1.StoreService service.
 type StoreServiceHandler interface {
-	// GetRunByNode returns the live run for a dagger node, or nothing. The
+	// GetRunByNode returns the live run for a skift node, or nothing. The
 	// first call a worker makes after a claim.
 	GetRunByNode(context.Context, *connect.Request[v1.GetRunByNodeRequest]) (*connect.Response[v1.GetRunByNodeResponse], error)
 	// CreateRun opens a run on a node in status selecting. At most one live
@@ -962,9 +962,9 @@ type StoreServiceHandler interface {
 	// orphans stopped, lost sandboxes noted, slices reaped for resume — the
 	// leftovers it removed, and the scratch projects it swept by name
 	// (docs/sandbox.md §Reconciliation, §"External state"); at start and
-	// between claims, the runs it found stranded under a node dagger had
+	// between claims, the runs it found stranded under a node skift had
 	// closed (docs/ledger.md §Sweep). It is a record of the host and of the
-	// ledger against dagger, not of a run: no lease fences it, because the
+	// ledger against skift, not of a run: no lease fences it, because the
 	// pass runs while the worker holds none on what it touches.
 	RecordReconciliation(context.Context, *connect.Request[v1.RecordReconciliationRequest]) (*connect.Response[v1.RecordReconciliationResponse], error)
 	// RecordWorkspace records the run's workspace once it is open: its kind,
@@ -982,7 +982,7 @@ type StoreServiceHandler interface {
 	// a run whose completing patch may have landed retries the same patch
 	// rather than sending a second one.
 	SetCompleteRequestId(context.Context, *connect.Request[v1.SetCompleteRequestIdRequest]) (*connect.Response[v1.SetCompleteRequestIdResponse], error)
-	// Done marks a run done. Called only after dagger has confirmed the
+	// Done marks a run done. Called only after skift has confirmed the
 	// completing patch: a run marked done before that would strand a node
 	// nothing can claim.
 	Done(context.Context, *connect.Request[v1.DoneRequest]) (*connect.Response[v1.DoneResponse], error)
@@ -1019,7 +1019,7 @@ type StoreServiceHandler interface {
 	RevokeStepToken(context.Context, *connect.Request[v1.RevokeStepTokenRequest]) (*connect.Response[v1.RevokeStepTokenResponse], error)
 	// RecordUsage appends what a turn cost, per model, to the ledger.
 	RecordUsage(context.Context, *connect.Request[v1.RecordUsageRequest]) (*connect.Response[v1.RecordUsageResponse], error)
-	// MarkUsagePosted marks a step run's usage rows as posted to dagger, after
+	// MarkUsagePosted marks a step run's usage rows as posted to skift, after
 	// ReportUsage has accepted them.
 	MarkUsagePosted(context.Context, *connect.Request[v1.MarkUsagePostedRequest]) (*connect.Response[v1.MarkUsagePostedResponse], error)
 	// GetWorkflow returns one workflow version, by id or by name in a scope.

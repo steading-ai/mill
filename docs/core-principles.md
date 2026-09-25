@@ -6,16 +6,16 @@ Decision filters for this project. Every principle has teeth — it should be po
 Auto-merge always. If a change needs more care than the mill's own checks, the repository enforces it — CI gating merge, required reviews, branch protection. The mill never second-guesses a forge that let it merge. If nothing blocks, hitting the default branch is done.
 
 ## 2. One node's worth of state per run
-The mill never holds more than the current node's state in memory or ledger. Decomposition is a workflow that files child nodes in dagger and ends; the mill never keeps a sub-plan. This is the rule that stops it growing a planner or a shadow backlog.
+The mill never holds more than the current node's state in memory or ledger. Decomposition is a workflow that files child nodes in skift and ends; the mill never keeps a sub-plan. This is the rule that stops it growing a planner or a shadow backlog.
 
 ## 3. Every spawned process goes through the workspace
-`Workspace.Exec` is the single chokepoint for anything a step runs — it sets cwd, uid, and environment. `exec.Command` is forbidden outside the workspace package (depguard/forbidigo, as dagger does). Checks are `Workspace.Exec` calls with a contract. This is what makes the local → container → remote swap a config change.
+`Workspace.Exec` is the single chokepoint for anything a step runs — it sets cwd, uid, and environment. `exec.Command` is forbidden outside the workspace package (depguard/forbidigo, as skift does). Checks are `Workspace.Exec` calls with a contract. This is what makes the local → container → remote swap a config change.
 
 ## 4. Escalation has a price
-There is no `needs-human` verdict. A reviewer may `approve` or `revise`. A human is reached one way: the circuit breaker — retry cap exhausted, last findings as a comment, dagger gate. Asking a human costs three real attempts.
+There is no `needs-human` verdict. A reviewer may `approve` or `revise`. A human is reached one way: the circuit breaker — retry cap exhausted, last findings as a comment, skift gate. Asking a human costs three real attempts.
 
 ## 5. One way to create work
-The workflow that decomposes a node uses the same skill a thicket agent uses to file work from a conversation. There is one path into dagger, and the mill is a client of it like everyone else.
+The workflow that decomposes a node uses the same skill a thicket agent uses to file work from a conversation. There is one path into skift, and the mill is a client of it like everyone else.
 
 ## 6. The skill is portable; the record is ours
 A workflow step is an agent skill (name, description, body, scripts, assets — the part that survives switching harnesses) plus an mill record beside it (output schema, ordering, the gate check, harness translation, provenance, scope). Nothing mill-specific goes in `SKILL.md` frontmatter beyond a flat breadcrumb.

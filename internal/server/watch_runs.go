@@ -8,7 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 )
 
 // DefaultWatchRunsWindow is how far back a WatchRuns cursor may be before it

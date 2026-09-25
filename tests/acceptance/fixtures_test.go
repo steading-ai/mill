@@ -17,7 +17,7 @@ import (
 // repository is bare and on this host, and nothing about the staging below
 // changes for it.
 type fixture struct {
-	// Name distinguishes the scratch project and the dagger project this
+	// Name distinguishes the scratch project and the skift project this
 	// fixture stages.
 	Name string
 	// Files seed the repository, path to content.
@@ -117,7 +117,7 @@ func scriptedImplement() string {
 }
 
 // staged is a fixture set up and ready to run: the repository the run
-// delivers to, the project and node in dagger, and a workspace root and log
+// delivers to, the project and node in skift, and a workspace root and log
 // directory of the spec's own.
 type staged struct {
 	// Project is the scratch project on the forge, or nil when the fixture
@@ -126,7 +126,7 @@ type staged struct {
 	Graph   *scratchGraph
 	NodeRef string
 	// Origin is what a new workspace clones, and VCSURL is the repository
-	// the dagger project names, which the forge steps address. They are
+	// the skift project names, which the forge steps address. They are
 	// the same for a fixture on a forge; a local fixture clones from disk
 	// and its project carries a placeholder, because a run resolves its
 	// project's forge before it clones and a run that never reaches a
@@ -155,7 +155,7 @@ func (f fixture) stage(ctx context.Context) *staged {
 		s.Origin, s.VCSURL, s.Ref = s.Project.CloneURL, s.Project.CloneURL, s.Project.DefaultBranch
 	}
 
-	By("and a dagger project whose repository is that repository")
+	By("and a skift project whose repository is that repository")
 	s.Graph = newScratchGraph(ctx, f.Name, s.VCSURL)
 
 	By("and the fixture's node filed in it")
@@ -175,7 +175,7 @@ func (f fixture) stage(ctx context.Context) *staged {
 	return s
 }
 
-// placeholderVCSURL is the repository a local fixture's dagger project
+// placeholderVCSURL is the repository a local fixture's skift project
 // names, for a forge the run will never reach. A project has to name one —
 // the forge is resolved after the claim and before the clone, so a project
 // with none fails before anything is spent — and a scenario that runs on a

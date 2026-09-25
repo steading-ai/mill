@@ -9,11 +9,11 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/gen/mill/v1/millv1connect"
-	"github.com/ivy/mill/internal/domain"
-	"github.com/ivy/mill/internal/server/interceptor"
-	"github.com/ivy/mill/internal/version"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
+	"github.com/steading-ai/mill/internal/domain"
+	"github.com/steading-ai/mill/internal/server/interceptor"
+	"github.com/steading-ai/mill/internal/version"
 )
 
 // StoreService is the mill.v1 StoreService over the ledger. A handler maps
@@ -83,7 +83,7 @@ func NewStoreService(svc *domain.Service, observer *Observer, logDir string, opt
 
 var _ millv1connect.StoreServiceHandler = (*StoreService)(nil)
 
-// GetRunByNode returns the live run for a dagger node, or nothing.
+// GetRunByNode returns the live run for a skift node, or nothing.
 func (s *StoreService) GetRunByNode(ctx context.Context, req *connect.Request[millv1.GetRunByNodeRequest]) (*connect.Response[millv1.GetRunByNodeResponse], error) {
 	run, err := s.svc.GetRunByNode(ctx, req.Msg.GetNodeId())
 	if err != nil {
@@ -311,7 +311,7 @@ func (s *StoreService) RecordHeartbeat(ctx context.Context, req *connect.Request
 	return connect.NewResponse(&millv1.RecordHeartbeatResponse{}), nil
 }
 
-// Done marks a run done, after dagger has confirmed the completing patch.
+// Done marks a run done, after skift has confirmed the completing patch.
 // SetCompleteRequestId mints the completing patch's idempotency key before
 // that patch is sent.
 func (s *StoreService) SetCompleteRequestId(ctx context.Context, req *connect.Request[millv1.SetCompleteRequestIdRequest]) (*connect.Response[millv1.SetCompleteRequestIdResponse], error) {
@@ -331,7 +331,7 @@ func (s *StoreService) Done(ctx context.Context, req *connect.Request[millv1.Don
 	return connect.NewResponse(&millv1.DoneResponse{Run: run}), nil
 }
 
-// Fail ends a run a gate denied, after dagger has been told with the gate's
+// Fail ends a run a gate denied, after skift has been told with the gate's
 // deny_result.
 func (s *StoreService) Fail(ctx context.Context, req *connect.Request[millv1.FailRequest]) (*connect.Response[millv1.FailResponse], error) {
 	run, err := s.svc.Fail(ctx, req.Msg.GetLeaseId(), req.Msg.GetRunId(), req.Msg.GetReason())
@@ -415,7 +415,7 @@ func (s *StoreService) RecordUsage(ctx context.Context, req *connect.Request[mil
 	return connect.NewResponse(&millv1.RecordUsageResponse{Usage: usage}), nil
 }
 
-// MarkUsagePosted marks a step run's usage rows as posted to dagger.
+// MarkUsagePosted marks a step run's usage rows as posted to skift.
 func (s *StoreService) MarkUsagePosted(ctx context.Context, req *connect.Request[millv1.MarkUsagePostedRequest]) (*connect.Response[millv1.MarkUsagePostedResponse], error) {
 	marked, err := s.svc.MarkUsagePosted(ctx, req.Msg.GetLeaseId(), req.Msg.GetStepRunId())
 	if err != nil {

@@ -9,11 +9,11 @@ import (
 	"github.com/onsi/ginkgo/v2/types"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/domain"
-	"github.com/ivy/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/domain"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
-// The run loop is specified against a real dagger and, where it writes them,
+// The run loop is specified against a real skift and, where it writes them,
 // a real ledger. Fencing is the whole contract on both sides and a fake
 // would prove nothing about it, so the container holds both databases.
 // `make test-unit` filters the db label out, so it must not be started

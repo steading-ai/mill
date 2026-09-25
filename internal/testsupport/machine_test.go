@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // Where a spec process runs decides which of the live tier's specs can run:

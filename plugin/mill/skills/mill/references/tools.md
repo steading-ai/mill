@@ -12,7 +12,7 @@ disagree about which tools exist.
 
 Conventions that hold for every entry below:
 
-- **`run`** is a dagger node reference (`mill#18`) or the run id `status`
+- **`run`** is a skift node reference (`mill#18`) or the run id `status`
   prints. Anything carrying a `#` is a node reference; a node reference
   resolves to that node's most recent run.
 - **`view`** is `refs`, `summary` (the default) or `full`. `refs` is
@@ -34,7 +34,7 @@ What is live. Start here.
 
 | Argument | Type | |
 |---|---|---|
-| `project` | string | Only runs on nodes in this dagger project |
+| `project` | string | Only runs on nodes in this skift project |
 | `statuses` | string[] | Only these states: `selecting`, `running`, `waiting`, `parked`, `done`, `failed`, `abandoned`. Empty means every state that has not ended |
 | `view` | string | `refs`, `summary`, `full` |
 
@@ -239,7 +239,7 @@ rate table is applied by whoever wants money.
 | Argument | Type | |
 |---|---|---|
 | `since` | string | A window such as `24h` or `7d`. Empty means everything |
-| `project` | string | Only runs on nodes in this dagger project |
+| `project` | string | Only runs on nodes in this skift project |
 
 ```json
 {
@@ -392,10 +392,10 @@ line of reason. Takes no arguments; every probe is reported.
   "probes": [
     {"name": "socket", "ok": true, "reason": "/run/user/1000/mill/mill.sock answers; mill 0.0.0-dev"},
     {"name": "schema", "ok": true, "reason": "migration 14, current"},
-    {"name": "dagger", "ok": true, "reason": "/run/dagger/dg.sock answers; this account is a principal on mill, 1 node(s) ready for an agent"},
+    {"name": "skift", "ok": true, "reason": "/run/skift/skift.sock answers; this account is a principal on mill, 1 node(s) ready for an agent"},
     {"name": "sidecar", "ok": false, "reason": "sidecar/dist/main.js did not answer: claude: the sidecar answered nothing before it exited"},
     {"name": "signing", "ok": false, "reason": "no signing key under ~/.local/state/mill/workspaces/signing"},
-    {"name": "forge", "ok": false, "reason": "no repository to probe: forge: project mill has no repository: set it with `dg project update mill --vcs-url <url>`"},
+    {"name": "forge", "ok": false, "reason": "no repository to probe: forge: project mill has no repository: set it with `skift project update mill --vcs-url <url>`"},
     {"name": "notify", "ok": true, "reason": "contrib/notify/thicket-send.sh accepts a probe notice"}
   ]
 }

@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/forge"
 )
 
 // The forge credential: the credential store first, the environment second,

@@ -10,7 +10,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
 )
 
 // The wait a session ends its turn on is watched: every heartbeat interval

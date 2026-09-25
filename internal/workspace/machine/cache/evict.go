@@ -6,8 +6,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/ivy/mill/internal/workspace/machine/driver"
-	"github.com/ivy/mill/internal/workspace/machine/image"
+	"github.com/steading-ai/mill/internal/workspace/machine/driver"
+	"github.com/steading-ai/mill/internal/workspace/machine/image"
 )
 
 // Eviction is docs/sandbox.md §Eviction past what a promotion does to its

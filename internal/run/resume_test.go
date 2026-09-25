@@ -10,12 +10,12 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/harness/fake"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/workspace"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/harness/fake"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // The three ways the first end-to-end run could not be recovered from
@@ -41,8 +41,8 @@ var _ = Describe("Resume after a run died early", Label(testsupport.DBLabel), fu
 	// died is a run that got no further than its workspace: created,
 	// holding the lease of the claim that created it, and dead before the
 	// workflow was chosen. The lease it holds is released on the way out,
-	// which is the state a crash leaves once dagger's TTL has run down —
-	// the ledger names a lease dagger no longer knows about.
+	// which is the state a crash leaves once skift's TTL has run down —
+	// the ledger names a lease skift no longer knows about.
 	died := func() *millv1.Run {
 		GinkgoHelper()
 		var calls atomic.Int64
@@ -61,7 +61,7 @@ var _ = Describe("Resume after a run died early", Label(testsupport.DBLabel), fu
 		Expect(run.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_SELECTING))
 		Expect(run.GetWorkflowId()).To(BeEmpty())
 		Expect(run.GetLeaseId()).NotTo(BeEmpty(), "the ledger still names the dead worker's lease")
-		Expect(f.leaseOf(ctx).GetId()).To(BeEmpty(), "dagger's lease is gone")
+		Expect(f.leaseOf(ctx).GetId()).To(BeEmpty(), "skift's lease is gone")
 		return run
 	}
 
@@ -91,7 +91,7 @@ var _ = Describe("Resume after a run died early", Label(testsupport.DBLabel), fu
 	})
 
 	It("Restart does not need the dead lease", func() {
-		By("given a parked run whose dagger lease has expired")
+		By("given a parked run whose skift lease has expired")
 		// The ledger nulls a run's lease when the circuit breaker parks it,
 		// so a stale lease on a stopped run is always the one a claim left
 		// behind when its worker died — which is the run a human restarts,

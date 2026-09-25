@@ -16,14 +16,14 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/gen/mill/v1/millv1connect"
-	"github.com/ivy/mill/internal/domain"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/server"
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/local"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
+	"github.com/steading-ai/mill/internal/domain"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/server"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/local"
 )
 
 // sealLease is the lease sealFixture's run and step run are created under.
@@ -32,7 +32,7 @@ import (
 const sealLease = "seal-lease-1"
 
 // sealFixture is a store client and one open step run, against a real
-// database but with none of support_test.go's dagger or scripted-session
+// database but with none of support_test.go's skift or scripted-session
 // machinery: SealAttempt only needs a step_run_id the activity table's
 // foreign key accepts and a store to call it through.
 type sealFixture struct {
@@ -46,7 +46,7 @@ type sealFixture struct {
 // newSealFixture opens a run and its one step run directly through the
 // store's own handlers, the same CreateRun-then-StartStepRun sequence
 // openRun uses (run.go), with a synthetic node id (unregistered with any
-// dagger, as sweep_test.go's fixture already does) since sealing an
+// skift, as sweep_test.go's fixture already does) since sealing an
 // attempt has nothing to do with the graph.
 func newSealFixture(ctx context.Context) *sealFixture {
 	GinkgoHelper()

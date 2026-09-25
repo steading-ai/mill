@@ -92,16 +92,16 @@ const (
 	Failed Status = "failed"
 )
 
-// Project is a dagger project as the forge needs it: a name for errors, and
+// Project is a skift project as the forge needs it: a name for errors, and
 // the repository it delivers to.
 //
-// VCSURL is dagger's own `vcs_url` on the project (dagger's
+// VCSURL is skift's own `vcs_url` on the project (skift's
 // docs/domain-model.md §Project) and nothing else feeds it: the mill carries
 // no repository of its own, so two orchestrators and a person read the same
 // answer from the same place. A project with none is a [NoVCSURLError],
-// which names the `dg` command that sets it.
+// which names the `skift` command that sets it.
 type Project struct {
-	// Slug is the dagger project, named in every error this package raises.
+	// Slug is the skift project, named in every error this package raises.
 	Slug string
 	// VCSURL is the repository the project delivers to.
 	VCSURL string
@@ -401,16 +401,16 @@ var (
 	ErrNotMerged = errors.New("forge: the pull request has not merged")
 )
 
-// NoVCSURLError is a dagger project the mill cannot find a repository for. It
+// NoVCSURLError is a skift project the mill cannot find a repository for. It
 // names the project, because the fix is on the project and a run that cannot
 // say which one is a bug report nobody can act on.
 type NoVCSURLError struct {
-	// Project is the dagger project's slug.
+	// Project is the skift project's slug.
 	Project string
 }
 
 func (e *NoVCSURLError) Error() string {
-	return fmt.Sprintf("forge: project %s has no repository: set it with `dg project update %s --vcs-url <url>`",
+	return fmt.Sprintf("forge: project %s has no repository: set it with `skift project update %s --vcs-url <url>`",
 		e.Project, e.Project)
 }
 
@@ -435,7 +435,7 @@ func (e *UnknownKindError) Error() string {
 type UnsupportedError struct {
 	// Kind is the forge kind asked for.
 	Kind Kind
-	// Project is the dagger project that named it.
+	// Project is the skift project that named it.
 	Project string
 }
 
@@ -610,7 +610,7 @@ func (r *Registry) Kinds() []Kind {
 	return kinds
 }
 
-// For resolves a dagger project to a forge client. This is what a run start
+// For resolves a skift project to a forge client. This is what a run start
 // calls, and where a project with no repository fails: a *[NoVCSURLError]
 // naming the project, before a workspace is created or a session is spent.
 func (r *Registry) For(project Project, minter Minter) (Forge, error) {
@@ -627,7 +627,7 @@ func (r *Registry) For(project Project, minter Minter) (Forge, error) {
 	return factory(repo, minter)
 }
 
-// RepoFor resolves the repository a dagger project delivers to, which is the
+// RepoFor resolves the repository a skift project delivers to, which is the
 // URL the run was given and nothing else.
 func RepoFor(project Project) (Repo, error) {
 	raw := strings.TrimSpace(project.VCSURL)

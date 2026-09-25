@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ivy/mill/internal/workspace/machine/driver"
-	"github.com/ivy/mill/internal/workspace/machine/image"
+	"github.com/steading-ai/mill/internal/workspace/machine/driver"
+	"github.com/steading-ai/mill/internal/workspace/machine/image"
 )
 
 // DefaultScratchBudget is how old a scratch project must be before the sweep
@@ -58,19 +58,19 @@ type LiveRun struct {
 	Machine string
 }
 
-// Project is the dagger project a node reference names.
+// Project is the skift project a node reference names.
 func (r LiveRun) Project() string {
 	project, _, _ := strings.Cut(r.NodeRef, "#")
 	return project
 }
 
 // External is one kind of state a machine creates outside itself and a
-// suite names so that it can be swept from the host side: dagger's scratch
+// suite names so that it can be swept from the host side: skift's scratch
 // projects, the forge's (docs/sandbox.md §"External state"). The reconciler
 // decides what is stale — the name pattern, the age, no live run — and the
 // external decides how it goes.
 type External interface {
-	// Kind names the state, such as `dagger` or `forge`, for the report.
+	// Kind names the state, such as `skift` or `forge`, for the report.
 	Kind() string
 	// List is every candidate the external knows, matched or not; the
 	// reconciler filters.
@@ -84,7 +84,7 @@ type External interface {
 // Scratch is one thing an [External] lists.
 type Scratch struct {
 	// Name is what the pattern is matched against: a project's slug on
-	// dagger, its path's last element on the forge.
+	// skift, its path's last element on the forge.
 	Name string
 	// CreatedAt is when it was made, which the budget is measured from.
 	CreatedAt time.Time

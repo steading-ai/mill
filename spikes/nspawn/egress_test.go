@@ -143,16 +143,16 @@ var _ = Describe("Egress, the db suite, Harbor and the shim on a real machine", 
 		By("the mill checkout bound at /work and the machine's podman socket")
 		checkout, err := filepath.Abs(filepath.Join("..", ".."))
 		Expect(err).NotTo(HaveOccurred())
-		dagger := os.Getenv("MILL_DAGGER_REPO")
-		if dagger == "" {
+		skift := os.Getenv("MILL_SKIFT_REPO")
+		if skift == "" {
 			home, err := os.UserHomeDir()
 			Expect(err).NotTo(HaveOccurred())
-			dagger = filepath.Join(home, "src", "github.com", "ivy", "dagger")
+			skift = filepath.Join(home, "src", "github.com", "ivy", "skift")
 		}
-		if _, err := os.Stat(filepath.Join(dagger, "internal", "store", "migrations")); err != nil {
-			Skip("no dagger checkout at " + dagger + "; the fixture needs its migrations and dg")
+		if _, err := os.Stat(filepath.Join(skift, "internal", "store", "migrations")); err != nil {
+			Skip("no skift checkout at " + skift + "; the fixture needs its migrations and skift")
 		}
-		boot(machine14, "--bind="+checkout+":/work:idmap", "--bind-ro="+dagger+":/opt/dagger:idmap", proxyEnvironment())
+		boot(machine14, "--bind="+checkout+":/work:idmap", "--bind-ro="+skift+":/opt/skift:idmap", proxyEnvironment())
 		network(machine14)
 		egress()
 		socket := "/run/user/1000/podman/podman.sock"
@@ -164,7 +164,7 @@ var _ = Describe("Egress, the db suite, Harbor and the shim on a real machine", 
 		By("agent runs make test-db")
 		env := []string{"User=agent", "WorkingDirectory=/work",
 			"Environment=HTTPS_PROXY=" + proxyURL(), "Environment=HTTP_PROXY=" + proxyURL(),
-			"Environment=DOCKER_HOST=unix://" + socket, "Environment=MILL_DAGGER_REPO=/opt/dagger"}
+			"Environment=DOCKER_HOST=unix://" + socket, "Environment=MILL_SKIFT_REPO=/opt/skift"}
 		_, stderr, status := execIn(machine14, env, "mise", "install")
 		Expect(status).To(BeZero(), stderr)
 		out, stderr, status := execIn(machine14, env, "mise", "exec", "--", "make", "test-db")

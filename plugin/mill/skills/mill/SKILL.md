@@ -1,7 +1,7 @@
 ---
 name: mill
 description: Use when a question is about a mill run — what is running, why a run is stuck, what a step cost, what evidence closed it, whether this host could work at all — or about the machine a mill session runs in: what mill.toml declares, why a package installed with dnf is gone next run, why a connection hangs. Covers the mill MCP tools and the `mill` CLI, what each answers, which of them a session is allowed to call, the mill.toml grammar, and how a session reaches out.
-when_to_use: mill status, mill inspect, mill explain, mill logs, mill cost, mill doctor, why is the run stuck, which step is it on, what evidence closed the step, a parked run, a waiting run, a mill workspace, a workflow version, mill.toml, image packages, a cache lineage, dnf install, HTTPS_PROXY, ANTHROPIC_BASE_URL, a connection that times out, nested machines. This is the mill workflow runner over a dagger work graph.
+when_to_use: mill status, mill inspect, mill explain, mill logs, mill cost, mill doctor, why is the run stuck, which step is it on, what evidence closed the step, a parked run, a waiting run, a mill workspace, a workflow version, mill.toml, image packages, a cache lineage, dnf install, HTTPS_PROXY, ANTHROPIC_BASE_URL, a connection that times out, nested machines. This is the mill workflow runner over a skift work graph.
 allowed-tools:
   - Bash(mill status:*)
   - Bash(mill inspect:*)
@@ -31,16 +31,16 @@ allowed-tools:
 **Autonomy:** model-invocable · reads a run unprompted · `cancel`, `rerun` and
 `workspace_clean` are the session's own calls, never pre-authorized here
 
-Mill is a workflow runner over dagger's work graph. It claims a ready node,
+Mill is a workflow runner over skift's work graph. It claims a ready node,
 drives each step as a headless coding-agent session or a deterministic check,
-closes a step only on evidence it verified, files a dagger gate when a person
-must decide, and completes the node. A **run** is one dagger node being worked.
+closes a step only on evidence it verified, files a skift gate when a person
+must decide, and completes the node. A **run** is one skift node being worked.
 
 ## Two rules before anything else
 
-**Want work done? File a dagger node.** `run` is not an MCP tool and will not
+**Want work done? File a skift node.** `run` is not an MCP tool and will not
 be: it executes in the calling process, on the mill's own host and account. A
-session that wants something built files it in dagger — the dagger skill is
+session that wants something built files it in skift — the skift skill is
 how — and a mill worker picks it up. Do not try to start a run.
 
 **The role decides, and nothing you say changes it.** Identity on mill's
@@ -57,7 +57,7 @@ naming the role. Ask the operator; do not work around it.
 
 ## Reading a run
 
-A run is named by its dagger node reference — `mill#18` — or by the run id
+A run is named by its skift node reference — `mill#18` — or by the run id
 `status` prints. A node reference resolves to that node's most recent run.
 
 `status` → `explain` → `inspect` → `logs`.
@@ -70,7 +70,7 @@ A run is named by its dagger node reference — `mill#18` — or by the run id
 | `logs` | One attempt's log: the session's events, one summary line each, as the redactor wrote them |
 | `history` | The audit trail — what changed, when, under which worker. The record of a run that has ended |
 | `cost` | A window of usage rolled up by run, workflow, step and model. Counts, never currency |
-| `doctor` | Whether this host could work at all: the socket, the schema, dagger, the sidecar, the signing key, the forge credential, the notifier |
+| `doctor` | Whether this host could work at all: the socket, the schema, skift, the sidecar, the signing key, the forge credential, the notifier |
 
 The readers take `view`: `refs` is identifiers, `summary` the default, `full`
 everything the ledger holds. Start narrow.
@@ -81,9 +81,9 @@ session's own output surfaces, and it was redacted at write time.
 
 ## A stuck run is usually a person's turn
 
-A run that is `waiting` or `parked` is blocked on a **dagger gate**, and only
+A run that is `waiting` or `parked` is blocked on a **skift gate**, and only
 a person completes a gate. `explain` names it and gives its title. Say what
-you think should happen — comment on the gate in dagger if you can reach
+you think should happen — comment on the gate in skift if you can reach
 it — and stop. Do not try to unblock the run yourself.
 
 `parked` means the circuit breaker tripped: a step used its retries, or the

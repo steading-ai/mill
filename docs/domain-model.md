@@ -1,8 +1,8 @@
 # Domain Model
 
-The model behind the mill's store and API. This document is the input to the proto contract; the proto is authoritative once it exists. It composes with `dagger/docs/domain-model.md` and never restates it: where dagger already names a thing — node, lease, gate, artifact, usage, principal, context id — the mill uses dagger's word and dagger's rules.
+The model behind the mill's store and API. This document is the input to the proto contract; the proto is authoritative once it exists. It composes with `skift/docs/domain-model.md` and never restates it: where skift already names a thing — node, lease, gate, artifact, usage, principal, context id — the mill uses skift's word and skift's rules.
 
-The mill holds exactly one kind of state dagger does not: **what happened inside a run** — which workflow, which step, what evidence, which session. Everything a human or another agent would want to *see* goes to dagger as a result or artifact. Everything only resume needs stays here.
+The mill holds exactly one kind of state skift does not: **what happened inside a run** — which workflow, which step, what evidence, which session. Everything a human or another agent would want to *see* goes to skift as a result or artifact. Everything only resume needs stays here.
 
 ## Run
 
@@ -11,21 +11,21 @@ One node, worked through one workflow, by this mill. The unit a worker takes and
 | Field | Notes |
 |---|---|
 | `id` | ULID, internal |
-| `node_id`, `node_ref` | The dagger node. `node_ref` is the display key (`dagger#18`) |
+| `node_id`, `node_ref` | The skift node. `node_ref` is the display key (`skift#18`) |
 | `generation` | 1 for the first run on a node; incremented by `restart`. `(node_id, generation)` is unique; at most one run per node is live. See [Restart](#restart) |
-| `context_id` | Dagger's context id for the node, copied at creation. Every session in the run derives from it and the generation |
+| `context_id` | Skift's context id for the node, copied at creation. Every session in the run derives from it and the generation |
 | `workflow_id` | The immutable workflow version this run follows. Fixed at selection; never changes mid-run |
 | `status` | `selecting`, `running`, `waiting`, `parked`, `done`, `failed`, `abandoned`. See [Run states](#run-states) |
-| `lease_id` | The current dagger lease, or null while `waiting` or `parked`. The fencing token on every dagger write |
+| `lease_id` | The current skift lease, or null while `waiting` or `parked`. The fencing token on every skift write |
 | `worker_ref` | Where the current attempt runs. Free string; a hostname and account today |
 | `parked_reason` | Set with `parked`: `retries`, `budget`, `denied`, `timeout`, `refused` |
 | `gate_node_id` | Set with `waiting`: the gate this run filed and is blocked on |
 | `cancel_requested` | Set by `cancel`; the worker reads it at every heartbeat and stops the step cleanly, releasing with `preempted`. Cleared on resume |
 | `created_at`, `updated_at` | |
 
-Derived, never stored: `current_step` (the first step whose latest step run is not `closed` — see [Evidence](#evidence) for what supersedes a closed one), `cost` (sum over step runs), `leases` (count of dagger leases the node has held under this run; distinct from a step's `attempt`).
+Derived, never stored: `current_step` (the first step whose latest step run is not `closed` — see [Evidence](#evidence) for what supersedes a closed one), `cost` (sum over step runs), `leases` (count of skift leases the node has held under this run; distinct from a step's `attempt`).
 
-**One live run per node.** A second lease on the same node resumes the same run at its current step — dagger's rule that "every attempt shares the node's context id, so a retry resumes the prior session" carries over. Starting over is a deliberate, human-initiated act with its own generation; see [Restart](#restart).
+**One live run per node.** A second lease on the same node resumes the same run at its current step — skift's rule that "every attempt shares the node's context id, so a retry resumes the prior session" carries over. Starting over is a deliberate, human-initiated act with its own generation; see [Restart](#restart).
 
 ### Run states
 
@@ -40,14 +40,14 @@ selecting ──▶ running ──▶ done
                 └──────▶ abandoned (terminal; a human restarted the node — a new generation exists)
 ```
 
-`abandoned` and `failed` are reachable from every state a run can still be live in — `selecting`, `running`, `waiting`, `parked`. `abandoned` because [Restart](#restart) applies to the live run whatever it is doing, and a run waiting on a human is the ordinary thing to restart; `failed` because a node is closed underneath a run only while the run holds no live lease — dagger refuses to drop or complete a leased node — which is any of those states, and the sweep that records it finds the run wherever it stopped (`docs/ledger.md` §Sweep). `parked` returns to `running` the same way `waiting` does: the gate is answered, the node becomes ready, and the next claim resumes the run at the step it stopped on.
+`abandoned` and `failed` are reachable from every state a run can still be live in — `selecting`, `running`, `waiting`, `parked`. `abandoned` because [Restart](#restart) applies to the live run whatever it is doing, and a run waiting on a human is the ordinary thing to restart; `failed` because a node is closed underneath a run only while the run holds no live lease — skift refuses to drop or complete a leased node — which is any of those states, and the sweep that records it finds the run wherever it stopped (`docs/ledger.md` §Sweep). `parked` returns to `running` the same way `waiting` does: the gate is answered, the node becomes ready, and the next claim resumes the run at the step it stopped on.
 
 - `selecting` — claimed, no workflow yet. The assessment step runs here.
 - `running` — a lease is held and a step is executing or about to.
 - `waiting` — a gate node exists and blocks this node. The run holds no lease and no worker. When the gate completes, the node becomes ready again, `ClaimNext` returns it, and the worker that gets it resumes this run: it finds `gate_node_id` set and the current step a gate step, reads the gate's result, and closes that step with `gate` evidence — it does not file the gate again.
 - `parked` — the circuit breaker fired. A comment with the last findings is on the node, a gate asks a human what to do, and the lease is released. Structurally identical to `waiting`; distinguished so `status` can say why.
-- `done` — the terminal step closed with evidence and `Complete` was accepted by dagger.
-- `failed` — a gate was denied, the node was closed underneath the run (dropped, or completed by someone other than the run), the run's machine is gone (a lost sandbox), or selection ended in a configuration or content problem no retry of the same run would get past — an unknown workflow, a missing or malformed `build-workflow` definition, or an assessment that exhausted its retries. The gate's denial is written by the worker holding the lease; a closed node is found by the worker's sweep of the ledger against dagger, which writes the reason and gives back what the run held (`docs/ledger.md` §Sweep). The lost-sandbox and selection cases additionally hold the node in dagger, under the same reason and lease, so `ClaimNext` does not return it into the identical failure — a person clears the hold before the node is claimed again. Terminal to the run loop: nothing mill does on its own leaves this state. An operator's `mill rerun <run> --from <step>` does, by overruling the ending — it supersedes the span and returns the run to `running` holding no lease, so the next claim resumes it at that step. `abandoned` has no such door: a later generation already holds the node.
+- `done` — the terminal step closed with evidence and `Complete` was accepted by skift.
+- `failed` — a gate was denied, the node was closed underneath the run (dropped, or completed by someone other than the run), the run's machine is gone (a lost sandbox), or selection ended in a configuration or content problem no retry of the same run would get past — an unknown workflow, a missing or malformed `build-workflow` definition, or an assessment that exhausted its retries. The gate's denial is written by the worker holding the lease; a closed node is found by the worker's sweep of the ledger against skift, which writes the reason and gives back what the run held (`docs/ledger.md` §Sweep). The lost-sandbox and selection cases additionally hold the node in skift, under the same reason and lease, so `ClaimNext` does not return it into the identical failure — a person clears the hold before the node is claimed again. Terminal to the run loop: nothing mill does on its own leaves this state. An operator's `mill rerun <run> --from <step>` does, by overruling the ending — it supersedes the span and returns the run to `running` holding no lease, so the next claim resumes it at that step. `abandoned` has no such door: a later generation already holds the node.
 - `abandoned` — a human restarted the node. Terminal. The run's record stays; the new generation is a different run.
 
 ### Restart
@@ -140,11 +140,11 @@ The assessment runs in a read-only session of its own, and it does not gather co
 
 | Field | Notes |
 |---|---|
-| `project` | The dagger project |
+| `project` | The skift project |
 | `workflow` | Name, resolved to the newest version in scope at run creation |
 | `tier` | `quick-fix`, `small`, `feature`, `large`. What gate `auto` predicates compare against when the assessment did not run |
 
-Dagger nodes carry no workflow label. Dagger never learns the word.
+Skift nodes carry no workflow label. Skift never learns the word.
 
 ## Step
 
@@ -166,7 +166,7 @@ One unit of a workflow. Four kinds.
 | `retries` | How many times *this* step may fail and be tried again before `on_failure` is consulted. Counted on this step's own attempts. Default 3 for a skill or gate step, 0 for a check: a check gets no feedback between one attempt and the next — `runCheck` takes none — so retrying it changes nothing unless the world does, and a check that wants a retry anyway says so with an explicit `retries` |
 | `token_budget` | How many tokens one attempt may bill through the credential gateway — input, output, cache read and cache write summed — before the gateway refuses its requests and the attempt fails on the budget. Zero declares none. `docs/sandbox.md` §Credentials |
 | `models` | The models the step's sessions may reach through the gateway; an entry matches a model id it equals or that contains it, so `sonnet` pins every Sonnet. Empty admits every model. Mill's field, not the harness's: the harness's `model` is what the session asks for, this is what the gateway lets through |
-| `timeout` | Wall clock for the step, enforced by the worker. Independent of the dagger lease, which the worker heartbeats for the step's whole duration; a step may run longer than a lease TTL |
+| `timeout` | Wall clock for the step, enforced by the worker. Independent of the skift lease, which the worker heartbeats for the step's whole duration; a step may run longer than a lease TTL |
 
 Harness settings live on the **step**, not on the skill record. A skill is shared across workflows, so it cannot hold a setting that differs between them: the same reviewer is worth a cheaper model in a `docs` workflow than in `feature`. `mill.v1.HarnessSettings` and `harness.v1.Settings` carry the decision in the proto.
 
@@ -192,7 +192,7 @@ An artifact step's evidence is the session's own report, which is the right defa
 
 A **check step** runs a command through the workspace and reads its exit code and stdout. It produces evidence directly.
 
-A **gate step** files a dagger gate and releases the lease. It produces no evidence of its own; it closes when the gate node completes, and the gate's result is the evidence.
+A **gate step** files a skift gate and releases the lease. It produces no evidence of its own; it closes when the gate node completes, and the gate's result is the evidence.
 
 A **preparatory step** readies the machine for the sessions — `workflows/quick-fix` and `workflows/feature` open with `toolchain`, `mise trust /work && mise install`. It runs a command through the workspace like a check, but its evidence is the record of how the command ended, whichever way it did: `exit` evidence carrying the process exit and the captured output, whole. It has no pass code, so it always closes and never fails: a non-zero exit, or a budget spent, is a *finding* the first session receives as feedback, never a failed attempt, so it consumes no retry, consults no `on_failure`, and cannot trip the circuit breaker; the loader refuses `retries` and `on_failure` on one. Its output is recorded and never shown to a session. It runs only in a workspace that provisions a machine; on the local backend there is nothing to ready, and the step closes on the record that it did not run. `docs/sandbox.md` §"Preparatory steps" is the authority.
 
@@ -228,7 +228,7 @@ A resumable agent session inside a run. Named by the step definition, identified
 
 Sessions exist so that gather-context → think → plan → implement → simplify → commit → PR share one context window and its cache, while review runs in another. Feedback from a `revise` returns to the *implementing* session, so the reviewer's findings land where the work was done and the reviewer, on the next pass, still has its own prior findings. Two sessions per code workflow is the expected shape; the model permits more.
 
-A session's transcript lives with the harness on the worker's host, never in the store. The store knows how to name it; only the adapter can resume it. This is dagger's "transcript resume vs. graph resume" distinction, one level down.
+A session's transcript lives with the harness on the worker's host, never in the store. The store knows how to name it; only the adapter can resume it. This is skift's "transcript resume vs. graph resume" distinction, one level down.
 
 **A turn is not the end of a session.** A session may background a command and end its turn to be woken when the command finishes, so the harness keeps the session open until a turn ends with no background task still running. That wait has no bound of its own and is where two of the reference harness's sessions were lost, each waiting on `until ! pgrep -f "ginkgo"; do sleep 5; done` — a loop whose own shell matches the pattern, so the condition is true forever — with the step's hour the only thing that ended it. The wait is therefore watched, and the session is given the tools it needs to wait properly: `TaskOutput` and `TaskStop` are in every skill step's tool policy unless the step denies them, a shell loop that polls with `pgrep -f` is refused before it runs with a reason naming `TaskOutput`, and an ordinary foreground command is capped below the point at which the harness would background it.
 
@@ -256,7 +256,7 @@ What each kind proves:
 | `structured` | assessment, plan | The session's final output validated against the step's schema |
 | `url` | PR steps | The forge returned the URL when asked for the PR by branch |
 | `status` | CI steps | The forge reports the named check as `success` for the commit |
-| `artifact` | any | An artifact with this digest was accepted by dagger |
+| `artifact` | any | An artifact with this digest was accepted by skift |
 | `gate` | gate steps | The gate node's status is `done` and its result is attached |
 
 A step definition names one evidence kind. A step run with evidence is `closed`. A `revise` marks closed step runs `superseded`: the evidence row stays, immutable, but the step is open again and runs anew. A run's `current_step` is the first step whose latest step run is not `closed`. Nothing the session says, and nothing in a transcript, is evidence.
@@ -282,7 +282,7 @@ Output that does not match the schema is not a verdict, and neither is a `revise
 
 A verdict step's `output_schema` may be left out, and the mill then hands the reviewer this schema; a workflow that writes it down writes down this one, which the loader checks. A reviewer is asked for exactly the shape the verifier accepts.
 
-The verdict is stored twice: as evidence here, and as a text artifact on the node's result in dagger named `<step>-<generation>.<attempt>.md`, carrying the decision, the findings and the reviewing session's id, so a human reads it next to the work. The generation is in the name because dagger admits one artifact per name on a node and a restarted node reviews again from attempt 1. Both a `revise` and an `approve` are attached: a `revise` closes no step, so the artifact and the next attempt's prompt are the whole of its record.
+The verdict is stored twice: as evidence here, and as a text artifact on the node's result in skift named `<step>-<generation>.<attempt>.md`, carrying the decision, the findings and the reviewing session's id, so a human reads it next to the work. The generation is in the name because skift admits one artifact per name on a node and a restarted node reviews again from attempt 1. Both a `revise` and an `approve` are attached: a `revise` closes no step, so the artifact and the next attempt's prompt are the whole of its record.
 
 What the reviewer is judging is put in front of it by the mill. For a target that closes on a file — `plan` — it is the file's path: the plan is untracked until `commit`, and the file is the whole of what the step wrote. For any other target it is the span that is this run's — the base commit of the first attempt at the step a `revise` would return to, the branch, and the files changed since — and the reviewer runs `git diff` against that base itself: a reviewer left to find the span on its own would review the checkout without knowing which part of it this run wrote, and a reviewer handed the whole diff in its prompt has the contract it is judging against crowded out. On a second look after its own `revise`, the reviewer is also told what changed (§Revise).
 
@@ -303,7 +303,7 @@ Checks are what make the workflow enforced. A skill can *recommend* a script; on
 
 ## Gate
 
-A human decision, expressed the only way dagger allows: a node with `assignee_kind: user` that blocks this run's node.
+A human decision, expressed the only way skift allows: a node with `assignee_kind: user` that blocks this run's node.
 
 | Field | Notes |
 |---|---|
@@ -311,13 +311,13 @@ A human decision, expressed the only way dagger allows: a node with `assignee_ki
 | `auto` | A policy that closes the gate without a human: a predicate over prior evidence and the run's `tier`, e.g. `verdict.decision == approve && tier <= feature`. `verdict(<step>)` names the step whose verdict is meant — `verdict('review-plan').decision == approve` — which a workflow with two reviewers needs; a step that closed on no verdict is undefined, so the predicate is false and the reason is on the record. `tier` comes from the assessment or the project default, so it always exists. Recorded in the ledger as an auto-approval when it fires |
 | `deny_result` | What the run records on the node if the human denies |
 
-Filing a gate is two dagger calls — `ApplyPatch` creates the gate node and the edge that blocks this one; `Release` ends the lease with reason `gate` — with the store's record of the gate id written *between* them, so a crash at any point leaves either a lease that expires harmlessly or a gate the store already knows about, never a gate the store will file twice. The mill never claims the gate, never completes it, and never disposes of it — dagger's policy forbids all three for the filer, and the mill does not want the exception. It waits for the node to become ready again.
+Filing a gate is two skift calls — `ApplyPatch` creates the gate node and the edge that blocks this one; `Release` ends the lease with reason `gate` — with the store's record of the gate id written *between* them, so a crash at any point leaves either a lease that expires harmlessly or a gate the store already knows about, never a gate the store will file twice. The mill never claims the gate, never completes it, and never disposes of it — skift's policy forbids all three for the filer, and the mill does not want the exception. It waits for the node to become ready again.
 
-A gate the `auto` policy closes files nothing and reaches dagger not at all, so there is no gate node to read: the fact that closes the step is the policy that fired, recorded as `gate` evidence reading `auto:<predicate>` and as `auto_approved` on the attempt. A gate declaring `status` evidence closes on the forge instead: approving it reads the forge's checks on the pull request's head, and merges only once they pass.
+A gate the `auto` policy closes files nothing and reaches skift not at all, so there is no gate node to read: the fact that closes the step is the policy that fired, recorded as `gate` evidence reading `auto:<predicate>` and as `auto_approved` on the attempt. A gate declaring `status` evidence closes on the forge instead: approving it reads the forge's checks on the pull request's head, and merges only once they pass.
 
 On resume, a run whose current step is a gate step and whose `gate_node_id` is set reads the gate node: `done` closes the step with `gate` evidence carrying the gate's result; a denial fails the run with `deny_result`. A gate is filed once.
 
-A filed gate is also carried to a person: the mill runs the deployment's configured notify command with the gate as JSON, records what it did, and never lets the outcome touch the run (architecture.md §"Gate steps"). The gate in dagger is the record; the message is a courtesy.
+A filed gate is also carried to a person: the mill runs the deployment's configured notify command with the gate as JSON, records what it did, and never lets the outcome touch the run (architecture.md §"Gate steps"). The gate in skift is the record; the message is a courtesy.
 
 Plan approval, merge approval where a project has not opted into auto-merge, deploy approval, and the circuit breaker are the gates in the first workflows. Merge is auto-approved by default: repo protections are the repo's job.
 
@@ -370,9 +370,9 @@ Every derived credential — the forge token for a `push`, a registry pull — i
 
 ## Result
 
-What the mill gives dagger when a run reaches `done`. Shaped by dagger's `Complete`: a markdown body under the cap, plus artifacts.
+What the mill gives skift when a run reaches `done`. Shaped by skift's `Complete`: a markdown body under the cap, plus artifacts.
 
-The body is the implementing session's own summary. The artifacts, as dagger artifact parts:
+The body is the implementing session's own summary. The artifacts, as skift artifact parts:
 
 | Artifact | Part kind |
 |---|---|
@@ -384,21 +384,21 @@ The body is the implementing session's own summary. The artifacts, as dagger art
 
 Every artifact's metadata carries `run_id` so a reader walks from the result back to the ledger.
 
-Usage is posted to dagger through `ReportUsage` **after every step run closes or fails** — one record per `(lease, model)` — not only at the end. Dagger's contract says reporting again adds a record and the attempt's cost is the sum, and that each report renews the lease, so posting per step is both the intended shape and a heartbeat. A worker that dies loses at most the in-flight step's usage from dagger's view; the ledger has it per turn.
+Usage is posted to skift through `ReportUsage` **after every step run closes or fails** — one record per `(lease, model)` — not only at the end. Skift's contract says reporting again adds a record and the attempt's cost is the sum, and that each report renews the lease, so posting per step is both the intended shape and a heartbeat. A worker that dies loses at most the in-flight step's usage from skift's view; the ledger has it per turn.
 
-Predecessor results arrive in a run as the node's inputs. They are rendered into prompts as attributed, delimited data — a claim by that principal — never as instructions. This is dagger's rule and the mill is its first consumer that has to honour it.
+Predecessor results arrive in a run as the node's inputs. They are rendered into prompts as attributed, delimited data — a claim by that principal — never as instructions. This is skift's rule and the mill is its first consumer that has to honour it.
 
 ## Principal
 
-Mill runs as the operator's unix account on the host, and by dagger's transport-resolved identity it *is* the operator's `user` principal. Dagger designed for this: an agent under a person's uid is that person, with that person's authority; the trust zone is the delegation (ADR-006 §"A trust zone is the delegation mechanism", ADR-009). It is also the only principal kind whose `ReportUsage` dagger accepts today.
+Mill runs as the operator's unix account on the host, and by skift's transport-resolved identity it *is* the operator's `user` principal. Skift designed for this: an agent under a person's uid is that person, with that person's authority; the trust zone is the delegation (ADR-006 §"A trust zone is the delegation mechanism", ADR-009). It is also the only principal kind whose `ReportUsage` skift accepts today.
 
 What follows from it, and what mill therefore owns:
 
 | Fact | Mill's obligation |
 |---|---|
-| Dagger applies no gate veto to a user principal | Mill never claims, completes, drops, reclassifies, or unlinks a gate — including its own. Enforced in mill's code, tested, not delegated to policy |
+| Skift applies no gate veto to a user principal | Mill never claims, completes, drops, reclassifies, or unlinks a gate — including its own. Enforced in mill's code, tested, not delegated to policy |
 | The principal cannot distinguish mill from the operator by hand | Every `ClaimNext` carries `harness: mill`, `agent_ref` naming the worker, `session_ref` naming the run; every leased write carries the lease. Every lease-less `ApplyPatch` uses a `request_id` prefixed `mill-<run>-`. "Everything mill did" is a join on those, and `mill history` performs it |
-| Mill's writes are `human_touched` | The operator vouches for them by running mill. The ledger, not dagger, is where a reader learns a step was a machine's |
+| Mill's writes are `human_touched` | The operator vouches for them by running mill. The ledger, not skift, is where a reader learns a step was a machine's |
 | A gate mill files and the operator answers is one principal completing it | Fine by design (ADR-009 §12). The ledger records that mill filed it and never completed it |
 | Workers share the principal | They are distinguished by `worker_ref` on the run and by the fencing token, which is what makes a stale worker's late write fail correctly |
 
@@ -406,7 +406,7 @@ The reviewer runs under the same account with a read-only tool policy and a step
 
 Other principals reach the store over its socket by peer uid, mapped by configuration to `operator` (read and operate) or `reader` (read). Because mill and the operator share a uid, the role map matters for *other* uids — the zone agents. They never hold a lease and never write evidence; `cancel`, `rerun`, and `restart` are requests the worker honours, recorded as events with the requesting uid.
 
-Moving mill to its own account is a later change and a larger one than it looks: a new `agent` principal in dagger, every gate veto beginning to apply, and a change to dagger's `ReportUsage` admission — an orchestrator principal kind or a stored delegation grant, which dagger's roadmap lists as deliberately unscheduled. It is the identity bet's work, not this project's.
+Moving mill to its own account is a later change and a larger one than it looks: a new `agent` principal in skift, every gate veto beginning to apply, and a change to skift's `ReportUsage` admission — an orchestrator principal kind or a stored delegation grant, which skift's roadmap lists as deliberately unscheduled. It is the identity bet's work, not this project's.
 
 ## Open questions
 

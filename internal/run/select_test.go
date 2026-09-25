@@ -7,12 +7,12 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/harness/fake"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/workspace"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/harness/fake"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // Selection's second rule, driven end to end: a project with no default
@@ -248,7 +248,7 @@ var _ = Describe("Selection by assessment", Label(testsupport.DBLabel), func() {
 			Expect(f.runner(noDefault).Execute(ctx, f.nodeRef)).To(Succeed())
 
 			Expect(f.runOf(ctx).GetTier()).To(Equal(millv1.Tier_TIER_QUICK_FIX))
-			Expect(f.gatesOn(ctx)).To(BeEmpty(), "nothing was filed in dagger")
+			Expect(f.gatesOn(ctx)).To(BeEmpty(), "nothing was filed in skift")
 			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_DONE))
 		})
 	})

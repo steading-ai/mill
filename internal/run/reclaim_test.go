@@ -9,13 +9,13 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/testsupport"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // Resumable is specified against the store alone: the ledger already knows
 // which of a worker's own runs an abort left behind, so nothing here reaches
-// dagger. [fixture.abortedRun] leaves a run exactly as shutdownStep does
+// skift. [fixture.abortedRun] leaves a run exactly as shutdownStep does
 // (internal/run/shutdown.go) — one aborted attempt, the run itself still
 // `selecting`, the default status [Store.CreateRun] gives a fresh run — which
 // is one of the two statuses docs/ledger.md §Resume's resume branch names and

@@ -6,7 +6,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
 )
 
 // The events a session's text, thinking and subagent activity forward as

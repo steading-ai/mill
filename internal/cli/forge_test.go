@@ -15,11 +15,11 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/cli"
-	"github.com/ivy/mill/internal/forge/github"
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/signing"
+	"github.com/steading-ai/mill/internal/cli"
+	"github.com/steading-ai/mill/internal/forge/github"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/signing"
 )
 
 // The GitHub forge as the mill reaches it: selected from the project's
@@ -96,7 +96,7 @@ var _ = Describe("The GitHub forge through the mill", Label(testsupport.DBLabel)
 		GinkgoHelper()
 		m := serving(ctx)
 		args := append([]string{"doctor",
-			"--dagger-socket", g.service.Socket, "--project", daggerProject,
+			"--skift-socket", g.service.Socket, "--project", skiftProject,
 			"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
 			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 			"--config", filepath.Join(GinkgoT().TempDir(), "no-config.yaml"),
@@ -107,7 +107,7 @@ var _ = Describe("The GitHub forge through the mill", Label(testsupport.DBLabel)
 
 	It("mill doctor names the account the token authenticates as", func() {
 		githubStub(everything())
-		g := daggerNodeWith(ctx, scratchRepo)
+		g := skiftNodeWith(ctx, scratchRepo)
 
 		verdict, reason := forgeProbe(doctorOn(g))
 		Expect(verdict).To(Equal("pass"), reason)
@@ -121,7 +121,7 @@ var _ = Describe("The GitHub forge through the mill", Label(testsupport.DBLabel)
 		// MILL_FORGE_TOKEN is unset: the probe passes on the stored token
 		// and says so.
 		githubStub(everything())
-		g := daggerNodeWith(ctx, scratchRepo)
+		g := skiftNodeWith(ctx, scratchRepo)
 		store := GinkgoT().TempDir()
 		Expect(os.WriteFile(filepath.Join(store, "forge-token"), []byte("ghp_from_the_store\n"), 0o600)).To(Succeed()) // gitleaks:allow
 		GinkgoT().Setenv("CREDENTIALS_DIRECTORY", store)
@@ -139,7 +139,7 @@ var _ = Describe("The GitHub forge through the mill", Label(testsupport.DBLabel)
 		githubStub(map[string]githubAnswer{
 			"GET /user": {status: 401, body: `{"message":"Bad credentials"}`},
 		})
-		g := daggerNodeWith(ctx, scratchRepo)
+		g := skiftNodeWith(ctx, scratchRepo)
 
 		verdict, reason := forgeProbe(doctorOn(g))
 		Expect(verdict).To(Equal("fail"), reason)
@@ -154,7 +154,7 @@ var _ = Describe("The GitHub forge through the mill", Label(testsupport.DBLabel)
 			headers: map[string]string{"X-Accepted-GitHub-Permissions": "pull_requests=read"},
 		}
 		githubStub(answers)
-		g := daggerNodeWith(ctx, scratchRepo)
+		g := skiftNodeWith(ctx, scratchRepo)
 
 		verdict, reason := forgeProbe(doctorOn(g))
 		Expect(verdict).To(Equal("fail"), reason)
@@ -167,7 +167,7 @@ var _ = Describe("The GitHub forge through the mill", Label(testsupport.DBLabel)
 		// configuration says so: the probe reaches the stub, which is
 		// only possible through that adapter.
 		githubStub(everything())
-		g := daggerNodeWith(ctx, "https://gitlab.example.test/octo-org/thing.git")
+		g := skiftNodeWith(ctx, "https://gitlab.example.test/octo-org/thing.git")
 
 		verdict, reason := forgeProbe(doctorOn(g, "--forge", "github"))
 		Expect(verdict).To(Equal("pass"), reason)
@@ -189,7 +189,7 @@ var _ = Describe("The GitHub forge through the mill", Label(testsupport.DBLabel)
 			body:   `{"encoding":"base64","content":"` + base64.StdEncoding.EncodeToString([]byte(key.AllowedSignersLine()+"\n")) + `"}`,
 		}
 		githubStub(answers)
-		g := daggerNodeWith(ctx, scratchRepo)
+		g := skiftNodeWith(ctx, scratchRepo)
 
 		databaseURL := pg.Database(ctx).Config().ConnString()
 		socket := filepath.Join(GinkgoT().TempDir(), "mill.sock")
@@ -207,11 +207,11 @@ var _ = Describe("The GitHub forge through the mill", Label(testsupport.DBLabel)
 			"--socket", socket,
 			"--database-url", databaseURL,
 			"--config", config,
-			"--project", daggerProject,
+			"--project", skiftProject,
 			// A label no node carries: what is under test is WorkerService
 			// answering beside the worker, not what the worker claims.
 			"--label", "nothing-carries-this",
-			"--dagger-socket", g.service.Socket,
+			"--skift-socket", g.service.Socket,
 			"--sidecar", workerSidecar,
 			"--identity", "mill@example.test",
 			"--name", "mill",
@@ -239,7 +239,7 @@ var _ = Describe("The GitHub forge through the mill", Label(testsupport.DBLabel)
 		// so a worker-answered probe is distinguishable from one this host
 		// would have produced on its own.
 		out, _ := runCLI(ctx, socket, "doctor",
-			"--dagger-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
+			"--skift-socket", filepath.Join(GinkgoT().TempDir(), "nothing.sock"),
 			"--sidecar", filepath.Join(GinkgoT().TempDir(), "not-the-workers-sidecar.js"),
 			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "not-the-workers-workspace"),
 			"--config", filepath.Join(GinkgoT().TempDir(), "no-config.yaml"),
@@ -259,7 +259,7 @@ var _ = Describe("The GitHub forge through the mill", Label(testsupport.DBLabel)
 
 	Describe("An unrecognised forge in configuration", func() {
 		It("fails mill doctor's forge probe naming the value", func() {
-			g := daggerNodeWith(ctx, scratchRepo)
+			g := skiftNodeWith(ctx, scratchRepo)
 
 			verdict, reason := forgeProbe(doctorOn(g, "--forge", "gitbucket"))
 			Expect(verdict).To(Equal("fail"), reason)
@@ -267,7 +267,7 @@ var _ = Describe("The GitHub forge through the mill", Label(testsupport.DBLabel)
 		})
 
 		It("stops the worker at startup naming the value", func() {
-			g := daggerNodeWith(ctx, scratchRepo)
+			g := skiftNodeWith(ctx, scratchRepo)
 			databaseURL := pg.Database(ctx).Config().ConnString()
 			config := filepath.Join(GinkgoT().TempDir(), "config.yaml")
 			Expect(os.WriteFile(config, []byte("forge: gitbucket\n"), 0o600)).To(Succeed())
@@ -279,8 +279,8 @@ var _ = Describe("The GitHub forge through the mill", Label(testsupport.DBLabel)
 				"--socket", filepath.Join(GinkgoT().TempDir(), "mill.sock"),
 				"--database-url", databaseURL,
 				"--config", config,
-				"--project", daggerProject,
-				"--dagger-socket", g.service.Socket,
+				"--project", skiftProject,
+				"--skift-socket", g.service.Socket,
 				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 				"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
 			})
@@ -293,13 +293,13 @@ var _ = Describe("The GitHub forge through the mill", Label(testsupport.DBLabel)
 		It("stops a run before anything is claimed, naming the value", func() {
 			m := serving(ctx)
 			m.run(ctx, "workflow", "push", quickFix)
-			g := daggerNodeWith(ctx, scratchRepo)
+			g := skiftNodeWith(ctx, scratchRepo)
 			var stdout, stderr bytes.Buffer
 
 			exit := cli.Run([]string{
 				"run", g.nodeRef,
-				"--project", daggerProject, "--workflow", "quick-fix", "--forge", "gitbucket",
-				"--socket", m.socket, "--dagger-socket", g.service.Socket,
+				"--project", skiftProject, "--workflow", "quick-fix", "--forge", "gitbucket",
+				"--socket", m.socket, "--skift-socket", g.service.Socket,
 				"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 				"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
 			}, strings.NewReader(""), &stdout, &stderr)

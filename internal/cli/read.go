@@ -20,11 +20,11 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/gen/mill/v1/millv1connect"
-	"github.com/ivy/mill/internal/dagger"
-	runpkg "github.com/ivy/mill/internal/run"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
+	runpkg "github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/skift"
 )
 
 // The read tools. Every one is a thin call on the Connect client and a
@@ -39,7 +39,7 @@ import (
 // same value as JSON, so an agent and an operator are looking at the same
 // fields.
 
-// view is how much of an answer a caller wants, spelled as dagger's views
+// view is how much of an answer a caller wants, spelled as skift's views
 // are so an agent that knows one knows the other.
 type view string
 
@@ -71,7 +71,7 @@ func parseViewName(text string) (view, error) {
 // much of the answer to render.
 type readOptions struct {
 	socket       string
-	daggerSocket string
+	skiftSocket  string
 	project      string
 	view         string
 	statuses     []string
@@ -91,7 +91,7 @@ type readOptions struct {
 }
 
 // target names the run a tool was asked about. A reference carrying a `#` is
-// a dagger node's display key; anything else is the run's own id, which is
+// a skift node's display key; anything else is the run's own id, which is
 // what `mill status` prints.
 //
 // A node reference resolves to that node's most recent run in the ledger —
@@ -105,7 +105,7 @@ func target(reference string) *millv1.InspectRequest {
 	return &millv1.InspectRequest{Id: reference}
 }
 
-// isNodeRef reports whether a reference is a dagger node's rather than a
+// isNodeRef reports whether a reference is a skift node's rather than a
 // run's.
 func isNodeRef(reference string) bool { return strings.Contains(reference, "#") }
 
@@ -178,7 +178,7 @@ mid-follow resumes with no gap and no duplicate.`,
 	}
 	addReadFlags(cmd, &opts)
 	cmd.Flags().StringSliceVar(&opts.statuses, "status", nil, "only runs in these states (default: every state that has not ended)")
-	cmd.Flags().StringVar(&opts.project, "project", "", "only runs on nodes in this dagger project")
+	cmd.Flags().StringVar(&opts.project, "project", "", "only runs on nodes in this skift project")
 	cmd.Flags().StringVar(&opts.config, "config", defaultConfigPath(), "path of the configuration file the worker's claim filter is read from for the header line (default: $"+configEnv+", else $XDG_CONFIG_HOME/mill/config.yaml, else /etc/mill/config.yaml)")
 	cmd.Flags().BoolVar(&opts.ended, "ended", false, "list runs that have ended instead of ones still live")
 	cmd.Flags().StringVar(&opts.since, "since", "", "with --ended, only runs that ended within this window, such as 24h or 7d")
@@ -616,7 +616,7 @@ func renderEnvironments(cmd *cobra.Command, detail *millv1.InspectResponse) erro
 // shell are told the same things. It carries no transcript content — the
 // ledger holds none, and this is the tool a thicket agent reaches for.
 type Explanation struct {
-	// Node is the dagger node, Run the ledger's id for its run.
+	// Node is the skift node, Run the ledger's id for its run.
 	Node string `json:"node"`
 	Run  string `json:"run"`
 	// Status is where the run is: running, waiting, parked.
@@ -633,7 +633,7 @@ type Explanation struct {
 	// Attempts is how many attempts this step has used, of Retries.
 	Attempts int64 `json:"attempts_used"`
 	Retries  int64 `json:"retries"`
-	// Gate is the dagger node a waiting or parked run is blocked on, and
+	// Gate is the skift node a waiting or parked run is blocked on, and
 	// GateTitle its ask.
 	Gate      string `json:"gate,omitempty"`
 	GateTitle string `json:"gate_title,omitempty"`
@@ -651,8 +651,8 @@ func newExplainCommand() *cobra.Command {
 		Long: `Say what step a run is on, why that step is open, what evidence would close
 it, how many attempts it has used, and what it is waiting on.
 
-A waiting or parked run is blocked on a dagger gate: its reference and its
-title are printed, and answering it in dagger is what lets the run go on.
+A waiting or parked run is blocked on a skift gate: its reference and its
+title are printed, and answering it in skift is what lets the run go on.
 Nothing a session said appears here; the ledger holds none of it.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -660,12 +660,12 @@ Nothing a session said appears here; the ledger holds none of it.`,
 		},
 	}
 	addReadFlags(cmd, &opts)
-	addDaggerFlags(cmd, &opts)
+	addSkiftFlags(cmd, &opts)
 	return cmd
 }
 
 func runExplain(cmd *cobra.Command, opts readOptions, reference string) error {
-	explanation, err := explain(cmd.Context(), storeClient(opts.socket), daggerFor(opts), reference)
+	explanation, err := explain(cmd.Context(), storeClient(opts.socket), skiftFor(opts), reference)
 	if err != nil {
 		return err
 	}
@@ -693,7 +693,7 @@ func runExplain(cmd *cobra.Command, opts readOptions, reference string) error {
 }
 
 // gates resolves the gate a run is blocked on to what a human would call it.
-// It is a function so `mill explain` works with no dagger at all: an
+// It is a function so `mill explain` works with no skift at all: an
 // unreachable service costs the gate's reference and title and nothing else.
 type gates func(ctx context.Context, nodeRef, runID, gateNodeID string) (reference, title string)
 
@@ -859,7 +859,7 @@ attempt, and how many revise rounds it answered.`,
 	cmd.Flags().StringVar(&opts.since, "since", "", "only usage recorded within this window, such as 24h or 7d")
 	cmd.Flags().StringVar(&opts.until, "until", "", "exclude usage within this window of now, such as 1h")
 	cmd.Flags().StringVar(&opts.bucket, "bucket", "", "also group the window over time: day")
-	cmd.Flags().StringVar(&opts.project, "project", "", "only runs on nodes in this dagger project")
+	cmd.Flags().StringVar(&opts.project, "project", "", "only runs on nodes in this skift project")
 	return cmd
 }
 
@@ -1075,22 +1075,22 @@ func addReadFlags(cmd *cobra.Command, opts *readOptions) {
 	cmd.Flags().StringVar(&opts.view, "view", string(viewSummary), "how much to show: "+strings.Join(views, ", "))
 }
 
-// addDaggerFlags puts the flags a tool that reads dagger takes.
-func addDaggerFlags(cmd *cobra.Command, opts *readOptions) {
-	cmd.Flags().StringVar(&opts.daggerSocket, "dagger-socket", envOr(daggerSocketEnv, defaultDaggerSocket), "path of dagger's unix socket (default: $"+daggerSocketEnv+")")
-	cmd.Flags().StringVar(&opts.project, "project", envOr(daggerProjectEnv, ""), "dagger project a bare #7 reference resolves in (default: $"+daggerProjectEnv+")")
+// addSkiftFlags puts the flags a tool that reads skift takes.
+func addSkiftFlags(cmd *cobra.Command, opts *readOptions) {
+	cmd.Flags().StringVar(&opts.skiftSocket, "skift-socket", envOr(skiftSocketEnv, defaultSkiftSocket), "path of skift's unix socket (default: $"+skiftSocketEnv+")")
+	cmd.Flags().StringVar(&opts.project, "project", envOr(skiftProjectEnv, ""), "skift project a bare #7 reference resolves in (default: $"+skiftProjectEnv+")")
 }
 
-// daggerFor resolves gate nodes through dagger. A gate the service cannot be
+// skiftFor resolves gate nodes through skift. A gate the service cannot be
 // asked about yields its id and no title: a read tool that cannot reach
-// dagger still answers everything the ledger knows.
-func daggerFor(opts readOptions) gates {
-	client := dagger.Dial(opts.daggerSocket, opts.project)
+// skift still answers everything the ledger knows.
+func skiftFor(opts readOptions) gates {
+	client := skift.Dial(opts.skiftSocket, opts.project)
 	return func(ctx context.Context, nodeRef, runID, gateNodeID string) (string, string) {
-		// A dagger reference is `#7`, never an id, so a gate id is resolved
+		// A skift reference is `#7`, never an id, so a gate id is resolved
 		// the way the run loop resolves it: the gates filed on the run's own
 		// node, matched by id (docs/domain-model.md §Gate).
-		filed, err := client.Gates(ctx, nodeRef, dagger.GateLabel, dagger.RunLabel(runID))
+		filed, err := client.Gates(ctx, nodeRef, skift.GateLabel, skift.RunLabel(runID))
 		if err != nil {
 			return gateNodeID, ""
 		}

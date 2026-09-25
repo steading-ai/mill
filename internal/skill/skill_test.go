@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/skill"
+	"github.com/steading-ai/mill/internal/skill"
 )
 
 // The skill a machine mounts is what the worker wrote from its own embed,

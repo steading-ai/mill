@@ -8,7 +8,7 @@ import (
 	"github.com/onsi/ginkgo/v2/types"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // The concurrency spec races 00001's role creation against itself, which

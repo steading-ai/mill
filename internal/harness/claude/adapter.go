@@ -29,9 +29,9 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/workspace"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 const (
@@ -664,7 +664,7 @@ func wireAttachments(attachments []harness.Attachment) []*harnessv1.Attachment {
 }
 
 // requestID correlates one request with the events and terminal record it
-// produces. The mill- prefix is the same marker its lease-less dagger writes
+// produces. The mill- prefix is the same marker its lease-less skift writes
 // carry, so a frame in a log says who sent it.
 func requestID() string {
 	raw := make([]byte, 8)

@@ -7,11 +7,12 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/harness/fake"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/testsupport"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/harness/fake"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // mill#30: an error returned between an attempt's writer opening
@@ -116,7 +117,7 @@ var _ = Describe("An attempt's writer and sink on a failed write", Label(testsup
 
 		It("closes the writer and detaches the sink when reviewed's verdict attach fails", func() {
 			// quick-fix declares no verdict step, so this spec adds one: a
-			// review after pr, whose own AttachText this run's dagger
+			// review after pr, whose own AttachText this run's skift
 			// client refuses. "review-" alone would also catch a
 			// review-plan step's attach in a workflow that had one; this
 			// workflow does not, but the exclusion documents the seam a
@@ -126,7 +127,7 @@ var _ = Describe("An attempt's writer and sink on a failed write", Label(testsup
 				review.Evidence = millv1.EvidenceKind_EVIDENCE_KIND_VERDICT
 				insertAfter(definition, "pr", review)
 			})
-			client := f.failingPatches(func(op *daggerv1.PatchOp) bool {
+			client := f.failingPatches(func(op *skiftv1.PatchOp) bool {
 				name := op.GetAttachArtifact().GetArtifact().GetName()
 				return strings.HasPrefix(name, "review-") && !strings.HasPrefix(name, "review-plan-")
 			})
@@ -136,7 +137,7 @@ var _ = Describe("An attempt's writer and sink on a failed write", Label(testsup
 
 			err := f.runner(func(o *run.Options) {
 				o.Workflow = workflow
-				o.Dagger = client
+				o.Skift = client
 				o.LogDir = logDir
 			}).Execute(ctx, f.nodeRef)
 			Expect(err).To(HaveOccurred())

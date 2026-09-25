@@ -4,7 +4,7 @@
 # file alone on upgrade.
 
 # What to claim: every ready node of the projects listed that carries every
-# label listed. A project's repository is its own `vcs_url` in dagger, read
+# label listed. A project's repository is its own `vcs_url` in skift, read
 # from each claim, and is not a setting here.
 project: []
 label: []

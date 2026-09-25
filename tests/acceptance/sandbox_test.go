@@ -37,7 +37,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 )
 
 const (
@@ -85,69 +85,69 @@ func sandboxSkip() {
 	}
 }
 
-// sandboxRefusal is why the live tier will not start against the dagger the
+// sandboxRefusal is why the live tier will not start against the skift the
 // environment named, or empty when it is safe. The live tier boots machines
 // through a root-owned unit and drives `mill run` subprocesses inside them,
 // and mill#49 already showed a test process becoming a worker against the
 // live graph with no session involved; a flag a stray variable can flip is
 // not a safe default for that tier (docs/sandbox.md §Testing). So the
-// deployed dagger is refused whether it was named by MILL_ACCEPTANCE_DAGGER_
-// SOCKET or reached by DG_SOCKET, and the message names the socket and the
+// deployed skift is refused whether it was named by MILL_ACCEPTANCE_SKIFT_
+// SOCKET or reached by SKIFT_SOCKET, and the message names the socket and the
 // fixture to use instead.
-func sandboxRefusal(daggerSocket string) string {
-	if daggerSocket == "" || !namesDeployedDagger(daggerSocket) {
+func sandboxRefusal(skiftSocket string) string {
+	if skiftSocket == "" || !namesDeployedSkift(skiftSocket) {
 		return ""
 	}
 	return fmt.Sprintf(
-		"the live tier will not file into the deployed dagger at %s: it boots real machines and drives real `mill run` "+
+		"the live tier will not file into the deployed skift at %s: it boots real machines and drives real `mill run` "+
 			"subprocesses, and a worker loosed on the operator's graph is exactly what mill#49 found; unset %s and let the "+
-			"suite start its own throwaway dagger (internal/testsupport, docs/runbook.md §\"Which dagger\")",
-		daggerSocket, DaggerSocketVar)
+			"suite start its own throwaway skift (internal/testsupport, docs/runbook.md §\"Which skift\")",
+		skiftSocket, SkiftSocketVar)
 }
 
-// namesDeployedDagger reports whether a socket is the operator's deployed
+// namesDeployedSkift reports whether a socket is the operator's deployed
 // one, following symlinks so a socket reached by another path is still
-// recognised. The deployed socket is /run/dagger/dg.sock (environment_test's
-// deployedDaggerSocket); a socket in a temporary directory, which is where
-// the suite's own dagger and an external test dagger listen, is not it.
-func namesDeployedDagger(socket string) bool {
-	if socket == deployedDaggerSocket {
+// recognised. The deployed socket is /run/skift/skift.sock (environment_test's
+// deployedSkiftSocket); a socket in a temporary directory, which is where
+// the suite's own skift and an external test skift listen, is not it.
+func namesDeployedSkift(socket string) bool {
+	if socket == deployedSkiftSocket {
 		return true
 	}
 	resolved, err := filepath.EvalSymlinks(socket)
 	if err != nil {
 		return false
 	}
-	return resolved == deployedDaggerSocket
+	return resolved == deployedSkiftSocket
 }
 
-// The live tier refuses the deployed dagger — the one scenario here that
+// The live tier refuses the deployed skift — the one scenario here that
 // needs no host, because refusing is a property of how the tier reads its
 // environment and not of any machine. It runs under `make test-acceptance`
 // on any host and, like every acceptance spec, skips under `make test` when
 // MILL_ACCEPTANCE is unset.
 var _ = Describe("Acceptance", Label("acceptance"), func() {
-	// Scenario: The live tier refuses the deployed dagger
-	//   Given the environment names /run/dagger/dg.sock
+	// Scenario: The live tier refuses the deployed skift
+	//   Given the environment names /run/skift/skift.sock
 	//   When the live tier starts
 	//   Then it refuses before booting anything
-	It("The live tier refuses the deployed dagger", func() {
-		By("given the environment names /run/dagger/dg.sock")
-		Expect(deployedDaggerSocket).To(Equal("/run/dagger/dg.sock"))
+	It("The live tier refuses the deployed skift", func() {
+		By("given the environment names /run/skift/skift.sock")
+		Expect(deployedSkiftSocket).To(Equal("/run/skift/skift.sock"))
 
 		By("when the live tier starts")
-		refusal := sandboxRefusal(deployedDaggerSocket)
+		refusal := sandboxRefusal(deployedSkiftSocket)
 
 		By("then it refuses before booting anything")
 		Expect(refusal).To(SatisfyAll(
-			ContainSubstring(deployedDaggerSocket),
-			ContainSubstring(DaggerSocketVar),
+			ContainSubstring(deployedSkiftSocket),
+			ContainSubstring(SkiftSocketVar),
 			ContainSubstring("internal/testsupport")),
 			"the refusal names the socket and the fixture to use instead")
-		// A socket in a directory the suite owns — its own throwaway dagger,
-		// or an external test dagger — is not the deployed one and is not
+		// A socket in a directory the suite owns — its own throwaway skift,
+		// or an external test skift — is not the deployed one and is not
 		// refused.
-		Expect(sandboxRefusal(filepath.Join(os.TempDir(), "mill-dagger-abc", "dg.sock"))).To(BeEmpty())
+		Expect(sandboxRefusal(filepath.Join(os.TempDir(), "mill-skift-abc", "skift.sock"))).To(BeEmpty())
 		Expect(sandboxRefusal("")).To(BeEmpty())
 	})
 })
@@ -373,8 +373,8 @@ var _ = Describe("Acceptance", Label("acceptance", "sandbox"), Label("live"), fu
 	BeforeEach(func() {
 		sandboxSkip()
 		// Refuse before booting anything: the live tier will not file into
-		// the deployed dagger, whatever named it (docs/sandbox.md §Testing).
-		if refusal := sandboxRefusal(env.DaggerSocket); refusal != "" {
+		// the deployed skift, whatever named it (docs/sandbox.md §Testing).
+		if refusal := sandboxRefusal(env.SkiftSocket); refusal != "" {
 			Fail(refusal)
 		}
 		// A machine's sessions reach the model through the gateway, which
@@ -693,7 +693,7 @@ var _ = Describe("Acceptance", Label("acceptance", "sandbox"), Label("live"), fu
 	// Scenario (acceptance criterion): a killed suite leaves nothing behind.
 	//   Killing the suite mid-run and starting the worker leaves no machine
 	//   and no run directory after reconciliation, and no project in the
-	//   deployed dagger.
+	//   deployed skift.
 	It("A killed suite leaves no machine, run directory, or project after reconciliation", func(ctx SpecContext) {
 		needsForge()
 
@@ -734,7 +734,7 @@ var _ = Describe("Acceptance", Label("acceptance", "sandbox"), Label("live"), fu
 		}, 5*time.Minute, 5*time.Second).WithContext(ctx).ShouldNot(ContainSubstring(record.Machine))
 		Eventually(runDir(id), time.Minute, time.Second).ShouldNot(BeADirectory(), "the run directory was removed")
 
-		By("and the deployed dagger's project list is unchanged")
+		By("and the deployed skift's project list is unchanged")
 		if deployed == "" {
 			return
 		}
@@ -810,7 +810,7 @@ func millCheckout(ctx context.Context) *staged {
 // done by hand (docs/runbook.md §"The live tier", what it leaves behind).
 // The store still has the run as live; the next worker's reconciliation
 // records it as a lost sandbox and claims nothing for it, because its node
-// is in a dagger that ended with the suite.
+// is in a skift that ended with the suite.
 func sweepKilledRun(ctx context.Context, runID string) {
 	GinkgoHelper()
 	if record, ok := readRecord(runID); ok && record.Machine != "" {
@@ -964,7 +964,7 @@ func buildDuration(ctx context.Context, nodeRef string) time.Duration {
 }
 
 // startMachineWorker starts `mill work` configured for the machine backend
-// against the suite's own service and dagger, and registers its kill. Its
+// against the suite's own service and skift, and registers its kill. Its
 // startup reconciliation is what the killed-suite scenario is about: before
 // its first claim it lists machines against the ledger's live runs and
 // sweeps what no live run owns (docs/sandbox.md §Reconciliation). It runs in
@@ -973,7 +973,7 @@ func buildDuration(ctx context.Context, nodeRef string) time.Duration {
 func startMachineWorker(ctx context.Context, s *staged) *worker {
 	GinkgoHelper()
 	// The worker reads a configuration file where `mill run` reads none:
-	// the operator's, by default, which on core names the deployed dagger,
+	// the operator's, by default, which on core names the deployed skift,
 	// the mill project and the label its own worker claims under. It is
 	// given an empty one of the suite's own, so every value it runs on is
 	// on this line. What it does after reconciling is claim the node the
@@ -990,7 +990,7 @@ func startMachineWorker(ctx context.Context, s *staged) *worker {
 	args := []string{
 		"work",
 		"--config", config,
-		"--dagger-socket", env.DaggerSocket,
+		"--skift-socket", env.SkiftSocket,
 		"--project", s.Graph.Slug,
 		"--workflow", "quick-fix",
 		"--workflow-dir", workflowDir("quick-fix"),

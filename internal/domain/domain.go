@@ -9,7 +9,7 @@
 // each has to hold whichever face of the binary asks — which is why it is
 // here and not in a handler.
 //
-// This is the only package that may import [github.com/ivy/mill/internal/store]
+// This is the only package that may import [github.com/steading-ai/mill/internal/store]
 // (depguard enforces it). Handlers reach the ledger through a [Service] and
 // never around it, so a rule cannot be skipped by calling the store directly.
 package domain
@@ -20,8 +20,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/ivy/mill/internal/store"
-	"github.com/ivy/mill/internal/store/migrations"
+	"github.com/steading-ai/mill/internal/store"
+	"github.com/steading-ai/mill/internal/store/migrations"
 )
 
 // The failures a caller distinguishes. The first five are the store's own,

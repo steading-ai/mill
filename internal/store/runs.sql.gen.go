@@ -46,7 +46,7 @@ const countRunLeases = `-- name: CountRunLeases :one
 SELECT count(*) FROM events WHERE run_id = $1 AND op = 'set_lease'
 `
 
-// How many dagger leases this run has held, counted from the event log
+// How many skift leases this run has held, counted from the event log
 // rather than stored: every SetLease writes one. Distinct from a step's
 // attempt, which counts review rounds.
 func (q *Queries) CountRunLeases(ctx context.Context, runID string) (int64, error) {

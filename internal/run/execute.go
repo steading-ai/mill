@@ -12,14 +12,14 @@ import (
 	"sync"
 	"time"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/check"
-	"github.com/ivy/mill/internal/evidence"
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/workflow"
-	"github.com/ivy/mill/internal/workspace"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/check"
+	"github.com/steading-ai/mill/internal/evidence"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/workflow"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // result is what executing one attempt produced, before anything is
@@ -28,7 +28,7 @@ import (
 // only for the two verifiers that read structured output.
 type result struct {
 	// claim is what the mill observed: a SHA git returned, a URL the forge
-	// returned, an artifact digest dagger accepted, a gate node's id.
+	// returned, an artifact digest skift accepted, a gate node's id.
 	claim string
 	// session is what the session produced.
 	session evidence.Session
@@ -803,7 +803,7 @@ func (r *Runner) prompt(ctx context.Context, s *state, step *millv1.Step, detail
 	if err != nil {
 		return harness.Prompt{}, err
 	}
-	inputs, err := r.options.Dagger.Inputs(ctx, s.node.GetReference())
+	inputs, err := r.options.Skift.Inputs(ctx, s.node.GetReference())
 	if err != nil {
 		return harness.Prompt{}, err
 	}

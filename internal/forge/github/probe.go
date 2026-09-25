@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/ivy/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/forge"
 )
 
 // Permission is one permission a fine-grained token needs, and why. The

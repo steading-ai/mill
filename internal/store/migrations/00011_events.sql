@@ -1,7 +1,7 @@
 -- Events: the audit trail, and what `mill status --history` reads. See the
 -- events section of docs/ledger.md.
 --
--- Append-only, and not partitioned: dagger's events are, because they are a
+-- Append-only, and not partitioned: skift's events are, because they are a
 -- change stream many consumers resume from, and these are neither. One
 -- operator and tens of runs a day do not justify the machinery, and nothing
 -- subscribes to this table.

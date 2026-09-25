@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/store"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/store"
 )
 
 // GetWorkflowParams names one workflow version: by id, or by name resolved

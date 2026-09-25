@@ -1,8 +1,8 @@
 // Package notify carries a filed gate to a person.
 //
 // The mill does not notify anyone itself, and this package does not either:
-// dagger's notifier is what wakes a human, and until the thicket bridge
-// consumes dagger's events the deployment is handed the gate and does
+// skift's notifier is what wakes a human, and until the thicket bridge
+// consumes skift's events the deployment is handed the gate and does
 // whatever it wants with it (docs/prd.md D1, docs/architecture.md §"Gate
 // steps"). The seam is one **configured command**: the mill writes the gate
 // to its standard input as JSON and reads its exit status. What that command
@@ -29,7 +29,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ivy/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // Timeout bounds one notification. A notifier that has not answered in half

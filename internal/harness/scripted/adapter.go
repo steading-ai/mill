@@ -8,11 +8,11 @@ import (
 	"strings"
 	"sync"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/harness/fake"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/socket"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/harness/fake"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/socket"
 )
 
 // Adapter is a [harness.Harness] whose turns come from a script file named

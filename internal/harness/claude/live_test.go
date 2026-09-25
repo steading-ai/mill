@@ -13,7 +13,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/harness"
 )
 
 // liveVar turns on the spec that spends a real session against the account's
@@ -423,12 +423,12 @@ var _ = Describe("The build-workflow skill against the real sidecar", Label("liv
 // reads the checkout it is standing in and a node about a repository it
 // cannot see is not the question being asked.
 const (
-	typoNode = "# mill#000: Fix the typo in `mill run --dagger-socket`'s usage string\n\n" +
+	typoNode = "# mill#000: Fix the typo in `mill run --skift-socket`'s usage string\n\n" +
 		"## Context\n\n" +
-		"The flag's usage string in `internal/cli/run.go` spells dagger \"daggr\". It is one " +
+		"The flag's usage string in `internal/cli/run.go` spells skift \"daggr\". It is one " +
 		"word in one string literal.\n\n" +
 		"## Acceptance criteria\n\n" +
-		"- [ ] The usage string spells dagger correctly\n" +
+		"- [ ] The usage string spells skift correctly\n" +
 		"- [ ] `make lint` and `make test` pass\n"
 
 	subcommandNode = "# mill#000: `mill runs` — list the runs in the ledger\n\n" +

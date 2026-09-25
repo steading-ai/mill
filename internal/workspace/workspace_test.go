@@ -4,8 +4,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/workspace"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 var _ = Describe("The workspace's vocabulary", Label("unit"), func() {
@@ -13,8 +13,8 @@ var _ = Describe("The workspace's vocabulary", Label("unit"), func() {
 		func(nodeRef, branch string) {
 			Expect(workspace.BranchFor(nodeRef)).To(Equal(branch))
 		},
-		Entry("a dagger ref", "mill#12", "mill/mill-12"),
-		Entry("another project", "dagger#4021", "mill/dagger-4021"),
+		Entry("a skift ref", "mill#12", "mill/mill-12"),
+		Entry("another project", "skift#4021", "mill/skift-4021"),
 		Entry("characters git forbids collapse to one dash", "mill #12", "mill/mill-12"),
 		Entry("a trailing separator is dropped, because git refuses a name ending in one", "mill#12.", "mill/mill-12"),
 		Entry("no node at all", "", ""),

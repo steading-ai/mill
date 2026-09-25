@@ -9,17 +9,18 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/harness/fake"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/socket"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/harness/fake"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/socket"
 )
 
-// The `feature` workflow, driven end to end against a real dagger, ledger,
+// The `feature` workflow, driven end to end against a real skift, ledger,
 // git and workspace, with the sessions scripted.
 //
 // What this is about is the two things `feature` adds to `quick-fix` that the
@@ -202,8 +203,8 @@ var _ = Describe("The feature workflow", Label(testsupport.DBLabel), func() {
 	})
 })
 
-// artifactsOn is every artifact dagger holds for the run's node.
-func (f *fixture) artifactsOn(ctx context.Context) []*daggerv1.Artifact {
+// artifactsOn is every artifact skift holds for the run's node.
+func (f *fixture) artifactsOn(ctx context.Context) []*skiftv1.Artifact {
 	GinkgoHelper()
 	held, err := f.client.Artifacts(ctx, f.nodeRef)
 	Expect(err).NotTo(HaveOccurred())
@@ -212,7 +213,7 @@ func (f *fixture) artifactsOn(ctx context.Context) []*daggerv1.Artifact {
 
 // artifactText is the text of the artifact carrying a digest, which is what
 // `artifact` evidence records.
-func artifactText(held []*daggerv1.Artifact, digest string) string {
+func artifactText(held []*skiftv1.Artifact, digest string) string {
 	GinkgoHelper()
 	for _, artifact := range held {
 		if artifact.GetMetadata().GetFields()["digest"].GetStringValue() != digest {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""harness/loop.py — work an epic in a running dagger service.
+"""harness/loop.py — work an epic in a running skift service.
 
 One node per iteration. The harness claims the most urgent ready child of the
 epic under a lease, an implementer agent builds it, a reviewer agent decides
@@ -56,7 +56,7 @@ LOGS = ROOT / "harness" / "logs"
 SESSION_URL = "https://claude.ai/code/session_017sEP9E8M4gp2qQ7DjYUbKu"
 
 # The implementer must not rewrite the machinery driving it. Design docs are
-# not protected: the work orders in dagger name them as deliverables.
+# not protected: the work orders in skift name them as deliverables.
 PROTECTED = ("backlog.toml", "harness/", "scripts/", ".claude/")
 
 # The harness writes these itself while an agent is running, so they are never
@@ -98,9 +98,9 @@ and your last summary is taken as your result."""
 BLOCKED_LABEL = "harness-blocked"
 
 IMPLEMENTER_PROMPT = """\
-You are implementing exactly one node of dagger's own work graph, in a
+You are implementing exactly one node of skift's own work graph, in a
 repository you are seeing for the first time. The node is held under a lease
-by the harness that dispatched you; you have no dagger tools and need none.
+by the harness that dispatched you; you have no skift tools and need none.
 
 Before writing code, read the documents the work order references. They are the
 authority: docs/domain-model.md, docs/architecture.md, docs/core-principles.md,
@@ -192,22 +192,22 @@ def say(s):
         f.write(s + "\n")
 
 
-# --- dagger ------------------------------------------------------------------
+# --- skift ------------------------------------------------------------------
 
 
-class Dagger:
-    """The dg CLI over the current project. Every call is one subprocess."""
+class Skift:
+    """The skift CLI over the current project. Every call is one subprocess."""
 
     def __init__(self, project):
         self.project = project
 
     def run(self, *args, stdin=None, check=True):
         r = subprocess.run(
-            ["dg", "-p", self.project, "-o", "json", *args],
+            ["skift", "-p", self.project, "-o", "json", *args],
             cwd=ROOT, capture_output=True, text=True, input=stdin,
         )
         if r.returncode != 0 and check:
-            raise RuntimeError(f"dg {' '.join(args)}: {r.stderr.strip() or r.stdout.strip()}")
+            raise RuntimeError(f"skift {' '.join(args)}: {r.stderr.strip() or r.stdout.strip()}")
         return json.loads(r.stdout) if r.stdout.strip() else {}
 
     def ref(self, node):
@@ -255,28 +255,28 @@ class Dagger:
         self.patch([{"update_node": op}])
 
 
-def scope_epic(dg, epic_ref, label):
+def scope_epic(skift, epic_ref, label):
     """Label every open child of the epic so the claim filter finds only them.
 
     Returns the children. The label is the scope: a node carrying it is the
     harness's to claim, and a node that loses it is not.
     """
-    children = dg.list(parent=epic_ref)
+    children = skift.list(parent=epic_ref)
     for node in children:
         labels = set(node.get("labels", []))
         if not is_(node["status"], "STATUS_", "open") or label in labels or BLOCKED_LABEL in labels:
             continue
-        dg.set_labels(node, labels | {label})
-        say(f"  .. labelled {dg.ref(node)} {label}")
+        skift.set_labels(node, labels | {label})
+        say(f"  .. labelled {skift.ref(node)} {label}")
     return children
 
 
-def predecessors(dg, node, by_id):
-    """Results of the done nodes that block this one, oldest first, from dagger's
+def predecessors(skift, node, by_id):
+    """Results of the done nodes that block this one, oldest first, from skift's
     own `inputs` — which crosses projects. A lookup over this project's node list
     misses a blocker filed in another project and drops its result silently."""
     out = []
-    for item in dg.run("inputs", dg.ref(node)).get("inputs", []):
+    for item in skift.run("inputs", skift.ref(node)).get("inputs", []):
         if item.get("result"):
             out.append({"node": item["node"], "result": item["result"]})
     return sorted(out, key=lambda s: int(s["node"]["number"]))
@@ -292,20 +292,20 @@ def is_(value, prefix, want):
     return short(value, prefix) == want
 
 
-def work_order_text(dg, node, by_id):
+def work_order_text(skift, node, by_id):
     buf = io.StringIO()
     w = buf.write
-    w(f"# {dg.ref(node)}: {node['title']}\n\n")
+    w(f"# {skift.ref(node)}: {node['title']}\n\n")
     w(f"kind: {node.get('kind', 'task')}  priority: {short(node.get('priority'), 'PRIORITY_')}\n\n")
     w(node.get("body", "").rstrip() + "\n")
-    preds = predecessors(dg, node, by_id)
+    preds = predecessors(skift, node, by_id)
     if preds:
         w("\n# Inputs from predecessors\n\n")
         w("The results of the nodes this one waited on. They say what was built and where.\n")
         for shown in preds:
             p = shown["node"]
             result = (shown.get("result") or {}).get("body")
-            w(f"\n## {p.get('reference') or dg.ref(p)}: {p['title']}\n\n")  # its own project, not ours
+            w(f"\n## {p.get('reference') or skift.ref(p)}: {p['title']}\n\n")  # its own project, not ours
             w((result or "(completed with no result body)").rstrip() + "\n")
     return buf.getvalue()
 
@@ -314,13 +314,13 @@ def is_grouping(node, children):
     """A node that groups work rather than being work.
 
     It has children and states no acceptance criteria, so there is nothing for
-    an agent to satisfy and nothing for a reviewer to judge. Dagger makes it
+    an agent to satisfy and nothing for a reviewer to judge. Skift makes it
     ready once its children close; the honest completion is bookkeeping.
     """
     return bool(children) and "## Acceptance criteria" not in node.get("body", "")
 
 
-# --- local state: attempts and usage, until dagger takes usage reports ---------
+# --- local state: attempts and usage, until skift takes usage reports ---------
 
 
 def load_state():
@@ -334,7 +334,7 @@ def save_state(state):
 
 
 def record(state, ref, attempt, role, usage, turns, verdict):
-    """One usage record per node, attempt and role. Same shape dagger stores."""
+    """One usage record per node, attempt and role. Same shape skift stores."""
     state["history"].append({
         "at": now(), "node": ref, "attempt": attempt, "role": role,
         "verdict": verdict, "turns": turns, "usage": usage,
@@ -603,7 +603,7 @@ async def run_agent(kind, system_prompt, prompt, log_path, args):
                     cost = message.total_cost_usd or 0.0
                     turns += message.num_turns or 0
                     usage = []
-                    # Recorded in the shape of dagger's own Usage entity: counts per
+                    # Recorded in the shape of skift's own Usage entity: counts per
                     # model, never currency. Cost is derived from a rate table.
                     for model_name, mu in (message.model_usage or {}).items():
                         usage.append({
@@ -710,18 +710,18 @@ def parse_verdict(text):
     return False, "The reviewer returned no VERDICT line.\n\n" + text.strip()
 
 
-async def keep_alive(dg, lease_id):
+async def keep_alive(skift, lease_id):
     """Renew the lease while an agent runs. Cancelled when the node is finished."""
     while True:
         await asyncio.sleep(HEARTBEAT_EVERY)
         try:
-            dg.heartbeat(lease_id)
+            skift.heartbeat(lease_id)
         except RuntimeError as e:
             say(f"  !! heartbeat failed: {e}")
 
 
-async def with_lease(dg, lease_id, coro, timeout):
-    task = asyncio.create_task(keep_alive(dg, lease_id))
+async def with_lease(skift, lease_id, coro, timeout):
+    task = asyncio.create_task(keep_alive(skift, lease_id))
     try:
         return await asyncio.wait_for(coro, timeout=timeout)
     finally:
@@ -731,22 +731,22 @@ async def with_lease(dg, lease_id, coro, timeout):
 # --- one node ----------------------------------------------------------------
 
 
-async def do_node(dg, node, lease, label, state, args):
-    ref = dg.ref(node)
+async def do_node(skift, node, lease, label, state, args):
+    ref = skift.ref(node)
     lease_id = lease["id"]
     ns = node_state(state, ref)
-    by_id = {n["id"]: n for n in dg.list()}
-    children = dg.list(parent=ref)
+    by_id = {n["id"]: n for n in skift.list()}
+    children = skift.list(parent=ref)
 
     if is_grouping(node, children):
         say(f"\n  {ref}  {node['title']}  (grouping; children complete)")
-        dg.complete(ref, lease_id, "Grouping node: every child completed. See their results.")
+        skift.complete(ref, lease_id, "Grouping node: every child completed. See their results.")
         ns["status"] = "done"
         record(state, ref, 0, "harness", [], 0, "grouping")
         save_state(state)
         return True
 
-    order = work_order_text(dg, node, by_id)
+    order = work_order_text(skift, node, by_id)
     LOGS.mkdir(parents=True, exist_ok=True)
     log_path = LOGS / f"{int(node['number']):03d}-{node['title'][:40].replace('/', '-')}.log"
 
@@ -771,7 +771,7 @@ async def do_node(dg, node, lease, label, state, args):
         before, baseline = head(), tree_snapshot()
         try:
             summary, cost_i, turns_i, usage_i = await with_lease(
-                dg, lease_id,
+                skift, lease_id,
                 run_agent("implementer", IMPLEMENTER_PROMPT, prompt, log_path, args),
                 args.timeout,
             )
@@ -807,7 +807,7 @@ async def do_node(dg, node, lease, label, state, args):
         )
         try:
             verdict_text, cost_r, turns_r, usage_r = await with_lease(
-                dg, lease_id,
+                skift, lease_id,
                 run_agent("reviewer", REVIEWER_PROMPT, review_prompt, log_path, args),
                 args.timeout,
             )
@@ -824,7 +824,7 @@ async def do_node(dg, node, lease, label, state, args):
             say(f"  == PASS  (${cost_i + cost_r:.2f}, {turns_i + turns_r} turns)")
             sha = commit_and_push(ref, node, summary, args)
             result = f"{summary.rstrip()}\n\nCommit: {sha}\nFiles:\n{diff}\n"
-            dg.complete(ref, lease_id, result)
+            skift.complete(ref, lease_id, result)
             ns["status"] = "done"
             ns.pop("feedback", None)
             save_state(state)
@@ -840,12 +840,12 @@ async def do_node(dg, node, lease, label, state, args):
     ns["status"] = "blocked"
     ns["feedback"] = feedback
     save_state(state)
-    dg.comment(ref, lease_id,
+    skift.comment(ref, lease_id,
                f"harness: blocked after {args.attempts} attempts. Last review:\n\n{feedback}\n\n"
                f"Relabel `{label}` to retry.")
     labels = (set(node.get("labels", [])) - {label}) | {BLOCKED_LABEL}
-    dg.set_labels(node, labels, lease_id)
-    dg.release(lease_id, "budget", f"{args.attempts} attempts exhausted; see comment")
+    skift.set_labels(node, labels, lease_id)
+    skift.release(lease_id, "budget", f"{args.attempts} attempts exhausted; see comment")
     return False
 
 
@@ -901,8 +901,8 @@ def report(state, titles):
 
 async def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--project", default=os.environ.get("DG_PROJECT", "dagger"),
-                   help="project slug (default: $DG_PROJECT, then dagger)")
+    p.add_argument("--project", default=os.environ.get("SKIFT_PROJECT", "skift"),
+                   help="project slug (default: $SKIFT_PROJECT, then skift)")
     p.add_argument("--epic", default=None,
                    help="the grouping node whose open children are the scope, as #N")
     p.add_argument("--max", type=int, default=100, help="max nodes this run")
@@ -923,10 +923,10 @@ async def main():
     if STOP.exists():
         STOP.unlink()
     state = load_state()
-    dg = Dagger(args.project)
+    skift = Skift(args.project)
 
     if args.report:
-        titles = {dg.ref(n): n["title"] for n in dg.list()}
+        titles = {skift.ref(n): n["title"] for n in skift.list()}
         report(state, titles)
         return 0
 
@@ -937,28 +937,28 @@ async def main():
     session = f"loop-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
 
     say(f"{epic_ref}: scoping by label {label}")
-    children = scope_epic(dg, epic_ref, label)
+    children = scope_epic(skift, epic_ref, label)
     open_children = [c for c in children if is_(c["status"], "STATUS_", "open")]
 
     if args.dry_run:
-        ready = dg.ready(label)
+        ready = skift.ready(label)
         done = sum(1 for c in children if is_(c["status"], "STATUS_", "done"))
         print(f"\n{epic_ref}: {done} done, {len(ready)} ready of {len(children)} children\n")
         for n in ready:
-            print(f"  {short(n.get('priority'), 'PRIORITY_')}  {dg.ref(n)}  {n['title']}")
+            print(f"  {short(n.get('priority'), 'PRIORITY_')}  {skift.ref(n)}  {n['title']}")
         waiting = [c for c in open_children if is_(c.get("assignee_kind"), "ASSIGNEE_KIND_", "user")]
         for n in waiting:
-            print(f"  gate  {dg.ref(n)}  {n['title']}  (waiting on a person)")
+            print(f"  gate  {skift.ref(n)}  {n['title']}  (waiting on a person)")
         return 0
 
     total = 0.0
     for i in range(1, args.max + 1):
-        node, lease = dg.claim(label, session)
+        node, lease = skift.claim(label, session)
         if node is None:
-            children = dg.list(parent=epic_ref)
-            still_open = [dg.ref(c) for c in children if is_(c["status"], "STATUS_", "open")]
-            blocked = [dg.ref(c) for c in children if BLOCKED_LABEL in c.get("labels", [])]
-            titles = {dg.ref(n): n["title"] for n in children}
+            children = skift.list(parent=epic_ref)
+            still_open = [skift.ref(c) for c in children if is_(c["status"], "STATUS_", "open")]
+            blocked = [skift.ref(c) for c in children if BLOCKED_LABEL in c.get("labels", [])]
+            titles = {skift.ref(n): n["title"] for n in children}
             if blocked:
                 STOP.write_text(f"BLOCKED: {blocked} exhausted their attempts\n")
                 print(f"\nBLOCKED: {blocked}")
@@ -974,11 +974,11 @@ async def main():
             report(state, titles)
             return 0
 
-        ref = dg.ref(node)
+        ref = skift.ref(node)
         try:
-            ok = await do_node(dg, node, lease, label, state, args)
+            ok = await do_node(skift, node, lease, label, state, args)
         except BaseException as e:
-            dg.release(lease["id"], "crash", f"harness: {type(e).__name__}: {e}"[:500])
+            skift.release(lease["id"], "crash", f"harness: {type(e).__name__}: {e}"[:500])
             raise
         total = total_cost(state)
         say(f"\n  ${total:.2f} spent this state file")

@@ -15,7 +15,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // script writes a shell script into a temporary directory and returns its
@@ -139,13 +139,13 @@ var _ = Describe("The dead sockets a workspace hands a child", Label("unit"), fu
 		dir := GinkgoT().TempDir()
 		env := workspace.DeadSockets(dir)
 
-		Expect(env).To(HaveKey("DG_SOCKET"))
+		Expect(env).To(HaveKey("SKIFT_SOCKET"))
 		Expect(env).To(HaveKey("MILL_SOCKET"))
-		Expect(env["DG_SOCKET"]).NotTo(Equal(env["MILL_SOCKET"]))
+		Expect(env["SKIFT_SOCKET"]).NotTo(Equal(env["MILL_SOCKET"]))
 		for name, path := range env {
 			Expect(filepath.IsAbs(path)).To(BeTrue(), "%s is not absolute: %s", name, path)
 			Expect(strings.HasPrefix(path, dir+string(filepath.Separator))).To(BeTrue(), "%s is not under %s: %s", name, dir, path)
-			Expect(path).NotTo(Equal("/run/dagger/dg.sock"))
+			Expect(path).NotTo(Equal("/run/skift/skift.sock"))
 			Expect(path).NotTo(Equal("/run/mill/mill.sock"))
 			Expect(path).NotTo(MatchRegexp(`^/run/user/\d+/mill/mill\.sock$`))
 		}

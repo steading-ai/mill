@@ -10,9 +10,9 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/dagger"
-	"github.com/ivy/mill/internal/workspace"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/skift"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // How a run gets its workflow. docs/domain-model.md §Selection names two
@@ -26,7 +26,7 @@ import (
 //     workflow must exist in scope, and the output is the selection's
 //     evidence.
 //
-// There is no third rule and no node-level selection: dagger's nodes carry
+// There is no third rule and no node-level selection: skift's nodes carry
 // no workflow and mill writes nothing of its own onto one. Filing a ticket
 // asks for an outcome; sizing it is the mill's job.
 //
@@ -143,7 +143,7 @@ func (r *Runner) selectAssessed(ctx context.Context, s *state) error {
 //
 // It is an ordinary skill step in everything but where it comes from: its
 // own session, its own token and capabilities, its own usage on the ledger
-// and in dagger, and evidence the verifier proved against the step's schema.
+// and in skift, and evidence the verifier proved against the step's schema.
 // What it is not is part of the run's workflow — there is no workflow yet —
 // so it runs here rather than through the walk, and its retries are spent
 // here rather than by the circuit breaker.
@@ -258,7 +258,7 @@ func (r *Runner) assess(ctx context.Context, s *state, step *millv1.Step, candid
 					if sr.GetAttempt() > int64(step.GetRetries()) {
 						exhausted := fmt.Errorf("run %s: the assessment did not close after %d attempts: %w",
 							s.run.GetId(), sr.GetAttempt(), cause)
-						return false, r.failRun(ctx, s, dagger.RequestID(s.run.GetId(), "assess-exhausted", sr.GetAttempt()),
+						return false, r.failRun(ctx, s, skift.RequestID(s.run.GetId(), "assess-exhausted", sr.GetAttempt()),
 							exhausted.Error(), exhausted)
 					}
 					feedback, feedbackFrom = cause.Error(), sr.GetId()
@@ -484,7 +484,7 @@ func (r *Runner) closeSelection(ctx context.Context, s *state, sr *millv1.StepRu
 // `select` attempt was opened, so the generation is all that distinguishes
 // one occurrence from the next.
 func (r *Runner) selectFailedKey(s *state) string {
-	return dagger.RequestID(s.run.GetId(), "select-failed", s.run.GetGeneration())
+	return skift.RequestID(s.run.GetId(), "select-failed", s.run.GetGeneration())
 }
 
 // failSelection fails the `select` attempt and reports why. The run stops
@@ -499,7 +499,7 @@ func (r *Runner) failSelection(ctx context.Context, s *state, sr *millv1.StepRun
 		return err
 	}
 	r.printf("  failed: %v\n", cause)
-	return r.failRun(ctx, s, dagger.RequestID(s.run.GetId(), "select-failed", sr.GetAttempt()), cause.Error(), cause)
+	return r.failRun(ctx, s, skift.RequestID(s.run.GetId(), "select-failed", sr.GetAttempt()), cause.Error(), cause)
 }
 
 // scopeOf names the scope a workflow is resolved in, for the message a

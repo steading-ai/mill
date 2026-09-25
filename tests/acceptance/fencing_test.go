@@ -6,7 +6,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/cli"
+	"github.com/steading-ai/mill/internal/cli"
 )
 
 // The lease the fencing scenario gives its run, and how often it renews it.

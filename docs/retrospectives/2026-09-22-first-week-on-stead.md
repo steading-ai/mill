@@ -1,7 +1,7 @@
 # Retrospective: the first week on stead
 
 **Date:** 2026-09-22
-**Scope:** the week from the subscription reset on Sunday 2026-09-20 04:00 PDT to the cap on Tuesday morning: the factory moved from the server to a laptop guest under stead, the worker was opened to every project, and mill, stead, dagger and steading were built by mill under a person's watch. One voice, Claude's, written from the record: mill's ledger (`mill cost`, `mill inspect`, the store), dagger's nodes, the guest journal, GitHub's merged pull requests, and the server's ledger for the week before.
+**Scope:** the week from the subscription reset on Sunday 2026-09-20 04:00 PDT to the cap on Tuesday morning: the factory moved from the server to a laptop guest under stead, the worker was opened to every project, and mill, stead, skift and steading were built by mill under a person's watch. One voice, Claude's, written from the record: mill's ledger (`mill cost`, `mill inspect`, the store), skift's nodes, the guest journal, GitHub's merged pull requests, and the server's ledger for the week before.
 
 ## What was built
 
@@ -12,11 +12,11 @@
 | mill | 33 | 34 | 6 |
 | steading | 9 | 9 | 12 |
 | stead | 7 | 7 | 0 |
-| dagger | 2 | 2 | 0 |
+| skift | 2 | 2 | 0 |
 
 On top of the 52, mill filed 24 park gates a person answered. Every merge went through plan review, implementation review and the auto merge gate. One merged with red checks (below).
 
-Monday night alone, between the laptop sleeping at 00:03Z and the cap: twelve nodes merged; five bugs found in mill from its own logs and four of them fixed and deployed the same night; GHCR publishing stood up for mill and dagger so steading's CI can obtain both without a credential of its own; the browser end-to-end suite landed on steading.
+Monday night alone, between the laptop sleeping at 00:03Z and the cap: twelve nodes merged; five bugs found in mill from its own logs and four of them fixed and deployed the same night; GHCR publishing stood up for mill and skift so steading's CI can obtain both without a credential of its own; the browser end-to-end suite landed on steading.
 
 **The code.** 913 files, +67,958 / −6,556 lines, by what the lines are:
 
@@ -74,7 +74,7 @@ In rough order of cost.
 - **The deploy loop.** Every merge to mill main redeploys the worker through the follower, immediately, with sessions mid-flight. mill merged 33 times; each restart aborted up to two attempts and each resume re-read the whole session context and rewrote the cache. Last week mill merged four times. mill#44, merged in the last hour, stops new claims from jumping ahead of the aborted runs; nothing yet drains a run before a redeploy or waits for idle.
 
 %%
-I thought it was great that we *got* a deploy loop running. I noticed far less trips against the auto mode classifier. Last week on the homelab, we saw significantly more hand-holding. I ran a Fable model to supervise and subscribe to events. I was pleased to find that it was unsatisfied with the breakage and took it upon itself to file new Dagger nodes to make fixes. We had the deploy loop set up so it didn't have to unblock Mill nearly as much, nor did it require any oversight or manual approval from me.
+I thought it was great that we *got* a deploy loop running. I noticed far less trips against the auto mode classifier. Last week on the homelab, we saw significantly more hand-holding. I ran a Fable model to supervise and subscribe to events. I was pleased to find that it was unsatisfied with the breakage and took it upon itself to file new Skift nodes to make fixes. We had the deploy loop set up so it didn't have to unblock Mill nearly as much, nor did it require any oversight or manual approval from me.
 
 We had a lot more work going through Mill and at a concurrency of *two* parallel workers. I think as a result, the naive deploy approach introduced a lot of churn. Nodes sat on the backlog in unfinished states and I think we paid significantly more for cold cache tokens than we would have if they'd run uninterrupted.
 
@@ -101,17 +101,17 @@ Before I forget: We should rethink the supervision approach. It's working well a
 Yay! New edge case! I've been unhappy that we aren't running any form of CI/CD. This was a good step in the right direction. I expect we'll have more to improve here.
 %%
 
-- **A design question baked into a node.** steading#6 said "pick one and record it" about how the suite obtains the dagger and mill binaries. The implementer correctly refused to wire an unattended fetch from private repositories with no credential story, but the only way it could say so was to fail: three implement attempts and four reviews before a person decided in five minutes (images on GHCR, pulled with the workflow's own token). The decision then went on the node as comments, and the comments never reached a session: mill's prompt (`internal/run/execute.go`, `prompt`) carries the node's body, the results of the nodes it depends on, the artifact brief and a failure's feedback, and not the node's comments. What the next attempt saw was the one-line result I gave the park gate when I completed it, because the gate blocked the node and so counted as an input. Detail below under "The plan as the contract".
+- **A design question baked into a node.** steading#6 said "pick one and record it" about how the suite obtains the skift and mill binaries. The implementer correctly refused to wire an unattended fetch from private repositories with no credential story, but the only way it could say so was to fail: three implement attempts and four reviews before a person decided in five minutes (images on GHCR, pulled with the workflow's own token). The decision then went on the node as comments, and the comments never reached a session: mill's prompt (`internal/run/execute.go`, `prompt`) carries the node's body, the results of the nodes it depends on, the artifact brief and a failure's feedback, and not the node's comments. What the next attempt saw was the one-line result I gave the park gate when I completed it, because the gate blocked the node and so counted as an input. Detail below under "The plan as the contract".
 
 %%
-We might want to rethink Dagger and how it supplies context to agents. I've been feeling some pain points and I'm not sure if we've covered some/all of this:
+We might want to rethink Skift and how it supplies context to agents. I've been feeling some pain points and I'm not sure if we've covered some/all of this:
 - Context supplied has "inputs" but I don't know if comments are included.
 - In this case, did the agent just misunderstand how it should answer? I thought we had a tool to allow agents to mark a node as needing a decision from a human/supervisor?
   - Reminder to myself: Write more about my thoughts about agent supervisors and team leads.
 - I recall that the supervisor took the implementing agent's suggestion as fact and didn't really reason about the solution much. It presented me with a choice to mint a personal access token or make a GitHub App. I proposed that we might be able to do with just publishing images to GHCR. Might be worth considering that prompting to future supervisors / team leads should try to come up with ideas, understand underlying requirements, and evaluate a best fit then present me with a menu of options.
 %%
 
-- **Plans cited interfaces that do not exist.** A `dg create` flag, an output flag on mill, sidecar unit tests, a Vitest script. Review caught every one, at a round each.
+- **Plans cited interfaces that do not exist.** A `skift create` flag, an output flag on mill, sidecar unit tests, a Vitest script. Review caught every one, at a round each.
 
 %%
 I suspect we only know of the hallucinations the reviewer *caught*. There's likely to be more. I'm suspecting we need to include documentation in our workflow:
@@ -136,7 +136,7 @@ Same here. We might not have caught everything. We won't know until we spot regr
 The parallelism presents a real problem. It's good that we exercised it and found gaps in our merge process (or lack thereof), but nodes crossed over into the same parts of the codebase more frequently than I expected. Some ideas:
 - Classification of nodes to the subsystems they touch. This could unlock smarter scheduling by running nodes that touch the same subsystem(s) one at a time.
   - Then again, epics sort of cluster around similar subsystems. For greenfield work, it might just be unavoidable. We'll have to look at this closer.
-- Decompose nodes *more* (skill tweak or a project manager agent). In prior weeks, agents have gasped at how small the tasks were and proposed changes to the `/dagger:dagger` skill to scope them larger. I don't have data here but I strongly suspect it resulted in larger changesets, bigger conflicts, more cache read tokens, and slower loops.
+- Decompose nodes *more* (skill tweak or a project manager agent). In prior weeks, agents have gasped at how small the tasks were and proposed changes to the `/skift:skift` skill to scope them larger. I don't have data here but I strongly suspect it resulted in larger changesets, bigger conflicts, more cache read tokens, and slower loops.
 - Perhaps a project manager agent could own the responsibilities of ensure nodes have clear decisions made (or block on human nodes), are classified by subsystem(s), and are of reasonable size/scope?
 %%
 
@@ -158,12 +158,12 @@ Ah, there's my answer. We *don't* have a way to let agents flag a node as needin
 
 %%
 Yes to draining and branch protection. Also:
-- What happens when a main branch is broken? Who will spot and fix it? We probably want to auto-create Dagger nodes.
-  - The supervisor mentioned a merge queue? I've thought they were kind of slow, but maybe there's something here. Another role that comes to mind: SRE/QA. I don't think an agent running in Mill will be able to inspect their work in production. Maybe they could hand off details to a thicket agent that's able to inspect and retrigger the Mill agents or file a new Dagger node?
+- What happens when a main branch is broken? Who will spot and fix it? We probably want to auto-create Skift nodes.
+  - The supervisor mentioned a merge queue? I've thought they were kind of slow, but maybe there's something here. Another role that comes to mind: SRE/QA. I don't think an agent running in Mill will be able to inspect their work in production. Maybe they could hand off details to a thicket agent that's able to inspect and retrigger the Mill agents or file a new Skift node?
     - There's other considerations here to avoid race conditions. Note to self: level up my distributed systems expertise.
 
 Unrelated:
-- We need to stay on top of Dependabot and other security/maintenance alerts. These should just create Dagger nodes, honestly.
+- We need to stay on top of Dependabot and other security/maintenance alerts. These should just create Skift nodes, honestly.
   - Same for application errors.
 %%
 
@@ -179,8 +179,8 @@ Agreed.
 I want to hear more about this.
 %%
 
-- **The plan as the contract.** A comment after approval should reopen the plan, or a resume should offer re-plan. Otherwise a person and the session talk past each other. The case, from steading#6's run `01M3342MQ83SBHJBT51SFGM2FM` and dagger's event log:
-  - 04:50:56Z: the first comment, "How the suite obtains `dg` and `mill` — decided", naming `ghcr.io/steading-ai/<product>:<sha>` and a versions file with both the commit and the version string. 04:5xZ: park gate steading#22 completed with a one-line result summarising it.
+- **The plan as the contract.** A comment after approval should reopen the plan, or a resume should offer re-plan. Otherwise a person and the session talk past each other. The case, from steading#6's run `01M3342MQ83SBHJBT51SFGM2FM` and skift's event log:
+  - 04:50:56Z: the first comment, "How the suite obtains `skift` and `mill` — decided", naming `ghcr.io/steading-ai/<product>:<sha>` and a versions file with both the commit and the version string. 04:5xZ: park gate steading#22 completed with a one-line result summarising it.
   - 05:23:37Z: implement attempt 4 starts. Its prompt (step log, line 126) carries the gate's one-line result as an input; the comment's body is not in it. The attempt builds the structure the result names — versions file, guard, `make services`, a GHCR step in CI — and commits `66421d7` at 05:36Z pulling `ghcr.io/ivy/<product>:<version-string>`: wrong owner, wrong tag.
   - 05:36:50Z: review attempt 6 blocks on the `+` in the tag and notes the `ghcr.io/ivy` images are 403, without naming the owner as wrong.
   - 05:40:25Z: implement attempt 5 starts, and at 05:41:21Z ends, having swapped `+` for `-` in the tag (`f7b45d9`). At 05:41:29Z, eight seconds after it ended, the second comment lands naming the owner and the SHA tag again.
@@ -208,7 +208,7 @@ Oof, I think I have some notes from when I was brainstorming a redesign of this.
 - I've been wondering about cross-repo nodes and epics. I had a thought earlier that maybe an epic or some other node group should live *outside* of a project. In this case, my reasoning about projects is starting to map projects and repos one-to-one, but agents don't always behave this way. In this case, I was trying to:
   - Make a web UI Steading which needed:
     - Improvements to Mill's run tracking / observability / event streaming
-    - Improvements to Dagger along the same lines.
+    - Improvements to Skift along the same lines.
     - Frontend development to convert the clickable prototype into a working product.
     - Deployment into the Stead VM.
     - Infrastructure (mainly GitHub repo setup, tokens, GitHub Actions workflow setup, GHCR permissions).
@@ -221,7 +221,7 @@ Oof, I think I have some notes from when I was brainstorming a redesign of this.
 Yeah... I was under the understanding that we sandboxed this in a system container and put all of this in a VM. Not as worrisome until we got into giving it more credentials to reach GitHub. I shrugged my shoulders a bit out of impatience to get this running. We'll need to assess and define a threat model soon.
 %%
 
-- **The human surface.** Everything a person must answer is a node body reached through the `dg` CLI, and knowing which ones needed a person meant an agent watching all night. That is what steading is for, and this week is the argument for it.
+- **The human surface.** Everything a person must answer is a node body reached through the `skift` CLI, and knowing which ones needed a person meant an agent watching all night. That is what steading is for, and this week is the argument for it.
 
 %%
 100%. I don't think I scoped push notifications into it yet, but I found myself wishing a thicket agent would ping me on Slack or that I'd get a push notification from Steading to jump in and answer a question. I also found myself wanting summaries throughout the day and a way to dig into specific nodes and quickly understand them. Instead, I did stuff manually or asked the supervisor. It wasn't efficient.
@@ -233,20 +233,20 @@ Yeah... I was under the understanding that we sandboxed this in a system contain
 - **Put the decision where the prompt reads.** On steading#6 I left the decision as comments under the node, and no session ever saw them. The prompt carries the node's body and the results of what blocks it; I should have edited the body, or written the whole contract into the gate's result rather than a one-line summary of it.
 
 %%
-This is going to trip up a lot of agents. I think we have history for node edits? Otherwise, I suspect that changing `dg` to share better hints and output comments would make this better.
+This is going to trip up a lot of agents. I think we have history for node edits? Otherwise, I suspect that changing `skift` to share better hints and output comments would make this better.
 %%
 
 - **Watch in batches.** Per-event wake-ups over a 34-hour session cost more than the reporting was worth. A half-hour digest, with a push only for a gate, would have carried the same information for a tenth of the reads.
 
 %%
-I'm not sure. I think maybe we could look at [Jev](https://docs.typesafe.ai/introduction.md) and see if we can make a smarter monitoring tool built into dagger/mill that wakes up the supervisor when something noteworthy happens in the system.
+I'm not sure. I think maybe we could look at [Jev](https://docs.typesafe.ai/introduction.md) and see if we can make a smarter monitoring tool built into skift/mill that wakes up the supervisor when something noteworthy happens in the system.
 %%
 
 - **File the follow-ups as the run ends, not after.** mill#62 and steading#23 were filed inside minutes of the bad merge and that was right; mill#63 could have been filed the moment mill#57's plan said "a 4xx takes the ordinary path".
 
 ### Nodes this week filed from the record
 
-mill#52 (done), mill#53, mill#54, mill#55 (done), mill#57 (done), mill#58 (done), mill#61 (done), mill#62 (done), mill#63; stead#6 (done), stead#7 (done); dagger#2 (done); steading#23. Gates answered: mill#48–51, mill#56, mill#59, mill#60, steading#21, steading#22; steading#24 dropped.
+mill#52 (done), mill#53, mill#54, mill#55 (done), mill#57 (done), mill#58 (done), mill#61 (done), mill#62 (done), mill#63; stead#6 (done), stead#7 (done); skift#2 (done); steading#23. Gates answered: mill#48–51, mill#56, mill#59, mill#60, steading#21, steading#22; steading#24 dropped.
 
 %%
 My closing thoughts:
@@ -265,8 +265,8 @@ My closing thoughts:
   - If tech debt accrues faster than I pay it off, this is going to slow down a lot. We're in a greenfield/feature-development/proving phase and there's likely lots that needs to be rethought or tossed.
 - I don't think we've done anything about cross-repo research.
 - Knowledge retrieval is also on the backburner. [kb](https://github.com/ivy/kb) is a prototype that still has an architecture worth keeping. It might make sense to revisit it in a few more weeks.
-- Dagger doesn't really have a way to "stage" work. The moment it's in the system, Mill picks it up. In hindsight, I think this makes me hesitant to add to it frequently. I think for the system to realize its full potential, it needs to track *my* tasks too. Another reason for a web UI. That means some thought needs to be put into how I navigate the backlog and view the tasks for *me*.
-- At some point, I'd really like to resume an agent from a dagger node. Basically, having a way to reference which sessions ran on a node and having a way to pick them back up or fork them to ask questions. I think it'd be helpful for both agents and I to have a way to interrogate a transcript against a running agent rather than deciphering it ourselves. I'm not sure though. It could just be theater and lead the agent to hallucinate a rationale for its decisions.
+- Skift doesn't really have a way to "stage" work. The moment it's in the system, Mill picks it up. In hindsight, I think this makes me hesitant to add to it frequently. I think for the system to realize its full potential, it needs to track *my* tasks too. Another reason for a web UI. That means some thought needs to be put into how I navigate the backlog and view the tasks for *me*.
+- At some point, I'd really like to resume an agent from a skift node. Basically, having a way to reference which sessions ran on a node and having a way to pick them back up or fork them to ask questions. I think it'd be helpful for both agents and I to have a way to interrogate a transcript against a running agent rather than deciphering it ourselves. I'm not sure though. It could just be theater and lead the agent to hallucinate a rationale for its decisions.
   - The knowledge retrieval system might fit in here. I started it with Markdown in mind, but making it agnostic to data sources could prove valuable.
 %%
 
@@ -276,7 +276,7 @@ Claude's follow-ups to Round 1, then a proposal for the next iteration.
 
 ### Corrections after reading the comments
 
-- **Comments never reach a session.** The "half-followed" claim in Round 1 was wrong, and the "plan as the contract" bullet above now carries the timeline. mill's `prompt` (`internal/run/execute.go`) passes a step's session the node's body, the results of the nodes that block it, the artifact brief and a failure's feedback; not the node's comments. Implement attempt 4 saw the one-line result of the completed park gate, because the gate blocked the node and so arrived as an input, and built the structure that line named with guessed values. Attempt 5 ended eight seconds before the second comment landed. Attempt 7 saw only the failed-checks feedback. Nothing read either comment. The lever is in the prompt, or in a skill that runs `dg node show` (which does return comments), not in the sessions.
+- **Comments never reach a session.** The "half-followed" claim in Round 1 was wrong, and the "plan as the contract" bullet above now carries the timeline. mill's `prompt` (`internal/run/execute.go`) passes a step's session the node's body, the results of the nodes that block it, the artifact brief and a failure's feedback; not the node's comments. Implement attempt 4 saw the one-line result of the completed park gate, because the gate blocked the node and so arrived as an input, and built the structure that line named with guessed values. Attempt 5 ended eight seconds before the second comment landed. Attempt 7 saw only the failed-checks feedback. Nothing read either comment. The lever is in the prompt, or in a skill that runs `skift node show` (which does return comments), not in the sessions.
 - **There is no decision tool.** `hold` is a user's verb; a session has comment, complete and release. The implementer on steading#6 did the only honest thing available, which was to fail with a full explanation.
 - **The supervisor took the implementer's frame.** Round 1's menu was "how does CI get a credential" because that was the question the session handed over. The requirement in its own words was "a workflow on repository A reads a build of private repository B", and GitHub already answers that with a package's Actions access. A supervisor should state the requirement before pricing anything.
 
@@ -285,15 +285,15 @@ Claude's follow-ups to Round 1, then a proposal for the next iteration.
 - **Merge pacing.** The cost was not the merges, it was the re-reviews: every catch-up re-ran simplify through review because the branch moved. Three options, cheapest first: (1) catch-up re-runs checks and not reviews when the overlap is lockfiles and generated files only, which was half of this week's catch-ups; (2) one run per project in the merge phase, a lock the merge gate takes so branches land one at a time and the second catches up once against a stable main; (3) GitHub's merge queue, which is (1) done on the forge side. Subsystem classification and smaller nodes attack the same thing from the front, and smaller nodes have this week's data behind them.
 - **Broken main.** A node filed by mill's sweep when main's checks go red, since the sweep already reconciles against the forge. The same hook fits Dependabot and application errors.
 - **Resuming a session from a node.** The ledger already records the session id per attempt (`session_started`), and the activity files hold the transcript, so the reference exists. Resuming the actor to ask why is the theatre risk named in Round 1: a resumed session will produce a rationale whether or not one existed. The cheaper and more honest form is a fresh agent given the transcript as data, asked what the record shows, which is what the supervisor did by hand all week with `mill logs` and the activity files. That is a retrieval problem, and a data-source-agnostic `kb` fits it exactly.
-- **Supervision as a feature.** What the supervisor did was a polling monitor plus judgment, at $204 for the week. What it wants is dagger and mill emitting the noteworthy events (park, fence, red main, outage, cap) to something that wakes a supervisor with the context attached, so the judgment is bought without the polling. Jev is the right shape for the wake-up; the summaries and the escalation are the same job made cheap.
+- **Supervision as a feature.** What the supervisor did was a polling monitor plus judgment, at $204 for the week. What it wants is skift and mill emitting the noteworthy events (park, fence, red main, outage, cap) to something that wakes a supervisor with the context attached, so the judgment is bought without the polling. Jev is the right shape for the wake-up; the summaries and the escalation are the same job made cheap.
 
 ### Everything mentioned, bucketed
 
-1. **Flow and scheduling.** Drain in-flight runs before a redeploy. Catch-up without re-review; a per-project merge lock; a merge queue. Subsystem classification for scheduling. Smaller nodes, or a project-manager agent that scopes and classifies. Project priority, or a better statement of the scheduling problem. Epics that live outside a project for cross-repository work. A way to stage work in dagger so it is not claimed the moment it exists, and for dagger to hold a person's tasks too.
+1. **Flow and scheduling.** Drain in-flight runs before a redeploy. Catch-up without re-review; a per-project merge lock; a merge queue. Subsystem classification for scheduling. Smaller nodes, or a project-manager agent that scopes and classifies. Project priority, or a better statement of the scheduling problem. Epics that live outside a project for cross-repository work. A way to stage work in skift so it is not claimed the moment it exists, and for skift to hold a person's tasks too.
 2. **Resilience.** A worker-level breaker and cap awareness with backoff (mill#63). A node filed when main goes red, and for Dependabot and application errors. The sleep fixes (done). Race conditions once more than one agent can act on production.
 3. **Quality.** A decision-request outcome with a per-run budget. Comments or a re-plan in the prompt path. A documentation framework (Diataxis) and a CLI schema (pup) so plans cite real interfaces. A tests-first or BDD step; coverage as a signal; change-failure-rate data; digital twins for what cannot be tested without credentials. The test baseline at branch time (checks from the HEAD branched from) so sessions do not re-diagnose pre-existing failures. golangci-lint for architecture layers; a code-quality pass before debt outruns the work.
 4. **Observability and cost.** USD in the ledger for these models; a redone-work number beside the funnel; the journal's gateway noise; the gateway's silence on non-2xx; the supervisor's own bill.
-5. **Supervision and the human surface.** Supervision as a feature on events (Jev). Push notifications and daily summaries. Drill-down into a node and its runs. Resume or fork a session from a node, or interrogate its transcript. Knowledge retrieval (kb) made source-agnostic. Hints in `dg` tool output and node edit history. Whether the CLI and MCP, rather than a web UI, are the better investment.
+5. **Supervision and the human surface.** Supervision as a feature on events (Jev). Push notifications and daily summaries. Drill-down into a node and its runs. Resume or fork a session from a node, or interrogate its transcript. Knowledge retrieval (kb) made source-agnostic. Hints in `skift` tool output and node edit history. Whether the CLI and MCP, rather than a web UI, are the better investment.
 6. **Security and infrastructure.** A threat model for the guest now that it holds credentials. Branch protection with required checks. Terraform for GitHub repositories, tokens, workflows and package permissions. CI/CD as a discipline rather than one workflow.
 
 ### The 20% for the next iteration
@@ -302,7 +302,7 @@ Judged by what the record says cost the most: 35% of attempts were redone work (
 
 1. **Drain before deploy** (bucket 1; stead's follower). Stop claiming, let in-flight runs finish or reach a step boundary, then restart. Removes the 87 aborts and the resumes behind them, which is the single largest share of this week's cache reads. One `mill drain` verb and one wait in the follower.
 2. **Catch-up without re-review, and one merge at a time per project** (bucket 1; mill's merge gate). Removes most of the 267 superseded rows. The check-only path already exists for the tree (mill#52); the lock is a few lines in the gate.
-3. **A decision request that parks the run with the question and the session's own best answer, budgeted at one per run, and the answer written into the prompt path** (bucket 3; mill and dagger). Turns a four-round loop into one gate and closes the comments gap at the same time, since the answer arrives as an input.
+3. **A decision request that parks the run with the question and the session's own best answer, budgeted at one per run, and the answer written into the prompt path** (bucket 3; mill and skift). Turns a four-round loop into one gate and closes the comments gap at the same time, since the answer arrives as an input.
 4. **The worker-level breaker for 429 and 5xx, honouring the reset, plus a red-main node from the sweep** (bucket 2; mill#63 and one more). Cheap, and it protects everything else from the two failure modes that take the whole factory down.
 5. **Redone-work and USD in `mill cost`** (bucket 4). So next week's retrospective can say whether 1 through 4 worked, in the same units as this one.
 

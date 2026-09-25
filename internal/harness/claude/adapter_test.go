@@ -10,9 +10,9 @@ import (
 	. "github.com/onsi/gomega"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/workspace"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // twoModels is a terminal record of the shape a real turn produces: the
@@ -340,7 +340,7 @@ printf '%s\n' '{"terminal":{"exit":{"status":0}}}'
 
 		turn, err := adapter(script).Start(lifetime, session,
 			harness.Prompt{Text: "implement the node", OutputSchema: `{"type":"object"}`},
-			[]harness.Attachment{{Name: "dagger#3", Source: "predecessor", MediaType: "text/markdown", Content: "done"}})
+			[]harness.Attachment{{Name: "skift#3", Source: "predecessor", MediaType: "text/markdown", Content: "done"}})
 		Expect(err).NotTo(HaveOccurred())
 		_, err = turn.Wait(lifetime)
 		Expect(err).NotTo(HaveOccurred())

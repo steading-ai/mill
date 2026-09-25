@@ -12,9 +12,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	"github.com/ivy/mill/internal/cli"
-	"github.com/ivy/mill/internal/testsupport"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	"github.com/steading-ai/mill/internal/cli"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // `mill serve --work` is the deployed shape: one process, both faces
@@ -24,7 +25,7 @@ import (
 
 var _ = Describe("mill serve --work", Label(testsupport.DBLabel), func() {
 	It("serves the store while a worker claims in the same process", func(ctx SpecContext) {
-		g := daggerNodeWith(ctx, "https://forge.test/mill/mill.git")
+		g := skiftNodeWith(ctx, "https://forge.test/mill/mill.git")
 		databaseURL := pg.Database(ctx).Config().ConnString()
 		socket := filepath.Join(GinkgoT().TempDir(), "mill.sock")
 
@@ -42,13 +43,13 @@ var _ = Describe("mill serve --work", Label(testsupport.DBLabel), func() {
 			"--socket", socket,
 			"--database-url", databaseURL,
 			"--config", config,
-			"--project", daggerProject,
+			"--project", skiftProject,
 			// A label no node carries, so the worker blocks in ClaimNext
 			// for the whole spec: what is under test is the service beside
 			// it, and the run in the ledger below is composed rather than
 			// driven.
 			"--label", "nothing-carries-this",
-			"--dagger-socket", g.service.Socket,
+			"--skift-socket", g.service.Socket,
 			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 			"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
 		})
@@ -89,10 +90,10 @@ var _ = Describe("mill serve --work", Label(testsupport.DBLabel), func() {
 		// that a worker in the process costs the service none of its own
 		// probes.
 		report, _ := runCLI(ctx, socket, "doctor",
-			"--dagger-socket", g.service.Socket, "--project", daggerProject,
+			"--skift-socket", g.service.Socket, "--project", skiftProject,
 			"--sidecar", filepath.Join(GinkgoT().TempDir(), "no-sidecar.js"),
 			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"))
-		for _, name := range []string{"socket", "schema", "dagger"} {
+		for _, name := range []string{"socket", "schema", "skift"} {
 			Expect(probeLine(report, name)).To(Equal("pass"), report)
 		}
 	})
@@ -102,7 +103,7 @@ var _ = Describe("mill serve --work", Label(testsupport.DBLabel), func() {
 	// same refusal — Hold's own contract, not a log — so the node is not
 	// claimed back into a hot claim/fail loop.
 	It("claims a node that names no repository, fails its run, and holds the node rather than reclaiming it", func(ctx SpecContext) {
-		g := daggerNode(ctx)
+		g := skiftNode(ctx)
 		databaseURL := pg.Database(ctx).Config().ConnString()
 		config := filepath.Join(GinkgoT().TempDir(), "empty.yaml")
 		Expect(os.WriteFile(config, []byte("{}\n"), 0o600)).To(Succeed())
@@ -115,8 +116,8 @@ var _ = Describe("mill serve --work", Label(testsupport.DBLabel), func() {
 			"--socket", socket,
 			"--database-url", databaseURL,
 			"--config", config,
-			"--project", daggerProject,
-			"--dagger-socket", g.service.Socket,
+			"--project", skiftProject,
+			"--skift-socket", g.service.Socket,
 			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 			"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
 		})
@@ -138,9 +139,9 @@ var _ = Describe("mill serve --work", Label(testsupport.DBLabel), func() {
 			return err
 		}, time.Minute, 50*time.Millisecond).Should(Succeed(), stderr.String())
 
-		By("it claims the node, fails the run, and dagger holds the node with a reason naming the missing repository")
+		By("it claims the node, fails the run, and skift holds the node with a reason naming the missing repository")
 		Eventually(func() string {
-			res, err := g.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{Project: daggerProject, Node: g.nodeRef}))
+			res, err := g.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{Project: skiftProject, Node: g.nodeRef}))
 			Expect(err).NotTo(HaveOccurred())
 			return res.Msg.GetNode().GetHold().GetReason()
 		}, time.Minute, 100*time.Millisecond).Should(HavePrefix("no repository"), stderr.String())
@@ -163,14 +164,14 @@ var _ = Describe("mill serve --work", Label(testsupport.DBLabel), func() {
 		// project is claimed first — what is under test here is the filter,
 		// not how long a real clone takes.
 		//
-		// DG_PROJECT is scrubbed here rather than left to the suite's own
+		// SKIFT_PROJECT is scrubbed here rather than left to the suite's own
 		// isolation: this is the one spec whose whole point is a worker with
 		// no project configured, and this repo's own mise.toml sets
-		// DG_PROJECT for its developers' convenience running a real mill
-		// against a real dagger — exactly the ambient value a spec must not
+		// SKIFT_PROJECT for its developers' convenience running a real mill
+		// against a real skift — exactly the ambient value a spec must not
 		// see.
-		GinkgoT().Setenv("DG_PROJECT", "")
-		g := daggerNode(ctx)
+		GinkgoT().Setenv("SKIFT_PROJECT", "")
+		g := skiftNode(ctx)
 		other, otherRef := g.secondProject(ctx, "millcli-second", "")
 		databaseURL := pg.Database(ctx).Config().ConnString()
 		config := filepath.Join(GinkgoT().TempDir(), "empty.yaml")
@@ -184,7 +185,7 @@ var _ = Describe("mill serve --work", Label(testsupport.DBLabel), func() {
 			"--socket", socket,
 			"--database-url", databaseURL,
 			"--config", config,
-			"--dagger-socket", g.service.Socket,
+			"--skift-socket", g.service.Socket,
 			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 			"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
 		})
@@ -208,7 +209,7 @@ var _ = Describe("mill serve --work", Label(testsupport.DBLabel), func() {
 			Should(ContainSubstring("projects=[]"), "an unconfigured worker's filter is empty, not defaulted to one project")
 
 		Eventually(func() string {
-			res, err := g.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{Project: other, Node: otherRef}))
+			res, err := g.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{Project: other, Node: otherRef}))
 			Expect(err).NotTo(HaveOccurred())
 			return res.Msg.GetNode().GetHold().GetReason()
 		}, time.Minute, 100*time.Millisecond).Should(HavePrefix("no repository"),
@@ -216,11 +217,11 @@ var _ = Describe("mill serve --work", Label(testsupport.DBLabel), func() {
 	})
 
 	It("with project: [mill] configured, claims only from mill even while a second project has ready work", func(ctx SpecContext) {
-		g := daggerNode(ctx)
+		g := skiftNode(ctx)
 		other, otherRef := g.secondProject(ctx, "millcli-second", "")
 		databaseURL := pg.Database(ctx).Config().ConnString()
 		config := filepath.Join(GinkgoT().TempDir(), "config.yaml")
-		Expect(os.WriteFile(config, []byte("project: ["+daggerProject+"]\n"), 0o600)).To(Succeed())
+		Expect(os.WriteFile(config, []byte("project: ["+skiftProject+"]\n"), 0o600)).To(Succeed())
 		socket := filepath.Join(GinkgoT().TempDir(), "mill.sock")
 
 		var stdout, stderr bytes.Buffer
@@ -230,7 +231,7 @@ var _ = Describe("mill serve --work", Label(testsupport.DBLabel), func() {
 			"--socket", socket,
 			"--database-url", databaseURL,
 			"--config", config,
-			"--dagger-socket", g.service.Socket,
+			"--skift-socket", g.service.Socket,
 			"--workspace-dir", filepath.Join(GinkgoT().TempDir(), "workspaces"),
 			"--log-dir", filepath.Join(GinkgoT().TempDir(), "logs"),
 		})
@@ -252,16 +253,16 @@ var _ = Describe("mill serve --work", Label(testsupport.DBLabel), func() {
 		}, time.Minute, 50*time.Millisecond).Should(Succeed(), stderr.String())
 
 		Eventually(func() string {
-			res, err := g.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{Project: daggerProject, Node: g.nodeRef}))
+			res, err := g.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{Project: skiftProject, Node: g.nodeRef}))
 			Expect(err).NotTo(HaveOccurred())
 			return res.Msg.GetNode().GetHold().GetReason()
 		}, time.Minute, 100*time.Millisecond).Should(HavePrefix("no repository"), "the configured project's own node is claimed")
 
 		Consistently(func() bool {
-			res, err := g.graph.GetNode(ctx, connect.NewRequest(&daggerv1.GetNodeRequest{Project: other, Node: otherRef}))
+			res, err := g.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{Project: other, Node: otherRef}))
 			Expect(err).NotTo(HaveOccurred())
 			return res.Msg.GetNode().GetClaimed()
-		}, 3*time.Second, 250*time.Millisecond).Should(BeFalse(), "the filter names only "+daggerProject+"; the second project's node is never claimed")
+		}, 3*time.Second, 250*time.Millisecond).Should(BeFalse(), "the filter names only "+skiftProject+"; the second project's node is never claimed")
 	})
 })
 

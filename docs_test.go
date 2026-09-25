@@ -228,7 +228,7 @@ var _ = Describe("The architecture decision records", Label("unit"), func() {
 	})
 })
 
-// The O2 retrospective, in the shape of dagger's first-build retrospective:
+// The O2 retrospective, in the shape of skift's first-build retrospective:
 // what was built with the numbers, the operator's side, the agent's side,
 // and the next run. The numbers are the milestone's report and the live
 // tier's first summary, quoted, so a retrospective that lost them would

@@ -7,7 +7,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
 )
 
 var _ = Describe("The sidecar wire's codec", Label("unit"), func() {
@@ -23,7 +23,7 @@ var _ = Describe("The sidecar wire's codec", Label("unit"), func() {
 			Body: &harnessv1.Request_Start{Start: &harnessv1.Start{
 				SessionId:    "b6f1e0a2-0000-4000-8000-000000000001",
 				Prompt:       "implement the node\nwith a newline in it",
-				Attachments:  []*harnessv1.Attachment{{Name: "dagger#3", Source: "predecessor", MediaType: "text/markdown", Content: "done"}},
+				Attachments:  []*harnessv1.Attachment{{Name: "skift#3", Source: "predecessor", MediaType: "text/markdown", Content: "done"}},
 				Settings:     &harnessv1.Settings{Options: settings},
 				Workspace:    &harnessv1.Workspace{Socket: "/run/mill/ws.sock", Token: "step-token-1"},
 				OutputSchema: `{"type":"object"}`,

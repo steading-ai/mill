@@ -7,7 +7,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/ivy/mill/internal/run"
+	"github.com/steading-ai/mill/internal/run"
 )
 
 // terminalAnswerer puts a gate's ask to the person running `mill run` and
@@ -16,8 +16,8 @@ import (
 // This is the only place a gate is answered inside mill's own process, and
 // it exists because `mill run` is a person watching one node go by: filing a
 // gate and telling them to go and answer it elsewhere would be ceremony. The
-// gate is still filed in dagger first, and the answer is still written to
-// dagger as *their* act, not the mill's (docs/domain-model.md §Principal) —
+// gate is still filed in skift first, and the answer is still written to
+// skift as *their* act, not the mill's (docs/domain-model.md §Principal) —
 // what this saves is the walk to another window, not the record.
 //
 // A worker never has one of these: `mill work` has nobody at its terminal,

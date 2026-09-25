@@ -1,6 +1,6 @@
 ---
 name: retrospective
-description: Use when asked to write up a week or a milestone of the factory — progress, tokens, code, what went wrong, gaps — as docs/retrospectives/YYYY-MM-DD-<slug>.md, and to carry it through numbered rounds of the person's %% comments. Every number comes from the ledger, dagger, and the forge, never from memory.
+description: Use when asked to write up a week or a milestone of the factory — progress, tokens, code, what went wrong, gaps — as docs/retrospectives/YYYY-MM-DD-<slug>.md, and to carry it through numbered rounds of the person's %% comments. Every number comes from the ledger, skift, and the forge, never from memory.
 argument-hint: "[<slug> [since <date-or-window>] | round <N> <slug>]"
 disable-model-invocation: true
 allowed-tools:
@@ -14,9 +14,9 @@ allowed-tools:
   - Bash(../cli/stead shell -- mill history:*)
   - Bash(../cli/stead shell -- mill logs:*)
   - Bash(../cli/stead shell -- mill doctor:*)
-  - Bash(dg node show:*)
-  - Bash(dg node list:*)
-  - Bash(dg project list:*)
+  - Bash(skift node show:*)
+  - Bash(skift node list:*)
+  - Bash(skift project list:*)
   - Bash(gh pr list:*)
   - Bash(gh pr view:*)
   - Bash(gh run list:*)

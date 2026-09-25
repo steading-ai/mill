@@ -5,11 +5,12 @@ import (
 	"errors"
 	"fmt"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/dagger"
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/workspace"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/skift"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // Restart is docs/domain-model.md §Restart, step for step. It is never
@@ -26,20 +27,20 @@ func (r *Runner) Restart(ctx context.Context, nodeRef, reason string) (*millv1.R
 	if reason == "" {
 		reason = "restart"
 	}
-	node, err := r.options.Dagger.Node(ctx, nodeRef)
+	node, err := r.options.Skift.Node(ctx, nodeRef)
 	if err != nil {
 		return nil, err
 	}
-	if node.GetAssigneeKind() == daggerv1.AssigneeKind_ASSIGNEE_KIND_USER {
-		return nil, &dagger.UserNodeError{Ref: nodeRef, Verb: "restart"}
+	if node.GetAssigneeKind() == skiftv1.AssigneeKind_ASSIGNEE_KIND_USER {
+		return nil, &skift.UserNodeError{Ref: nodeRef, Verb: "restart"}
 	}
 	// A closed node has no next generation to start: a restart of a
 	// dropped node would open a run nothing can ever claim, which is
 	// exactly the stranded run the sweep exists to end (docs/ledger.md
 	// §Sweep).
-	if node.GetStatus() != daggerv1.Status_STATUS_OPEN {
+	if node.GetStatus() != skiftv1.Status_STATUS_OPEN {
 		return nil, fmt.Errorf("%w: %s is %s, not open; nothing to restart",
-			ErrRefused, nodeRef, daggerStatus(node.GetStatus()))
+			ErrRefused, nodeRef, skiftStatus(node.GetStatus()))
 	}
 	old, next, err := r.runByNode(ctx, node.GetId())
 	if err != nil {
@@ -103,7 +104,7 @@ func (r *Runner) Restart(ctx context.Context, nodeRef, reason string) (*millv1.R
 // actually takes the node back, with the reason docs/domain-model.md names —
 // an operator taking a lease away is what `preempted` means.
 //
-// A lease dagger says is not live is not an error here. The run whose worker
+// A lease skift says is not live is not an error here. The run whose worker
 // died holding one is the very run a human restarts, and the release exists
 // only to stop a worker that is still alive: there is nothing to take back
 // from a lease that is already gone. It is named in the output and the
@@ -120,10 +121,10 @@ func (r *Runner) preempt(ctx context.Context, old *millv1.Run, reason string) er
 	}); err != nil && !errors.Is(err, ErrFenced) {
 		return err
 	}
-	switch err := r.options.Dagger.Release(ctx, lease,
-		daggerv1.ReleaseReason_RELEASE_REASON_PREEMPTED, reason); {
-	case errors.Is(err, dagger.ErrFenced):
-		r.printf("lease %s is no longer live in dagger; skipped the release\n", lease)
+	switch err := r.options.Skift.Release(ctx, lease,
+		skiftv1.ReleaseReason_RELEASE_REASON_PREEMPTED, reason); {
+	case errors.Is(err, skift.ErrFenced):
+		r.printf("lease %s is no longer live in skift; skipped the release\n", lease)
 	case err != nil:
 		return err
 	}

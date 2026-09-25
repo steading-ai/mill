@@ -20,7 +20,7 @@ package harness.v1;
 
 import "google/protobuf/struct.proto";
 
-option go_package = "github.com/ivy/mill/gen/harness/v1;harnessv1";
+option go_package = "github.com/steading-ai/mill/gen/harness/v1;harnessv1";
 
 // ExitReason says why a session ended when the exit status alone does not.
 // It is the discriminator that keeps "never ran" apart from "ran and
@@ -73,7 +73,7 @@ message ProcessExit {
 }
 
 // TokenCounts is one model's token usage. Counts, never currency: a rate
-// table is applied by whoever wants money, exactly as in dagger.
+// table is applied by whoever wants money, exactly as in skift.
 message TokenCounts {
   // Tokens sent to the model.
   int64 input = 1;
@@ -88,7 +88,7 @@ message TokenCounts {
 // Usage is what a turn or a whole session cost, keyed by model. It is a map
 // and not a single model's counts because one assistant turn bills an
 // auxiliary model alongside the one the step asked for, and the mill posts
-// one dagger usage record per (lease, model). Usage is part of the adapter's
+// one skift usage record per (lease, model). Usage is part of the adapter's
 // contract, not an optional event: the adapter is the only component that
 // sees the harness's numbers.
 message Usage {
@@ -162,7 +162,7 @@ message Attachment {
   string name = 1;
   // Who is making this claim: the principal or step the content came from.
   // Predecessor content is rendered as attributed, delimited data and never
-  // as instructions, which is dagger's rule and the mill's to honour.
+  // as instructions, which is skift's rule and the mill's to honour.
   string source = 2;
   // The content's media type, so the sidecar renders it correctly.
   string media_type = 3;

@@ -6,7 +6,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 )
 
 // implementReached bounds how long the first run has to get as far as the
@@ -35,7 +35,7 @@ var _ = Describe("Acceptance", Label("acceptance"), func() {
 		afterKill := workspaceDirs(s.WorkspaceDir)
 		Expect(afterKill).To(HaveLen(1), "the killed run left exactly one workspace behind")
 
-		// A killed worker releases nothing, and dagger hands the node to
+		// A killed worker releases nothing, and skift hands the node to
 		// nobody while the lease is live: the second claim would be refused
 		// until the TTL passed, which is longer than this scenario waits.
 		// Taking the lease is what an operator does for a worker that is not

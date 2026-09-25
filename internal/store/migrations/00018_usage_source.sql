@@ -5,7 +5,7 @@
 -- outside the session (docs/sandbox.md §Credentials). The two are separate
 -- rows with a source each, so what a session reported and what the model
 -- billed can be read beside each other, and only the adapter's rows are
--- what the ledger calls the step's cost and posts to dagger.
+-- what the ledger calls the step's cost and posts to skift.
 
 -- +goose Up
 

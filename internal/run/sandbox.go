@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/workspace"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // recordWorkspace writes the ledger's record of the run's workspace once it

@@ -9,14 +9,14 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/testsupport"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 var _ = Describe("SealOrphans", Label(testsupport.DBLabel), func() {
 	// closingRunner builds a bare *run.Runner over sealFixture's store
-	// client and log dir — no dagger, no workspace, exactly what
+	// client and log dir — no skift, no workspace, exactly what
 	// SealOrphans itself touches.
 	closingRunner := func(f *sealFixture) *run.Runner {
 		return run.New(run.Options{

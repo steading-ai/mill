@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/machine/cache"
-	"github.com/ivy/mill/internal/workspace/machine/config"
-	"github.com/ivy/mill/internal/workspace/machine/driver"
-	"github.com/ivy/mill/internal/workspace/machine/image"
-	"github.com/ivy/mill/internal/workspace/socket"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/machine/cache"
+	"github.com/steading-ai/mill/internal/workspace/machine/config"
+	"github.com/steading-ai/mill/internal/workspace/machine/driver"
+	"github.com/steading-ai/mill/internal/workspace/machine/image"
+	"github.com/steading-ai/mill/internal/workspace/socket"
 )
 
 // Names inside a run's directory (docs/sandbox.md §Naming, §Filesystem).
@@ -200,8 +200,8 @@ func (w *Workspace) create(ctx context.Context, spec workspace.Spec, record *Rec
 		// The helper refuses a bind whose source is not there, in the
 		// unit's journal; the checkout is the worker's to see, so say it
 		// here with the key that names it.
-		if info, err := os.Stat(w.config.DaggerCheckout); err != nil || !info.IsDir() {
-			return nil, fmt.Errorf("machine: nested: dagger_checkout %s is not a directory to bind read-only at %s", w.config.DaggerCheckout, DaggerCheckoutTarget)
+		if info, err := os.Stat(w.config.SkiftCheckout); err != nil || !info.IsDir() {
+			return nil, fmt.Errorf("machine: nested: skift_checkout %s is not a directory to bind read-only at %s", w.config.SkiftCheckout, SkiftCheckoutTarget)
 		}
 	}
 	manifest := w.manifest(declared, id, string(digest), proxyFile, nested)
@@ -300,7 +300,7 @@ func (w *Workspace) writeProxyFile(runDir string, egress workspace.Egress) (stri
 // directory read-only, one
 // plus the proxy file read-only, and under nested the host's image
 // subvolumes read-only so an inner suite boots them rather than building
-// them, and the dagger checkout read-only for its test fixture. Nothing
+// them, and the skift checkout read-only for its test fixture. Nothing
 // else differs between a nested and a flat provision.
 func (w *Workspace) manifest(declared config.Config, id, digest, proxyFile string, nested bool) Manifest {
 	mounts := config.Mounts{
@@ -321,7 +321,7 @@ func (w *Workspace) manifest(declared config.Config, id, digest, proxyFile strin
 	if nested {
 		m.Binds = append(m.Binds,
 			Bind{Source: w.config.Machines, Target: DefaultMachines, ReadOnly: true},
-			Bind{Source: w.config.DaggerCheckout, Target: DaggerCheckoutTarget, ReadOnly: true})
+			Bind{Source: w.config.SkiftCheckout, Target: SkiftCheckoutTarget, ReadOnly: true})
 	}
 	return m
 }
@@ -329,7 +329,7 @@ func (w *Workspace) manifest(declared config.Config, id, digest, proxyFile strin
 // allowedBindRoots is the helper's policy as this worker knows it: the run
 // directory and the socket directory read-write, the skill, the sidecar and
 // the workflow copy read-only, and under nested — only then — the image
-// directory and the dagger checkout read-only.
+// directory and the skift checkout read-only.
 func (w *Workspace) allowedBindRoots(id string, nested bool) map[string]bool {
 	roots := map[string]bool{
 		w.config.runDir(id):    false,
@@ -342,7 +342,7 @@ func (w *Workspace) allowedBindRoots(id string, nested bool) map[string]bool {
 	}
 	if nested {
 		roots[w.config.Machines] = true
-		roots[w.config.DaggerCheckout] = true
+		roots[w.config.SkiftCheckout] = true
 	}
 	return roots
 }

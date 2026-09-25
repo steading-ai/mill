@@ -15,15 +15,16 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/dagger"
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/harness/fake"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/workspace"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/harness/fake"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/skift"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
@@ -59,14 +60,14 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			// The only open node is one a person must complete, and the
 			// only other is blocked by it. A worker sees nothing.
 			blocker := f.userNode(ctx, "a decision only a person can make", "Say yes or no.")
-			node := f.createNode(ctx, &daggerv1.CreateNodeOp{
+			node := f.createNode(ctx, &skiftv1.CreateNodeOp{
 				Title: "the work behind the decision", Body: "Change the README's first line.",
 				BlockedBy: []string{blocker},
 			})
 			f.script(f.quickFixScripts()...)
 
 			client, counter := f.counted()
-			worker := f.workerOver(f.runner(quick, func(o *run.Options) { o.Dagger = client }),
+			worker := f.workerOver(f.runner(quick, func(o *run.Options) { o.Skift = client }),
 				func(o *run.WorkerOptions) { o.Wait = 30 * time.Second })
 			done := startWorker(ctx, worker)
 			DeferCleanup(func() {
@@ -85,19 +86,19 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			// a claim landing at all is the wait doing the work.
 			Eventually(func() *millv1.Run { return f.runOfRef(ctx, node) }, 5*time.Second, 100*time.Millisecond).
 				ShouldNot(BeNil())
-			Expect(counter.events.Load()).To(BeZero(), "nothing subscribed to dagger's change stream")
+			Expect(counter.events.Load()).To(BeZero(), "nothing subscribed to skift's change stream")
 			Expect(counter.claims.Load()).To(BeNumerically("<=", 2),
 				"one blocking claim, not a poll of its own")
 		})
 
 		It("blocks with no ready work and returns within a second of a node becoming ready", func() {
 			blocker := f.userNode(ctx, "a decision only a person can make", "Say yes or no.")
-			node := f.createNode(ctx, &daggerv1.CreateNodeOp{
+			node := f.createNode(ctx, &skiftv1.CreateNodeOp{
 				Title: "the work behind the decision", Body: "Change the README's first line.",
 				BlockedBy: []string{blocker},
 			})
 
-			claimed := make(chan *dagger.Claimed, 1)
+			claimed := make(chan *skift.Claimed, 1)
 			go func() {
 				defer GinkgoRecover()
 				got, err := f.client.ClaimNext(ctx, nil, nil, 30*time.Second)
@@ -110,9 +111,9 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			ready := time.Now()
 			f.complete(ctx, blocker)
 
-			// Dagger polls its own ready set at most a second apart inside
+			// Skift polls its own ready set at most a second apart inside
 			// the wait, so the bound is that second plus the round trip.
-			var got *dagger.Claimed
+			var got *skift.Claimed
 			Eventually(claimed, 2*time.Second, 50*time.Millisecond).Should(Receive(&got))
 			Expect(got.Node.GetReference()).To(Equal(node))
 			Expect(time.Since(ready)).To(BeNumerically("<", 2*time.Second))
@@ -139,12 +140,12 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 
 			worker := f.workerOver(f.runner(quick), func(o *run.WorkerOptions) { o.Labels = []string{"mill"} })
 			done := startWorker(ctx, worker)
-			Eventually(func() daggerv1.Status { return f.statusOf(ctx, mine) }, 2*time.Minute, 200*time.Millisecond).
-				Should(Equal(daggerv1.Status_STATUS_DONE))
+			Eventually(func() skiftv1.Status { return f.statusOf(ctx, mine) }, 2*time.Minute, 200*time.Millisecond).
+				Should(Equal(skiftv1.Status_STATUS_DONE))
 			worker.Stop()
 			Eventually(done, time.Minute).Should(Receive(BeNil()))
 
-			Expect(f.statusOf(ctx, theirs)).To(Equal(daggerv1.Status_STATUS_OPEN))
+			Expect(f.statusOf(ctx, theirs)).To(Equal(skiftv1.Status_STATUS_OPEN))
 			Expect(f.runOfRef(ctx, theirs)).To(BeNil(), "the unlabelled node was never claimed")
 		})
 	})
@@ -158,10 +159,10 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			worker := f.workerOver(f.runner(quick), func(o *run.WorkerOptions) { o.Concurrency = 1 })
 			done := startWorker(ctx, worker)
 
-			Eventually(func() []daggerv1.Status {
-				return []daggerv1.Status{f.statusOf(ctx, first), f.statusOf(ctx, second)}
-			}, 3*time.Minute, 200*time.Millisecond).Should(Equal([]daggerv1.Status{
-				daggerv1.Status_STATUS_DONE, daggerv1.Status_STATUS_DONE,
+			Eventually(func() []skiftv1.Status {
+				return []skiftv1.Status{f.statusOf(ctx, first), f.statusOf(ctx, second)}
+			}, 3*time.Minute, 200*time.Millisecond).Should(Equal([]skiftv1.Status{
+				skiftv1.Status_STATUS_DONE, skiftv1.Status_STATUS_DONE,
 			}))
 			Consistently(done, time.Second).ShouldNot(Receive(), "the loop asks for more work rather than ending")
 
@@ -216,8 +217,8 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			f.script(f.quickFixScripts()...)
 			next := f.workerOver(f.runner(quick))
 			resumed := startWorker(ctx, next)
-			Eventually(func() daggerv1.Status { return f.statusOf(ctx, node) }, 3*time.Minute, 200*time.Millisecond).
-				Should(Equal(daggerv1.Status_STATUS_DONE))
+			Eventually(func() skiftv1.Status { return f.statusOf(ctx, node) }, 3*time.Minute, 200*time.Millisecond).
+				Should(Equal(skiftv1.Status_STATUS_DONE))
 			next.Stop()
 			Eventually(resumed, time.Minute).Should(Receive(BeNil()))
 
@@ -271,7 +272,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			}})
 
 			client, counter := f.counted()
-			worker := f.workerOver(f.runner(quick, func(o *run.Options) { o.Dagger = client }))
+			worker := f.workerOver(f.runner(quick, func(o *run.Options) { o.Skift = client }))
 			done := startWorker(ctx, worker)
 
 			// A second claim is the worker carrying on: it asked for more
@@ -290,14 +291,14 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 
 	Describe("A claim it cannot open, for a reason it did not choose", func() {
 		It("waits before reclaiming, with a bound that grows, and logs once per attempt rather than per cycle", func() {
-			f.createNode(ctx, &daggerv1.CreateNodeOp{Title: "a workspace that never opens", Body: "body"})
+			f.createNode(ctx, &skiftv1.CreateNodeOp{Title: "a workspace that never opens", Body: "body"})
 
 			boom := errors.New("workspace: the sandbox host is unreachable")
 
 			warnings := &warnCounter{message: "could not open a claimed node; backing off before reclaiming it"}
 			client, counter := f.counted()
 			worker := f.workerOver(f.runner(quick, func(o *run.Options) {
-				o.Dagger = client
+				o.Skift = client
 				o.Workspaces = func(context.Context, workspace.Spec, run.Repository) (run.Workspace, error) {
 					return nil, boom
 				}
@@ -323,7 +324,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			total := len(attempts)
 			Expect(gap2).To(BeNumerically(">", gap1), "each refusal waits longer than the one before it")
 
-			By("dagger's ClaimNext is asked more often than the node is actually opened")
+			By("skift's ClaimNext is asked more often than the node is actually opened")
 			Expect(counter.claims.Load()).To(BeNumerically(">", int64(total)),
 				"at least one claim never reached a workspace: it backed off and was released at once")
 		})
@@ -331,12 +332,12 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 
 	Describe("A project with no repository", func() {
 		It("holds each node it claims there, and warns once rather than once per node", func() {
-			first := f.createNode(ctx, &daggerv1.CreateNodeOp{Title: "first with no repository", Body: "body"})
-			second := f.createNode(ctx, &daggerv1.CreateNodeOp{Title: "second with no repository", Body: "body"})
+			first := f.createNode(ctx, &skiftv1.CreateNodeOp{Title: "first with no repository", Body: "body"})
+			second := f.createNode(ctx, &skiftv1.CreateNodeOp{Title: "second with no repository", Body: "body"})
 
 			// Repositories is resolved once per claim, from the project the
 			// claim carried, before either node is known apart: the project
-			// has only these two ready nodes and nothing else for dagger to
+			// has only these two ready nodes and nothing else for skift to
 			// hand back, so a call count that stops at two once both are held
 			// is the same proof a per-node counter would be (mill#39's
 			// Scenario: "the worker claims each once... and does not claim it
@@ -344,7 +345,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			var calls atomic.Int64
 			warnings := &warnCounter{message: "a project has no repository; nodes there are held rather than claimed"}
 			worker := f.workerOver(f.runner(quick, func(o *run.Options) {
-				o.Repositories = func(context.Context, *daggerv1.Project) (run.Repository, error) {
+				o.Repositories = func(context.Context, *skiftv1.Project) (run.Repository, error) {
 					calls.Add(1)
 					return run.Repository{}, &forge.NoVCSURLError{Project: project}
 				}
@@ -369,7 +370,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			By("and neither node is reclaimed again within the lease TTL, the Scenario's own Then clause")
 			Expect(calls.Load()).To(Equal(int64(2)), "one claim per node, no more, once both are held")
 			Consistently(calls.Load, ttl+time.Second, 100*time.Millisecond).
-				Should(Equal(int64(2)), "dagger's lease table gains one row per node, not thousands")
+				Should(Equal(int64(2)), "skift's lease table gains one row per node, not thousands")
 		})
 	})
 
@@ -402,14 +403,14 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			Eventually(setupDone, time.Minute).Should(Receive(BeNil()))
 
 			By("and a third, unrelated node ready but with no free slot at that concurrency")
-			third := f.createNode(ctx, &daggerv1.CreateNodeOp{
+			third := f.createNode(ctx, &skiftv1.CreateNodeOp{
 				Title: "a third fix with no free slot", Body: "Change the README's third line.",
 			})
 
 			By("when the next worker starts at the same concurrency")
 			journal := &bytes.Buffer{}
 			client, counter := f.counted()
-			next := f.workerOver(f.runner(quick, func(o *run.Options) { o.Dagger = client }),
+			next := f.workerOver(f.runner(quick, func(o *run.Options) { o.Skift = client }),
 				func(o *run.WorkerOptions) { o.Concurrency = 2; o.Out = journal })
 			resumed := startWorker(ctx, next)
 			DeferCleanup(func() {
@@ -428,8 +429,8 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			Expect(journal.String()).To(ContainSubstring("resumed " + second + ", aborted at"))
 
 			By("and no new node is claimed until one of them frees a slot")
-			Consistently(func() daggerv1.Status { return f.statusOf(ctx, third) }, 2*time.Second, 100*time.Millisecond).
-				Should(Equal(daggerv1.Status_STATUS_OPEN))
+			Consistently(func() skiftv1.Status { return f.statusOf(ctx, third) }, 2*time.Second, 100*time.Millisecond).
+				Should(Equal(skiftv1.Status_STATUS_OPEN))
 			Consistently(func() int64 { return counter.claims.Load() }, 2*time.Second, 100*time.Millisecond).
 				Should(Equal(int64(2)), "the third slot never opens because nothing frees the two reclaim took")
 		})
@@ -525,7 +526,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			startup := &recordingStartup{claim: counter.claims.Load, also: func() string {
 				return fmt.Sprintf("sealed: %v", sealed())
 			}}
-			worker := f.workerOver(f.runner(quick, func(o *run.Options) { o.Dagger = client; o.LogDir = dir }),
+			worker := f.workerOver(f.runner(quick, func(o *run.Options) { o.Skift = client; o.LogDir = dir }),
 				func(o *run.WorkerOptions) { o.Startup = startup })
 			done := startWorker(ctx, worker)
 			DeferCleanup(func() {

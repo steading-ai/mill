@@ -9,9 +9,9 @@
 
 CREATE TABLE runs (
     id               text        NOT NULL,
-    -- The dagger node. One live run per node, ever.
+    -- The skift node. One live run per node, ever.
     node_id          text        NOT NULL,
-    -- Display key, e.g. `dagger#18`.
+    -- Display key, e.g. `skift#18`.
     node_ref         text        NOT NULL,
     -- 1 for the first run on a node; incremented by restart.
     generation       bigint      NOT NULL DEFAULT 1,
@@ -20,11 +20,11 @@ CREATE TABLE runs (
     -- Null while selecting; set once and never changed (Invariant 2).
     workflow_id      text,
     status           text        NOT NULL DEFAULT 'selecting',
-    -- The current dagger lease, or null. What every write for this run is
+    -- The current skift lease, or null. What every write for this run is
     -- fenced by (Invariant 9).
     lease_id         text,
     worker_ref       text        NOT NULL DEFAULT '',
-    -- Set while waiting or parked: the gate dagger returned.
+    -- Set while waiting or parked: the gate skift returned.
     gate_node_id     text,
     parked_reason    text,
     -- Set by cancel; the worker reads it at every heartbeat.
@@ -52,8 +52,8 @@ CREATE TABLE runs (
         'retries', 'budget', 'denied', 'timeout', 'refused')),
     CONSTRAINT runs_parked_has_reason     CHECK (status <> 'parked' OR parked_reason IS NOT NULL),
     -- Invariant 11, the half the store can hold on its own: a run is never
-    -- waiting or parked without the gate id dagger returned, so the store
-    -- cannot assert a gate exists before dagger has made it true.
+    -- waiting or parked without the gate id skift returned, so the store
+    -- cannot assert a gate exists before skift has made it true.
     CONSTRAINT runs_blocked_has_gate      CHECK (status NOT IN ('waiting', 'parked') OR gate_node_id IS NOT NULL),
     CONSTRAINT runs_tier_check            CHECK (tier IS NULL OR tier IN (
         'quick_fix', 'small', 'feature', 'large')),

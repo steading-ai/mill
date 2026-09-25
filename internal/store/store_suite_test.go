@@ -8,8 +8,8 @@ import (
 	"github.com/onsi/ginkgo/v2/types"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/store/migrations"
-	"github.com/ivy/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/store/migrations"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // Every spec in this suite runs against a real PostgreSQL, because the

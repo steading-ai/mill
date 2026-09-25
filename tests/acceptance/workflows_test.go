@@ -11,8 +11,8 @@ import (
 	. "github.com/onsi/gomega"
 	"gopkg.in/yaml.v3"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/run"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/run"
 )
 
 // The `feature` workflow without the two steps that talk to a forge.
@@ -38,7 +38,7 @@ const forgelessFeature = "feature-no-forge"
 
 // deriveForgelessFeature drops the two steps whose evidence only a forge
 // can state and pushes what is left under a name of its own, into the
-// scenario's own dagger project.
+// scenario's own skift project.
 //
 // The scope is the point. A derived definition is one scenario's scaffolding
 // and not a workflow a deployment has, so it belongs where only that
@@ -65,7 +65,7 @@ func deriveForgelessFeature(ctx context.Context, project string) (dir string, dr
 // has no `auto`, which the loader reads as "always ask" (internal/workflow,
 // predicate.UnmarshalYAML). Every other byte is the delivering workflow's.
 //
-// It keeps the name `feature` and is pushed into the scenario's own dagger
+// It keeps the name `feature` and is pushed into the scenario's own skift
 // project, so a run there resolves `feature` to this definition and a run
 // anywhere else still resolves it to the org one: a project definition
 // shadows an org definition of the same name, which is the precedence both

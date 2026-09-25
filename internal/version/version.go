@@ -2,7 +2,7 @@
 //
 // The value is injected at link time by the Makefile:
 //
-//	-ldflags "-X github.com/ivy/mill/internal/version.version=<semver>"
+//	-ldflags "-X github.com/steading-ai/mill/internal/version.version=<semver>"
 //
 // A build without the flag reports a development placeholder so that every
 // build, including "go run", still yields a semver-shaped string.

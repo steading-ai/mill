@@ -3,15 +3,15 @@ package run
 import (
 	"context"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/notify"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/notify"
 )
 
 // Carrying a filed gate to a person.
 //
-// A gate in dagger is an answer nobody has been asked for yet: the node is
-// blocked, the run has given its lease back, and until somebody opens dagger
-// nothing says so. Dagger's own notifier is what will wake them, and until
+// A gate in skift is an answer nobody has been asked for yet: the node is
+// blocked, the run has given its lease back, and until somebody opens skift
+// nothing says so. Skift's own notifier is what will wake them, and until
 // that bridge exists the deployment is handed the gate through one
 // configured command (docs/architecture.md §"Gate steps", docs/prd.md D1).
 //
@@ -19,7 +19,7 @@ import (
 // no more than [notify.Timeout], writes what happened to the audit trail,
 // and carries on. A command that fails, hangs, or does not exist changes
 // nothing about the run: the gate is filed and the run waits either way,
-// because the record a human answers is in dagger and not in the message.
+// because the record a human answers is in skift and not in the message.
 
 // notified runs the configured command for one filed gate and records what
 // it did. It is called while the gate's lease is still held — the write that

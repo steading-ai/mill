@@ -11,10 +11,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/machine"
-	"github.com/ivy/mill/internal/workspace/machine/driver"
-	"github.com/ivy/mill/internal/workspace/machine/image"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/machine"
+	"github.com/steading-ai/mill/internal/workspace/machine/driver"
+	"github.com/steading-ai/mill/internal/workspace/machine/image"
 )
 
 // fakeLedger is the store as reconciliation sees it: the live runs a spec
@@ -271,14 +271,14 @@ var _ = Describe("Reconciliation on resume", Label("unit"), func() {
 	})
 
 	// Scenario: Scratch projects are swept by name
-	//   Given stale mill-acceptance-* projects in dagger and on the forge with no live run
+	//   Given stale mill-acceptance-* projects in skift and on the forge with no live run
 	//   When the worker reconciles
 	//   Then each is archived or deleted and named in the report
 	It("Scratch projects are swept by name", func(ctx context.Context) {
-		By("given stale mill-acceptance-* projects in dagger and on the forge with no live run")
+		By("given stale mill-acceptance-* projects in skift and on the forge with no live run")
 		stale := now.Add(-2 * time.Hour)
 		fresh := now.Add(-time.Minute)
-		dagger := &fakeExternal{kind: "dagger", action: "archived (dagger offers no project delete)", listed: []machine.Scratch{
+		skift := &fakeExternal{kind: "skift", action: "archived (skift offers no project delete)", listed: []machine.Scratch{
 			{Name: "mill-acceptance-x-0badcafe", CreatedAt: stale},
 			{Name: "mill-acceptance-y-deadbeef", CreatedAt: fresh},
 			{Name: "mill-acceptance-live-cafef00d", CreatedAt: stale},
@@ -292,17 +292,17 @@ var _ = Describe("Reconciliation on resume", Label("unit"), func() {
 		ledger.live = []machine.LiveRun{{RunID: runID, NodeRef: "mill-acceptance-live-cafef00d#1", Step: "implement"}}
 
 		By("when the worker reconciles")
-		report := reconcile(ctx, dagger, forge)
+		report := reconcile(ctx, skift, forge)
 
 		By("then each is archived or deleted and named in the report")
-		Expect(dagger.names()).To(Equal([]string{"mill-acceptance-x-0badcafe"}),
+		Expect(skift.names()).To(Equal([]string{"mill-acceptance-x-0badcafe"}),
 			"stale and unclaimed: not the fresh one, not the one a live run works, never a name outside the pattern")
 		Expect(forge.names()).To(Equal([]string{"mill-acceptance-x-0badcafe"}))
 		swept := report.Of(machine.FindingSwept)
 		Expect(swept).To(HaveLen(2))
 		Expect(swept[0]).To(Equal(machine.Finding{
 			Kind: machine.FindingSwept, Name: "mill-acceptance-x-0badcafe",
-			Action: "archived (dagger offers no project delete)", Detail: "dagger project, 2h0m0s old",
+			Action: "archived (skift offers no project delete)", Detail: "skift project, 2h0m0s old",
 		}))
 		Expect(swept[1]).To(Equal(machine.Finding{
 			Kind: machine.FindingSwept, Name: "mill-acceptance-x-0badcafe",

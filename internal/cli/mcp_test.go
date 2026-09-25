@@ -16,13 +16,13 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/cli"
-	"github.com/ivy/mill/internal/domain"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/server"
-	"github.com/ivy/mill/internal/server/interceptor"
-	"github.com/ivy/mill/internal/testsupport"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/cli"
+	"github.com/steading-ai/mill/internal/domain"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/server"
+	"github.com/steading-ai/mill/internal/server/interceptor"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // session is `mill mcp` running over a pair of pipes, spoken to the way a
@@ -134,7 +134,7 @@ var _ = Describe("mill mcp", Label(testsupport.DBLabel), func() {
 			"workflow_list", "workflow_show", "doctor", "cancel",
 			"rerun", "workspace_show", "workspace_clean"))
 		// `run` executes in the calling process and is local to the mill's
-		// host and account; a session elsewhere files a dagger node.
+		// host and account; a session elsewhere files a skift node.
 		Expect(s.toolNames()).NotTo(ContainElement("run"))
 	})
 
@@ -162,7 +162,7 @@ var _ = Describe("mill mcp", Label(testsupport.DBLabel), func() {
 		Expect(printed).To(ContainSubstring("attempts  2 of 3 retries"))
 	})
 
-	It("sizes a reader's answer with view, as dagger's tools do", func() {
+	It("sizes a reader's answer with view, as skift's tools do", func() {
 		r := openRun(ctx, "millcli#32", nodeID(32))
 
 		s := mcp(ctx, "--socket", r.mill.socket)
@@ -248,7 +248,7 @@ var _ = Describe("mill mcp", Label(testsupport.DBLabel), func() {
 
 	It("A thicket agent can say why a run is stuck", func() {
 		By("given a run parked after three review rounds")
-		g := daggerNode(ctx)
+		g := skiftNode(ctx)
 		r := openRun(ctx, g.nodeRef, g.nodeID)
 		r.closeGatherContext(ctx, "sha256:"+strings.Repeat("a", 64))
 		for round := 0; round < 3; round++ {
@@ -259,7 +259,7 @@ var _ = Describe("mill mcp", Label(testsupport.DBLabel), func() {
 
 		By("when explain is called over MCP")
 		s := mcp(ctx, "--socket", r.mill.socket,
-			"--dagger-socket", g.service.Socket, "--project", daggerProject)
+			"--skift-socket", g.service.Socket, "--project", skiftProject)
 		s.call("initialize", nil)
 		answer := s.tool("explain", map[string]any{"run": g.nodeRef})
 

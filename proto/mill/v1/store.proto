@@ -17,13 +17,13 @@ import "google/protobuf/timestamp.proto";
 import "harness/v1/harness.proto";
 import "mill/v1/mill.proto";
 
-option go_package = "github.com/ivy/mill/gen/mill/v1;millv1";
+option go_package = "github.com/steading-ai/mill/gen/mill/v1;millv1";
 
 // StoreService is the ledger's one door. It reads and writes the record of
 // what happened inside a run: selection, step runs, evidence, sessions,
 // tokens, and usage.
 //
-// Lease fencing. Every mutating request carries `lease_id`, the dagger lease
+// Lease fencing. Every mutating request carries `lease_id`, the skift lease
 // the caller believes it holds. The store takes the run's row lock
 // (`SELECT … FOR UPDATE`), re-reads `lease_id` in a separate statement after
 // the lock is granted — a locked row is not re-read, so a lease a concurrent
@@ -41,7 +41,7 @@ option go_package = "github.com/ivy/mill/gen/mill/v1;millv1";
 // FinishWorkspace, the one write made after the run has ended and released
 // its lease, which the run's ended state admits instead.
 service StoreService {
-  // GetRunByNode returns the live run for a dagger node, or nothing. The
+  // GetRunByNode returns the live run for a skift node, or nothing. The
   // first call a worker makes after a claim.
   rpc GetRunByNode(GetRunByNodeRequest) returns (GetRunByNodeResponse);
   // CreateRun opens a run on a node in status selecting. At most one live
@@ -105,9 +105,9 @@ service StoreService {
   // orphans stopped, lost sandboxes noted, slices reaped for resume — the
   // leftovers it removed, and the scratch projects it swept by name
   // (docs/sandbox.md §Reconciliation, §"External state"); at start and
-  // between claims, the runs it found stranded under a node dagger had
+  // between claims, the runs it found stranded under a node skift had
   // closed (docs/ledger.md §Sweep). It is a record of the host and of the
-  // ledger against dagger, not of a run: no lease fences it, because the
+  // ledger against skift, not of a run: no lease fences it, because the
   // pass runs while the worker holds none on what it touches.
   rpc RecordReconciliation(RecordReconciliationRequest) returns (RecordReconciliationResponse);
   // RecordWorkspace records the run's workspace once it is open: its kind,
@@ -125,7 +125,7 @@ service StoreService {
   // a run whose completing patch may have landed retries the same patch
   // rather than sending a second one.
   rpc SetCompleteRequestId(SetCompleteRequestIdRequest) returns (SetCompleteRequestIdResponse);
-  // Done marks a run done. Called only after dagger has confirmed the
+  // Done marks a run done. Called only after skift has confirmed the
   // completing patch: a run marked done before that would strand a node
   // nothing can claim.
   rpc Done(DoneRequest) returns (DoneResponse);
@@ -162,7 +162,7 @@ service StoreService {
   rpc RevokeStepToken(RevokeStepTokenRequest) returns (RevokeStepTokenResponse);
   // RecordUsage appends what a turn cost, per model, to the ledger.
   rpc RecordUsage(RecordUsageRequest) returns (RecordUsageResponse);
-  // MarkUsagePosted marks a step run's usage rows as posted to dagger, after
+  // MarkUsagePosted marks a step run's usage rows as posted to skift, after
   // ReportUsage has accepted them.
   rpc MarkUsagePosted(MarkUsagePostedRequest) returns (MarkUsagePostedResponse);
   // GetWorkflow returns one workflow version, by id or by name in a scope.
@@ -233,7 +233,7 @@ service StoreService {
 
 // GetRunByNodeRequest asks for the live run on a node.
 message GetRunByNodeRequest {
-  // The dagger node's id.
+  // The skift node's id.
   string node_id = 1;
 }
 
@@ -254,11 +254,11 @@ message CreateRunRequest {
   // The lease the caller holds, compared against the run's current lease
   // inside the writing transaction.
   string lease_id = 1;
-  // The dagger node's id.
+  // The skift node's id.
   string node_id = 2;
   // The node's display key.
   string node_ref = 3;
-  // Dagger's context id for the node, copied at creation.
+  // Skift's context id for the node, copied at creation.
   string context_id = 4;
   // 1 for the first run on a node; restart passes the next generation.
   int64 generation = 5;
@@ -460,7 +460,7 @@ message MarkWaitingRequest {
   string lease_id = 1;
   // The run that filed the gate.
   string run_id = 2;
-  // The gate node dagger returned. Recorded after the patch and before the
+  // The gate node skift returned. Recorded after the patch and before the
   // release; a gate is filed once.
   string gate_node_id = 3;
   // The gate step's attempt, which stays open until the gate completes.
@@ -621,7 +621,7 @@ message RecordWorkspaceResponse {
 
 // FinishWorkspaceRequest records that the run's workspace was destroyed
 // and what its caches promoted. It is the one write made after the run has
-// ended: the files go once dagger has confirmed the completing patch and the
+// ended: the files go once skift has confirmed the completing patch and the
 // store has marked the run done, and the promotion happens as they go
 // (docs/ledger.md §Resume). By then the run holds no lease, so the store
 // admits the write when the run has ended and holds none; while the run is
@@ -669,7 +669,7 @@ message DoneRequest {
   // sent; it is compared against the run's current lease inside the writing
   // transaction.
   string lease_id = 1;
-  // The run dagger has confirmed complete.
+  // The run skift has confirmed complete.
   string run_id = 2;
 }
 
@@ -824,7 +824,7 @@ message RecordUsageResponse {
   repeated Usage usage = 1;
 }
 
-// MarkUsagePostedRequest marks a step's usage as reported to dagger.
+// MarkUsagePostedRequest marks a step's usage as reported to skift.
 message MarkUsagePostedRequest {
   // The lease the caller holds, compared against the run's current lease
   // inside the writing transaction.
@@ -951,7 +951,7 @@ message GetSkillResponse {
 message StatusRequest {
   // Only runs in these states. Empty means every non-terminal state.
   repeated RunStatus statuses = 1;
-  // Only runs on nodes in this dagger project. Empty means every project.
+  // Only runs on nodes in this skift project. Empty means every project.
   string project = 2;
 }
 
@@ -970,7 +970,7 @@ message ListRunsRequest {
   // Only runs in these states. Empty means every terminal state: done,
   // failed, abandoned.
   repeated RunStatus statuses = 1;
-  // Only runs on nodes in this dagger project. Empty means every project.
+  // Only runs on nodes in this skift project. Empty means every project.
   string project = 2;
   // Only the run(s) on this node's display key, every generation included.
   // Empty means every node.
@@ -1054,7 +1054,7 @@ message HistoryResponse {
 message CostRequest {
   // Only usage recorded at or after this instant. Unset means everything.
   google.protobuf.Timestamp since = 1;
-  // Only runs on nodes in this dagger project. Empty means every project.
+  // Only runs on nodes in this skift project. Empty means every project.
   string project = 2;
   // Only usage recorded before this instant. Unset means no upper bound.
   google.protobuf.Timestamp until = 3;
@@ -1214,7 +1214,7 @@ message WatchRunsRequest {
   // WatchRunsResponse.cursor. Empty starts from the moment the call is
   // received.
   string cursor = 1;
-  // Only events for runs on nodes in this dagger project.
+  // Only events for runs on nodes in this skift project.
   string project = 2;
 }
 

@@ -10,12 +10,13 @@ import (
 	. "github.com/onsi/gomega"
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/testsupport"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
@@ -42,7 +43,7 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 	}
 
 	Describe("A predicate that holds", func() {
-		It("records an auto-approval in the ledger and files nothing in dagger", func() {
+		It("records an auto-approval in the ledger and files nothing in skift", func() {
 			Expect(f.runner().Execute(ctx, f.nodeRef)).To(Succeed())
 
 			var merge *millv1.StepRun
@@ -50,7 +51,7 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 				merge = sr
 			}
 			Expect(merge.GetAutoApproved()).To(BeTrue(), "the ledger records the auto-approval")
-			Expect(f.gatesOn(ctx)).To(BeEmpty(), "nothing was filed in dagger")
+			Expect(f.gatesOn(ctx)).To(BeEmpty(), "nothing was filed in skift")
 		})
 	})
 
@@ -61,19 +62,19 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 
 			Expect(f.runner(func(o *run.Options) {
 				o.Workflow = workflow
-				o.Dagger = client
+				o.Skift = client
 			}).Execute(ctx, f.nodeRef)).To(Succeed())
 
 			gate := f.theGate(ctx)
-			Expect(gate.GetAssigneeKind()).To(Equal(daggerv1.AssigneeKind_ASSIGNEE_KIND_USER))
-			Expect(gate.GetStatus()).To(Equal(daggerv1.Status_STATUS_OPEN))
+			Expect(gate.GetAssigneeKind()).To(Equal(skiftv1.AssigneeKind_ASSIGNEE_KIND_USER))
+			Expect(gate.GetStatus()).To(Equal(skiftv1.Status_STATUS_OPEN))
 			Expect(f.blockedBy(ctx)).To(ContainElement(gate.GetId()), "the gate blocks the node it was filed for")
 
 			run := f.runOf(ctx)
 			Expect(run.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_WAITING))
 			Expect(run.GetGateNodeId()).To(Equal(gate.GetId()))
 			Expect(run.GetLeaseId()).To(BeEmpty())
-			Expect(watcher.reasons()).To(ContainElement(daggerv1.ReleaseReason_RELEASE_REASON_GATE))
+			Expect(watcher.reasons()).To(ContainElement(skiftv1.ReleaseReason_RELEASE_REASON_GATE))
 			Expect(f.leaseOf(ctx)).To(BeNil())
 		})
 
@@ -85,7 +86,7 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 			store := &failingStore{StoreServiceClient: f.store}
 
 			// When the process dies after ApplyPatch and before the store
-			// write. The gate is in dagger; the ledger knows nothing of it.
+			// write. The gate is in skift; the ledger knows nothing of it.
 			err := f.runner(func(o *run.Options) {
 				o.Workflow = workflow
 				o.Store = store
@@ -121,7 +122,7 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 
 			node, err := f.client.Node(ctx, f.nodeRef)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(node.GetStatus()).To(Equal(daggerv1.Status_STATUS_DONE))
+			Expect(node.GetStatus()).To(Equal(skiftv1.Status_STATUS_DONE))
 			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_DONE))
 
 			detail := f.inspect(ctx)
@@ -132,7 +133,7 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 		})
 
 		It("fails the run with the step's deny_result when the gate is denied", func() {
-			// A denial is a gate a person disposed of, and dagger's rule is
+			// A denial is a gate a person disposed of, and skift's rule is
 			// that dropping a gate never satisfies the edge out of it: the
 			// node is never ready again, so the run that records the denial
 			// has to be the one still holding the lease. That is single-run
@@ -146,7 +147,7 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 
 			Expect(person.answered()).To(HaveLen(1))
 			Expect(person.answered()[0].Title).To(Equal("Merge " + f.nodeRef + "?"))
-			Expect(f.theGate(ctx).GetStatus()).To(Equal(daggerv1.Status_STATUS_DROPPED))
+			Expect(f.theGate(ctx).GetStatus()).To(Equal(skiftv1.Status_STATUS_DROPPED))
 
 			result, err := f.result(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -165,7 +166,7 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 
 			Expect(person.answered()).To(HaveLen(1))
 			gate := f.theGate(ctx)
-			Expect(gate.GetStatus()).To(Equal(daggerv1.Status_STATUS_DONE))
+			Expect(gate.GetStatus()).To(Equal(skiftv1.Status_STATUS_DONE))
 
 			detail := f.inspect(ctx)
 			Expect(stepRuns(detail, "merge")).To(HaveLen(1))
@@ -199,12 +200,12 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 			workflow := asks("verdict.decision == approve")
 			logDir := GinkgoT().TempDir()
 			person := &answerer{approve: false}
-			client := f.failingPatches(func(op *daggerv1.PatchOp) bool { return op.GetCompleteNode() != nil })
+			client := f.failingPatches(func(op *skiftv1.PatchOp) bool { return op.GetCompleteNode() != nil })
 
 			err := f.runner(withAnswers(person), func(o *run.Options) {
 				o.Workflow = workflow
 				o.LogDir = logDir
-				o.Dagger = client
+				o.Skift = client
 			}).Execute(ctx, f.nodeRef)
 			Expect(err).To(HaveOccurred())
 			f.assertWriterClosed(ctx, logDir, "merge")

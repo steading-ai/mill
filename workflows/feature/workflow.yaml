@@ -148,7 +148,7 @@ steps:
   # any verdict but approve, is a person's decision — and a revised plan
   # never arrives here at all, because review-plan's on_failure returns the
   # run to plan. When the gate is filed, the ask carries the plan itself:
-  # a person reading it in dagger, or in whatever the deployment's notify
+  # a person reading it in skift, or in whatever the deployment's notify
   # command carries it to, can answer without opening the checkout.
   #
   # It is a gate after a step that wrote, which the loader would ordinarily

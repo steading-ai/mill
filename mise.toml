@@ -20,4 +20,4 @@ nfpm = "2.47.0"
 
 [env]
 _.python.venv = { path = "harness/.venv", create = true }
-DG_PROJECT = "mill"
+SKIFT_PROJECT = "mill"

@@ -15,7 +15,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/forge"
 )
 
 // The repository every spec runs against, on a GitLab the stub below stands

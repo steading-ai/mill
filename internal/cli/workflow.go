@@ -16,9 +16,9 @@ import (
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/gen/mill/v1/millv1connect"
-	"github.com/ivy/mill/internal/workflow"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
+	"github.com/steading-ai/mill/internal/workflow"
 )
 
 // workflowOptions are what every workflow subcommand needs: where the

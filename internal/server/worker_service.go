@@ -5,10 +5,10 @@ import (
 
 	"connectrpc.com/connect"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/gen/mill/v1/millv1connect"
-	"github.com/ivy/mill/internal/doctor"
-	"github.com/ivy/mill/internal/forge"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
+	"github.com/steading-ai/mill/internal/doctor"
+	"github.com/steading-ai/mill/internal/forge"
 )
 
 // WorkerServiceConfig is the worker's own settings, resolved once by

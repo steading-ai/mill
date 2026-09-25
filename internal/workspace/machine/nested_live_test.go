@@ -13,12 +13,12 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/machine"
-	"github.com/ivy/mill/internal/workspace/machine/cache"
-	"github.com/ivy/mill/internal/workspace/machine/driver"
-	"github.com/ivy/mill/internal/workspace/machine/image"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/machine"
+	"github.com/steading-ai/mill/internal/workspace/machine/cache"
+	"github.com/steading-ai/mill/internal/workspace/machine/driver"
+	"github.com/steading-ai/mill/internal/workspace/machine/image"
 )
 
 // The nested live tier: a machine granted `[machine].nested` on `core`,
@@ -97,8 +97,8 @@ var _ = Describe("A nested machine on a real host", Label("live"), Serial, Order
 		if _, _, status := host("sudo", "-n", "true"); status != 0 {
 			Skip("sudo -n is refused; the helper and the image export need it")
 		}
-		info, err := os.Stat(machine.DefaultDaggerCheckout)
-		Expect(err).NotTo(HaveOccurred(), "the dagger checkout the helper's policy names as a nested read-only source is not there: homestead's mill_storage puts it at %s", machine.DefaultDaggerCheckout)
+		info, err := os.Stat(machine.DefaultSkiftCheckout)
+		Expect(err).NotTo(HaveOccurred(), "the skift checkout the helper's policy names as a nested read-only source is not there: homestead's mill_storage puts it at %s", machine.DefaultSkiftCheckout)
 		Expect(info.IsDir()).To(BeTrue())
 
 		By("the host's prerequisites: the skill directory the helper's policy admits")
@@ -173,7 +173,7 @@ var _ = Describe("A nested machine on a real host", Label("live"), Serial, Order
 		Expect(manifest.Nested).To(BeTrue())
 		Expect(manifest.Binds).To(ContainElements(
 			machine.Bind{Source: liveMachines, Target: "/var/lib/machines", ReadOnly: true},
-			machine.Bind{Source: machine.DefaultDaggerCheckout, Target: machine.DaggerCheckoutTarget, ReadOnly: true}))
+			machine.Bind{Source: machine.DefaultSkiftCheckout, Target: machine.SkiftCheckoutTarget, ReadOnly: true}))
 		nested := image.Derived(base, nil, image.Nested)
 		Expect(handle.Sandbox.Image).To(Equal(string(nested)), "the nested variant boots")
 		Expect(strings.TrimSpace(must("machinectl", "show", name, "-p", "State"))).To(Equal("State=running"))
@@ -182,11 +182,11 @@ var _ = Describe("A nested machine on a real host", Label("live"), Serial, Order
 		// The image directory is root's on the host and so inside (the bind
 		// is idmapped for the worker's uid, not root's); the outer's sudo
 		// reads it, as the snapshot below needs.
-		out, status := inMachine(name, "agent", "sh", "-c", "sudo -n id -u && rpm -q systemd-container btrfs-progs && sudo -n ls /var/lib/machines/mill-image-"+string(base)+" >/dev/null && test -d "+machine.DaggerCheckoutTarget+"/internal/store/migrations && echo binds")
+		out, status := inMachine(name, "agent", "sh", "-c", "sudo -n id -u && rpm -q systemd-container btrfs-progs && sudo -n ls /var/lib/machines/mill-image-"+string(base)+" >/dev/null && test -d "+machine.SkiftCheckoutTarget+"/internal/store/migrations && echo binds")
 		Expect(status).To(BeZero(), out)
 		Expect(out).To(ContainSubstring("0\n"))
 		Expect(out).To(ContainSubstring("binds"))
-		out, status = inMachine(name, "agent", "sh", "-c", "sudo -n touch /var/lib/machines/x 2>&1; sudo -n touch "+machine.DaggerCheckoutTarget+"/x 2>&1; true")
+		out, status = inMachine(name, "agent", "sh", "-c", "sudo -n touch /var/lib/machines/x 2>&1; sudo -n touch "+machine.SkiftCheckoutTarget+"/x 2>&1; true")
 		Expect(status).To(BeZero())
 		Expect(strings.Count(out, "Read-only file system")).To(Equal(2), "both binds are read-only even to root inside: %s", out)
 

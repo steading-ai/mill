@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"strings"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/dagger"
-	"github.com/ivy/mill/internal/evidence"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/evidence"
+	"github.com/steading-ai/mill/internal/skift"
 )
 
 // verify asks the verifier for the step's declared evidence kind whether the
@@ -39,7 +40,7 @@ func (r *Runner) verify(ctx context.Context, s *state, step *millv1.Step, sr *mi
 		Elapsed:      elapsed(detail, step.GetName(), r.options.Now()),
 		Git:          s.workspace.GitRunner(),
 		Forge:        s.repo.Forge,
-		Artifacts:    artifacts{client: s.dagger, ref: s.node.GetReference()},
+		Artifacts:    artifacts{client: s.skift, ref: s.node.GetReference()},
 		Gates:        gates{runner: r, state: s},
 		Now:          r.options.Now,
 	}
@@ -67,11 +68,11 @@ func committer(ws Workspace) evidence.Committer {
 	return evidence.Committer{Name: identity.Name, Email: identity.Email}
 }
 
-// artifacts asks dagger whether it holds an artifact of a digest. `artifact`
-// evidence is a digest dagger accepted, so the acceptance is dagger's to
+// artifacts asks skift whether it holds an artifact of a digest. `artifact`
+// evidence is a digest skift accepted, so the acceptance is skift's to
 // confirm and never the session's to claim.
 type artifacts struct {
-	client *dagger.Client
+	client *skift.Client
 	ref    string
 }
 
@@ -88,21 +89,21 @@ func (a artifacts) Accepted(ctx context.Context, want string) (bool, error) {
 	return false, nil
 }
 
-// attachArtifact puts a step's output on the node as a dagger artifact and
-// returns its digest, which is what the `artifact` verifier then asks dagger
+// attachArtifact puts a step's output on the node as a skift artifact and
+// returns its digest, which is what the `artifact` verifier then asks skift
 // to confirm. The metadata carries the run id, as every artifact mill
-// attaches does (docs/ledger.md §"What goes to dagger, and when").
+// attaches does (docs/ledger.md §"What goes to skift, and when").
 func (r *Runner) attachArtifact(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, body string) (string, error) {
 	if body == "" {
 		return "", nil
 	}
-	// One artifact per attempt, named for it. Dagger refuses a second
+	// One artifact per attempt, named for it. Skift refuses a second
 	// artifact by a name a node already carries, and a revise means a step
 	// runs again and produces another: the pass that was superseded keeps
 	// its own, which is the record of what the run actually did.
 	name := fmt.Sprintf("%s-%s-%d", s.run.GetId(), step.GetName(), sr.GetAttempt())
-	if err := s.dagger.AttachText(ctx,
-		dagger.RequestID(s.run.GetId(), attachStep(step.GetName()), sr.GetAttempt()), s.leaseID(),
+	if err := s.skift.AttachText(ctx,
+		skift.RequestID(s.run.GetId(), attachStep(step.GetName()), sr.GetAttempt()), s.leaseID(),
 		s.node.GetReference(), name, step.GetName(), body, map[string]any{
 			"run_id": s.run.GetId(),
 			"step":   step.GetName(),
@@ -115,14 +116,14 @@ func (r *Runner) attachArtifact(ctx context.Context, s *state, step *millv1.Step
 
 // attachStep names the attaching patch apart from every other patch of the
 // same run, and the attempt number keeps two attempts at the same step
-// apart. Dagger compares a replayed request id against the whole request,
+// apart. Skift compares a replayed request id against the whole request,
 // the lease included, so a second attempt attaching under the first's key is
 // refused as the same key with different content — which is precisely what a
 // revise does.
 func attachStep(step string) string { return step + "-artifact" }
 
 // artifactDigest reads the digest mill recorded on an artifact's metadata.
-func artifactDigest(artifact *daggerv1.Artifact) string {
+func artifactDigest(artifact *skiftv1.Artifact) string {
 	value, ok := artifact.GetMetadata().GetFields()["digest"]
 	if !ok {
 		return ""
@@ -159,15 +160,15 @@ func (r *Runner) reviewed(ctx context.Context, s *state, step *millv1.Step, sr *
 // the step, the generation and the attempt — `review-1.2.md` — carrying the
 // decision, the findings, and the id of the session that reviewed. It is
 // the half of the record a person reads: the ledger holds the same verdict
-// as evidence, and a node in dagger is where somebody looks when asking why
-// a change was sent back. The generation is in the name because dagger
+// as evidence, and a node in skift is where somebody looks when asking why
+// a change was sent back. The generation is in the name because skift
 // admits one artifact per name on a node and a restart's generation reviews
 // again from attempt 1 (mill#93).
 func (r *Runner) attachVerdict(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, verdict *millv1.Verdict) error {
 	name := fmt.Sprintf("%s-%d.%d.md", step.GetName(), s.run.GetGeneration(), sr.GetAttempt())
 	body := verdictDocument(s, step, sr, verdict)
-	return s.dagger.AttachText(ctx,
-		dagger.RequestID(s.run.GetId(), name, sr.GetAttempt()), s.leaseID(),
+	return s.skift.AttachText(ctx,
+		skift.RequestID(s.run.GetId(), name, sr.GetAttempt()), s.leaseID(),
 		s.node.GetReference(), name, "the "+step.GetName()+" step's verdict", body,
 		map[string]any{
 			"run_id":     s.run.GetId(),

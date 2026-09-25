@@ -5,7 +5,7 @@ import (
 	"sort"
 	"time"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 )
 
 // Resumable is one of this worker's own runs left with an aborted attempt: a

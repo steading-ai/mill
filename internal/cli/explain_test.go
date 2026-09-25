@@ -9,9 +9,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/testsupport"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 var _ = Describe("mill explain", Label(testsupport.DBLabel), func() {
@@ -75,7 +75,7 @@ var _ = Describe("mill explain", Label(testsupport.DBLabel), func() {
 	})
 
 	It("on a waiting run prints the gate node's reference and the gate's title", func() {
-		g := daggerNode(ctx)
+		g := skiftNode(ctx)
 		r := openRun(ctx, g.nodeRef, g.nodeID)
 		r.closeGatherContext(ctx, "sha256:"+strings.Repeat("a", 64))
 		sr := r.start(ctx, "merge", millv1.StepKind_STEP_KIND_GATE)
@@ -83,7 +83,7 @@ var _ = Describe("mill explain", Label(testsupport.DBLabel), func() {
 		r.wait(ctx, g.gateID, sr)
 
 		out := r.cli(ctx, "explain", g.nodeRef,
-			"--dagger-socket", g.service.Socket, "--project", daggerProject)
+			"--skift-socket", g.service.Socket, "--project", skiftProject)
 
 		Expect(out).To(ContainSubstring("is waiting"))
 		Expect(out).To(ContainSubstring("gate      " + g.gateRef))

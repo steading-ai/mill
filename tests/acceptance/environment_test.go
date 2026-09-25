@@ -10,7 +10,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // The variables the suite reads. Every one of them is documented in
@@ -36,21 +36,21 @@ const (
 	// DatabaseURLVar is the PostgreSQL the suite's own `mill serve` owns.
 	DatabaseURLVar = "MILL_ACCEPTANCE_DATABASE_URL"
 
-	// DaggerSocketVar is an external dagger to file nodes in, for the
+	// SkiftSocketVar is an external skift to file nodes in, for the
 	// deliberate case of exercising the deployed service. Unset, the suite
-	// starts a dagger of its own from internal/testsupport and files there,
+	// starts a skift of its own from internal/testsupport and files there,
 	// so nothing it makes reaches a graph anyone reads. It is the only
-	// variable that points the suite at a dagger: `DG_SOCKET` in the
+	// variable that points the suite at a skift: `SKIFT_SOCKET` in the
 	// operator's shell names the deployed one and is ignored here on
 	// purpose.
-	DaggerSocketVar = "MILL_ACCEPTANCE_DAGGER_SOCKET"
-	// SecondDaggerConfigVar is a `dg --config` for a second principal, used
+	SkiftSocketVar = "MILL_ACCEPTANCE_SKIFT_SOCKET"
+	// SecondSkiftConfigVar is a `skift --config` for a second principal, used
 	// by the fencing scenario to take the node's lease away from the mill.
 	// Optional: without it the scenario claims as the same principal under a
 	// second agent ref, which fences the running worker just the same. It
-	// names a principal of the external dagger, so it is read only when
-	// DaggerSocketVar is set.
-	SecondDaggerConfigVar = "MILL_ACCEPTANCE_SECOND_DAGGER_CONFIG"
+	// names a principal of the external skift, so it is read only when
+	// SkiftSocketVar is set.
+	SecondSkiftConfigVar = "MILL_ACCEPTANCE_SECOND_SKIFT_CONFIG"
 
 	// credentialsPath is where the account's Claude Code login lives,
 	// relative to $HOME. It is what the sidecar's sessions run on: a key or
@@ -60,10 +60,10 @@ const (
 	credentialsPath = ".claude/.credentials.json"
 )
 
-// deployedDaggerSocket is where the operator's dagger listens. The suite
-// never files there unless DaggerSocketVar says so; the two scenarios about
-// the suite's own dagger read its project list to prove that.
-const deployedDaggerSocket = "/run/dagger/dg.sock"
+// deployedSkiftSocket is where the operator's skift listens. The suite
+// never files there unless SkiftSocketVar says so; the two scenarios about
+// the suite's own skift read its project list to prove that.
+const deployedSkiftSocket = "/run/skift/skift.sock"
 
 // Environment is everything the suite was given, resolved once.
 type Environment struct {
@@ -75,8 +75,8 @@ type Environment struct {
 	// Sidecar is the harness entrypoint, absolute because a session's
 	// working directory is some other project's checkout.
 	Sidecar string
-	// DG is dagger's CLI.
-	DG string
+	// Skift is skift's CLI.
+	Skift string
 
 	ForgeURL       string
 	ForgeToken     string
@@ -85,14 +85,14 @@ type Environment struct {
 
 	DatabaseURL string
 
-	// DaggerSocket is the dagger every scratch project is created in. It
-	// is DaggerSocketVar when that is set, and otherwise the socket of the
-	// dagger the suite started for itself, filled in by the BeforeSuite.
-	DaggerSocket string
-	// ExternalDagger reports whether DaggerSocket was named by the
+	// SkiftSocket is the skift every scratch project is created in. It
+	// is SkiftSocketVar when that is set, and otherwise the socket of the
+	// skift the suite started for itself, filled in by the BeforeSuite.
+	SkiftSocket string
+	// ExternalSkift reports whether SkiftSocket was named by the
 	// environment rather than started by the suite.
-	ExternalDagger     bool
-	SecondDaggerConfig string
+	ExternalSkift     bool
+	SecondSkiftConfig string
 }
 
 // env is resolved by the preflight and read by every spec.
@@ -113,22 +113,22 @@ func preflight() Environment {
 	Expect(err).NotTo(HaveOccurred())
 
 	resolved := Environment{
-		RepoRoot:           root,
-		Sidecar:            filepath.Join(root, "sidecar", "dist", "main.js"),
-		ForgeURL:           strings.TrimSuffix(os.Getenv(ForgeURLVar), "/"),
-		ForgeToken:         os.Getenv(ForgeTokenVar),
-		ForgeNamespace:     os.Getenv(ForgeNamespaceVar),
-		ForgeUser:          valueOr(os.Getenv(ForgeUserVar), "mill"),
-		DatabaseURL:        os.Getenv(DatabaseURLVar),
-		DaggerSocket:       os.Getenv(DaggerSocketVar),
-		ExternalDagger:     os.Getenv(DaggerSocketVar) != "",
-		SecondDaggerConfig: os.Getenv(SecondDaggerConfigVar),
+		RepoRoot:          root,
+		Sidecar:           filepath.Join(root, "sidecar", "dist", "main.js"),
+		ForgeURL:          strings.TrimSuffix(os.Getenv(ForgeURLVar), "/"),
+		ForgeToken:        os.Getenv(ForgeTokenVar),
+		ForgeNamespace:    os.Getenv(ForgeNamespaceVar),
+		ForgeUser:         valueOr(os.Getenv(ForgeUserVar), "mill"),
+		DatabaseURL:       os.Getenv(DatabaseURLVar),
+		SkiftSocket:       os.Getenv(SkiftSocketVar),
+		ExternalSkift:     os.Getenv(SkiftSocketVar) != "",
+		SecondSkiftConfig: os.Getenv(SecondSkiftConfigVar),
 	}
-	if !resolved.ExternalDagger {
-		// A second principal is one the external dagger knows. The suite's
-		// own dagger seeds one principal, this process's uid, and the
+	if !resolved.ExternalSkift {
+		// A second principal is one the external skift knows. The suite's
+		// own skift seeds one principal, this process's uid, and the
 		// fencing scenario claims as it under a second agent ref.
-		resolved.SecondDaggerConfig = ""
+		resolved.SecondSkiftConfig = ""
 	}
 
 	var missing []string
@@ -142,26 +142,26 @@ func preflight() Environment {
 	} else if _, err := os.Stat(filepath.Join(home, credentialsPath)); err != nil {
 		missing = append(missing, "no Claude login at ~/"+credentialsPath+"; the sessions run on the account's own login, never on a credential in the environment")
 	}
-	if resolved.ExternalDagger {
-		if _, err := os.Stat(resolved.DaggerSocket); err != nil {
-			missing = append(missing, "nothing is listening on "+resolved.DaggerSocket+" ("+DaggerSocketVar+")")
+	if resolved.ExternalSkift {
+		if _, err := os.Stat(resolved.SkiftSocket); err != nil {
+			missing = append(missing, "nothing is listening on "+resolved.SkiftSocket+" ("+SkiftSocketVar+")")
 		}
-	} else if reason := testsupport.DaggerUnavailable(); reason != "" {
-		missing = append(missing, reason+"; or set "+DaggerSocketVar+" to an external dagger")
+	} else if reason := testsupport.SkiftUnavailable(); reason != "" {
+		missing = append(missing, reason+"; or set "+SkiftSocketVar+" to an external skift")
 	}
 	if _, err := os.Stat(resolved.Sidecar); err != nil {
 		missing = append(missing, resolved.Sidecar+" does not exist; run `make sidecar-build`")
 	}
-	if resolved.SecondDaggerConfig != "" {
-		if _, err := os.Stat(resolved.SecondDaggerConfig); err != nil {
-			missing = append(missing, resolved.SecondDaggerConfig+" does not exist ("+SecondDaggerConfigVar+")")
+	if resolved.SecondSkiftConfig != "" {
+		if _, err := os.Stat(resolved.SecondSkiftConfig); err != nil {
+			missing = append(missing, resolved.SecondSkiftConfig+" does not exist ("+SecondSkiftConfigVar+")")
 		}
 	}
 	for _, tool := range []struct {
 		name string
 		into *string
 	}{
-		{"dg", &resolved.DG},
+		{"skift", &resolved.Skift},
 		{"git", nil},
 		{"node", nil},
 		{"go", nil},

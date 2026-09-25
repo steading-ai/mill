@@ -6,7 +6,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/doctor"
+	"github.com/steading-ai/mill/internal/doctor"
 )
 
 // fixture is the fake stdio MCP server sidecar/sidecar_test.go also mounts,

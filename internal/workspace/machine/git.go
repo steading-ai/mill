@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ivy/mill/internal/workspace/verbs"
+	"github.com/steading-ai/mill/internal/workspace/verbs"
 )
 
 // clone is sequence step 2 (docs/sandbox.md §"Sequence of a run"): the

@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 )
 
 // Stopping a worker, from the run's side.
@@ -13,7 +14,7 @@ import (
 // docs/architecture.md §"Failure and stop": on SIGTERM the worker stops
 // claiming, lets the current step reach a boundary if it can inside the
 // grace window, posts unposted usage, releases every lease with reason
-// `preempted` and detail `shutdown` — dagger's ReleaseReason has no shutdown
+// `preempted` and detail `shutdown` — skift's ReleaseReason has no shutdown
 // value, and an operator taking the lease away is what preempted means —
 // and leaves workspaces intact.
 //
@@ -42,8 +43,8 @@ func (r *Runner) shutdownStep(ctx context.Context, s *state) error {
 	}); err != nil {
 		return err
 	}
-	if err := r.options.Dagger.Release(ctx, s.leaseID(),
-		daggerv1.ReleaseReason_RELEASE_REASON_PREEMPTED, "shutdown"); err != nil {
+	if err := r.options.Skift.Release(ctx, s.leaseID(),
+		skiftv1.ReleaseReason_RELEASE_REASON_PREEMPTED, "shutdown"); err != nil {
 		return err
 	}
 	r.printf("shutting down; run %s stays resumable\n", s.run.GetId())

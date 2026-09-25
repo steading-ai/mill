@@ -7,12 +7,13 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/harness/fake"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/testsupport"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/harness/fake"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // The reviewer's half of `feature`: what a verdict does to the run.
@@ -183,7 +184,7 @@ var _ = Describe("The reviewer's verdict", Label(testsupport.DBLabel), func() {
 				approves("AC-1", "the change matches the plan"), usage(5)),
 		})
 
-		By("when the node is shown in dagger")
+		By("when the node is shown in skift")
 		verdict := artifactNamed(f.artifactsOn(ctx), "review-1.1.md")
 
 		By("then a text artifact named for the step, the generation and the attempt carries the verdict with its findings and the reviewing session's id")
@@ -288,7 +289,7 @@ var _ = Describe("The reviewer's verdict", Label(testsupport.DBLabel), func() {
 })
 
 // artifactNamed is the text of the artifact a node carries under a name.
-func artifactNamed(held []*daggerv1.Artifact, name string) string {
+func artifactNamed(held []*skiftv1.Artifact, name string) string {
 	GinkgoHelper()
 	for _, artifact := range held {
 		if artifact.GetName() != name {

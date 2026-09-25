@@ -12,8 +12,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/notify"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/notify"
 )
 
 // featureTimeout is how long one feature node has to reach its pull request.
@@ -76,8 +76,8 @@ var _ = Describe("Acceptance", Label("acceptance"), func() {
 				"%s closed on the evidence its step names", step.name)
 		}
 
-		By("and the plan is an artifact dagger holds for the run")
-		// `artifact` evidence only closes when dagger confirms it holds an
+		By("and the plan is an artifact skift holds for the run")
+		// `artifact` evidence only closes when skift confirms it holds an
 		// artifact of that digest, so a closed plan step is the attachment.
 		Expect(steps["plan"].GetEvidence().GetArtifact()).NotTo(BeEmpty())
 
@@ -206,9 +206,9 @@ var _ = Describe("Acceptance", Label("acceptance"), func() {
 			HaveField("Run", runID))), "a plan notice naming the gate reached the notifier")
 
 		By("when a person completes the gate")
-		// As the person and not as the mill: `dg complete` under the
+		// As the person and not as the mill: `skift complete` under the
 		// operator's own configuration, with no lease, which is what a
-		// human answering in dagger does.
+		// human answering in skift does.
 		s.Graph.complete(ctx, gate.Reference, "Approved by the acceptance suite, standing in for the person the gate was filed for.")
 
 		By("and mill run is invoked again")
@@ -227,7 +227,7 @@ var _ = Describe("Acceptance", Label("acceptance"), func() {
 		Expect(detail.GetSummary().GetRun().GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_DONE))
 		steps := latest(detail)
 		Expect(steps["plan"].GetEvidence().GetArtifact()).NotTo(BeEmpty(),
-			"dagger confirmed it holds the plan of that digest")
+			"skift confirmed it holds the plan of that digest")
 		verdicts := verdictNames(view)
 		Expect(verdicts).NotTo(BeEmpty(), "the reviewer reached a verdict")
 		approved := view.attachment(verdicts[len(verdicts)-1])
@@ -256,8 +256,8 @@ var _ = Describe("Acceptance", Label("acceptance"), func() {
 			Expect(row).NotTo(ContainSubstring("unspecified"), "a closed attempt with no evidence: %s", row)
 		}
 
-		By("and dagger holds what the run cost, across at least three models")
-		Expect(view.Usage.Actual).NotTo(BeEmpty(), "usage reached dagger")
+		By("and skift holds what the run cost, across at least three models")
+		Expect(view.Usage.Actual).NotTo(BeEmpty(), "usage reached skift")
 		models := map[string]bool{}
 		for _, total := range view.Usage.Actual {
 			models[total.Model] = true

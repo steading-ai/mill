@@ -5,7 +5,7 @@
 ## Merged pull requests and lines
 
 ```bash
-for r in mill dagger cli steading; do
+for r in mill skift cli steading; do
   gh pr list -R steading-ai/$r --state merged --limit 100 --json number,additions,deletions,changedFiles,mergedAt,headRefName,title \
     --jq ".[] | select(.mergedAt >= \"$SINCE\") | \"$r\t#\(.number)\t\(.headRefName)\t\(.mergedAt)\t\(.additions)\t\(.deletions)\t\(.changedFiles)\t\(.title)\""
 done | sort -t$'\t' -k4 > prs.tsv
@@ -24,12 +24,12 @@ awk -F'\t' '{p=$3; c="source"; if (p ~ /(^|\/)gen\//) c="generated"; else if (p 
 ## Nodes
 
 ```bash
-for p in mill dagger stead steading; do
-  echo "$p done=$(dg node list -p $p --status done --view summary | jq '[.nodes[] | select(.title|test("stopped after")|not)] | length') gates=$(dg node list -p $p --status done --view summary | jq '[.nodes[] | select(.title|test("stopped after"))] | length') open=$(dg node list -p $p --status open --view summary | jq '.nodes|length')"
+for p in mill skift stead steading; do
+  echo "$p done=$(skift node list -p $p --status done --view summary | jq '[.nodes[] | select(.title|test("stopped after")|not)] | length') gates=$(skift node list -p $p --status done --view summary | jq '[.nodes[] | select(.title|test("stopped after"))] | length') open=$(skift node list -p $p --status open --view summary | jq '.nodes|length')"
 done
 ```
 
-`dg node list` carries no completion time; the done count is since the project's creation. Say so if the window is shorter.
+`skift node list` carries no completion time; the done count is since the project's creation. Say so if the window is shorter.
 
 ## Tokens
 

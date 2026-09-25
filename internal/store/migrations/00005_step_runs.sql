@@ -18,7 +18,7 @@ CREATE TABLE step_runs (
     kind          text        NOT NULL,
     -- Skill steps: the session this attempt ran in.
     session_id    text,
-    -- The dagger lease held when this attempt ran.
+    -- The skift lease held when this attempt ran.
     lease_id      text,
     worker_ref    text        NOT NULL DEFAULT '',
     status        text        NOT NULL DEFAULT 'running',

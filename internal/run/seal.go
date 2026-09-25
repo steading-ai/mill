@@ -13,9 +13,9 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/gen/mill/v1/millv1connect"
-	"github.com/ivy/mill/internal/workspace"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // Sealing turns a closed attempt's live activity file (activity.go) into its

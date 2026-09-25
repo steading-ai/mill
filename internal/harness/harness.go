@@ -11,7 +11,7 @@
 // keeps "never ran" apart from "ran and failed" for retry policy. And [Usage]
 // is part of the return value, not an optional event: the adapter is the only
 // component that sees the harness's numbers, so an adapter that drops them
-// has left the ledger and dagger with nothing to record.
+// has left the ledger and skift with nothing to record.
 package harness
 
 import (
@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
 )
 
 // Workspace is the entire environment a session is given: a unix socket and
@@ -256,7 +256,7 @@ type TokenCounts struct {
 
 // Usage is what a turn or a whole session cost, keyed by the harness's own
 // model name. It is a map because one assistant turn bills an auxiliary model
-// alongside the one the step asked for, and mill posts one dagger usage
+// alongside the one the step asked for, and mill posts one skift usage
 // record per (lease, model).
 type Usage map[string]TokenCounts
 

@@ -18,7 +18,7 @@
 package millv1
 
 import (
-	v1 "github.com/ivy/mill/gen/harness/v1"
+	v1 "github.com/steading-ai/mill/gen/harness/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
@@ -37,7 +37,7 @@ const (
 // GetRunByNodeRequest asks for the live run on a node.
 type GetRunByNodeRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The dagger node's id.
+	// The skift node's id.
 	NodeId        string `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -145,11 +145,11 @@ type CreateRunRequest struct {
 	// The lease the caller holds, compared against the run's current lease
 	// inside the writing transaction.
 	LeaseId string `protobuf:"bytes,1,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
-	// The dagger node's id.
+	// The skift node's id.
 	NodeId string `protobuf:"bytes,2,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	// The node's display key.
 	NodeRef string `protobuf:"bytes,3,opt,name=node_ref,json=nodeRef,proto3" json:"node_ref,omitempty"`
-	// Dagger's context id for the node, copied at creation.
+	// Skift's context id for the node, copied at creation.
 	ContextId string `protobuf:"bytes,4,opt,name=context_id,json=contextId,proto3" json:"context_id,omitempty"`
 	// 1 for the first run on a node; restart passes the next generation.
 	Generation int64 `protobuf:"varint,5,opt,name=generation,proto3" json:"generation,omitempty"`
@@ -1295,7 +1295,7 @@ type MarkWaitingRequest struct {
 	LeaseId string `protobuf:"bytes,1,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
 	// The run that filed the gate.
 	RunId string `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
-	// The gate node dagger returned. Recorded after the patch and before the
+	// The gate node skift returned. Recorded after the patch and before the
 	// release; a gate is filed once.
 	GateNodeId string `protobuf:"bytes,3,opt,name=gate_node_id,json=gateNodeId,proto3" json:"gate_node_id,omitempty"`
 	// The gate step's attempt, which stays open until the gate completes.
@@ -2240,7 +2240,7 @@ func (x *RecordWorkspaceResponse) GetWorkspace() *Workspace {
 
 // FinishWorkspaceRequest records that the run's workspace was destroyed
 // and what its caches promoted. It is the one write made after the run has
-// ended: the files go once dagger has confirmed the completing patch and the
+// ended: the files go once skift has confirmed the completing patch and the
 // store has marked the run done, and the promotion happens as they go
 // (docs/ledger.md §Resume). By then the run holds no lease, so the store
 // admits the write when the run has ended and holds none; while the run is
@@ -2477,7 +2477,7 @@ type DoneRequest struct {
 	// sent; it is compared against the run's current lease inside the writing
 	// transaction.
 	LeaseId string `protobuf:"bytes,1,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
-	// The run dagger has confirmed complete.
+	// The run skift has confirmed complete.
 	RunId         string `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3470,7 +3470,7 @@ func (x *RecordUsageResponse) GetUsage() []*Usage {
 	return nil
 }
 
-// MarkUsagePostedRequest marks a step's usage as reported to dagger.
+// MarkUsagePostedRequest marks a step's usage as reported to skift.
 type MarkUsagePostedRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// The lease the caller holds, compared against the run's current lease
@@ -4230,7 +4230,7 @@ type StatusRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Only runs in these states. Empty means every non-terminal state.
 	Statuses []RunStatus `protobuf:"varint,1,rep,packed,name=statuses,proto3,enum=mill.v1.RunStatus" json:"statuses,omitempty"`
-	// Only runs on nodes in this dagger project. Empty means every project.
+	// Only runs on nodes in this skift project. Empty means every project.
 	Project       string `protobuf:"bytes,2,opt,name=project,proto3" json:"project,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -4343,7 +4343,7 @@ type ListRunsRequest struct {
 	// Only runs in these states. Empty means every terminal state: done,
 	// failed, abandoned.
 	Statuses []RunStatus `protobuf:"varint,1,rep,packed,name=statuses,proto3,enum=mill.v1.RunStatus" json:"statuses,omitempty"`
-	// Only runs on nodes in this dagger project. Empty means every project.
+	// Only runs on nodes in this skift project. Empty means every project.
 	Project string `protobuf:"bytes,2,opt,name=project,proto3" json:"project,omitempty"`
 	// Only the run(s) on this node's display key, every generation included.
 	// Empty means every node.
@@ -4779,7 +4779,7 @@ type CostRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Only usage recorded at or after this instant. Unset means everything.
 	Since *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=since,proto3" json:"since,omitempty"`
-	// Only runs on nodes in this dagger project. Empty means every project.
+	// Only runs on nodes in this skift project. Empty means every project.
 	Project string `protobuf:"bytes,2,opt,name=project,proto3" json:"project,omitempty"`
 	// Only usage recorded before this instant. Unset means no upper bound.
 	Until *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=until,proto3" json:"until,omitempty"`
@@ -5661,7 +5661,7 @@ type WatchRunsRequest struct {
 	// WatchRunsResponse.cursor. Empty starts from the moment the call is
 	// received.
 	Cursor string `protobuf:"bytes,1,opt,name=cursor,proto3" json:"cursor,omitempty"`
-	// Only events for runs on nodes in this dagger project.
+	// Only events for runs on nodes in this skift project.
 	Project       string `protobuf:"bytes,2,opt,name=project,proto3" json:"project,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -6261,7 +6261,7 @@ const file_mill_v1_store_proto_rawDesc = "" +
 	"\x06WhoAmI\x12\x16.mill.v1.WhoAmIRequest\x1a\x17.mill.v1.WhoAmIResponse\x125\n" +
 	"\x04Logs\x12\x14.mill.v1.LogsRequest\x1a\x15.mill.v1.LogsResponse0\x01\x12H\n" +
 	"\vSealAttempt\x12\x1b.mill.v1.SealAttemptRequest\x1a\x1c.mill.v1.SealAttemptResponse\x12D\n" +
-	"\tWatchRuns\x12\x19.mill.v1.WatchRunsRequest\x1a\x1a.mill.v1.WatchRunsResponse0\x01B(Z&github.com/ivy/mill/gen/mill/v1;millv1b\x06proto3"
+	"\tWatchRuns\x12\x19.mill.v1.WatchRunsRequest\x1a\x1a.mill.v1.WatchRunsResponse0\x01B0Z.github.com/steading-ai/mill/gen/mill/v1;millv1b\x06proto3"
 
 var (
 	file_mill_v1_store_proto_rawDescOnce sync.Once

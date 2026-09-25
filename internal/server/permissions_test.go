@@ -4,9 +4,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/gen/mill/v1/millv1connect"
-	"github.com/ivy/mill/internal/server"
-	"github.com/ivy/mill/internal/server/interceptor"
+	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
+	"github.com/steading-ai/mill/internal/server"
+	"github.com/steading-ai/mill/internal/server/interceptor"
 )
 
 var _ = Describe("What a procedure needs", Label("unit"), func() {

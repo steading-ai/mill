@@ -20,29 +20,30 @@ import (
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/gen/mill/v1/millv1connect"
-	"github.com/ivy/mill/internal/dagger"
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/forge/github"
-	"github.com/ivy/mill/internal/forge/gitlab"
-	"github.com/ivy/mill/internal/gateway"
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/harness/claude"
-	"github.com/ivy/mill/internal/harness/scripted"
-	"github.com/ivy/mill/internal/notify"
-	"github.com/ivy/mill/internal/run"
-	"github.com/ivy/mill/internal/skill"
-	"github.com/ivy/mill/internal/version"
-	"github.com/ivy/mill/internal/workflow"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/local"
-	"github.com/ivy/mill/internal/workspace/machine"
-	"github.com/ivy/mill/internal/workspace/machine/cache"
-	"github.com/ivy/mill/internal/workspace/machine/driver"
-	"github.com/ivy/mill/internal/workspace/machine/image"
-	"github.com/ivy/mill/internal/workspace/redact"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/forge/github"
+	"github.com/steading-ai/mill/internal/forge/gitlab"
+	"github.com/steading-ai/mill/internal/gateway"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/harness/claude"
+	"github.com/steading-ai/mill/internal/harness/scripted"
+	"github.com/steading-ai/mill/internal/notify"
+	"github.com/steading-ai/mill/internal/run"
+	"github.com/steading-ai/mill/internal/skift"
+	"github.com/steading-ai/mill/internal/skill"
+	"github.com/steading-ai/mill/internal/version"
+	"github.com/steading-ai/mill/internal/workflow"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/local"
+	"github.com/steading-ai/mill/internal/workspace/machine"
+	"github.com/steading-ai/mill/internal/workspace/machine/cache"
+	"github.com/steading-ai/mill/internal/workspace/machine/driver"
+	"github.com/steading-ai/mill/internal/workspace/machine/image"
+	"github.com/steading-ai/mill/internal/workspace/redact"
 )
 
 // ExitFenced is the status `mill run` exits with when another worker took
@@ -60,23 +61,23 @@ const (
 	ExitLogsParked       = 4
 )
 
-// daggerSocketEnv and daggerProjectEnv are dagger's own variables, so a
-// shell already set up for `dg` needs nothing more for `mill run`.
+// skiftSocketEnv and skiftProjectEnv are skift's own variables, so a
+// shell already set up for `skift` needs nothing more for `mill run`.
 const (
-	daggerSocketEnv  = "DG_SOCKET"
-	daggerProjectEnv = "DG_PROJECT"
+	skiftSocketEnv  = "SKIFT_SOCKET"
+	skiftProjectEnv = "SKIFT_PROJECT"
 )
 
-// defaultDaggerSocket is where dagger listens when DG_SOCKET says nothing.
-const defaultDaggerSocket = "/run/dagger/dg.sock"
+// defaultSkiftSocket is where skift listens when SKIFT_SOCKET says nothing.
+const defaultSkiftSocket = "/run/skift/skift.sock"
 
-// resolveProjects is --project's fallback to $DG_PROJECT, shared by every
+// resolveProjects is --project's fallback to $SKIFT_PROJECT, shared by every
 // caller that needs the same list a worker actually claims from: an empty
 // --project falls back to the environment variable rather than reporting
 // "every project" when a deployment set only the latter.
 func resolveProjects(projects []string) []string {
 	if len(projects) == 0 {
-		if fallback := os.Getenv(daggerProjectEnv); fallback != "" {
+		if fallback := os.Getenv(skiftProjectEnv); fallback != "" {
 			return []string{fallback}
 		}
 	}
@@ -220,7 +221,7 @@ const forgeUsage = "forge the project's repository is delivered through: github 
 
 type runOptions struct {
 	socket        string
-	daggerSocket  string
+	skiftSocket   string
 	project       string
 	workflow      string
 	tier          string
@@ -266,7 +267,7 @@ func newRunCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run <node>",
 		Short: "Drive a single node's run in this process",
-		Long: `Drive one dagger node end to end: claim it, hold its lease, walk the
+		Long: `Drive one skift node end to end: claim it, hold its lease, walk the
 selected workflow's steps, and complete it with a result.
 
 This is the worker's own code path with the claim replaced by an argument.
@@ -295,8 +296,8 @@ between.`,
 	}
 	f := cmd.Flags()
 	f.StringVar(&opts.socket, "socket", defaultSocketPath(), "path of the service's unix socket (default: $"+socketEnv+")")
-	f.StringVar(&opts.daggerSocket, "dagger-socket", envOr(daggerSocketEnv, defaultDaggerSocket), "path of dagger's unix socket (default: $"+daggerSocketEnv+")")
-	f.StringVar(&opts.project, "project", os.Getenv(daggerProjectEnv), "dagger project a bare #7 reference resolves in (default: $"+daggerProjectEnv+")")
+	f.StringVar(&opts.skiftSocket, "skift-socket", envOr(skiftSocketEnv, defaultSkiftSocket), "path of skift's unix socket (default: $"+skiftSocketEnv+")")
+	f.StringVar(&opts.project, "project", os.Getenv(skiftProjectEnv), "skift project a bare #7 reference resolves in (default: $"+skiftProjectEnv+")")
 	f.StringVar(&opts.workflow, "workflow", "", "workflow to select when the run has none (default: assess the node and let the assessment name one)")
 	f.StringVar(&opts.tier, "tier", "", "tier that workflow stands for, which gate policies compare against (default: quick-fix, or the assessed tier)")
 	f.StringVar(&opts.workflowDir, "workflow-dir", "", "directory the workflow was loaded from, for a check step's scripts")
@@ -309,7 +310,7 @@ between.`,
 	f.StringVar(&opts.sandboxRoot, "sandbox-root", machine.DefaultRoot, sandboxRootUsage)
 	f.StringVar(&opts.logDir, "log-dir", defaultLogDir(), "directory step logs are written under, one file per attempt")
 	f.StringVar(&opts.envMode, "env-mode", string(claude.DefaultEnvMode), envModeUsage)
-	f.DurationVar(&opts.ttl, "ttl", run.DefaultTTL, "lease TTL to ask dagger for")
+	f.DurationVar(&opts.ttl, "ttl", run.DefaultTTL, "lease TTL to ask skift for")
 	f.DurationVar(&opts.interval, "heartbeat", 0, "how often to renew the lease (default: a third of the TTL)")
 	f.BoolVar(&opts.dryRun, "dry-run", false, "print the workflow and its steps; claim nothing and execute nothing")
 	f.StringVar(&opts.identity, "identity", "", "address the mill commits under, and the principal of its allowed_signers line (default: mill@<host>)")
@@ -412,7 +413,7 @@ func selectedWorkflow(ctx context.Context, store millv1connect.StoreServiceClien
 // execute drives the node.
 func execute(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 	if opts.project == "" {
-		return fmt.Errorf("mill run: a dagger project is required; pass --project or set %s", daggerProjectEnv)
+		return fmt.Errorf("mill run: a skift project is required; pass --project or set %s", skiftProjectEnv)
 	}
 	if err := resolveSandboxRoot(cmd, &opts.sandboxRoot, ""); err != nil {
 		return err
@@ -429,7 +430,7 @@ func execute(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 
 	// A gate filed under `mill run` is put to whoever is watching. The run
 	// stops either way — the gate is filed, the lease released — and the
-	// answer is written to dagger as theirs; answering just saves them
+	// answer is written to skift as theirs; answering just saves them
 	// finding it in another window (docs/domain-model.md §Gate).
 	var answers run.Answerer
 	if !opts.noAsk {
@@ -456,7 +457,7 @@ func execute(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 // else. If they diverged here, single-run mode would stop being a test of
 // the daemon (docs/architecture.md §"One binary, two faces").
 //
-// sessionRef is what dagger records on the lease as the harness session.
+// sessionRef is what skift records on the lease as the harness session.
 // `mill run` names the node it was given; a worker has none to name, because
 // the node is not known until the claim it is an argument to has returned.
 //
@@ -482,10 +483,10 @@ func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, 
 	if err != nil {
 		return nil, err
 	}
-	client := dagger.Dial(opts.daggerSocket, project,
-		dagger.WithAgentRef(worker),
-		dagger.WithSessionRef(sessionRef),
-		dagger.WithTTL(opts.ttl))
+	client := skift.Dial(opts.skiftSocket, project,
+		skift.WithAgentRef(worker),
+		skift.WithSessionRef(sessionRef),
+		skift.WithTTL(opts.ttl))
 
 	envMode, err := claude.ParseEnvMode(opts.envMode)
 	if err != nil {
@@ -525,7 +526,7 @@ func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, 
 	options := run.Options{
 		Store:             storeClient(opts.socket),
 		Notifier:          notifier(opts.notifyCommand),
-		Dagger:            client,
+		Skift:             client,
 		Workspaces:        workspacesFor(kind, opts, redactor),
 		Attach:            attachOnlyWorkspaces(kind, opts, redactor),
 		Repositories:      repositories(opts),
@@ -583,7 +584,7 @@ func notifier(command string) notify.Notifier {
 }
 
 // tierNamed reads the project default's tier. It is a flag rather than a
-// lookup because dagger's projects carry no tier and mill stores no project
+// lookup because skift's projects carry no tier and mill stores no project
 // row yet (docs/domain-model.md §Selection). Empty leaves it unset: a run
 // with a project default takes the documented default of quick-fix, and a
 // run that assesses takes the tier the assessment named.
@@ -621,7 +622,7 @@ type sandboxOptions struct {
 	proxy           string
 	noProxy         string
 	nestedRepos     []string
-	daggerCheckout  string
+	skiftCheckout   string
 	// What the worker's start does to the host (docs/sandbox.md
 	// §Reconciliation, §Eviction): the forge namespace and age the scratch
 	// sweep works by, and the expiry image eviction works by.
@@ -643,7 +644,7 @@ func applySandboxConfig(config Config, opts *sandboxOptions) error {
 	opts.proxy = config.Proxy
 	opts.noProxy = config.NoProxy
 	opts.nestedRepos = config.NestedRepos
-	opts.daggerCheckout = config.DaggerCheckout
+	opts.skiftCheckout = config.SkiftCheckout
 	opts.scratchNamespace = config.ScratchNamespace
 	if config.ScratchBudget != "" {
 		budget, err := time.ParseDuration(config.ScratchBudget)
@@ -1015,13 +1016,13 @@ func machineConfig(opts runOptions, repo run.Repository, redactor *redact.Redact
 			HighWatermark: sandbox.highWatermark,
 			LowWatermark:  sandbox.lowWatermark,
 		},
-		ImageExpiry:    sandbox.imageExpiry,
-		CacheDriver:    cacheDriver(),
-		Proxy:          sandbox.proxy,
-		NoProxy:        sandbox.noProxy,
-		NestedRepos:    sandbox.nestedRepos,
-		DaggerCheckout: sandbox.daggerCheckout,
-		ScratchBudget:  sandbox.scratchBudget,
+		ImageExpiry:   sandbox.imageExpiry,
+		CacheDriver:   cacheDriver(),
+		Proxy:         sandbox.proxy,
+		NoProxy:       sandbox.noProxy,
+		NestedRepos:   sandbox.nestedRepos,
+		SkiftCheckout: sandbox.skiftCheckout,
+		ScratchBudget: sandbox.scratchBudget,
 	}
 }
 
@@ -1040,12 +1041,12 @@ func forges() *forge.Registry {
 // GitHub in for the one host through it; nothing in the binary sets it.
 var forgeHTTP *http.Client
 
-// forgeProject is the dagger project as the forge resolves it: its slug,
+// forgeProject is the skift project as the forge resolves it: its slug,
 // its `vcs_url`, and the forge kind the configuration names, if it names
 // one. A configured kind that names no adapter is refused here, which is
 // the first thing `run`, `work` and `doctor` do with a project, so a
 // misspelt `forge:` stops the worker at startup naming what it found.
-func forgeProject(project *daggerv1.Project, configured string) (forge.Project, error) {
+func forgeProject(project *skiftv1.Project, configured string) (forge.Project, error) {
 	kind, err := forge.ParseKind(configured)
 	if err != nil {
 		return forge.Project{}, fmt.Errorf("mill: --forge: %w", err)
@@ -1053,13 +1054,13 @@ func forgeProject(project *daggerv1.Project, configured string) (forge.Project, 
 	return forge.Project{Slug: project.GetSlug(), VCSURL: project.GetVcsUrl(), Kind: kind}, nil
 }
 
-// resolveForgeProject dials dagger for the project's repository and builds
+// resolveForgeProject dials skift for the project's repository and builds
 // the forge adapter mill run would use against it — the resolution
 // probeForge and signingContentReader both need, and what a worker-side
 // probe answered through internal/server's WorkerService resolves the same
 // way (workerForgeResolver in serve.go).
-func resolveForgeProject(ctx context.Context, daggerSocket, project, forgeName string) (forge.Forge, string, error) {
-	repo, err := dagger.Dial(daggerSocket, project).GetProject(ctx)
+func resolveForgeProject(ctx context.Context, skiftSocket, project, forgeName string) (forge.Forge, string, error) {
+	repo, err := skift.Dial(skiftSocket, project).GetProject(ctx)
 	if err != nil {
 		return nil, "", fmt.Errorf("no repository to probe: %w", err)
 	}
@@ -1092,12 +1093,12 @@ func forgeMinter() forge.Minter {
 }
 
 // repositoryFor is where a run on the project delivers and what its
-// workspace clones: the project's own `vcs_url`, as dagger carries it, and
+// workspace clones: the project's own `vcs_url`, as skift carries it, and
 // nothing the worker was configured with. A project with none is a
 // *forge.NoVCSURLError. `--origin` overrides the clone URL and nothing else.
 // The credential is the one the mill account holds, handed out per request
 // by [forge.Static].
-func repositoryFor(project *daggerv1.Project, opts runOptions) (run.Repository, error) {
+func repositoryFor(project *skiftv1.Project, opts runOptions) (run.Repository, error) {
 	p, err := forgeProject(project, opts.forge)
 	if err != nil {
 		return run.Repository{}, err
@@ -1119,7 +1120,7 @@ func repositoryFor(project *daggerv1.Project, opts runOptions) (run.Repository, 
 
 // repositories is the seam a runner resolves each run's repository through.
 func repositories(opts runOptions) run.Repositories {
-	return func(_ context.Context, project *daggerv1.Project) (run.Repository, error) {
+	return func(_ context.Context, project *skiftv1.Project) (run.Repository, error) {
 		return repositoryFor(project, opts)
 	}
 }
@@ -1128,7 +1129,7 @@ func repositories(opts runOptions) run.Repositories {
 // (claims is nil), the worker did not say which host it is on (an empty
 // host — can't tell, don't refuse), or its host is this one. Otherwise it
 // names both hosts, because a run driven here would work on this host's
-// files and login while dagger thinks the other worker holds it — the
+// files and login while skift thinks the other worker holds it — the
 // opposite of what a client host asking for this node wanted (docs/tools.md,
 // "`run` is not among them").
 func refusalForHost(claims *millv1.ClaimsResponse, localHost string) error {

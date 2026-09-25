@@ -2125,7 +2125,7 @@ configuration — `homestead#34` either binds a host address that always exists
 orders the unit after the link. Booted, addressed, then squid:
 
 ```
-$ /tmp/spike-out/boot.sh e1 14 --bind=$PWD:/work:idmap --bind-ro=/home/ivy/src/github.com/ivy/dagger:/opt/dagger:idmap --bind-ro=/tmp/spike-out/50-mill-proxy.conf:/etc/environment.d/50-mill-proxy.conf
+$ /tmp/spike-out/boot.sh e1 14 --bind=$PWD:/work:idmap --bind-ro=/home/ivy/src/github.com/steading-ai/skift:/opt/skift:idmap --bind-ro=/tmp/spike-out/50-mill-proxy.conf:/etc/environment.d/50-mill-proxy.conf
 Running as unit: mill-run-e1.service; invocation ID: 61017e58290843a48c5486845f55ae78
 running
                        State: routable (configured)
@@ -2143,7 +2143,7 @@ active
 LISTEN 0      4096                    10.99.14.1:3128       0.0.0.0:*    users:(("squid",pid=366853,fd=10))
 ```
 
-(The two extra binds are E6's: the checkout and the dagger checkout. The
+(The two extra binds are E6's: the checkout and the skift checkout. The
 `environment.d` file is E6's too — see there.) No capability was needed on
 the nspawn invocation for the veth: `--network-veth` under `sudo` brings the
 link up as it did in E1 and E14.
@@ -2243,11 +2243,11 @@ are set in every exec's environment" means both cases of all three names.
 
 ## E6 — The real test suite, inside
 
-Same machine as E5, booted with the checkout at `/work` and the dagger
-checkout at `/opt/dagger`, both `:idmap` (E4). The fixture in
-`internal/testsupport/dagger.go` finds dagger's migrations and `dg` through
-`MILL_DAGGER_REPO`, so that is set on the exec; `docs/sandbox.md` §Testing
-already says the mill repo's machine gets the dagger checkout bound
+Same machine as E5, booted with the checkout at `/work` and the skift
+checkout at `/opt/skift`, both `:idmap` (E4). The fixture in
+`internal/testsupport/skift.go` finds skift's migrations and `skift` through
+`MILL_SKIFT_REPO`, so that is set on the exec; `docs/sandbox.md` §Testing
+already says the mill repo's machine gets the skift checkout bound
 read-only.
 
 ### The checkout is writable as `agent`
@@ -2257,11 +2257,11 @@ operator is uid 1000 and `:idmap` makes the bind uid 1000 inside.
 
 ```
 $ ls -ld $PWD; id -u
-drwxr-xr-x. 17 ivy ivy 4096 Sep 11 02:53 /home/ivy/src/github.com/ivy/mill
+drwxr-xr-x. 17 ivy ivy 4096 Sep 11 02:53 /home/ivy/src/github.com/steading-ai/mill
 1000
-$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p WorkingDirectory=/work -- sh -c 'id; ls -ld /work /work/.git /opt/dagger; touch /work/.e6-probe && echo writable && rm /work/.e6-probe; ls -l /run/user/1000/podman/podman.sock /run/podman/podman.sock; cat /etc/environment.d/50-mill-proxy.conf'
+$ sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p WorkingDirectory=/work -- sh -c 'id; ls -ld /work /work/.git /opt/skift; touch /work/.e6-probe && echo writable && rm /work/.e6-probe; ls -l /run/user/1000/podman/podman.sock /run/podman/podman.sock; cat /etc/environment.d/50-mill-proxy.conf'
 uid=1000(agent) gid=1000(agent) groups=1000(agent)
-drwxr-xr-x. 16 agent agent 4096 Sep  8 02:05 /opt/dagger
+drwxr-xr-x. 16 agent agent 4096 Sep  8 02:05 /opt/skift
 drwxr-xr-x. 17 agent agent 4096 Sep 11 02:17 /work
 drwxr-xr-x.  8 agent agent 4096 Sep 11 02:48 /work/.git
 writable
@@ -2362,14 +2362,14 @@ answer; a preparatory step or the session's shell would have it from
 container store are all empty:
 
 ```
-$ date +%T; time sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p WorkingDirectory=/work -p Environment=HTTPS_PROXY=$P -p Environment=HTTP_PROXY=$P -p Environment=DOCKER_HOST=unix:///run/user/1000/podman/podman.sock -p Environment=MILL_DAGGER_REPO=/opt/dagger -- mise exec -- make test-db > /tmp/spike-out/e6-cold.log 2>&1; echo rc=$?; date +%T
+$ date +%T; time sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p WorkingDirectory=/work -p Environment=HTTPS_PROXY=$P -p Environment=HTTP_PROXY=$P -p Environment=DOCKER_HOST=unix:///run/user/1000/podman/podman.sock -p Environment=MILL_SKIFT_REPO=/opt/skift -- mise exec -- make test-db > /tmp/spike-out/e6-cold.log 2>&1; echo rc=$?; date +%T
 02:54:00
 sudo systemd-run -M mill-e1 --pipe --wait --quiet --collect -p User=agent -p   0.01s user 0.00s system 0% cpu 43.875 total
 rc=0
 02:54:44
 $ sed 's/\x1b\[[0-9;]*m//g' /tmp/spike-out/e6-cold.log | grep -E 'specs - 15 procs' | grep -v ' 0/'
 [1789120440] cli - 65/107 specs - 15 procs … SUCCESS! 6.449760811s
-[1789120440] dagger - 12/12 specs - 15 procs … SUCCESS! 2.656700233s
+[1789120440] skift - 12/12 specs - 15 procs … SUCCESS! 2.656700233s
 [1789120440] run - 73/84 specs - 15 procs … SUCCESS! 8.622844905s
 [1789120440] server - 36/63 specs - 15 procs … SUCCESS! 1.896098607s
 [1789120440] store - 41/53 specs - 15 procs … SUCCESS! 2.448982571s
@@ -2893,14 +2893,14 @@ linux-specific type, which is fine for filling a cache). The `go:
 downloading` lines are elided.
 
 ```
-$ cd /home/ivy/src/github.com/ivy/mill; time (GOCACHE=/var/lib/mill/cache-e9-target GOMODCACHE=/var/lib/mill/cache-e9-target/mod GOTOOLCHAIN=local go build ./... && GOCACHE=/var/lib/mill/cache-e9-target GOMODCACHE=/var/lib/mill/cache-e9-target/mod GOTOOLCHAIN=local go test -count=1 -run xxx ./... 2>&1 | tail -5)
+$ cd /home/ivy/src/github.com/steading-ai/mill; time (GOCACHE=/var/lib/mill/cache-e9-target GOMODCACHE=/var/lib/mill/cache-e9-target/mod GOTOOLCHAIN=local go build ./... && GOCACHE=/var/lib/mill/cache-e9-target GOMODCACHE=/var/lib/mill/cache-e9-target/mod GOTOOLCHAIN=local go test -count=1 -run xxx ./... 2>&1 | tail -5)
 go: downloading google.golang.org/protobuf v1.36.12
 [… 66 more]
-ok  	github.com/ivy/mill/internal/workspace/socket	0.004s [no tests to run]
-ok  	github.com/ivy/mill/proto/contract	0.002s [no tests to run]
-ok  	github.com/ivy/mill/sidecar	0.002s [no tests to run]
-ok  	github.com/ivy/mill/spikes/nspawn	0.002s [no tests to run]
-ok  	github.com/ivy/mill/tests/acceptance	0.023s [no tests to run]
+ok  	github.com/steading-ai/mill/internal/workspace/socket	0.004s [no tests to run]
+ok  	github.com/steading-ai/mill/proto/contract	0.002s [no tests to run]
+ok  	github.com/steading-ai/mill/sidecar	0.002s [no tests to run]
+ok  	github.com/steading-ai/mill/spikes/nspawn	0.002s [no tests to run]
+ok  	github.com/steading-ai/mill/tests/acceptance	0.023s [no tests to run]
 
 real	0m11.603s
 user	1m33.510s
@@ -2909,19 +2909,19 @@ $ du -sh /var/lib/mill/cache-e9-target; du -s /var/lib/mill/cache-e9-target; fin
 704M	/var/lib/mill/cache-e9-target
 720876	/var/lib/mill/cache-e9-target
 15633
-$ cd /home/ivy/src/github.com/ivy/mill; export GOCACHE=/var/lib/mill/cache-e9-target GOMODCACHE=/var/lib/mill/cache-e9-target/mod GOTOOLCHAIN=local; time (go build -race ./... && go test -race -count=1 -run xxx ./... >/dev/null && GOARCH=arm64 go build ./... && GOARCH=arm64 go test -count=1 -run xxx -exec /bin/true ./... >/dev/null; GOARCH=arm64 go vet ./... >/dev/null 2>&1; go vet ./... >/dev/null 2>&1; GOOS=darwin GOARCH=arm64 go build ./... ; GOOS=darwin GOARCH=arm64 go test -count=1 -run xxx -exec /bin/true ./... > /dev/null); du -sh /var/lib/mill/cache-e9-target
+$ cd /home/ivy/src/github.com/steading-ai/mill; export GOCACHE=/var/lib/mill/cache-e9-target GOMODCACHE=/var/lib/mill/cache-e9-target/mod GOTOOLCHAIN=local; time (go build -race ./... && go test -race -count=1 -run xxx ./... >/dev/null && GOARCH=arm64 go build ./... && GOARCH=arm64 go test -count=1 -run xxx -exec /bin/true ./... >/dev/null; GOARCH=arm64 go vet ./... >/dev/null 2>&1; go vet ./... >/dev/null 2>&1; GOOS=darwin GOARCH=arm64 go build ./... ; GOOS=darwin GOARCH=arm64 go test -count=1 -run xxx -exec /bin/true ./... > /dev/null); du -sh /var/lib/mill/cache-e9-target
 go: downloading github.com/ebitengine/purego v0.10.1
-# github.com/ivy/mill/internal/workspace/machine
+# github.com/steading-ai/mill/internal/workspace/machine
 internal/workspace/machine/systemd.go:208:25: cannot use stat.Type (variable of type uint32) as int64 value in argument to filesystemName
-# github.com/ivy/mill/internal/workspace/machine
+# github.com/steading-ai/mill/internal/workspace/machine
 internal/workspace/machine/systemd.go:208:25: cannot use stat.Type (variable of type uint32) as int64 value in argument to filesystemName
 
 real	0m37.915s
 user	4m57.832s
 sys	0m39.706s
 2.0G	/var/lib/mill/cache-e9-target
-$ cd /home/ivy/src/github.com/ivy/mill; export GOCACHE=/var/lib/mill/cache-e9-target GOMODCACHE=/var/lib/mill/cache-e9-target/mod GOTOOLCHAIN=local; time (GOARCH=riscv64 go build ./... && GOARCH=riscv64 go test -count=1 -run xxx -exec /bin/true ./... >/dev/null; GOARCH=386 go build ./... && GOARCH=386 go test -count=1 -run xxx -exec /bin/true ./... >/dev/null); du -sh /var/lib/mill/cache-e9-target; du -s /var/lib/mill/cache-e9-target; find /var/lib/mill/cache-e9-target -type f | wc -l; df -h /var/lib/mill
-# github.com/ivy/mill/internal/workspace/machine
+$ cd /home/ivy/src/github.com/steading-ai/mill; export GOCACHE=/var/lib/mill/cache-e9-target GOMODCACHE=/var/lib/mill/cache-e9-target/mod GOTOOLCHAIN=local; time (GOARCH=riscv64 go build ./... && GOARCH=riscv64 go test -count=1 -run xxx -exec /bin/true ./... >/dev/null; GOARCH=386 go build ./... && GOARCH=386 go test -count=1 -run xxx -exec /bin/true ./... >/dev/null); du -sh /var/lib/mill/cache-e9-target; du -s /var/lib/mill/cache-e9-target; find /var/lib/mill/cache-e9-target -type f | wc -l; df -h /var/lib/mill
+# github.com/steading-ai/mill/internal/workspace/machine
 internal/workspace/machine/systemd.go:208:25: cannot use stat.Type (variable of type int32) as int64 value in argument to filesystemName
 
 real	0m16.449s
@@ -2977,7 +2977,7 @@ and the host's Go at `/opt/go`, every bind `:idmap`. The mount point
 otherwise create it, as root, inside the operator's tree).
 
 ```
-$ date +%T.%N; sudo systemd-run --unit=mill-run-e9 --collect -p KillMode=mixed systemd-nspawn --boot --quiet --machine=mill-e9 --directory=/var/lib/machines/mill-image-spike --ephemeral --private-users=pick --private-users-ownership=auto --network-veth --settings=false --bind=/home/ivy/src/github.com/ivy/mill:/work:idmap --bind=/var/lib/mill/run-e9-target:/work/.cache/go:idmap --bind-ro=/home/ivy/.local/share/mise/installs/go/1.25.7:/opt/go:idmap; until sudo systemd-run -M mill-e9 --pipe --wait --quiet --collect -- true 2>/dev/null; do sleep 0.2; done; date +%T.%N; sudo systemd-run -M mill-e9 --pipe --wait --quiet --collect -- systemctl is-system-running --wait
+$ date +%T.%N; sudo systemd-run --unit=mill-run-e9 --collect -p KillMode=mixed systemd-nspawn --boot --quiet --machine=mill-e9 --directory=/var/lib/machines/mill-image-spike --ephemeral --private-users=pick --private-users-ownership=auto --network-veth --settings=false --bind=/home/ivy/src/github.com/steading-ai/mill:/work:idmap --bind=/var/lib/mill/run-e9-target:/work/.cache/go:idmap --bind-ro=/home/ivy/.local/share/mise/installs/go/1.25.7:/opt/go:idmap; until sudo systemd-run -M mill-e9 --pipe --wait --quiet --collect -- true 2>/dev/null; do sleep 0.2; done; date +%T.%N; sudo systemd-run -M mill-e9 --pipe --wait --quiet --collect -- systemctl is-system-running --wait
 06:29:20.936734212
 Running as unit: mill-run-e9.service; invocation ID: cba5ce369b914174a511dce42f5397fb
 06:29:21.211297210
@@ -2991,9 +2991,9 @@ drwxr-xr-x   1 agent agent 1058 Sep 11 06:27 /work/.cache/go
 writable
 go version go1.25.7 linux/amd64
 $ time sudo systemd-run -M mill-e9 --pipe --wait --quiet --collect -p User=agent -p WorkingDirectory=/work -p Environment=GOCACHE=/work/.cache/go -p Environment=GOMODCACHE=/work/.cache/go/mod -p Environment=GOTOOLCHAIN=local -p Environment=GOPROXY=off -p Environment=GOFLAGS=-mod=mod -p Environment=HOME=/home/agent -- sh -c "/opt/go/bin/go build ./... && /opt/go/bin/go test -count=1 -run xxx ./... | tail -3 && /opt/go/bin/go build -tags e9 -o /tmp/mill-e9 ./cmd/mill && ls -l /tmp/mill-e9"; echo rc=$?
-ok  	github.com/ivy/mill/sidecar	0.002s [no tests to run]
-ok  	github.com/ivy/mill/spikes/nspawn	0.002s [no tests to run]
-ok  	github.com/ivy/mill/tests/acceptance	0.005s [no tests to run]
+ok  	github.com/steading-ai/mill/sidecar	0.002s [no tests to run]
+ok  	github.com/steading-ai/mill/spikes/nspawn	0.002s [no tests to run]
+ok  	github.com/steading-ai/mill/tests/acceptance	0.005s [no tests to run]
 -rwxr-xr-x. 1 agent agent 34520315 Sep 11 06:29 /tmp/mill-e9
 
 real	0m7.856s
@@ -3257,7 +3257,7 @@ mill-image-e8
 mill-image-e8.tpmstate
 mill-image-spike
 mill-image-spike.tpmstate
-$ cd /home/ivy/src/github.com/ivy/mill; ( spikes/nspawn/build-derived.sh mill-base-spike libpq-devel 2>&1 | sed "s/^/[A] /" ) & sleep 2; ( echo "[B] starting $(date +%T.%N | cut -c1-12)"; spikes/nspawn/build-derived.sh mill-base-spike libpq-devel 2>&1 | sed "s/^/[B] /"; echo "[B] done $(date +%T.%N | cut -c1-12)" ) & sleep 2; echo "--- 4 s in: who holds and who waits"; ps -o pid,etimes,stat,wchan:16,comm -C flock; sudo lsof /var/lib/mill/image-599b7919d9a115b9.lock | tail -n +2 | awk "{print \$1, \$2, \$4}"; wait; echo "[done $(date +%T.%N | cut -c1-12)]"
+$ cd /home/ivy/src/github.com/steading-ai/mill; ( spikes/nspawn/build-derived.sh mill-base-spike libpq-devel 2>&1 | sed "s/^/[A] /" ) & sleep 2; ( echo "[B] starting $(date +%T.%N | cut -c1-12)"; spikes/nspawn/build-derived.sh mill-base-spike libpq-devel 2>&1 | sed "s/^/[B] /"; echo "[B] done $(date +%T.%N | cut -c1-12)" ) & sleep 2; echo "--- 4 s in: who holds and who waits"; ps -o pid,etimes,stat,wchan:16,comm -C flock; sudo lsof /var/lib/mill/image-599b7919d9a115b9.lock | tail -n +2 | awk "{print \$1, \$2, \$4}"; wait; echo "[done $(date +%T.%N | cut -c1-12)]"
 [B] starting 06:37:39.789
 --- 4 s in: who holds and who waits
     PID ELAPSED STAT WCHAN            COMMAND
@@ -3330,7 +3330,7 @@ optimisation to reach for if the number of derived images ever matters.
 ### A package that does not exist
 
 ```
-$ cd /home/ivy/src/github.com/ivy/mill; time spikes/nspawn/build-derived.sh mill-base-spike no-such-package-e10 2>/tmp/spike-out/e10/fail.stderr; echo rc=$?; echo "--- stderr:"; cat /tmp/spike-out/e10/fail.stderr; sudo ls /var/lib/machines; sudo btrfs subvolume list /var/lib/machines | grep -c building; podman images --format "{{.Repository}}" | grep mill-derived
+$ cd /home/ivy/src/github.com/steading-ai/mill; time spikes/nspawn/build-derived.sh mill-base-spike no-such-package-e10 2>/tmp/spike-out/e10/fail.stderr; echo rc=$?; echo "--- stderr:"; cat /tmp/spike-out/e10/fail.stderr; sudo ls /var/lib/machines; sudo btrfs subvolume list /var/lib/machines | grep -c building; podman images --format "{{.Repository}}" | grep mill-derived
 
 real	0m4.354s
 user	0m3.654s
@@ -3369,7 +3369,7 @@ the `trap`. A failure after it does, forced with a `podman` shim whose
 `export` dies mid-stream:
 
 ```
-$ cd /home/ivy/src/github.com/ivy/mill; PATH=/tmp/spike-out/e10/fakebin:$PATH spikes/nspawn/build-derived.sh mill-base-spike libpq-devel ncurses; echo rc=$?; sudo ls /var/lib/machines | grep -c building; podman ps -a --format "{{.Image}}" | grep -c mill-derived; podman rmi mill-derived-1de6411ca553779e >/dev/null
+$ cd /home/ivy/src/github.com/steading-ai/mill; PATH=/tmp/spike-out/e10/fakebin:$PATH spikes/nspawn/build-derived.sh mill-base-spike libpq-devel ncurses; echo rc=$?; sudo ls /var/lib/machines | grep -c building; podman ps -a --format "{{.Image}}" | grep -c mill-derived; podman rmi mill-derived-1de6411ca553779e >/dev/null
 fake podman: export failed
 rc=1
 0
@@ -3400,7 +3400,7 @@ Filesystem        Size  Used Avail Use% Mounted on
 /dev/mapper/mill  932G  2.3G  928G   1% /var/lib/mill
 Filesystem        Size  Used Avail Use% Mounted on
 /dev/mapper/mill  932G  1.4G  929G   1% /var/lib/mill
-$ sudo btrfs subvolume delete /var/lib/machines/mill-image-599b7919d9a115b9; sudo rm -f /var/lib/mill/image-*.lock; podman rmi mill-derived-599b7919d9a115b9 >/dev/null; rmdir /home/ivy/src/github.com/ivy/mill/.cache/go /home/ivy/src/github.com/ivy/mill/.cache; sudo btrfs subvolume list /var/lib/mill; sudo btrfs subvolume list /var/lib/machines; ls /var/lib/mill; sudo machinectl list --no-pager; systemctl list-units "mill-run-e*" --all --no-legend; ls -l /etc/systemd/system/mill-machine@.service; podman images --format "{{.Repository}}" | grep mill
+$ sudo btrfs subvolume delete /var/lib/machines/mill-image-599b7919d9a115b9; sudo rm -f /var/lib/mill/image-*.lock; podman rmi mill-derived-599b7919d9a115b9 >/dev/null; rmdir /home/ivy/src/github.com/steading-ai/mill/.cache/go /home/ivy/src/github.com/steading-ai/mill/.cache; sudo btrfs subvolume list /var/lib/mill; sudo btrfs subvolume list /var/lib/machines; ls /var/lib/mill; sudo machinectl list --no-pager; systemctl list-units "mill-run-e*" --all --no-legend; ls -l /etc/systemd/system/mill-machine@.service; podman images --format "{{.Repository}}" | grep mill
 Delete subvolume 410 (no-commit): '/var/lib/machines/mill-image-599b7919d9a115b9'
 ID 256 gen 606 top level 5 path @mill
 ID 257 gen 605 top level 5 path @machines
@@ -3412,7 +3412,7 @@ ID 257 gen 605 top level 5 path @machines
 ID 298 gen 566 top level 257 path mill-image-spike
 ID 395 gen 560 top level 256 path @mill/mill-image-e7
 ID 396 gen 577 top level 257 path mill-image-e8
-dagger
+skift
 mill-image-e7
 runs
 MACHINE        CLASS SERVICE      OS VERSION ADDRESSES
@@ -3427,7 +3427,7 @@ The same picture once more, at teardown: 2.3G used before and after the
 deletes and after `subvolume sync`, 1.4G after `filesystem sync`. No
 `cache-e9-*`, `run-e9-*` or `mill-image-599b…` subvolume, no lock, no
 `mill-e*` machine, no `mill-run-e*` unit. `mill-image-spike`,
-`mill-image-e7`, `mill-image-e8`, `/var/lib/mill/{dagger,runs}` and
+`mill-image-e7`, `mill-image-e8`, `/var/lib/mill/{skift,runs}` and
 homestead's unit are other nodes' and untouched. The `.cache` mount point
 created in the checkout for the bind is gone.
 

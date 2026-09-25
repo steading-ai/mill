@@ -10,7 +10,7 @@
 //
 // Three things follow from that.
 //
-// The command is spawned through [github.com/ivy/mill/internal/workspace]'s
+// The command is spawned through [github.com/steading-ai/mill/internal/workspace]'s
 // Exec and nowhere else, so cwd, uid and environment are the workspace's to
 // set (docs/core-principles.md §3). This package never touches os/exec, and
 // lint enforces it.
@@ -41,10 +41,10 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/evidence"
-	"github.com/ivy/mill/internal/workspace"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/evidence"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // OutputLimit is how much of a stream is kept. A check that writes more than

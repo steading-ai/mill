@@ -29,9 +29,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/protobuf/proto"
 
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/internal/store/migrations"
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/store/migrations"
 )
 
 // The errors a store method is refused with. [ErrFenced] is in fence.go,
@@ -63,17 +63,17 @@ var (
 // claimableStatuses are the run statuses a new claim may take over, from
 // Invariant 9: selecting, running with an expired or absent lease, waiting,
 // parked, or done with the node still open. Whether a lease has expired is
-// dagger's judgement, not the ledger's — dagger issues a new lease only when
+// skift's judgement, not the ledger's — skift issues a new lease only when
 // the old one is gone — so a status is admitted on the strength of the
-// caller holding a lease dagger just granted.
+// caller holding a lease skift just granted.
 //
 // `selecting` is among them for the same reason `running` is. A run is
 // created holding the lease of the claim that created it, so ordinarily
 // there is nothing for a later SetLease to take over; but a worker that died
 // between CreateRun and the selection left the run exactly there, holding a
-// lease dagger has since expired, and refusing that claim leaves the node
+// lease skift has since expired, and refusing that claim leaves the node
 // unrecoverable by any mill command. A selecting run is never a reason to
-// refuse a claim: dagger has already decided who holds the node.
+// refuse a claim: skift has already decided who holds the node.
 var claimableStatuses = map[string]bool{
 	"selecting": true,
 	"running":   true,
@@ -219,11 +219,11 @@ func (s *Store) GetRun(ctx context.Context, runID string) (*millv1.Run, error) {
 
 // CreateRunParams opens a run on a claimed node.
 type CreateRunParams struct {
-	// NodeID is the dagger node's id.
+	// NodeID is the skift node's id.
 	NodeID string
 	// NodeRef is its display key.
 	NodeRef string
-	// ContextID is dagger's context id for the node, copied at creation.
+	// ContextID is skift's context id for the node, copied at creation.
 	ContextID string
 	// Generation is 1 for the first run on a node; restart passes the next.
 	Generation int64
@@ -573,7 +573,7 @@ func (s *Store) SetCompleteRequestID(ctx context.Context, leaseID, runID, reques
 	return run, nil
 }
 
-// Done marks a run done. It is called only after dagger has confirmed the
+// Done marks a run done. It is called only after skift has confirmed the
 // completing patch: a run marked done before that would strand a node
 // nothing can claim (Invariant 11).
 func (s *Store) Done(ctx context.Context, leaseID, runID string) (*millv1.Run, error) {
@@ -588,7 +588,7 @@ func (s *Store) Failed(ctx context.Context, leaseID, runID, reason string) (*mil
 
 // Abandon marks a run abandoned so a new generation can be created. It
 // leaves the lease unfenced when the caller presents none, which is the
-// ordinary restart path: dagger's release has already happened, so there is
+// ordinary restart path: skift's release has already happened, so there is
 // no lease left to compare against.
 func (s *Store) Abandon(ctx context.Context, leaseID, runID, reason string) (*millv1.Run, error) {
 	return s.finish(ctx, leaseID, runID, "abandoned", reason)
@@ -1511,8 +1511,8 @@ func (s *Store) RecordUsage(ctx context.Context, leaseID, stepRunID string, usag
 }
 
 // MarkUsagePosted marks exactly the unposted rows of one step run, after
-// dagger's ReportUsage has accepted them. A worker that dies mid-step
-// leaves dagger's per-lease total short by one step and the ledger complete;
+// skift's ReportUsage has accepted them. A worker that dies mid-step
+// leaves skift's per-lease total short by one step and the ledger complete;
 // there is no reconciliation job, so the mark is per step run and never
 // wider.
 func (s *Store) MarkUsagePosted(ctx context.Context, leaseID, stepRunID string) (int64, error) {
@@ -2448,7 +2448,7 @@ type WatchableEvent struct {
 }
 
 // WatchableEvents reads events across every run, from after (exclusive) in
-// (occurred_at, id) order, optionally narrowed to one dagger project. What
+// (occurred_at, id) order, optionally narrowed to one skift project. What
 // WatchRuns streams from a cursor. See docs/ledger.md §events.
 func (s *Store) WatchableEvents(ctx context.Context, after time.Time, afterID, project string) ([]WatchableEvent, error) {
 	rows, err := New(s.pool).WatchableEvents(ctx, WatchableEventsParams{
@@ -2470,7 +2470,7 @@ type CostParams struct {
 	Since time.Time
 	// Until bounds the window above. Zero means no upper bound.
 	Until time.Time
-	// Project narrows to one dagger project. Empty means every project.
+	// Project narrows to one skift project. Empty means every project.
 	Project string
 	// Bucket says whether, and how, to also group the window over time.
 	Bucket millv1.TimeBucket

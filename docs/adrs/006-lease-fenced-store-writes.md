@@ -7,11 +7,11 @@ date: 2026-09-08
 
 ## Context and Problem Statement
 
-A worker can be fenced out — its lease expires, another claims the node and resumes the run — while it is still executing a step and writing to the ledger. Dagger fences its own writes; nothing yet stops the stale worker corrupting mill's record of the run it no longer owns.
+A worker can be fenced out — its lease expires, another claims the node and resumes the run — while it is still executing a step and writing to the ledger. Skift fences its own writes; nothing yet stops the stale worker corrupting mill's record of the run it no longer owns.
 
 ## Decision Drivers
 
-- The ledger is what a new holder resumes from, so a stale write there is worse than one to dagger
+- The ledger is what a new holder resumes from, so a stale write there is worse than one to skift
 - A worker that has lost its lease is the *normal* path, not an error: it should fail silently and correctly
 - Correctness that depends on a worker checking before it writes is not correctness
 
@@ -25,7 +25,7 @@ A worker can be fenced out — its lease expires, another claims the node and re
 
 Chosen option: **fence inside the writing transaction, after the row lock**. [Ledger invariant 9](../ledger.md#invariants): every statement mutating `step_runs`, `evidence`, `step_tokens`, `usage`, or `runs` takes the `runs` row lock (`SELECT … FOR UPDATE`), **re-reads `lease_id` in a separate statement after the lock is granted**, compares it to the lease the worker presented, and rolls back on mismatch.
 
-The re-read is the subtle part, borrowed from dagger's `fence()`: a locked row is not re-read, so a lease a concurrent claim committed while this transaction waited on the lock would otherwise be missed.
+The re-read is the subtle part, borrowed from skift's `fence()`: a locked row is not re-read, so a lease a concurrent claim committed while this transaction waited on the lock would otherwise be missed.
 
 `SetLease` is the sole exception, because it is the write that changes what later writes compare against. It takes the same lock and requires the run to be in a status a new claim may take over. The mechanism *"lives in the store, not in the worker's good behaviour."*
 
@@ -51,8 +51,8 @@ The worker heartbeats, notices a fence, and stops writing.
 Read `runs.lease_id`, take the lock, write.
 
 - **Good**: One fewer statement, and it looks correct.
-- **Bad**: It is the trap dagger's `fence()` comments on. The value read before the lock is stale by the time the lock is granted, so a claim that committed during the wait is invisible and the stale write succeeds.
+- **Bad**: It is the trap skift's `fence()` comments on. The value read before the lock is stale by the time the lock is granted, so a claim that committed during the wait is invisible and the stale write succeeds.
 
 ## More Information
 
-Related: [ADR-005](005-dagger-first-store-second.md), [ADR-007](007-one-live-run-per-node.md).
+Related: [ADR-005](005-skift-first-store-second.md), [ADR-007](007-one-live-run-per-node.md).

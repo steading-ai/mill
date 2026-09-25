@@ -7,7 +7,7 @@ syntax = "proto3";
 
 package mill.v1;
 
-option go_package = "github.com/ivy/mill/gen/mill/v1;millv1";
+option go_package = "github.com/steading-ai/mill/gen/mill/v1;millv1";
 
 // WorkerService is the worker's own door, mounted only in a process
 // actually running one (`mill serve --work`; docs/architecture.md §"One
@@ -71,7 +71,7 @@ message ClaimsRequest {
 message ClaimsResponse {
   // The worker's OS hostname.
   string host = 1;
-  // The dagger projects the worker claims from; empty means every project
+  // The skift projects the worker claims from; empty means every project
   // its principal may read.
   repeated string projects = 2;
   // The labels every claimed node must carry.

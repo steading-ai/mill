@@ -11,9 +11,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ivy/mill/internal/cli"
-	"github.com/ivy/mill/internal/testsupport"
-	"github.com/ivy/mill/internal/workflow"
+	"github.com/steading-ai/mill/internal/cli"
+	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/workflow"
 )
 
 // quickFix is the workflow directory in this repository, which is what the
@@ -116,15 +116,15 @@ var _ = Describe("mill.run/mill.try's socket guard", Label("unit"), func() {
 		Expect(func() { mill{}.run(context.Background(), "status") }).To(PanicWith(ContainSubstring("serving(ctx)")))
 	})
 
-	It("appends a dead --dagger-socket when the target command takes one", func() {
+	It("appends a dead --skift-socket when the target command takes one", func() {
 		m := mill{socket: "/nonexistent/mill.sock"}
 		args := m.argsWithSockets([]string{"explain", "millcli#1"})
-		Expect(args).To(ContainElement("--dagger-socket"))
+		Expect(args).To(ContainElement("--skift-socket"))
 	})
 
-	It("does not hand an unknown flag to a command with no --dagger-socket", func() {
+	It("does not hand an unknown flag to a command with no --skift-socket", func() {
 		m := mill{socket: "/nonexistent/mill.sock"}
-		Expect(m.argsWithSockets([]string{"status"})).NotTo(ContainElement("--dagger-socket"))
+		Expect(m.argsWithSockets([]string{"status"})).NotTo(ContainElement("--skift-socket"))
 	})
 })
 

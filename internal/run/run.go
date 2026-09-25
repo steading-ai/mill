@@ -10,13 +10,13 @@
 //     deterministic id, so the model picks up its own context.
 //   - Resume is the same code as a first run. The only branch a resume takes
 //     that a first run does not is the gate at the top of the loop.
-//   - Dagger first, store second. The node is completed in dagger before the
+//   - Skift first, store second. The node is completed in skift before the
 //     run is marked done in the store, under a request id minted and stored
 //     before the patch is sent, so a crash between the two is a retry of the
 //     same patch and never a node nothing can claim.
 //
 // A fenced write on either side — the store refusing a lease that is no
-// longer the run's, dagger refusing the same — is the normal end of a stale
+// longer the run's, skift refusing the same — is the normal end of a stale
 // worker, not an error to retry. The run is abandoned locally, nothing more
 // is written, and [ErrFenced] comes back.
 package run
@@ -33,21 +33,22 @@ import (
 
 	"connectrpc.com/connect"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	harnessv1 "github.com/ivy/mill/gen/harness/v1"
-	millv1 "github.com/ivy/mill/gen/mill/v1"
-	"github.com/ivy/mill/gen/mill/v1/millv1connect"
-	"github.com/ivy/mill/internal/dagger"
-	"github.com/ivy/mill/internal/domain"
-	"github.com/ivy/mill/internal/forge"
-	"github.com/ivy/mill/internal/gateway"
-	"github.com/ivy/mill/internal/harness"
-	"github.com/ivy/mill/internal/notify"
-	"github.com/ivy/mill/internal/workspace"
-	"github.com/ivy/mill/internal/workspace/redact"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
+	"github.com/steading-ai/mill/internal/domain"
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/gateway"
+	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/notify"
+	"github.com/steading-ai/mill/internal/skift"
+	"github.com/steading-ai/mill/internal/workspace"
+	"github.com/steading-ai/mill/internal/workspace/redact"
 )
 
-// Defaults from docs/architecture.md §Heartbeat: dagger's lease TTL is
+// Defaults from docs/architecture.md §Heartbeat: skift's lease TTL is
 // fifteen minutes, and the worker renews well inside it.
 const (
 	// DefaultTTL is the lease TTL every claim asks for.
@@ -125,9 +126,9 @@ type Workspace interface {
 type Workspaces func(ctx context.Context, spec workspace.Spec, repo Repository) (Workspace, error)
 
 // Repository is where one run delivers and what its workspace clones,
-// resolved from the dagger project the claim came back with. It is the
+// resolved from the skift project the claim came back with. It is the
 // run's and never the runner's: two runs of one worker may be on projects
-// whose repositories differ only in dagger.
+// whose repositories differ only in skift.
 type Repository struct {
 	// Forge is the repository's forge, bound to the mill's credential.
 	Forge forge.Forge
@@ -135,11 +136,11 @@ type Repository struct {
 	Origin string
 }
 
-// Repositories resolves a run's repository from its dagger project. It is
+// Repositories resolves a run's repository from its skift project. It is
 // called once per run, after the run exists in the ledger and before its
 // workspace is cloned, so a project with no repository fails before it has
 // spent anything.
-type Repositories func(ctx context.Context, project *daggerv1.Project) (Repository, error)
+type Repositories func(ctx context.Context, project *skiftv1.Project) (Repository, error)
 
 // inMachineSession is a workspace whose sessions run inside a sandbox, so
 // the paths a session's sidecar uses are the sandbox's and not the host's:
@@ -174,8 +175,8 @@ type HarnessesFor func(ws Workspace) (*harness.Registry, error)
 type Options struct {
 	// Store is `mill serve`, over its unix socket.
 	Store millv1connect.StoreServiceClient
-	// Dagger is the work graph.
-	Dagger *dagger.Client
+	// Skift is the work graph.
+	Skift *skift.Client
 	// Workspaces makes the run's workspace.
 	Workspaces Workspaces
 	// Attach finds a workspace this host already has and never makes one.
@@ -242,7 +243,7 @@ type Options struct {
 	// Notifier carries a filed gate to a person, through whatever command
 	// the deployment configured. Nil never notifies, which is a deployment
 	// that has not configured one: the gate is still filed, and whoever
-	// answers it finds it in dagger (docs/architecture.md §"Gate steps").
+	// answers it finds it in skift (docs/architecture.md §"Gate steps").
 	Notifier notify.Notifier
 	// Answers puts a gate's ask to a person and reports their decision.
 	// Only single-run mode sets it: a worker files a gate and goes back to
@@ -372,23 +373,23 @@ func New(options Options) *Runner {
 // well inside the window, so that one missed tick is not a lost node.
 func (r *Runner) Interval() time.Duration { return r.options.Interval }
 
-// Dagger is the runner's dagger client, scoped to its one project.
-func (r *Runner) Dagger() *dagger.Client { return r.options.Dagger }
+// Skift is the runner's skift client, scoped to its one project.
+func (r *Runner) Skift() *skift.Client { return r.options.Skift }
 
 // state is one run in flight: what the loop carries between its stages.
 type state struct {
-	node *daggerv1.Node
+	node *skiftv1.Node
 	// lease is the fencing token every write this run makes presents. The
 	// run-loop goroutine reads it on every write; the heartbeat's own
 	// goroutine writes it when a fenced heartbeat wins the node back. Both
 	// happen concurrently, so this is atomic rather than a plain string.
 	lease atomic.Pointer[string]
-	// dagger is the run's own dagger client, scoped to the project the claim
+	// skift is the run's own skift client, scoped to the project the claim
 	// landed in — the worker's own client when the claim carried none (a
-	// dagger older than the project field). Every write and gate read this
+	// skift older than the project field). Every write and gate read this
 	// run makes after its claim goes through it, never through the worker's
 	// possibly project-less one.
-	dagger    *dagger.Client
+	skift     *skift.Client
 	run       *millv1.Run
 	workflow  *millv1.Workflow
 	workspace Workspace
@@ -517,34 +518,34 @@ func (s *state) attemptsAt(detail *millv1.InspectResponse, step string, attempt 
 // Execute drives one node from a claim to a result. It is docs/ledger.md
 // §Resume, and every stage below is a line of it.
 func (r *Runner) Execute(ctx context.Context, nodeRef string) error {
-	node, err := r.options.Dagger.Node(ctx, nodeRef)
+	node, err := r.options.Skift.Node(ctx, nodeRef)
 	if err != nil {
 		return err
 	}
-	if node.GetAssigneeKind() == daggerv1.AssigneeKind_ASSIGNEE_KIND_USER {
-		return &dagger.UserNodeError{Ref: nodeRef, Verb: "claim"}
+	if node.GetAssigneeKind() == skiftv1.AssigneeKind_ASSIGNEE_KIND_USER {
+		return &skift.UserNodeError{Ref: nodeRef, Verb: "claim"}
 	}
 
-	// A node already closed in dagger is never claimed: there is nothing
+	// A node already closed in skift is never claimed: there is nothing
 	// left to do to it. A done one is the crash window of Invariant 11 —
 	// the completing patch landed and store.Done did not — and a dropped
 	// one had its run stranded underneath it. Either way the run is caught
-	// up with what dagger already says, exactly as the sweep would catch it
+	// up with what skift already says, exactly as the sweep would catch it
 	// up (docs/ledger.md §Sweep).
-	if node.GetStatus() != daggerv1.Status_STATUS_OPEN {
+	if node.GetStatus() != skiftv1.Status_STATUS_OPEN {
 		run, _, err := r.runByNode(ctx, node.GetId())
 		if err != nil {
 			return err
 		}
 		if run == nil {
-			return fmt.Errorf("%w: %s is %s in dagger and the ledger has no run for it",
-				ErrRefused, node.GetReference(), daggerStatus(node.GetStatus()))
+			return fmt.Errorf("%w: %s is %s in skift and the ledger has no run for it",
+				ErrRefused, node.GetReference(), skiftStatus(node.GetStatus()))
 		}
 		_, err = r.reconcileClosed(ctx, run, node)
 		return err
 	}
 
-	claimed, err := r.options.Dagger.Claim(ctx, nodeRef)
+	claimed, err := r.options.Skift.Claim(ctx, nodeRef)
 	if err != nil {
 		return err
 	}
@@ -561,22 +562,22 @@ func (r *Runner) Execute(ctx context.Context, nodeRef string) error {
 // then stops at the first boundary it can reach, aborts the attempt in
 // flight, releases the lease `preempted`/`shutdown`, and stays resumable.
 // Nil never fires, which is what `mill run` passes.
-func (r *Runner) ExecuteClaimed(ctx context.Context, claimed *dagger.Claimed, stopping <-chan struct{}) error {
+func (r *Runner) ExecuteClaimed(ctx context.Context, claimed *skift.Claimed, stopping <-chan struct{}) error {
 	return r.drive(ctx, claimed, stopping)
 }
 
 // drive is the run loop proper: everything from a held lease to a result.
-func (r *Runner) drive(ctx context.Context, claimed *dagger.Claimed, stopping <-chan struct{}) error {
+func (r *Runner) drive(ctx context.Context, claimed *skift.Claimed, stopping <-chan struct{}) error {
 	s := &state{
 		node:     claimed.Node,
-		dagger:   r.options.Dagger,
+		skift:    r.options.Skift,
 		retried:  map[string]int64{},
 		stopping: stopping,
 		process:  ctx,
 	}
 	s.setLease(claimed.Lease.GetId())
 	if claimed.Project != nil {
-		s.dagger = r.options.Dagger.Scoped(claimed.Project.GetSlug())
+		s.skift = r.options.Skift.Scoped(claimed.Project.GetSlug())
 	}
 	r.printf("claimed %s under lease %s\n", s.node.GetReference(), s.leaseID())
 
@@ -621,7 +622,7 @@ func (r *Runner) drive(ctx context.Context, claimed *dagger.Claimed, stopping <-
 	return r.stop(ctx, s, r.walk(s.beat.ctx, s))
 }
 
-// reconcileClosed catches a live run up with a node dagger says is closed,
+// reconcileClosed catches a live run up with a node skift says is closed,
 // and reports what it did: `done`, `failed`, or `already <status>` for a
 // run that had ended. It is the one place that decides what a closed node
 // means to its run, shared by `mill run` on such a node and by the sweep
@@ -633,7 +634,7 @@ func (r *Runner) drive(ctx context.Context, claimed *dagger.Claimed, stopping <-
 // holds, which is the one that sent the patch. A done node with no such id
 // was completed by someone else, and a dropped node was dropped underneath
 // the run; both fail the run with the reason on the event, after every
-// open attempt is aborted so no token outlives it. Dagger's fence means a
+// open attempt is aborted so no token outlives it. Skift's fence means a
 // node is closed underneath a run only while the run holds no live lease,
 // which is why the write presents none: there is no lease to compare
 // against, and the row lock alone serialises it (Invariant 9's leaseless
@@ -645,7 +646,7 @@ func (r *Runner) drive(ctx context.Context, claimed *dagger.Claimed, stopping <-
 // alone, and a run that never chose a workflow pushed nothing. Neither
 // cleanup failing fails the reconciliation: the ledger is right, and the
 // host's reconciliation pass finishes what this could not.
-func (r *Runner) reconcileClosed(ctx context.Context, run *millv1.Run, node *daggerv1.Node) (string, error) {
+func (r *Runner) reconcileClosed(ctx context.Context, run *millv1.Run, node *skiftv1.Node) (string, error) {
 	ref := node.GetReference()
 	switch run.GetStatus() {
 	case millv1.RunStatus_RUN_STATUS_DONE, millv1.RunStatus_RUN_STATUS_FAILED, millv1.RunStatus_RUN_STATUS_ABANDONED:
@@ -655,7 +656,7 @@ func (r *Runner) reconcileClosed(ctx context.Context, run *millv1.Run, node *dag
 
 	var action, reason string
 	switch {
-	case node.GetStatus() == daggerv1.Status_STATUS_DONE && run.GetCompleteRequestId() != "":
+	case node.GetStatus() == skiftv1.Status_STATUS_DONE && run.GetCompleteRequestId() != "":
 		if _, err := call(ctx, r.options.Store.Done, &millv1.DoneRequest{
 			LeaseId: run.GetLeaseId(),
 			RunId:   run.GetId(),
@@ -663,10 +664,10 @@ func (r *Runner) reconcileClosed(ctx context.Context, run *millv1.Run, node *dag
 			return "", err
 		}
 		action = "done"
-		r.printf("%s was completed in dagger; run %s marked done\n", ref, run.GetId())
-	case node.GetStatus() == daggerv1.Status_STATUS_DONE:
+		r.printf("%s was completed in skift; run %s marked done\n", ref, run.GetId())
+	case node.GetStatus() == skiftv1.Status_STATUS_DONE:
 		action, reason = "failed", "node completed outside the run"
-	case node.GetStatus() == daggerv1.Status_STATUS_DROPPED:
+	case node.GetStatus() == skiftv1.Status_STATUS_DROPPED:
 		action, reason = "failed", "node dropped underneath the run"
 	default:
 		return "", fmt.Errorf("%w: %s is open; nothing to reconcile", ErrRefused, ref)
@@ -694,7 +695,7 @@ func (r *Runner) reconcileClosed(ctx context.Context, run *millv1.Run, node *dag
 	r.discardWorkspace(ctx, run, repo)
 	if action == "failed" && run.GetWorkflowId() != "" {
 		comment := fmt.Sprintf("Closed: run %s of %s ended because its %s (%s).",
-			run.GetId(), run.GetNodeRef(), reason, daggerStatus(node.GetStatus()))
+			run.GetId(), run.GetNodeRef(), reason, skiftStatus(node.GetStatus()))
 		if err := r.closeBranch(ctx, run, comment, repo); err != nil {
 			r.options.Log.Warn("closing the branch of a run whose node was closed", "run", run.GetId(), "error", err)
 		}
@@ -711,7 +712,7 @@ func (r *Runner) repositoryOf(ctx context.Context, nodeRef string) (Repository, 
 	if !found || slug == "" {
 		return r.repository(ctx, nil)
 	}
-	project, err := r.options.Dagger.ProjectNamed(ctx, slug)
+	project, err := r.options.Skift.ProjectNamed(ctx, slug)
 	if err != nil {
 		return Repository{}, err
 	}
@@ -759,7 +760,7 @@ func (r *Runner) openRun(ctx context.Context, s *state) error {
 		// refused again on the very next ClaimNext (mill#39): this answer
 		// cannot change until a person acts, and every worker would reach it.
 		reason := fmt.Sprintf("run %s is done but %s is open", run.GetId(), s.node.GetReference())
-		r.hold(ctx, s, dagger.RequestID(run.GetId(), "refused-done", run.GetGeneration()), reason)
+		r.hold(ctx, s, skift.RequestID(run.GetId(), "refused-done", run.GetGeneration()), reason)
 		return fmt.Errorf("%w: %s", ErrRefused, reason)
 
 	case run.GetStatus() == millv1.RunStatus_RUN_STATUS_FAILED:
@@ -773,7 +774,7 @@ func (r *Runner) openRun(ctx context.Context, s *state) error {
 		// see the same refusal, on this worker or any other.
 		reason := fmt.Sprintf("run %s of %s failed; `mill restart` starts the next generation, `mill rerun` reopens this one",
 			run.GetId(), s.node.GetReference())
-		r.hold(ctx, s, dagger.RequestID(run.GetId(), "refused-failed", run.GetGeneration()), reason)
+		r.hold(ctx, s, skift.RequestID(run.GetId(), "refused-failed", run.GetGeneration()), reason)
 		return fmt.Errorf("%w: %s", ErrRefused, reason)
 
 	default:
@@ -878,7 +879,7 @@ func (r *Runner) openWorkspace(ctx context.Context, s *state) error {
 // workspace's state was the machine's and is not the ledger's to
 // reconstruct (docs/sandbox.md §Reconciliation, §"Failure modes").
 //
-// The node is held in dagger under the same reason, so it leaves the ready
+// The node is held in skift under the same reason, so it leaves the ready
 // set rather than being claimed again into the same refusal, and the person
 // who restarts it finds why on the node. Then the lease is released.
 func (r *Runner) lostSandbox(ctx context.Context, s *state, cause error) error {
@@ -891,7 +892,7 @@ func (r *Runner) lostSandbox(ctx context.Context, s *state, cause error) error {
 		step = "(selecting)"
 	}
 	reason := fmt.Sprintf("lost sandbox: %v; the ledger's step is %s", cause, step)
-	return r.failRun(ctx, s, dagger.RequestID(s.run.GetId(), "lost-sandbox", s.run.GetGeneration()), reason,
+	return r.failRun(ctx, s, skift.RequestID(s.run.GetId(), "lost-sandbox", s.run.GetGeneration()), reason,
 		fmt.Errorf("run %s: %w", s.run.GetId(), cause))
 }
 
@@ -903,7 +904,7 @@ func (r *Runner) lostSandbox(ctx context.Context, s *state, cause error) error {
 // pattern, reused here for the same reason).
 func (r *Runner) noRepository(ctx context.Context, s *state, missing *forge.NoVCSURLError) error {
 	reason := fmt.Sprintf("no repository: %s has no vcs_url", missing.Project)
-	return r.failRun(ctx, s, dagger.RequestID(s.run.GetId(), "no-repository", s.run.GetGeneration()), reason,
+	return r.failRun(ctx, s, skift.RequestID(s.run.GetId(), "no-repository", s.run.GetGeneration()), reason,
 		fmt.Errorf("run %s: %w", s.run.GetId(), missing))
 }
 
@@ -937,17 +938,17 @@ func (r *Runner) failRun(ctx context.Context, s *state, requestKey, reason strin
 // is logged rather than failed on: a refusal this deterministic should not
 // stay claimable just because the hold write itself did not land.
 func (r *Runner) hold(ctx context.Context, s *state, requestKey, reason string) {
-	if err := s.dagger.Hold(ctx, requestKey, s.leaseID(), s.node.GetReference(), reason); err != nil {
+	if err := s.skift.Hold(ctx, requestKey, s.leaseID(), s.node.GetReference(), reason); err != nil {
 		r.options.Log.Warn("holding a refused node", "node", s.node.GetReference(), "reason", reason, "error", err)
 	}
 }
 
 // repository resolves the run's repository: from the project the claim
-// carried, or from dagger when the claim carried none (a dagger older than
+// carried, or from skift when the claim carried none (a skift older than
 // `vcs_url`).
-func (r *Runner) repository(ctx context.Context, project *daggerv1.Project) (Repository, error) {
+func (r *Runner) repository(ctx context.Context, project *skiftv1.Project) (Repository, error) {
 	if project == nil {
-		p, err := r.options.Dagger.GetProject(ctx)
+		p, err := r.options.Skift.GetProject(ctx)
 		if err != nil {
 			return Repository{}, err
 		}
@@ -969,7 +970,7 @@ func (r *Runner) runByNode(ctx context.Context, nodeID string) (*millv1.Run, int
 }
 
 // stop is the one exit. A fenced runner writes nothing more — not to the
-// store, not to dagger — because everything it could write belongs to the
+// store, not to skift — because everything it could write belongs to the
 // worker that fenced it out. Every other failure gives the lease back so the
 // node is claimable again rather than waiting out its TTL.
 func (r *Runner) stop(ctx context.Context, s *state, err error) error {
@@ -1002,7 +1003,7 @@ func (r *Runner) stop(ctx context.Context, s *state, err error) error {
 		return err
 	}
 	if lease := s.leaseID(); lease != "" {
-		if releaseErr := r.options.Dagger.Release(ctx, lease, daggerv1.ReleaseReason_RELEASE_REASON_CRASH, err.Error()); releaseErr != nil {
+		if releaseErr := r.options.Skift.Release(ctx, lease, skiftv1.ReleaseReason_RELEASE_REASON_CRASH, err.Error()); releaseErr != nil {
 			r.options.Log.Warn("releasing the lease after a failure", "error", releaseErr)
 		}
 	}
@@ -1035,11 +1036,11 @@ func call[Req, Res any](ctx context.Context, method func(context.Context, *conne
 
 // isFenced reports whether a failure is a lease that is no longer current,
 // on either side. The store answers a fenced write with FAILED_PRECONDITION
-// and a message naming both leases; dagger answers the same code with a
+// and a message naming both leases; skift answers the same code with a
 // message naming the lease. Both halves are checked, so a precondition of
 // another kind is not mistaken for a fence.
 func isFenced(err error) bool {
-	if errors.Is(err, ErrFenced) || errors.Is(err, dagger.ErrFenced) {
+	if errors.Is(err, ErrFenced) || errors.Is(err, skift.ErrFenced) {
 		return true
 	}
 	var connectErr *connect.Error

@@ -11,15 +11,16 @@ import (
 	"sync/atomic"
 	"time"
 
-	daggerv1 "github.com/ivy/mill/gen/dagger/v1"
-	"github.com/ivy/mill/internal/dagger"
-	"github.com/ivy/mill/internal/forge"
+	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
+
+	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/skift"
 )
 
 // The daemon is the loop, not a scheduler.
 //
 // docs/architecture.md §"One binary, two faces": there is no scheduler and
-// no event consumer. Readiness is dagger's, derived, so there is no "node
+// no event consumer. Readiness is skift's, derived, so there is no "node
 // became ready" event to subscribe to; a worker asking for work *is* the
 // scheduling. The whole of `mill work` is therefore `ClaimNext --wait`, hand
 // what comes back to the same [Runner] `mill run` uses, repeat.
@@ -27,12 +28,12 @@ import (
 // Concurrency is a cap and nothing more. One is O0's value: a semaphore
 // taken before the claim, so a lease is never held on work there is no slot
 // to run. Above one the code works and nothing here places a run — no
-// worktree pools, no affinity — because dagger already orders the ready set
+// worktree pools, no affinity — because skift already orders the ready set
 // and a second worker on another host is the design's answer to wanting more
 // throughput.
 
 const (
-	// DefaultWait is how long one ClaimNext blocks for work. Dagger polls
+	// DefaultWait is how long one ClaimNext blocks for work. Skift polls
 	// its ready set at most a second apart inside that wait, so a node that
 	// becomes ready is claimed about as fast as it became ready, and an
 	// idle worker makes one request a minute rather than a busy loop.
@@ -47,7 +48,7 @@ const (
 	// This is the safety net for refusals that are not deterministic enough
 	// to Hold (docs/sandbox.md §Reconciliation): it does not need to match
 	// the lease TTL, only to stop a bad node from being reclaimed as fast as
-	// dagger's round-robin will hand it back (mill#39).
+	// skift's round-robin will hand it back (mill#39).
 	BackoffBase = time.Second
 	// BackoffCap bounds BackoffBase's doubling.
 	BackoffCap = 5 * time.Minute
@@ -83,7 +84,7 @@ type Startup interface {
 
 // WorkerOptions is everything a worker is built from.
 type WorkerOptions struct {
-	// Runner drives every claim. Its dagger client's own project, if any, is
+	// Runner drives every claim. Its skift client's own project, if any, is
 	// only the fallback [Runner.repository] and a bare reference resolve
 	// against; the claim itself carries Projects, and every write the claim
 	// leads to goes through the client [Runner.drive] scopes to the project
@@ -102,10 +103,10 @@ type WorkerOptions struct {
 	// [DefaultConcurrency].
 	Concurrency int
 	// Wait is how long one claim blocks for work. Zero takes
-	// [DefaultWait]; dagger clamps it to five minutes.
+	// [DefaultWait]; skift clamps it to five minutes.
 	Wait time.Duration
 	// SweepInterval is how long the worker goes between sweeps of the
-	// ledger against dagger (docs/ledger.md §Sweep). Zero takes
+	// ledger against skift (docs/ledger.md §Sweep). Zero takes
 	// [DefaultSweepInterval].
 	SweepInterval time.Duration
 	// Out is where the worker's own progress is written.
@@ -120,11 +121,11 @@ type Worker struct {
 	slots    chan struct{}
 	stopping chan struct{}
 	once     sync.Once
-	// lastSweep is when the ledger was last swept against dagger. Touched
+	// lastSweep is when the ledger was last swept against skift. Touched
 	// on the claim loop alone.
 	lastSweep time.Time
 	// inFlight is every node this process is driving, by id. The sweep
-	// leaves those alone whatever dagger says of them: the run's own
+	// leaves those alone whatever skift says of them: the run's own
 	// goroutine is the one that writes its ending.
 	inFlight sync.Map
 	// killed records that a run was still in flight when the kill context
@@ -213,7 +214,7 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 // start is what precedes the first claim: the sweep of the ledger against
-// dagger, then the host's reconciliation, then eviction, in that order and
+// skift, then the host's reconciliation, then eviction, in that order and
 // all before any lease is taken (docs/ledger.md §Sweep, docs/sandbox.md
 // §Reconciliation). The sweep goes first so the host's pass sees the
 // ledger's truth: a run the sweep has just failed is no longer live, and
@@ -221,7 +222,7 @@ func (w *Worker) Run(ctx context.Context) error {
 // in the very next step.
 //
 // A ledger that cannot be swept stops the worker the way a host that
-// cannot be reconciled does: both are the store or dagger not answering,
+// cannot be reconciled does: both are the store or skift not answering,
 // and neither is a state to claim work in.
 func (w *Worker) start(ctx context.Context) error {
 	if err := w.sweep(ctx); err != nil {
@@ -346,7 +347,7 @@ func (w *Worker) claim(ctx context.Context, wg *sync.WaitGroup) error {
 		// over it would.
 		if sweepDue(w.lastSweep, w.options.SweepInterval, time.Now()) {
 			if err := w.sweep(ctx); err != nil {
-				w.options.Log.Warn("sweeping the ledger against dagger", "error", err)
+				w.options.Log.Warn("sweeping the ledger against skift", "error", err)
 			}
 		}
 
@@ -362,13 +363,13 @@ func (w *Worker) claim(ctx context.Context, wg *sync.WaitGroup) error {
 		}
 
 		runner := w.options.Runner
-		claimed, err := runner.options.Dagger.ClaimNext(claiming, w.options.Projects, w.options.Labels, w.options.Wait)
+		claimed, err := runner.options.Skift.ClaimNext(claiming, w.options.Projects, w.options.Labels, w.options.Wait)
 		if err != nil || claimed == nil {
 			<-w.slots
 			if err == nil || w.stopped() || ctx.Err() != nil {
 				continue
 			}
-			// Dagger being unreachable is not something a worker can work
+			// Skift being unreachable is not something a worker can work
 			// around; the unit restarts it. Reporting rather than
 			// swallowing is what makes that restart happen.
 			return fmt.Errorf("work: claim: %w", err)
@@ -389,11 +390,11 @@ func (w *Worker) claim(ctx context.Context, wg *sync.WaitGroup) error {
 		// window rather than all of it, so a node still backing off never
 		// stalls an unrelated one that is ready right now; the loop simply
 		// asks again; a window not yet elapsed is caught here again next
-		// time this same node comes back off dagger's round-robin.
+		// time this same node comes back off skift's round-robin.
 		if wait, ok := w.backoffRemaining(nodeID); ok {
 			ref := claimed.Node.GetReference()
-			if err := runner.options.Dagger.Release(ctx, claimed.Lease.GetId(),
-				daggerv1.ReleaseReason_RELEASE_REASON_PREEMPTED,
+			if err := runner.options.Skift.Release(ctx, claimed.Lease.GetId(),
+				skiftv1.ReleaseReason_RELEASE_REASON_PREEMPTED,
 				fmt.Sprintf("worker: backing off %s, %s left", ref, wait)); err != nil {
 				w.options.Log.Warn("releasing a node still backing off", "node", ref, "error", err)
 			}
@@ -408,7 +409,7 @@ func (w *Worker) claim(ctx context.Context, wg *sync.WaitGroup) error {
 
 // spawn hands a claimed node to its own goroutine: the slot it took, and the
 // inFlight entry the sweep reads, are released as it ends.
-func (w *Worker) spawn(ctx context.Context, wg *sync.WaitGroup, claimed *dagger.Claimed) {
+func (w *Worker) spawn(ctx context.Context, wg *sync.WaitGroup, claimed *skift.Claimed) {
 	nodeID := claimed.Node.GetId()
 	w.inFlight.Store(nodeID, struct{}{})
 	wg.Add(1)
@@ -423,12 +424,12 @@ func (w *Worker) spawn(ctx context.Context, wg *sync.WaitGroup, claimed *dagger.
 // releaseIfStopped gives a claim straight back if it landed after the
 // worker had already begun stopping, and frees the slot it took: nothing
 // has been written yet, so the node simply returns to the ready set.
-func (w *Worker) releaseIfStopped(ctx context.Context, runner *Runner, claimed *dagger.Claimed) bool {
+func (w *Worker) releaseIfStopped(ctx context.Context, runner *Runner, claimed *skift.Claimed) bool {
 	if !w.stopped() {
 		return false
 	}
-	if err := runner.options.Dagger.Release(ctx, claimed.Lease.GetId(),
-		daggerv1.ReleaseReason_RELEASE_REASON_PREEMPTED, "shutdown"); err != nil {
+	if err := runner.options.Skift.Release(ctx, claimed.Lease.GetId(),
+		skiftv1.ReleaseReason_RELEASE_REASON_PREEMPTED, "shutdown"); err != nil {
 		w.options.Log.Warn("releasing a claim that landed as the worker stopped",
 			"node", claimed.Node.GetReference(), "error", err)
 	}
@@ -469,7 +470,7 @@ func (w *Worker) reclaim(ctx context.Context, wg *sync.WaitGroup) error {
 			return nil
 		}
 
-		claimed, err := runner.options.Dagger.Scoped(projectOf(c.NodeRef)).Claim(ctx, c.NodeRef)
+		claimed, err := runner.options.Skift.Scoped(projectOf(c.NodeRef)).Claim(ctx, c.NodeRef)
 		if err != nil {
 			<-w.slots
 			w.options.Log.Warn("reclaiming a resumable run", "node", c.NodeRef, "error", err)
@@ -504,7 +505,7 @@ func (w *Worker) sleepBackoff(ctx context.Context, d time.Duration) {
 // released its lease and recorded why; a fenced one belongs to whoever
 // fenced it out and is not this worker's to report. Either way the answer is
 // the same: ask for more work.
-func (w *Worker) drive(ctx context.Context, claimed *dagger.Claimed) {
+func (w *Worker) drive(ctx context.Context, claimed *skift.Claimed) {
 	ref := claimed.Node.GetReference()
 	nodeID := claimed.Node.GetId()
 	err := w.options.Runner.ExecuteClaimed(ctx, claimed, w.stopping)
