@@ -248,10 +248,11 @@ var _ = Describe("A step the upstream refuses", Label(testsupport.DBLabel), func
 	// mill#63: a reset the gateway itself observed is waited for, not
 	// escalated past — even past what mill#57's own doubling would already
 	// have moved on from, and never given up on merely because it is a long
-	// wait. This drives a real request through a real gateway, since the
-	// reset only ever reaches the ledger by way of Runner.gatewayUpstreamRefusal
-	// reading what the gateway itself saw (internal/run/walk.go), never from
-	// the fake harness's own exit classification.
+	// wait. The fake harness reports this attempt as an ordinary failure,
+	// with no upstream reason of its own, so the only way it reaches
+	// UPSTREAM_REFUSED and skips the step's retries is the gateway's own
+	// observation of the 429 reaching the ledger by way of
+	// Runner.gatewayUpstreamRefusal (internal/run/walk.go).
 	It("waits for a reset the upstream itself named instead of escalating", func() {
 		By("given gather-context's one request is refused with a reset two minutes out")
 		var refusals atomic.Int32
@@ -280,10 +281,10 @@ var _ = Describe("A step the upstream refuses", Label(testsupport.DBLabel), func
 			_ = resp.Body.Close()
 		}
 		workflow := f.variant(ctx, "upstream-reset", func(definition *millv1.Workflow) {
-			stepOf(definition, "gather-context").Retries = 1
+			stepOf(definition, "gather-context").Retries = 0
 		})
 		f.script(append([]fake.Script{
-			{Terminal: &harness.Terminal{FinalMessage: "refused", Exit: harness.ProcessExit{Status: 1, Reason: harness.ReasonUpstream}, Usage: usage(1)}, Do: request},
+			{Terminal: &harness.Terminal{FinalMessage: "refused", Exit: harness.ProcessExit{Status: 1}, Usage: usage(1)}, Do: request},
 		}, f.quickFixScripts()...)...)
 
 		By("when the run is executed")
@@ -306,12 +307,14 @@ var _ = Describe("A step the upstream refuses", Label(testsupport.DBLabel), func
 		Expect(waits[0]).To(BeNumerically("~", 120*time.Second+run.UpstreamResetMargin, 5*time.Second))
 		mu.Unlock()
 
-		By("and it closed rather than parking, with the reset recorded on the refused attempt")
+		By("and the gateway's own observation reclassified the attempt, with the reset recorded on it")
 		detail := f.inspect(ctx)
 		attempts := stepRuns(detail, "gather-context")
 		Expect(attempts).To(HaveLen(2))
 		Expect(attempts[0].GetExit().GetReason()).To(Equal(harnessv1.ExitReason_EXIT_REASON_UPSTREAM_REFUSED))
 		Expect(attempts[0].GetExit().GetResetAt()).NotTo(BeNil())
+
+		By("and it retried and closed rather than parking on a step configured with no retries of its own")
 		Expect(attempts[1].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED))
 		Expect(f.runOf(ctx).GetStatus()).NotTo(Equal(millv1.RunStatus_RUN_STATUS_PARKED))
 	})
