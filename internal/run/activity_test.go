@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -327,6 +328,27 @@ var _ = Describe("The activity writer", Label("unit"), func() {
 		Expect(activities[0].GetToolResult().GetContent()).To(Equal(large))
 	})
 
+	It("sanitizes a tool result carrying invalid UTF-8 instead of dropping the record", func() {
+		w := open()
+		dirty := "before\xff after"
+		Expect(w.Record(&millv1.Activity{
+			Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+			Body:   &millv1.Activity_ToolResult{ToolResult: &millv1.ToolResult{CallId: "call-1", Content: dirty}},
+		})).To(Succeed())
+		Expect(w.Close()).To(Succeed())
+
+		activities := read()
+		Expect(activities).To(HaveLen(1))
+		Expect(activities[0].GetSanitized()).To(BeTrue())
+		content := activities[0].GetToolResult().GetContent()
+		Expect(content).To(Equal("before� after"))
+		Expect(utf8.ValidString(content)).To(BeTrue())
+
+		rendered, err := RenderedLog(dir, "run-1", "gather-context", 1)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rendered).To(ContainSubstring("before� after"))
+	})
+
 	It("folds a subagent's turn under its Agent call, translated from real harness events", func() {
 		w := open()
 		record := func(event *harnessv1.Event) {
@@ -485,5 +507,30 @@ var _ = Describe("ActivityRenderer", Label("unit"), func() {
 		text := fmt.Sprintf("-- build attempt 1 started --\n%s text Hello, world!\n-- build attempt 1 ended: exit status 0 --\n", stamp)
 		a := &millv1.Activity{At: at, Body: &millv1.Activity_Compacted{Compacted: &millv1.Compacted{Text: text}}}
 		Expect(RenderActivity(a)).To(Equal(text))
+	})
+})
+
+var _ = Describe("activityLogFields", Label("unit"), func() {
+	It("names the kind and the call it answered, for a tool_result", func() {
+		a := &millv1.Activity{
+			Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+			Body:   &millv1.Activity_ToolResult{ToolResult: &millv1.ToolResult{CallId: "call-1"}},
+		}
+		Expect(activityLogFields(a)).To(Equal([]any{
+			"source", "ACTIVITY_SOURCE_HARNESS",
+			"kind", "tool_result",
+			"call_id", "call-1",
+		}))
+	})
+
+	It("names only the kind for a record with no call to name", func() {
+		a := &millv1.Activity{
+			Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+			Body:   &millv1.Activity_Text{Text: &millv1.Text{Text: "hello"}},
+		}
+		Expect(activityLogFields(a)).To(Equal([]any{
+			"source", "ACTIVITY_SOURCE_HARNESS",
+			"kind", "text",
+		}))
 	})
 })

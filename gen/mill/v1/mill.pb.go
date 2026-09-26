@@ -5538,7 +5538,13 @@ type Activity struct {
 	//	*Activity_AttemptStarted
 	//	*Activity_AttemptEnded
 	//	*Activity_Compacted
-	Body          isActivity_Body `protobuf_oneof:"body"`
+	Body isActivity_Body `protobuf_oneof:"body"`
+	// A string field of this body held bytes that were not valid UTF-8 — a
+	// tool result or session text carrying raw output a marshaled proto
+	// string cannot hold — and was rewritten with the replacement character
+	// before this record was stored. The record is kept rather than dropped;
+	// this says it disagrees with the bytes a tool actually produced.
+	Sanitized     bool `protobuf:"varint,28,opt,name=sanitized,proto3" json:"sanitized,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5803,6 +5809,13 @@ func (x *Activity) GetCompacted() *Compacted {
 		}
 	}
 	return nil
+}
+
+func (x *Activity) GetSanitized() bool {
+	if x != nil {
+		return x.Sanitized
+	}
+	return false
 }
 
 type isActivity_Body interface {
@@ -6461,7 +6474,8 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"\revidence_kind\x18\x02 \x01(\x0e2\x15.mill.v1.EvidenceKindR\fevidenceKind\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\"\x1f\n" +
 	"\tCompacted\x12\x12\n" +
-	"\x04text\x18\x01 \x01(\tR\x04text\"\xf5\t\n" +
+	"\x04text\x18\x01 \x01(\tR\x04text\"\x93\n" +
+	"\n" +
 	"\bActivity\x12\x1e\n" +
 	"\vstep_run_id\x18\x01 \x01(\tR\tstepRunId\x12\x10\n" +
 	"\x03seq\x18\x02 \x01(\x03R\x03seq\x12*\n" +
@@ -6493,7 +6507,8 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"gate_filed\x18\x18 \x01(\v2\x12.mill.v1.GateFiledH\x00R\tgateFiled\x12B\n" +
 	"\x0fattempt_started\x18\x19 \x01(\v2\x17.mill.v1.AttemptStartedH\x00R\x0eattemptStarted\x12<\n" +
 	"\rattempt_ended\x18\x1a \x01(\v2\x15.mill.v1.AttemptEndedH\x00R\fattemptEnded\x122\n" +
-	"\tcompacted\x18\x1b \x01(\v2\x12.mill.v1.CompactedH\x00R\tcompactedB\x06\n" +
+	"\tcompacted\x18\x1b \x01(\v2\x12.mill.v1.CompactedH\x00R\tcompacted\x12\x1c\n" +
+	"\tsanitized\x18\x1c \x01(\bR\tsanitizedB\x06\n" +
 	"\x04body\"\x9f\x03\n" +
 	"\x10ActivityIndexRow\x12\x1e\n" +
 	"\vstep_run_id\x18\x01 \x01(\tR\tstepRunId\x12\x10\n" +

@@ -324,7 +324,8 @@ func activityFromEvent(event *harnessv1.Event) *millv1.Activity {
 // verbSink below apply to their own records.
 func (r *Runner) recordActivity(s *state, sr *millv1.StepRun, a *millv1.Activity) {
 	if err := s.activity.Record(a); err != nil {
-		r.options.Log.Warn("recording activity", "run", s.run.GetId(), "step_run", sr.GetId(), "error", err)
+		fields := append([]any{"run", s.run.GetId(), "step_run", sr.GetId(), "error", err}, activityLogFields(a)...)
+		r.options.Log.Warn("recording activity", fields...)
 	}
 }
 
