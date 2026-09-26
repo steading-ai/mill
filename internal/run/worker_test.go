@@ -230,7 +230,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			Eventually(resumed, time.Minute).Should(Receive(BeNil()))
 		})
 
-		It("releases both runs at their next boundary at concurrency two, claiming nothing more", func() {
+		It("a drain releases at the boundary", func() {
 			By("given two nodes held under this worker at concurrency two")
 			first := f.node(ctx, "the first fix mid-drain", "Change the README's first line.")
 			second := f.node(ctx, "the second fix mid-drain", "Change the README's second line.")
@@ -491,7 +491,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 		// at implement and mill#33 at review, when it restarts, its first
 		// two claims are steading#4 and mill#33, and no new node is claimed
 		// until one of them frees a slot.
-		It("reclaims runs a drain released before claiming anything new, up to concurrency", func() {
+		It("the next worker takes drained runs first", func() {
 			By("given two nodes held under this worker at concurrency two")
 			first := f.node(ctx, "the first interrupted fix", "Change the README's first line.")
 			second := f.node(ctx, "the second interrupted fix", "Change the README's second line.")
