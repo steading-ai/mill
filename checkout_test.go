@@ -53,8 +53,11 @@ func writeFile(root, rel, content string) {
 }
 
 // makeTarget runs one make target in the given checkout and waits for it to
-// exit. Every package compiles from the shared build cache, so a couple of
-// minutes covers a cold golangci-lint run with margin.
+// exit. `time mise exec -- make lint` on this guest measured 35s cold-cache
+// and ~5s once golangci-lint's cache was warm; the lint specs that drive this
+// helper carry Serial so they never pay the parallel suite's CPU contention
+// on top of that, and three minutes is over 3x the cold-cache figure with
+// margin to spare.
 func makeTarget(dir, target string) *gexec.Session {
 	GinkgoHelper()
 	cmd := exec.Command("make", target)
