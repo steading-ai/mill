@@ -245,6 +245,13 @@ type pipeline struct {
 	Status string `json:"status"`
 }
 
+// job is one job of a pipeline, as much of it as [Client.FailingChecks]
+// reads.
+type job struct {
+	Name   string `json:"name"`
+	WebURL string `json:"web_url"`
+}
+
 // Authenticate mints a credential for one git command and returns it as the
 // arguments and environment git reads it through.
 //
@@ -405,6 +412,46 @@ func statusOf(status string) forge.Status {
 	default:
 		return forge.Failed
 	}
+}
+
+// DefaultHead is the repository's default branch and its current head sha.
+func (c *Client) DefaultHead(ctx context.Context) (string, string, error) {
+	project, err := c.projectInfo(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	sha, err := c.BranchHead(ctx, project.DefaultBranch)
+	if err != nil {
+		return "", "", err
+	}
+	return project.DefaultBranch, sha, nil
+}
+
+// FailingChecks is the latest pipeline's failed jobs for sha, by name and
+// URL. A project with no pipeline for sha has nothing there to be red about.
+func (c *Client) FailingChecks(ctx context.Context, sha string) ([]forge.CheckResult, error) {
+	if sha == "" {
+		return nil, errors.New("gitlab: checks are read for a commit")
+	}
+	var pipelines []pipeline
+	query := url.Values{"sha": {sha}, "order_by": {"id"}, "sort": {"desc"}}
+	if err := c.call(ctx, http.MethodGet, c.path("pipelines"), query, nil, &pipelines); err != nil {
+		return nil, err
+	}
+	if len(pipelines) == 0 || statusOf(pipelines[0].Status) == forge.Success {
+		return nil, nil
+	}
+	var jobs []job
+	failedQuery := url.Values{"scope[]": {"failed"}}
+	if err := c.call(ctx, http.MethodGet,
+		c.path("pipelines", strconv.Itoa(pipelines[0].ID), "jobs"), failedQuery, nil, &jobs); err != nil {
+		return nil, err
+	}
+	failing := make([]forge.CheckResult, 0, len(jobs))
+	for _, j := range jobs {
+		failing = append(failing, forge.CheckResult{Name: j.Name, URL: j.WebURL})
+	}
+	return failing, nil
 }
 
 // Merge merges the merge request, squashing when the project's setting says

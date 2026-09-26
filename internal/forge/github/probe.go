@@ -123,11 +123,7 @@ func (c *Client) Probe(ctx context.Context) (forge.Account, error) {
 	if err := c.call(ctx, http.MethodGet, "/user", nil, nil, &who); err != nil {
 		return forge.Account{}, c.classify(err)
 	}
-	repository, err := c.repository(ctx)
-	if err != nil {
-		return forge.Account{}, c.classify(err)
-	}
-	head, err := c.BranchHead(ctx, repository.DefaultBranch)
+	_, head, err := c.DefaultHead(ctx)
 	if err != nil {
 		return forge.Account{}, c.classify(err)
 	}

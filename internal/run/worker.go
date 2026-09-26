@@ -278,7 +278,7 @@ func (w *Worker) start(ctx context.Context) error {
 // again at the interval and not at every claim.
 func (w *Worker) sweep(ctx context.Context) error {
 	w.lastSweep = time.Now()
-	report, err := w.options.Runner.Sweep(ctx, w.driving)
+	report, err := w.options.Runner.Sweep(ctx, w.driving, w.options.Projects)
 	for _, finding := range report.Findings {
 		w.printf("sweep: %s\n", finding)
 	}

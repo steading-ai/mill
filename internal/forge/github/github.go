@@ -417,8 +417,10 @@ func (c *Client) PR(ctx context.Context, branch string) (forge.PullRequest, erro
 type checkRuns struct {
 	Total int `json:"total_count"`
 	Runs  []struct {
+		Name       string `json:"name"`
 		Status     string `json:"status"`
 		Conclusion string `json:"conclusion"`
+		HTMLURL    string `json:"html_url"`
 	} `json:"check_runs"`
 }
 
@@ -426,6 +428,15 @@ type checkRuns struct {
 type combinedStatus struct {
 	State string `json:"state"`
 	Total int    `json:"total_count"`
+}
+
+// commitStatus is one of GitHub's older-style per-context statuses, read by
+// [Client.FailingChecks] for the name and URL the combined status GitHub
+// gives [Client.Checks] does not carry.
+type commitStatus struct {
+	Context   string `json:"context"`
+	State     string `json:"state"`
+	TargetURL string `json:"target_url"`
 }
 
 // Checks is what GitHub says about a commit, across both kinds of check it
@@ -494,6 +505,57 @@ func worse(a, b forge.Status) forge.Status {
 		return b
 	}
 	return a
+}
+
+// DefaultHead is the repository's default branch and its current head sha,
+// the same two calls [Probe] already makes in sequence.
+func (c *Client) DefaultHead(ctx context.Context) (string, string, error) {
+	repository, err := c.repository(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	sha, err := c.BranchHead(ctx, repository.DefaultBranch)
+	if err != nil {
+		return "", "", err
+	}
+	return repository.DefaultBranch, sha, nil
+}
+
+// FailingChecks is every check run and commit status on sha that is not
+// green, by name and URL. GitHub reports checks two ways — check runs and
+// the older, per-context commit statuses — and a commit missing entirely
+// from one of them has nothing there to be red about.
+func (c *Client) FailingChecks(ctx context.Context, sha string) ([]forge.CheckResult, error) {
+	if sha == "" {
+		return nil, errors.New("github: checks are read for a commit")
+	}
+	var runs checkRuns
+	if err := c.call(ctx, http.MethodGet, c.path("commits", sha, "check-runs"),
+		url.Values{"per_page": {"100"}}, nil, &runs); err != nil {
+		return nil, err
+	}
+	var statuses []commitStatus
+	if err := c.call(ctx, http.MethodGet, c.path("commits", sha, "statuses"),
+		url.Values{"per_page": {"100"}}, nil, &statuses); err != nil {
+		return nil, err
+	}
+	var failing []forge.CheckResult
+	for _, run := range runs.Runs {
+		if runStatus(run.Status, run.Conclusion) != forge.Success {
+			failing = append(failing, forge.CheckResult{Name: run.Name, URL: run.HTMLURL})
+		}
+	}
+	seen := map[string]bool{}
+	for _, status := range statuses {
+		if seen[status.Context] {
+			continue
+		}
+		seen[status.Context] = true
+		if statusOf(status.State) != forge.Success {
+			failing = append(failing, forge.CheckResult{Name: status.Context, URL: status.TargetURL})
+		}
+	}
+	return failing, nil
 }
 
 // Merge merges the pull request by the method the repository's settings

@@ -268,6 +268,14 @@ func (f *catchUpForge) Checks(context.Context, string) (forge.Status, error) {
 	return "", errors.New("catchUpForge: Checks is not catch-up's to call")
 }
 
+func (f *catchUpForge) DefaultHead(context.Context) (string, string, error) {
+	return "", "", errors.New("catchUpForge: DefaultHead is not catch-up's to call")
+}
+
+func (f *catchUpForge) FailingChecks(context.Context, string) ([]forge.CheckResult, error) {
+	return nil, errors.New("catchUpForge: FailingChecks is not catch-up's to call")
+}
+
 func (f *catchUpForge) Merge(context.Context, forge.PullRequest) (forge.PullRequest, error) {
 	return forge.PullRequest{}, errors.New("catchUpForge: Merge is not catch-up's to call")
 }

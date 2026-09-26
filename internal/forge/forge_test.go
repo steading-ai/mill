@@ -26,6 +26,10 @@ func (s *stubForge) PR(context.Context, string) (forge.PullRequest, error) {
 	return forge.PullRequest{}, forge.ErrNoPullRequest
 }
 func (s *stubForge) Checks(context.Context, string) (forge.Status, error) { return forge.Success, nil }
+func (s *stubForge) DefaultHead(context.Context) (string, string, error)  { return "main", "", nil }
+func (s *stubForge) FailingChecks(context.Context, string) ([]forge.CheckResult, error) {
+	return nil, nil
+}
 func (s *stubForge) Merge(context.Context, forge.PullRequest) (forge.PullRequest, error) {
 	return forge.PullRequest{}, nil
 }

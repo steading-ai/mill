@@ -48,7 +48,7 @@ var _ = Describe("The stranded-run sweep", Label(testsupport.DBLabel), func() {
 	}
 	sweep := func(options ...func(*run.Options)) machine.Report {
 		GinkgoHelper()
-		report, err := f.runner(append([]func(*run.Options){quick, aged}, options...)...).Sweep(ctx, nil)
+		report, err := f.runner(append([]func(*run.Options){quick, aged}, options...)...).Sweep(ctx, nil, nil)
 		Expect(err).NotTo(HaveOccurred())
 		return report
 	}
@@ -262,7 +262,7 @@ var _ = Describe("The stranded-run sweep", Label(testsupport.DBLabel), func() {
 		first := f.selectingRun(ctx, f.worker)
 		f.drop(ctx, f.nodeRef)
 
-		report, err := f.runner(func(o *run.Options) { o.TTL = time.Hour }).Sweep(ctx, nil)
+		report, err := f.runner(func(o *run.Options) { o.TTL = time.Hour }).Sweep(ctx, nil, nil)
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(f.inspectRun(ctx, first.GetId()).GetSummary().GetRun().GetStatus()).
@@ -278,7 +278,7 @@ var _ = Describe("The stranded-run sweep", Label(testsupport.DBLabel), func() {
 		first := f.selectingRun(ctx, f.worker)
 		f.drop(ctx, f.nodeRef)
 
-		report, err := f.runner(quick, aged).Sweep(ctx, func(nodeID string) bool { return nodeID == first.GetNodeId() })
+		report, err := f.runner(quick, aged).Sweep(ctx, func(nodeID string) bool { return nodeID == first.GetNodeId() }, nil)
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(f.inspectRun(ctx, first.GetId()).GetSummary().GetRun().GetStatus()).

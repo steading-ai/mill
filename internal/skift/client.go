@@ -110,33 +110,53 @@ func (c *Client) Scoped(project string) *Client {
 	return &scoped
 }
 
-// Node reads one node in full: the body is the prompt a step is built from,
-// so VIEW_FULL is the only view worth asking for here.
-func (c *Client) Node(ctx context.Context, ref string) (*skiftv1.Node, error) {
+// getNode is the one full-view node fetch every by-reference read below
+// shares, since each wants a different field off the same response and
+// reports a failure in its own words.
+func (c *Client) getNode(ctx context.Context, ref string) (*skiftv1.GetNodeResponse, error) {
 	res, err := c.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{
 		Project: c.project,
 		Node:    ref,
 		View:    skiftv1.View_VIEW_FULL,
 	}))
 	if err != nil {
+		return nil, err
+	}
+	return res.Msg, nil
+}
+
+// Node reads one node in full: the body is the prompt a step is built from,
+// so VIEW_FULL is the only view worth asking for here.
+func (c *Client) Node(ctx context.Context, ref string) (*skiftv1.Node, error) {
+	msg, err := c.getNode(ctx, ref)
+	if err != nil {
 		return nil, fmt.Errorf("skift: get node %s: %w", ref, err)
 	}
-	return res.Msg.GetNode(), nil
+	return msg.GetNode(), nil
+}
+
+// Comments is every comment on a node, oldest first — a node's own Body is
+// fixed at creation, so a caller telling whether it has already told a node
+// about some later state (the healing reconciler's own use, comparing a
+// finding's current body against what a node was last commented with) reads
+// this rather than [Client.Node]'s.
+func (c *Client) Comments(ctx context.Context, ref string) ([]*skiftv1.Comment, error) {
+	msg, err := c.getNode(ctx, ref)
+	if err != nil {
+		return nil, fmt.Errorf("skift: get node %s: %w", ref, err)
+	}
+	return msg.GetComments(), nil
 }
 
 // Result is what a node was completed with, or nil while it is open. It is
 // read by reference like every other node read, and it is separate from
 // [Client.Node] because the node message carries no result of its own.
 func (c *Client) Result(ctx context.Context, ref string) (*skiftv1.Result, error) {
-	res, err := c.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{
-		Project: c.project,
-		Node:    ref,
-		View:    skiftv1.View_VIEW_FULL,
-	}))
+	msg, err := c.getNode(ctx, ref)
 	if err != nil {
 		return nil, wrap("skift: get result of "+ref, err)
 	}
-	return res.Msg.GetResult(), nil
+	return msg.GetResult(), nil
 }
 
 // Inputs are the results of the predecessors that satisfy a node. They are
