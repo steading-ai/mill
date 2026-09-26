@@ -1305,6 +1305,12 @@ message Activity {
     // Retention compacted this frame to its rendered summary.
     Compacted compacted = 27;
   }
+  // A string field of this body held bytes that were not valid UTF-8 — a
+  // tool result or session text carrying raw output a marshaled proto
+  // string cannot hold — and was rewritten with the replacement character
+  // before this record was stored. The record is kept rather than dropped;
+  // this says it disagrees with the bytes a tool actually produced.
+  bool sanitized = 28;
 }
 
 // ActivityIndexRow is one sealed record's row in the `activity` table
