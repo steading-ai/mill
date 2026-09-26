@@ -53,11 +53,11 @@ func writeFile(root, rel, content string) {
 }
 
 // makeTarget runs one make target in the given checkout and waits for it to
-// exit. `time mise exec -- make lint` on this guest measured 35s cold-cache
-// and ~5s once golangci-lint's cache was warm; the lint specs that drive this
-// helper carry Serial so they never pay the parallel suite's CPU contention
-// on top of that, and three minutes is over 3x the cold-cache figure with
-// margin to spare.
+// exit. The lint specs that drive this helper carry Serial, isolating them
+// from this suite's own parallel procs, but a shared guest's other tenants
+// can still make a single `make lint` run take longer than idle or
+// moderately-loaded measurements suggest: nine minutes is a 3x margin on the
+// three-minute wait that a live-tier run on this guest still exceeded.
 func makeTarget(dir, target string) *gexec.Session {
 	GinkgoHelper()
 	cmd := exec.Command("make", target)
@@ -65,7 +65,7 @@ func makeTarget(dir, target string) *gexec.Session {
 	cmd.Env = scratchEnv()
 	session, err := gexec.Start(cmd, GinkgoWriter, GinkgoWriter)
 	Expect(err).NotTo(HaveOccurred())
-	return session.Wait(3 * time.Minute)
+	return session.Wait(9 * time.Minute)
 }
 
 // scratchEnv is the environment for a subprocess that operates on a scratch
