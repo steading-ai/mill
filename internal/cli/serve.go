@@ -206,6 +206,7 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 			Drain:             worker.Drain,
 			State:             worker.State,
 			InFlight:          worker.InFlight,
+			Outage:            worker.Outage,
 			Store:             svc,
 		})
 	}

@@ -15,6 +15,7 @@ import (
 
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/gateway"
 	"github.com/steading-ai/mill/internal/skift"
 )
 
@@ -59,6 +60,9 @@ const (
 	// different, unrelated node's readiness is never starved behind one
 	// node's backoff (mill#39).
 	backoffSlice = time.Second
+	// upstreamProbeInterval is how long the worker waits between probes
+	// while an outage names no reset to wait for instead (mill#63).
+	upstreamProbeInterval = 30 * time.Second
 )
 
 // ErrKilled ends the worker when it was stopped a second time inside the
@@ -148,6 +152,12 @@ type Worker struct {
 	// regardless, so an entry surviving here past that point is only ever
 	// consulted if the Hold write itself failed.
 	backoff map[string]*nodeBackoff
+	// outageMu guards outage.
+	outageMu sync.Mutex
+	// outage is the upstream refusal this worker is currently waiting out,
+	// recorded so State and Outage report the same fact [waitOutUpstream]
+	// is looping on, not a value only its own stack frame holds (mill#63).
+	outage *gateway.UpstreamRefusal
 }
 
 // RunningNode is what Probe reports of one node this worker is driving.
@@ -352,6 +362,21 @@ func (w *Worker) claim(ctx context.Context, wg *sync.WaitGroup) error {
 			return nil
 		}
 
+		// A process-wide outage the gateway itself observed (mill#63): no
+		// ready node is claimed while every request to the upstream would
+		// only be refused. w.waitOutUpstream loops until it clears, a drain
+		// starts, or the worker is killed, so the loop below either goes
+		// straight back to the top with the outage gone, or returns having
+		// been told to stop.
+		if gw := w.options.Runner.options.Gateway; gw != nil {
+			if outage := gw.Outage(); outage != nil {
+				if w.waitOutUpstream(ctx, gw, outage) {
+					return nil
+				}
+				continue
+			}
+		}
+
 		// The sweep rides the loop's own cadence rather than a timer of
 		// its own: a busy worker passes here between runs, an idle one
 		// every Wait, and either sweeps once the interval has elapsed. It
@@ -514,6 +539,51 @@ func (w *Worker) sleepBackoff(ctx context.Context, d time.Duration) {
 	}
 }
 
+// waitOutUpstream is the worker-wide breaker (mill#63): claiming stops the
+// moment gw reports a process-wide outage, and does not resume until a probe
+// shows the upstream answering again. It records the outage it is waiting
+// out so State and Outage report the same fact this loop is acting on, and
+// reports true when the wait ended in a drain or a kill rather than the
+// outage clearing — the caller's cue to stop the claim loop outright instead
+// of going back to claiming.
+//
+// The loop's exit condition is gw.Outage() == nil, not Probe returning no
+// error: Probe can succeed at the transport level while the response it got
+// was itself a refusal, and Outage is the one fact [clearUpstream] maintains
+// across every path a 200 can arrive by, the probe's own included.
+func (w *Worker) waitOutUpstream(ctx context.Context, gw Gateway, outage *gateway.UpstreamRefusal) bool {
+	w.setOutage(outage)
+	defer w.setOutage(nil)
+	for {
+		wait := upstreamProbeInterval
+		if reset := outage.Reset; !reset.IsZero() {
+			if until := time.Until(reset.Add(UpstreamResetMargin)); until > wait {
+				wait = until
+			}
+		}
+		w.sleepBackoff(ctx, wait)
+		if ctx.Err() != nil || w.isDraining() {
+			return true
+		}
+		if err := gw.Probe(ctx); err != nil {
+			w.options.Log.Warn("probing the upstream while waiting out an outage", "error", err)
+		}
+		outage = gw.Outage()
+		if outage == nil {
+			return false
+		}
+		w.setOutage(outage)
+	}
+}
+
+// setOutage records the outage waitOutUpstream is currently waiting out, or
+// clears it, for State and Outage to read.
+func (w *Worker) setOutage(outage *gateway.UpstreamRefusal) {
+	w.outageMu.Lock()
+	w.outage = outage
+	w.outageMu.Unlock()
+}
+
 // drive runs one claimed node and decides what its ending means to the loop.
 //
 // Nothing a single run does stops the worker. A failed run has already
@@ -564,10 +634,14 @@ func (w *Worker) isDraining() bool {
 }
 
 // State reports what Probe tells a remote caller of this worker: draining
-// once asked to stop, idle once draining with nothing left in flight, and
-// claiming otherwise.
+// once asked to stop, idle once draining with nothing left in flight,
+// waiting on upstream once claiming has stopped for an outage the gateway
+// itself observed (mill#63), and claiming otherwise.
 func (w *Worker) State() millv1.WorkerState {
 	if !w.isDraining() {
+		if w.Outage() != nil {
+			return millv1.WorkerState_WORKER_STATE_WAITING_ON_UPSTREAM
+		}
 		return millv1.WorkerState_WORKER_STATE_CLAIMING
 	}
 	empty := true
@@ -579,6 +653,15 @@ func (w *Worker) State() millv1.WorkerState {
 		return millv1.WorkerState_WORKER_STATE_IDLE
 	}
 	return millv1.WorkerState_WORKER_STATE_DRAINING
+}
+
+// Outage is the upstream refusal this worker is currently waiting out, or
+// nil while it is claiming normally — the fact Probe reports as
+// [millv1.UpstreamOutage] once State is WAITING_ON_UPSTREAM.
+func (w *Worker) Outage() *gateway.UpstreamRefusal {
+	w.outageMu.Lock()
+	defer w.outageMu.Unlock()
+	return w.outage
 }
 
 // InFlight lists every node this worker is currently driving, for Probe.

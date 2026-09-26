@@ -2,7 +2,14 @@ package run_test
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -11,10 +18,12 @@ import (
 
 	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/gateway"
 	"github.com/steading-ai/mill/internal/harness"
 	"github.com/steading-ai/mill/internal/harness/fake"
 	"github.com/steading-ai/mill/internal/run"
 	"github.com/steading-ai/mill/internal/testsupport"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // UpstreamWait, UpstreamStreak and UpstreamGiveUp are mill#57's whole policy
@@ -62,9 +71,10 @@ var _ = Describe("UpstreamStreak", Label("unit"), func() {
 			refusedAttempt("gather-context", 1, base),
 			closedAttempt("gather-context", 2, base.Add(time.Minute)),
 		)
-		count, since := run.UpstreamStreak(detail, "gather-context")
+		count, since, reset := run.UpstreamStreak(detail, "gather-context")
 		Expect(count).To(BeZero())
 		Expect(since.IsZero()).To(BeTrue())
+		Expect(reset.IsZero()).To(BeTrue())
 	})
 
 	It("counts the trailing run of refusals and when the first of them ended", func() {
@@ -73,7 +83,7 @@ var _ = Describe("UpstreamStreak", Label("unit"), func() {
 			refusedAttempt("gather-context", 2, base.Add(5*time.Minute)),
 			refusedAttempt("gather-context", 3, base.Add(7*time.Minute)),
 		)
-		count, since := run.UpstreamStreak(detail, "gather-context")
+		count, since, _ := run.UpstreamStreak(detail, "gather-context")
 		Expect(count).To(Equal(int64(2)))
 		Expect(since).To(BeTemporally("==", base.Add(5*time.Minute)))
 	})
@@ -83,9 +93,29 @@ var _ = Describe("UpstreamStreak", Label("unit"), func() {
 			refusedAttempt("gather-context", 1, base),
 			refusedAttempt("implement", 1, base),
 		)
-		count, since := run.UpstreamStreak(detail, "implement")
+		count, since, _ := run.UpstreamStreak(detail, "implement")
 		Expect(count).To(Equal(int64(1)))
 		Expect(since).To(BeTemporally("==", base))
+	})
+
+	It("takes the reset from the freshest attempt that named one", func() {
+		older := refusedAttempt("gather-context", 1, base)
+		older.Exit.ResetAt = timestamppb.New(base.Add(time.Hour))
+		newer := refusedAttempt("gather-context", 2, base.Add(time.Minute))
+		newer.Exit.ResetAt = timestamppb.New(base.Add(2 * time.Hour))
+		detail := inspectWith(older, newer)
+		count, _, reset := run.UpstreamStreak(detail, "gather-context")
+		Expect(count).To(Equal(int64(2)))
+		Expect(reset).To(BeTemporally("==", base.Add(2*time.Hour)))
+	})
+
+	It("falls back to an older attempt's reset when the freshest named none", func() {
+		older := refusedAttempt("gather-context", 1, base)
+		older.Exit.ResetAt = timestamppb.New(base.Add(time.Hour))
+		newer := refusedAttempt("gather-context", 2, base.Add(time.Minute))
+		detail := inspectWith(older, newer)
+		_, _, reset := run.UpstreamStreak(detail, "gather-context")
+		Expect(reset).To(BeTemporally("==", base.Add(time.Hour)))
 	})
 })
 
@@ -214,4 +244,94 @@ var _ = Describe("A step the upstream refuses", Label(testsupport.DBLabel), func
 		Expect(comments[0]).To(ContainSubstring("outlasted the wait"))
 		Expect(comments[0]).NotTo(ContainSubstring("Round 2"))
 	})
+
+	// mill#63: a reset the gateway itself observed is waited for, not
+	// escalated past — even past what mill#57's own doubling would already
+	// have moved on from, and never given up on merely because it is a long
+	// wait. The fake harness reports this attempt as an ordinary failure,
+	// with no upstream reason of its own, so the only way it reaches
+	// UPSTREAM_REFUSED and skips the step's retries is the gateway's own
+	// observation of the 429 reaching the ledger by way of
+	// Runner.gatewayUpstreamRefusal (internal/run/walk.go).
+	It("waits for a reset the upstream itself named instead of escalating", func() {
+		By("given gather-context's one request is refused with a reset two minutes out")
+		var refusals atomic.Int32
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if refusals.Add(1) == 1 {
+				w.Header().Set("Retry-After", "120")
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprintf(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":%q,\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n", turnModel)
+			_, _ = io.WriteString(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+		}))
+		DeferCleanup(upstream.Close)
+		server := newTestGateway(upstream.URL, "sk-ant-oat01-upstream-reset-subscription")
+		DeferCleanup(server.Close)
+
+		request := func(session harness.Session) {
+			req, err := http.NewRequest(http.MethodPost, session.Workspace.Env["ANTHROPIC_BASE_URL"]+"/v1/messages",
+				strings.NewReader(`{"model":"claude-sonnet-4-5","stream":true,"messages":[{"role":"user","content":"ok"}]}`))
+			Expect(err).NotTo(HaveOccurred())
+			req.Header.Set("Authorization", "Bearer "+session.Workspace.Env["ANTHROPIC_AUTH_TOKEN"])
+			resp, err := http.DefaultClient.Do(req)
+			Expect(err).NotTo(HaveOccurred())
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+		}
+		workflow := f.variant(ctx, "upstream-reset", func(definition *millv1.Workflow) {
+			stepOf(definition, "gather-context").Retries = 0
+		})
+		f.script(append([]fake.Script{
+			{Terminal: &harness.Terminal{FinalMessage: "refused", Exit: harness.ProcessExit{Status: 1}, Usage: usage(1)}, Do: request},
+		}, f.quickFixScripts()...)...)
+
+		By("when the run is executed")
+		var mu sync.Mutex
+		var waits []time.Duration
+		Expect(f.runner(func(o *run.Options) {
+			o.Workflow = workflow
+			o.Gateway = server.Gateway()
+			o.Egress = workspace.Egress{Gateway: server.URL()}
+			o.Sleep = func(_ context.Context, d time.Duration) {
+				mu.Lock()
+				defer mu.Unlock()
+				waits = append(waits, d)
+			}
+		}).Execute(ctx, f.nodeRef)).To(Succeed())
+
+		By("then it waited once for the reset, not the escalating sequence")
+		mu.Lock()
+		Expect(waits).To(HaveLen(1))
+		Expect(waits[0]).To(BeNumerically("~", 120*time.Second+run.UpstreamResetMargin, 5*time.Second))
+		mu.Unlock()
+
+		By("and the gateway's own observation reclassified the attempt, with the reset recorded on it")
+		detail := f.inspect(ctx)
+		attempts := stepRuns(detail, "gather-context")
+		Expect(attempts).To(HaveLen(2))
+		Expect(attempts[0].GetExit().GetReason()).To(Equal(harnessv1.ExitReason_EXIT_REASON_UPSTREAM_REFUSED))
+		Expect(attempts[0].GetExit().GetResetAt()).NotTo(BeNil())
+
+		By("and it retried and closed rather than parking on a step configured with no retries of its own")
+		Expect(attempts[1].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED))
+		Expect(f.runOf(ctx).GetStatus()).NotTo(Equal(millv1.RunStatus_RUN_STATUS_PARKED))
+	})
 })
+
+// newTestGateway starts a real gateway in front of upstream, the setup a
+// gateway-observed reset (this file) and the worker-wide breaker
+// (worker_test.go) each need a real *gateway.Gateway for, not a fake with a
+// scripted Outage().
+func newTestGateway(upstream, credential string) *gateway.Server {
+	gw, err := gateway.New(gateway.Config{
+		Upstream:   upstream,
+		Credential: gateway.CredentialOf(credential),
+		Log:        slog.New(slog.NewTextHandler(GinkgoWriter, nil)),
+	})
+	Expect(err).NotTo(HaveOccurred())
+	server, err := gateway.Listen("127.0.0.1:0", gw)
+	Expect(err).NotTo(HaveOccurred())
+	return server
+}

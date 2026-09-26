@@ -8,6 +8,7 @@ syntax = "proto3";
 package mill.v1;
 
 import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/steading-ai/mill/gen/mill/v1;millv1";
 
@@ -60,6 +61,9 @@ message ProbeResponse {
   // The runs this worker is driving right now. Non-empty only while state is
   // draining or claiming; empty once idle.
   repeated InFlightRun in_flight = 5;
+  // The upstream outage the worker is waiting out, present only while state
+  // is WORKER_STATE_WAITING_ON_UPSTREAM.
+  UpstreamOutage upstream_outage = 6;
 }
 
 // WorkerState is a worker's own claim/drain state, as `mill status` and
@@ -76,6 +80,19 @@ enum WorkerState {
   // WORKER_STATE_IDLE means a drain has finished: no runs in flight, and
   // none will be claimed.
   WORKER_STATE_IDLE = 3;
+  // WORKER_STATE_WAITING_ON_UPSTREAM means the worker has observed the
+  // model's upstream refusing every request and has stopped claiming until
+  // a probe shows it answering again.
+  WORKER_STATE_WAITING_ON_UPSTREAM = 4;
+}
+
+// UpstreamOutage is the upstream refusal a worker is waiting out.
+message UpstreamOutage {
+  // When the worker first observed the refusal.
+  google.protobuf.Timestamp since = 1;
+  // When the upstream itself said it would answer again, or unset when it
+  // named none.
+  google.protobuf.Timestamp reset_at = 2;
 }
 
 // InFlightRun is one run a worker is driving right now, as Probe reports it.
