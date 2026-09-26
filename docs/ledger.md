@@ -342,8 +342,20 @@ for run in store.Status(live):                     # selecting, running, waiting
     if failed and run.workflow_id != nil:          # a selecting run pushed nothing; a run that delivered has a merged PR to leave alone
         forge.ClosePR(comment); forge.DeleteBranch()
     finding{stranded, run, failed|done, node status and the ledger's step}
+for slug in projects:                               # the worker's own project filter; none configured heals nothing
+    sha, checks := forge.DefaultHead(slug); forge.Checks(sha)   # never skift — a probe result, not a write
+    error?             -> warn; continue
+    if checks failed: red[slug] = finding{key: repo+ref, title, body}   # keyed on the repository and its ref, not the sha
+converge skift's open healing nodes against red:
+    no node for a red finding    -> file bug{P1, agent, key label}; finding{heal-filed}
+    node's body stale            -> comment the new body; finding{heal-commented}
+    node for a finding gone green:
+        unclaimed  -> drop it; finding{heal-dropped}
+        claimed    -> comment it green (never labelled: an update_node would need the lease this pass never holds); finding{heal-commented}
 store.RecordReconciliation(findings)
 ```
+
+A finding is anything the probe or the reconciler actually did — filed, commented, or dropped — never a red branch a node already says is red, or a green one already dropped: an unchanged pass converges to nothing and records none of the three healing kinds.
 
 Two things make this safe to write under no lease. Skift refuses `drop_node` and a user's `complete_node` on a node with a live lease, so a run whose node is closed is provably unleased there: nothing is driving it. And the store's terminal write with no lease presented takes the row lock alone and nulls `lease_id` as it ends the run (Invariant 9's leaseless door, the one Abandon uses), so a worker that still believed it held the run is fenced on its next write. No skift write is made: a closed node is outside every ready set, nothing is held, and the ledger row with its `failed` event and the `reconciliations` row are the record. `mill run` on a closed node resolves its run the same way, through the same code, so the two cannot disagree; `mill restart` refuses a node that is not open, because a restart of one would open a run nothing can claim.
 

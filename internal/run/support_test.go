@@ -189,6 +189,24 @@ func start(ctx context.Context) *fixture {
 	return f
 }
 
+// secondProjectSlug names the project secondProject creates: a second skift
+// project beside the fixture's own, for a spec proving a cross-project write
+// (the healing reconciler's `Scoped` routing) lands in the right one.
+const secondProjectSlug = "millspec-second"
+
+// secondProject creates a second project beside the fixture's own and
+// returns its slug.
+func (f *fixture) secondProject(ctx context.Context) string {
+	GinkgoHelper()
+	_, err := f.graph.CreateProject(ctx, connect.NewRequest(&skiftv1.CreateProjectRequest{
+		RequestId: "mill-spec-second-project",
+		Title:     "mill specs (second)",
+		Slug:      secondProjectSlug,
+	}))
+	Expect(err).NotTo(HaveOccurred())
+	return secondProjectSlug
+}
+
 // pushWorkflow stores the quick-fix definition and its skills.
 func (f *fixture) pushWorkflow(ctx context.Context) {
 	GinkgoHelper()
@@ -460,6 +478,13 @@ type fixtureForge struct {
 	checks      int
 	comments    []string
 	deleted     []string
+	// defaultBranch and defaultSHA are what DefaultHead reports; a spec that
+	// never sets them gets "main" at a fixed sha, which is enough for
+	// anything that does not care.
+	defaultBranch string
+	defaultSHA    string
+	// failingChecks is what FailingChecks reports for defaultSHA.
+	failingChecks []forge.CheckResult
 }
 
 // mergeCalls is how many times the forge was asked to merge the pull
@@ -520,6 +545,26 @@ func (f *fixtureForge) Checks(context.Context, string) (forge.Status, error) {
 		return forge.Success, nil
 	}
 	return f.checksAt, nil
+}
+
+func (f *fixtureForge) DefaultHead(context.Context) (string, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	branch := f.defaultBranch
+	if branch == "" {
+		branch = "main"
+	}
+	sha := f.defaultSHA
+	if sha == "" {
+		sha = strings.Repeat("a", 40)
+	}
+	return branch, sha, nil
+}
+
+func (f *fixtureForge) FailingChecks(context.Context, string) ([]forge.CheckResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.failingChecks, nil
 }
 
 func (f *fixtureForge) Merge(_ context.Context, pr forge.PullRequest) (forge.PullRequest, error) {

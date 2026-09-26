@@ -166,6 +166,17 @@ type OpenPRRequest struct {
 	Description string
 }
 
+// CheckResult is one check that is not green on a commit: a check run, a
+// commit status, or a pipeline job, whichever the forge calls it. Name and
+// URL are the forge's own, so a finding built from them can say which check
+// failed and where to look without the mill inventing either.
+type CheckResult struct {
+	// Name is the check's own name.
+	Name string
+	// URL is where the forge shows it, empty when the forge names none.
+	URL string
+}
+
 // PullRequest is the forge's pull request — GitLab's merge request — as the
 // mill records it. URL is the `url` evidence a PR step closes on.
 type PullRequest struct {
@@ -316,6 +327,15 @@ type Forge interface {
 	PR(ctx context.Context, branch string) (PullRequest, error)
 	// Checks is what the forge's checks say about a commit.
 	Checks(ctx context.Context, sha string) (Status, error)
+	// DefaultHead is the repository's default branch and its current head
+	// sha. An empty sha is a branch with no commits, not an error — the
+	// same "not yet is not an error" contract [Forge.PR] and a branch read
+	// hold to elsewhere in this package.
+	DefaultHead(ctx context.Context) (ref, sha string, err error)
+	// FailingChecks is every check on sha that is not green, one entry per
+	// check, named and linked where the forge gives a URL. Empty means
+	// everything is green or there is nothing to check.
+	FailingChecks(ctx context.Context, sha string) ([]CheckResult, error)
 	// Merge merges a pull request, squashing when the project's settings
 	// say so. The merge names pr's head, so what merges is the commit the
 	// caller read: a head that moved since yields a *[HeadMovedError], and

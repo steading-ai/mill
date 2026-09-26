@@ -2,6 +2,8 @@ package skift
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 
 	"connectrpc.com/connect"
@@ -265,6 +267,113 @@ func (c *Client) Gates(ctx context.Context, parent string, labels ...string) ([]
 	}))
 	if err != nil {
 		return nil, wrap("skift: list the gates on "+parent, err)
+	}
+	return res.Msg.GetNodes(), nil
+}
+
+// HealingLabel marks every node this package files for a healing reconciler
+// (docs/architecture.md §"Failure and stop"). It is the shared marker
+// [Client.Findings] lists project-wide by, independent of any one finding's
+// own key — the analogue of [GateLabel] for a node an agent may claim rather
+// than a person.
+const HealingLabel = "mill-heal"
+
+// KeyLabelPrefix begins every label [KeyLabel] produces, so a caller can
+// recognize one among a node's labels without recomputing every possible
+// key's hash.
+const KeyLabelPrefix = "mill-heal-key-"
+
+// KeyLabel is the deterministic label a filed node carries for one finding's
+// key: short, and derived from the key alone, so a reconciler that filed a
+// node on an earlier pass can recompute the same label from a finding it
+// reads again and match the two without storing anything outside skift.
+func KeyLabel(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return KeyLabelPrefix + hex.EncodeToString(sum[:])[:12]
+}
+
+// Finding is a non-gate node a healing reconciler files: a bug an agent may
+// claim, not a decision only a person may make.
+type Finding struct {
+	// Title is the node's title.
+	Title string
+	// Body is the node's body.
+	Body string
+	// Labels are carried onto the node beside HealingLabel.
+	Labels []string
+}
+
+// findingAlias names the created finding for the node lookup that follows in
+// the same patch.
+const findingAlias = "finding"
+
+// FileFinding files a finding as its own node: no parent, no blocking edge —
+// kind bug, assignee kind agent, priority P1, so an agent may claim it
+// unprompted, unlike a gate that only a person may close.
+func (c *Client) FileFinding(ctx context.Context, requestID string, finding Finding) (*skiftv1.Node, error) {
+	res, err := c.ApplyPatch(ctx, requestID, "",
+		&skiftv1.PatchOp{Op: &skiftv1.PatchOp_CreateNode{CreateNode: &skiftv1.CreateNodeOp{
+			Alias:        findingAlias,
+			Kind:         "bug",
+			Title:        finding.Title,
+			Body:         finding.Body,
+			AssigneeKind: skiftv1.AssigneeKind_ASSIGNEE_KIND_AGENT,
+			Priority:     skiftv1.Priority_PRIORITY_P1,
+			Labels:       append([]string{HealingLabel}, finding.Labels...),
+		}}},
+	)
+	if err != nil {
+		return nil, err
+	}
+	ref, ok := res.GetAliases()[findingAlias]
+	if !ok {
+		return nil, fmt.Errorf("skift: the patch that filed the finding returned no %q alias", findingAlias)
+	}
+	return c.Node(ctx, ref)
+}
+
+// DropFinding drops a finding node whose condition no longer holds: the
+// branch it named went green with nobody having claimed it.
+func (c *Client) DropFinding(ctx context.Context, requestID, ref, detail string) error {
+	_, err := c.ApplyPatch(ctx, requestID, "", &skiftv1.PatchOp{
+		Op: &skiftv1.PatchOp_DropNode{DropNode: &skiftv1.DropNodeOp{
+			Node:   ref,
+			Reason: skiftv1.DropReason_DROP_REASON_NO_LONGER_RELEVANT,
+			Detail: detail,
+		}},
+	})
+	return err
+}
+
+// CommentFinding adds a comment to a finding node: a new head sha, or word
+// that the branch it named is green again. It never touches the node's
+// labels — skift fences an update_node against whatever lease holds the
+// node, and a reconciler is never the holder of a claim someone else took on
+// it, so add_comment, exempt from that fence, is the only write it can make
+// on a claimed node.
+func (c *Client) CommentFinding(ctx context.Context, requestID, ref, body string) error {
+	_, err := c.ApplyPatch(ctx, requestID, "", &skiftv1.PatchOp{
+		Op: &skiftv1.PatchOp_AddComment{AddComment: &skiftv1.AddCommentOp{Node: ref, Body: body}},
+	})
+	return err
+}
+
+// Findings is every open node in the client's own project carrying
+// HealingLabel: every finding a healing reconciler has ever filed there and
+// not yet dropped or completed, whichever key it was filed under. A caller
+// matches a returned node back to a finding's key by scanning its labels for
+// the prefix [KeyLabel] produces.
+func (c *Client) Findings(ctx context.Context) ([]*skiftv1.Node, error) {
+	res, err := c.graph.ListNodes(ctx, connect.NewRequest(&skiftv1.ListNodesRequest{
+		Filter: &skiftv1.NodeFilter{
+			Projects: []string{c.project},
+			Labels:   []string{HealingLabel},
+			Status:   skiftv1.Status_STATUS_OPEN,
+		},
+		View: skiftv1.View_VIEW_FULL,
+	}))
+	if err != nil {
+		return nil, wrap("skift: list findings in "+c.project, err)
 	}
 	return res.Msg.GetNodes(), nil
 }
