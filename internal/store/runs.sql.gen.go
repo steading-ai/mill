@@ -583,6 +583,47 @@ func (q *Queries) ParkRun(ctx context.Context, arg ParkRunParams) (Run, error) {
 	return i, err
 }
 
+const releaseRunLease = `-- name: ReleaseRunLease :one
+UPDATE runs
+SET lease_id = NULL
+WHERE id = $1 AND lease_id = $2 AND status = 'running'
+RETURNING id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at, complete_request_id
+`
+
+type ReleaseRunLeaseParams struct {
+	ID      string
+	LeaseID *string
+}
+
+// A graceful drain's release: the run stays running, holding no lease, so
+// this worker's own reclaim or another worker's ClaimNext can pick it up at
+// its next step boundary (docs/ledger.md §Resume).
+func (q *Queries) ReleaseRunLease(ctx context.Context, arg ReleaseRunLeaseParams) (Run, error) {
+	row := q.db.QueryRow(ctx, releaseRunLease, arg.ID, arg.LeaseID)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.NodeID,
+		&i.NodeRef,
+		&i.Generation,
+		&i.ContextID,
+		&i.WorkflowID,
+		&i.Status,
+		&i.LeaseID,
+		&i.WorkerRef,
+		&i.GateNodeID,
+		&i.ParkedReason,
+		&i.CancelRequested,
+		&i.Branch,
+		&i.Tier,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.EndedAt,
+		&i.CompleteRequestID,
+	)
+	return i, err
+}
+
 const reopenRun = `-- name: ReopenRun :one
 UPDATE runs
 SET status = 'running', ended_at = NULL, lease_id = NULL, worker_ref = '',

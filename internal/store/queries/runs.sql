@@ -62,6 +62,15 @@ SET status = 'waiting', gate_node_id = $2, lease_id = NULL
 WHERE id = $1
 RETURNING *;
 
+-- A graceful drain's release: the run stays running, holding no lease, so
+-- this worker's own reclaim or another worker's ClaimNext can pick it up at
+-- its next step boundary (docs/ledger.md §Resume).
+-- name: ReleaseRunLease :one
+UPDATE runs
+SET lease_id = NULL
+WHERE id = $1 AND lease_id = $2 AND status = 'running'
+RETURNING *;
+
 -- name: ParkRun :one
 UPDATE runs
 SET status = 'parked', gate_node_id = $2, parked_reason = $3, lease_id = NULL

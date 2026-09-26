@@ -39,6 +39,7 @@ var _ = Describe("What a procedure needs", Label("unit"), func() {
 		Entry("Abandon", millv1connect.StoreServiceAbandonProcedure),
 		Entry("PutWorkflow", millv1connect.StoreServicePutWorkflowProcedure),
 		Entry("PutSkill", millv1connect.StoreServicePutSkillProcedure),
+		Entry("WorkerService.Drain", millv1connect.WorkerServiceDrainProcedure),
 	)
 
 	DescribeTable("the calls that write a run's record need write",
@@ -51,6 +52,7 @@ var _ = Describe("What a procedure needs", Label("unit"), func() {
 		Entry("CloseStepRun", millv1connect.StoreServiceCloseStepRunProcedure),
 		Entry("FailStepRun", millv1connect.StoreServiceFailStepRunProcedure),
 		Entry("AbortOpenStepRuns", millv1connect.StoreServiceAbortOpenStepRunsProcedure),
+		Entry("ReleaseLease", millv1connect.StoreServiceReleaseLeaseProcedure),
 		Entry("SupersedeSteps", millv1connect.StoreServiceSupersedeStepsProcedure),
 		Entry("MarkWaiting", millv1connect.StoreServiceMarkWaitingProcedure),
 		Entry("Park", millv1connect.StoreServiceParkProcedure),

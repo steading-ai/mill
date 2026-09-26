@@ -340,6 +340,37 @@ func (s *Store) MarkWaiting(ctx context.Context, leaseID, runID, gateNodeID, ste
 	return run, nil
 }
 
+// ReleaseLease gives back the run's lease without ending it: the run stays
+// running, holding no lease, resumable by this worker's own reclaim or by
+// whichever worker's ClaimNext reaches it next (docs/ledger.md §Resume). A
+// graceful drain calls this at a step boundary, where AbortOpenStepRuns
+// would have nothing open to abort.
+func (s *Store) ReleaseLease(ctx context.Context, leaseID, runID string) (*millv1.Run, error) {
+	var run *millv1.Run
+	err := s.withTx(ctx, func(ctx context.Context, tx pgx.Tx, q *Queries) error {
+		state, err := fence(ctx, tx, runID, leaseID)
+		if err != nil {
+			return err
+		}
+		row, err := q.ReleaseRunLease(ctx, ReleaseRunLeaseParams{ID: runID, LeaseID: nullable(leaseID)})
+		if err != nil {
+			return fmt.Errorf("release lease on run %s: %w", runID, err)
+		}
+		run = runProto(row)
+		return record(ctx, q, event{
+			runID:     runID,
+			op:        "release_lease",
+			before:    map[string]any{"status": state.status, "lease_id": text(state.lease)},
+			after:     map[string]any{"status": row.Status, "lease_id": ""},
+			workerRef: row.WorkerRef,
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return run, nil
+}
+
 // Park trips the circuit breaker: the run stops, a gate asks a human what
 // to do, and the reason says what stopped it.
 func (s *Store) Park(ctx context.Context, leaseID, runID, gateNodeID string, reason millv1.ParkedReason) (*millv1.Run, error) {

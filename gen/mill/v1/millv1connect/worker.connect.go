@@ -42,6 +42,8 @@ const (
 	WorkerServiceProbeProcedure = "/mill.v1.WorkerService/Probe"
 	// WorkerServiceClaimsProcedure is the fully-qualified name of the WorkerService's Claims RPC.
 	WorkerServiceClaimsProcedure = "/mill.v1.WorkerService/Claims"
+	// WorkerServiceDrainProcedure is the fully-qualified name of the WorkerService's Drain RPC.
+	WorkerServiceDrainProcedure = "/mill.v1.WorkerService/Drain"
 )
 
 // WorkerServiceClient is a client for the mill.v1.WorkerService service.
@@ -53,6 +55,11 @@ type WorkerServiceClient interface {
 	// from its own already-resolved configuration: no probe, no side effect,
 	// safe to call on every `status`, `doctor` or `run` invocation.
 	Claims(context.Context, *connect.Request[v1.ClaimsRequest]) (*connect.Response[v1.ClaimsResponse], error)
+	// Drain asks the worker to stop claiming and let every run in flight
+	// release at its next step boundary, the same request a SIGTERM makes
+	// locally. It returns at once; the caller polls Probe's state to learn
+	// when the worker has actually gone idle.
+	Drain(context.Context, *connect.Request[v1.DrainRequest]) (*connect.Response[v1.DrainResponse], error)
 }
 
 // NewWorkerServiceClient constructs a client for the mill.v1.WorkerService service. By default, it
@@ -78,6 +85,12 @@ func NewWorkerServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(workerServiceMethods.ByName("Claims")),
 			connect.WithClientOptions(opts...),
 		),
+		drain: connect.NewClient[v1.DrainRequest, v1.DrainResponse](
+			httpClient,
+			baseURL+WorkerServiceDrainProcedure,
+			connect.WithSchema(workerServiceMethods.ByName("Drain")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -85,6 +98,7 @@ func NewWorkerServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 type workerServiceClient struct {
 	probe  *connect.Client[v1.ProbeRequest, v1.ProbeResponse]
 	claims *connect.Client[v1.ClaimsRequest, v1.ClaimsResponse]
+	drain  *connect.Client[v1.DrainRequest, v1.DrainResponse]
 }
 
 // Probe calls mill.v1.WorkerService.Probe.
@@ -97,6 +111,11 @@ func (c *workerServiceClient) Claims(ctx context.Context, req *connect.Request[v
 	return c.claims.CallUnary(ctx, req)
 }
 
+// Drain calls mill.v1.WorkerService.Drain.
+func (c *workerServiceClient) Drain(ctx context.Context, req *connect.Request[v1.DrainRequest]) (*connect.Response[v1.DrainResponse], error) {
+	return c.drain.CallUnary(ctx, req)
+}
+
 // WorkerServiceHandler is an implementation of the mill.v1.WorkerService service.
 type WorkerServiceHandler interface {
 	// Probe answers the sidecar, signing, and forge probes from the worker's
@@ -106,6 +125,11 @@ type WorkerServiceHandler interface {
 	// from its own already-resolved configuration: no probe, no side effect,
 	// safe to call on every `status`, `doctor` or `run` invocation.
 	Claims(context.Context, *connect.Request[v1.ClaimsRequest]) (*connect.Response[v1.ClaimsResponse], error)
+	// Drain asks the worker to stop claiming and let every run in flight
+	// release at its next step boundary, the same request a SIGTERM makes
+	// locally. It returns at once; the caller polls Probe's state to learn
+	// when the worker has actually gone idle.
+	Drain(context.Context, *connect.Request[v1.DrainRequest]) (*connect.Response[v1.DrainResponse], error)
 }
 
 // NewWorkerServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -127,12 +151,20 @@ func NewWorkerServiceHandler(svc WorkerServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(workerServiceMethods.ByName("Claims")),
 		connect.WithHandlerOptions(opts...),
 	)
+	workerServiceDrainHandler := connect.NewUnaryHandler(
+		WorkerServiceDrainProcedure,
+		svc.Drain,
+		connect.WithSchema(workerServiceMethods.ByName("Drain")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/mill.v1.WorkerService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case WorkerServiceProbeProcedure:
 			workerServiceProbeHandler.ServeHTTP(w, r)
 		case WorkerServiceClaimsProcedure:
 			workerServiceClaimsHandler.ServeHTTP(w, r)
+		case WorkerServiceDrainProcedure:
+			workerServiceDrainHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -148,4 +180,8 @@ func (UnimplementedWorkerServiceHandler) Probe(context.Context, *connect.Request
 
 func (UnimplementedWorkerServiceHandler) Claims(context.Context, *connect.Request[v1.ClaimsRequest]) (*connect.Response[v1.ClaimsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.WorkerService.Claims is not implemented"))
+}
+
+func (UnimplementedWorkerServiceHandler) Drain(context.Context, *connect.Request[v1.DrainRequest]) (*connect.Response[v1.DrainResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.WorkerService.Drain is not implemented"))
 }

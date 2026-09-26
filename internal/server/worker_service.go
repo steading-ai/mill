@@ -2,14 +2,26 @@ package server
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/types/known/durationpb"
 
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
 	"github.com/steading-ai/mill/internal/doctor"
+	"github.com/steading-ai/mill/internal/domain"
 	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/run"
 )
+
+// WorkerStore is what Probe needs to resolve one in-flight node to its
+// current step: domain.Service's own Inspect, so this costs one in-process
+// call per node rather than a round trip through Connect.
+type WorkerStore interface {
+	Inspect(ctx context.Context, p domain.InspectParams) (*domain.RunDetail, error)
+}
 
 // WorkerServiceConfig is the worker's own settings, resolved once by
 // internal/cli/serve.go from --work's flags and configuration file — the
@@ -38,6 +50,22 @@ type WorkerServiceConfig struct {
 	Host     string
 	Projects []string
 	Labels   []string
+	// Drain asks the local worker to stop claiming and drain every run in
+	// flight to its next boundary.
+	Drain func()
+	// State and InFlight report the local worker's own state for Probe.
+	State    func() millv1.WorkerState
+	InFlight func() []run.RunningNode
+	// Store resolves an in-flight node's current step for Probe, by its
+	// node ref.
+	//
+	// Drain, State, InFlight, and Store are always set together: internal/cli/
+	// serve.go only constructs a WorkerService at all when a worker runs in
+	// this process (opts.work), and sets all four from that one worker. A bare
+	// `serve` mounts no WorkerService, so WorkerService.Drain's nil check below
+	// exists to keep this config constructible with its zero value in tests,
+	// not because production ever leaves one of the four unset while running.
+	Store WorkerStore
 }
 
 // WorkerService answers WorkerService.Probe from this process's own worker
@@ -91,15 +119,61 @@ func (s *WorkerService) Probe(ctx context.Context, _ *connect.Request[millv1.Pro
 		cancel()
 	}
 
+	var state millv1.WorkerState
+	var inFlight []*millv1.InFlightRun
+	if s.cfg.State != nil {
+		state = s.cfg.State()
+	}
+	if s.cfg.InFlight != nil {
+		for _, n := range s.cfg.InFlight() {
+			inFlight = append(inFlight, s.inFlightRun(ctx, n))
+		}
+	}
+
 	return connect.NewResponse(&millv1.ProbeResponse{
-		Sidecar: probeResultProto(sidecar),
-		Signing: probeResultProto(signing),
-		Forge:   probeResultProto(forgeResult),
+		Sidecar:  probeResultProto(sidecar),
+		Signing:  probeResultProto(signing),
+		Forge:    probeResultProto(forgeResult),
+		State:    state,
+		InFlight: inFlight,
 	}), nil
+}
+
+// inFlightRun looks up one in-flight node's current step, tolerating a
+// lookup that fails: the node ref and a zero step are still worth reporting,
+// the same tolerance resolvedClaims already gives a failed Claims call.
+func (s *WorkerService) inFlightRun(ctx context.Context, n run.RunningNode) *millv1.InFlightRun {
+	out := &millv1.InFlightRun{NodeRef: n.NodeRef}
+	if s.cfg.Store == nil {
+		return out
+	}
+	detail, err := s.cfg.Store.Inspect(ctx, domain.InspectParams{NodeRef: n.NodeRef})
+	if err != nil || detail.Summary == nil {
+		return out
+	}
+	out.RunId = detail.Summary.GetRun().GetId()
+	out.CurrentStep = detail.Summary.GetCurrentStep()
+	latest := latestStepRun(detail, out.CurrentStep, 0)
+	if started := latest.GetStartedAt(); started != nil {
+		out.TimeInStep = durationpb.New(time.Since(started.AsTime()))
+	}
+	return out
 }
 
 func probeResultProto(r doctor.Result) *millv1.ProbeResult {
 	return &millv1.ProbeResult{Ok: r.OK, Reason: r.Reason}
+}
+
+// Drain asks the local worker to stop claiming and drain every run in flight
+// to its next boundary, with no attempt aborted. It is fire-and-forget:
+// `mill drain --wait` polls Probe for the state this leads to, rather than
+// this call blocking for it.
+func (s *WorkerService) Drain(_ context.Context, _ *connect.Request[millv1.DrainRequest]) (*connect.Response[millv1.DrainResponse], error) {
+	if s.cfg.Drain == nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("no worker runs in this process"))
+	}
+	s.cfg.Drain()
+	return connect.NewResponse(&millv1.DrainResponse{}), nil
 }
 
 // Claims answers the worker's own already-resolved claim filter and host:

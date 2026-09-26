@@ -737,6 +737,30 @@ A cancelled run is not a failed one. It keeps its workflow, its branch and
 its status, so `mill run` on the same node resumes at that step with the next
 attempt. `mill restart` is the verb that throws the work away instead.
 
+## drain
+
+Ask the worker behind `--socket` to stop claiming and let every run it
+already holds reach its next step boundary before releasing the lease —
+preempted with detail `drain`, no attempt aborted — rather than aborting
+whatever is in flight ([architecture.md](architecture.md) §"Failure and
+stop").
+
+```
+$ mill drain
+drain requested; the worker stops claiming and releases each run in flight at its next step boundary
+```
+
+The call is fire-and-forget: it returns once the worker has been asked, not
+once it is actually idle. `--wait` blocks until `mill status`'s underlying
+Probe reports the worker idle, or `--timeout` (default 5m) elapses first,
+in which case it exits non-zero naming the timeout:
+
+```
+$ mill drain --wait --timeout 30s
+drain requested; the worker stops claiming and releases each run in flight at its next step boundary
+worker is idle; drain complete
+```
+
 ## rerun
 
 "The work up to here is fine, redo from this step." Every step from the one

@@ -46,7 +46,7 @@ var leaselessRPCs = map[string]bool{
 // --follow reads. An RPC with no caller there does not belong on this
 // service.
 var wantedRPCs = []string{
-	"GetRunByNode", "CreateRun", "SetLease",
+	"GetRunByNode", "CreateRun", "SetLease", "ReleaseLease",
 	"StartStepRun", "RecordStepEnvironment", "MarkSessionStarted", "CloseStepRun", "FailStepRun",
 	"AbortOpenStepRuns", "SupersedeSteps",
 	"MarkWaiting", "Park", "RecordNotice", "RecordHeartbeat", "RecordInstall", "RecordReconciliation", "RecordWorkspace", "FinishWorkspace",

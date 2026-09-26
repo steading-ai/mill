@@ -548,6 +548,28 @@ account this server runs as. ` + runIdiom,
 				return wire(res.Msg)
 			},
 		},
+		{
+			name: "drain",
+			description: `Ask the local worker to stop claiming new work and let every run it already
+holds reach its next step boundary before releasing its lease, with no
+attempt aborted. Each run stays resumable at the step it was on.
+
+This does not block: it returns as soon as the worker has been asked, not
+once it is done. Whether it is allowed is decided by the unix account this
+server runs as.`,
+			schema: objectSchema(map[string]any{}),
+			call: func(ctx context.Context, raw json.RawMessage) (any, error) {
+				var args struct{}
+				if err := decodeArgs(raw, &args); err != nil {
+					return nil, err
+				}
+				res, err := workerClient(s.opts.socket).Drain(ctx, connect.NewRequest(&millv1.DrainRequest{}))
+				if err != nil {
+					return nil, err
+				}
+				return wire(res.Msg)
+			},
+		},
 	}
 }
 

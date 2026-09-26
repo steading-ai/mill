@@ -91,6 +91,28 @@ var _ = Describe("Supervising a worker", Label("unit"), func() {
 		worker.finish(nil)
 		Eventually(done, time.Minute).Should(Receive(BeNil()))
 	})
+
+	It("one signal reaching both the context and the channel still honours the grace window", func() {
+		// A caller whose ctx is itself signal-derived delivers one SIGTERM to
+		// both destinations: ctx is cancelled and the same signal lands on
+		// the channel, back to back. Seeding both before supervise even
+		// starts is what guards this against reverting: whichever of the
+		// two the first select inside it happens to pick, the duplicate
+		// must not read as a second, unrelated stop.
+		worker := newFakeWorker()
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		signals <- syscall.SIGTERM
+		done := make(chan error, 1)
+		go func() { done <- supervise(ctx, worker, patient, signals) }()
+
+		Eventually(worker.running, time.Minute).Should(BeClosed())
+		Eventually(worker.asked, time.Minute).Should(BeClosed())
+		Consistently(done, 250*time.Millisecond).ShouldNot(Receive(),
+			"the duplicate must not read as an unrelated second signal")
+		worker.finish(nil)
+		Eventually(done, time.Minute).Should(Receive(BeNil()))
+	})
 })
 
 var _ = Describe("The worker's configuration file", Label("unit"), func() {
@@ -297,7 +319,7 @@ func (w *fakeWorker) Run(ctx context.Context) error {
 	}
 }
 
-func (w *fakeWorker) Stop() { w.once.Do(func() { close(w.asked) }) }
+func (w *fakeWorker) Drain() { w.once.Do(func() { close(w.asked) }) }
 
 // finish is the worker's runs reaching a boundary of their own accord.
 func (w *fakeWorker) finish(err error) { w.done <- err }

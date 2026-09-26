@@ -71,7 +71,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 				func(o *run.WorkerOptions) { o.Wait = 30 * time.Second })
 			done := startWorker(ctx, worker)
 			DeferCleanup(func() {
-				worker.Stop()
+				worker.Drain()
 				Eventually(done, time.Minute).Should(Receive())
 			})
 			Consistently(func() *millv1.Run { return f.runOfRef(ctx, node) }, 2*time.Second, 250*time.Millisecond).
@@ -129,7 +129,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 
 			Eventually(func() int { return len(f.harness.Calls()) }, time.Second, 50*time.Millisecond).
 				Should(BeZero(), "there is nothing to claim")
-			worker.Stop()
+			worker.Drain()
 			Eventually(done, 10*time.Second).Should(Receive(BeNil()))
 		})
 
@@ -142,7 +142,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			done := startWorker(ctx, worker)
 			Eventually(func() skiftv1.Status { return f.statusOf(ctx, mine) }, 2*time.Minute, 200*time.Millisecond).
 				Should(Equal(skiftv1.Status_STATUS_DONE))
-			worker.Stop()
+			worker.Drain()
 			Eventually(done, time.Minute).Should(Receive(BeNil()))
 
 			Expect(f.statusOf(ctx, theirs)).To(Equal(skiftv1.Status_STATUS_OPEN))
@@ -166,7 +166,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			}))
 			Consistently(done, time.Second).ShouldNot(Receive(), "the loop asks for more work rather than ending")
 
-			worker.Stop()
+			worker.Drain()
 			Eventually(done, time.Minute).Should(Receive(BeNil()))
 
 			runs := []*millv1.Run{f.runOfRef(ctx, first), f.runOfRef(ctx, second)}
@@ -185,50 +185,162 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 	})
 
 	Describe("Stopping", func() {
-		It("Stop is resumable", func() {
+		It("drains at the next step boundary, aborting nothing that already ran", func() {
 			By("given work is executing the implement step of node N")
-			node := f.node(ctx, "a fix that is interrupted", "Change the README's first line.")
-			f.script(
-				ok("context gathered"),
-				fake.Script{Hold: true, Cancelled: fake.Terminal("stopped", nil, nil)},
-			)
-			worker := f.workerOver(f.runner(quick))
+			node := f.node(ctx, "a fix drained mid-step", "Change the README's first line.")
+			var worker *run.Worker
+			scripts := f.quickFixScripts()
+			implement := scripts[1]
+			scripts[1] = fake.Script{Terminal: implement.Terminal, Do: func(session harness.Session) {
+				// Draining mid-step, once the step has already been
+				// attempted, must not touch it: walk() only checks for a
+				// drain before a step it has not yet attempted
+				// (internal/run/walk.go's stepAttempted).
+				implement.Do(session)
+				worker.Drain()
+			}}
+			f.script(scripts...)
+			worker = f.workerOver(f.runner(quick))
 			done := startWorker(ctx, worker)
-			Eventually(func() string { return f.runningStep(ctx, node) }, time.Minute, 100*time.Millisecond).
-				Should(Equal("implement"))
-			interrupted := f.openStepRun(ctx)
 
-			By("when SIGTERM arrives")
-			// Stop is what the process's signal handler calls; the handler
-			// itself is specified in internal/cli, where the signals are.
-			worker.Stop()
+			By("then the run finishes implement, releases N preempted/drain at the next boundary, and stops short of commit")
 			Eventually(done, time.Minute).Should(Receive(BeNil()))
 
-			By("then N's lease is released preempted/shutdown")
 			reason, detail := f.releasedLease(ctx)
 			Expect(reason).To(Equal("preempted"))
-			Expect(detail).To(Equal("shutdown"))
+			Expect(detail).To(Equal("drain"))
 			Expect(f.leaseOf(ctx).GetId()).To(BeEmpty(), "the node is claimable again")
-			Expect(f.stepRunStatus(ctx, interrupted.GetId())).
-				To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_ABORTED))
 			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
 
-			By("and the next work claims N and starts attempt 2 of implement in the same session")
-			f.script(f.quickFixScripts()...)
+			detailAfter := f.inspect(ctx)
+			implemented := stepRuns(detailAfter, "implement")
+			Expect(implemented).To(HaveLen(1))
+			Expect(implemented[0].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED),
+				"a step already attempted finishes exactly as if no drain had been requested")
+			Expect(stepRuns(detailAfter, "commit")).To(BeEmpty(),
+				"a step never attempted is the one a drain releases in front of")
+
+			By("and the next work claims N and resumes at commit")
+			f.script(f.quickFixScripts()[2:]...)
 			next := f.workerOver(f.runner(quick))
 			resumed := startWorker(ctx, next)
 			Eventually(func() skiftv1.Status { return f.statusOf(ctx, node) }, 3*time.Minute, 200*time.Millisecond).
 				Should(Equal(skiftv1.Status_STATUS_DONE))
-			next.Stop()
+			next.Drain()
 			Eventually(resumed, time.Minute).Should(Receive(BeNil()))
+		})
+
+		It("a drain releases at the boundary", func() {
+			By("given two nodes held under this worker at concurrency two")
+			first := f.node(ctx, "the first fix mid-drain", "Change the README's first line.")
+			second := f.node(ctx, "the second fix mid-drain", "Change the README's second line.")
+			var worker *run.Worker
+			implementDone := fake.Script{
+				Terminal: fake.Terminal("the change is made", nil, usage(20)),
+				Do:       func(harness.Session) { worker.Drain() },
+			}
+			f.script(ok("context gathered"), ok("context gathered"), implementDone, implementDone)
+			client, counter := f.counted()
+			worker = f.workerOver(f.runner(quick, func(o *run.Options) { o.Skift = client }),
+				func(o *run.WorkerOptions) { o.Concurrency = 2 })
+			done := startWorker(ctx, worker)
+			Eventually(func() *millv1.Run { return f.runOfRef(ctx, first) }, time.Minute, 100*time.Millisecond).
+				ShouldNot(BeNil())
+			Eventually(func() *millv1.Run { return f.runOfRef(ctx, second) }, time.Minute, 100*time.Millisecond).
+				ShouldNot(BeNil())
+
+			By("and a third, unrelated node ready with no free slot at that concurrency")
+			third := f.createNode(ctx, &skiftv1.CreateNodeOp{
+				Title: "a third fix with no free slot", Body: "Change the README's third line.",
+			})
+
+			By("then both runs reach their next boundary, and the worker exits zero with neither aborted")
+			Eventually(done, time.Minute).Should(Receive(BeNil()))
+
+			for _, ref := range []string{first, second} {
+				released := f.runOfRef(ctx, ref)
+				Expect(released.GetLeaseId()).To(BeEmpty(), ref+"'s lease was released, not held past the boundary")
+				Expect(released.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+				detail := f.inspectRun(ctx, released.GetId())
+				implemented := stepRuns(detail, "implement")
+				Expect(implemented).To(HaveLen(1))
+				Expect(implemented[0].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED),
+					"a step already attempted finishes exactly as if no drain had been requested")
+				Expect(stepRuns(detail, "commit")).To(BeEmpty(),
+					"a step never attempted is the one a drain releases in front of")
+			}
+
+			By("and neither release's freed slot was used to claim the third node")
+			Expect(f.statusOf(ctx, third)).To(Equal(skiftv1.Status_STATUS_OPEN))
+			Expect(f.runOfRef(ctx, third)).To(BeNil())
+			Expect(counter.claims.Load()).To(Equal(int64(2)),
+				"draining stops claiming; a slot a release frees claims nothing more")
+		})
+
+		It("does not drain mid-retry: the retry a failed attempt earns finishes before the drain takes effect", func() {
+			By("given gather-context fails once, requesting a drain during the attempt that earns it a retry")
+			f.node(ctx, "a fix drained mid-retry", "Change the README's first line.")
+			var worker *run.Worker
+			round1 := failed("round 1")
+			scripts := append([]fake.Script{{Terminal: round1.Terminal, Do: func(session harness.Session) {
+				// gather-context already has a StepRun row the moment this
+				// attempt starts, so the boundary check the next pass of
+				// walk() makes finds it stepAttempted and skips the drain,
+				// the same way a step already on its second attempt does.
+				worker.Drain()
+			}}}, f.quickFixScripts()...)
+			f.script(scripts...)
+			worker = f.workerOver(f.runner(quick))
+			done := startWorker(ctx, worker)
+
+			By("then the retry runs and closes, and the drain releases in front of implement instead")
+			Eventually(done, time.Minute).Should(Receive(BeNil()))
+
+			reason, detail := f.releasedLease(ctx)
+			Expect(reason).To(Equal("preempted"))
+			Expect(detail).To(Equal("drain"))
+			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
 
 			detailAfter := f.inspect(ctx)
-			attempts := stepRuns(detailAfter, "implement")
-			Expect(attempts).To(HaveLen(2))
-			Expect(attempts[1].GetAttempt()).To(Equal(int64(2)))
-			Expect(attempts[1].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED))
-			Expect(sessionsOf(detailAfter, "implement")).
-				To(Equal([]string{interrupted.GetSessionId(), interrupted.GetSessionId()}))
+			gathered := stepRuns(detailAfter, "gather-context")
+			Expect(gathered).To(HaveLen(2), "the failed attempt and its retry, uninterrupted by the drain")
+			Expect(gathered[0].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_FAILED))
+			Expect(gathered[1].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED))
+			Expect(stepRuns(detailAfter, "implement")).To(BeEmpty(),
+				"a step never attempted is the one a drain releases in front of")
+		})
+
+		It("lets the run finish normally when the drain lands on its last step, with nothing left to run", func() {
+			By("given a workflow with nothing after pr, the run's last step")
+			workflow := f.variant(ctx, "quick-fix-no-merge", func(definition *millv1.Workflow) {
+				steps := make([]*millv1.Step, 0, len(definition.GetSteps()))
+				for _, step := range definition.GetSteps() {
+					if step.GetName() == "merge" {
+						continue
+					}
+					steps = append(steps, step)
+				}
+				definition.Steps = steps
+			})
+			node := f.node(ctx, "a fix drained on its last step", "Change the README's first line.")
+			var worker *run.Worker
+			scripts := f.quickFixScripts()
+			pr := scripts[3]
+			scripts[3] = fake.Script{Terminal: pr.Terminal, Do: func(session harness.Session) {
+				pr.Do(session)
+				worker.Drain()
+			}}
+			f.script(scripts...)
+			worker = f.workerOver(f.runner(quick, func(o *run.Options) { o.Workflow = workflow }))
+			done := startWorker(ctx, worker)
+
+			By("then the run finishes on its own: there is no boundary left for the drain to land on")
+			Eventually(done, time.Minute).Should(Receive(BeNil()))
+			Expect(f.statusOf(ctx, node)).To(Equal(skiftv1.Status_STATUS_DONE))
+			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_DONE))
+
+			reason, _ := f.releasedLease(ctx)
+			Expect(reason).NotTo(Equal("preempted"), "the run finished on its own, not by a drain")
 		})
 
 		It("kills the sessions in flight and exits non-zero when it is stopped a second time", func() {
@@ -247,7 +359,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			Eventually(stubborn.started, time.Minute).Should(BeClosed())
 
 			By("the first stop asks, and the session does not go")
-			worker.Stop()
+			worker.Drain()
 			Consistently(done, 2*time.Second).ShouldNot(Receive())
 
 			By("the second kills it")
@@ -280,7 +392,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			Eventually(func() int64 { return counter.claims.Load() }, time.Minute, 100*time.Millisecond).
 				Should(BeNumerically(">=", 2))
 
-			worker.Stop()
+			worker.Drain()
 			var err error
 			Eventually(done, time.Minute).Should(Receive(&err))
 			Expect(err).NotTo(HaveOccurred(), "being fenced out is not the worker's failure")
@@ -305,7 +417,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			}), func(o *run.WorkerOptions) { o.Log = slog.New(warnings) })
 			done := startWorker(ctx, worker)
 			DeferCleanup(func() {
-				worker.Stop()
+				worker.Drain()
 				Eventually(done, time.Minute).Should(Receive(BeNil()))
 			})
 
@@ -354,7 +466,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			})
 			done := startWorker(ctx, worker)
 			DeferCleanup(func() {
-				worker.Stop()
+				worker.Drain()
 				Eventually(done, time.Minute).Should(Receive(BeNil()))
 			})
 
@@ -379,28 +491,26 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 		// at implement and mill#33 at review, when it restarts, its first
 		// two claims are steading#4 and mill#33, and no new node is claimed
 		// until one of them frees a slot.
-		It("reclaims runs a stop left aborted before claiming anything new, up to concurrency", func() {
+		It("the next worker takes drained runs first", func() {
 			By("given two nodes held under this worker at concurrency two")
 			first := f.node(ctx, "the first interrupted fix", "Change the README's first line.")
 			second := f.node(ctx, "the second interrupted fix", "Change the README's second line.")
-			hold := fake.Script{Hold: true, Cancelled: fake.Terminal("stopped", nil, nil)}
-			f.script(hold, hold)
-			setup := f.workerOver(f.runner(quick), func(o *run.WorkerOptions) { o.Concurrency = 2 })
+			var setup *run.Worker
+			// implement is each node's second session; StartStepRun records the
+			// attempt before this runs (internal/run/walk.go's step), so the
+			// step it belongs to always finishes — only commit, never
+			// attempted, is what draining gives back before starting.
+			implementDone := fake.Script{
+				Terminal: fake.Terminal("the change is made", nil, usage(20)),
+				Do:       func(harness.Session) { setup.Drain() },
+			}
+			f.script(ok("context gathered"), ok("context gathered"), implementDone, implementDone)
+			setup = f.workerOver(f.runner(quick), func(o *run.WorkerOptions) { o.Concurrency = 2 })
 			setupDone := startWorker(ctx, setup)
-			Eventually(func() []millv1.RunStatus {
-				a, b := f.runOfRef(ctx, first), f.runOfRef(ctx, second)
-				if a == nil || b == nil {
-					return nil
-				}
-				return []millv1.RunStatus{a.GetStatus(), b.GetStatus()}
-			}, time.Minute, 100*time.Millisecond).Should(Equal([]millv1.RunStatus{
-				millv1.RunStatus_RUN_STATUS_RUNNING, millv1.RunStatus_RUN_STATUS_RUNNING,
-			}))
-			firstRunID, secondRunID := f.runOfRef(ctx, first).GetId(), f.runOfRef(ctx, second).GetId()
-
-			By("when SIGTERM arrives")
-			setup.Stop()
 			Eventually(setupDone, time.Minute).Should(Receive(BeNil()))
+			firstRunID, secondRunID := f.runOfRef(ctx, first).GetId(), f.runOfRef(ctx, second).GetId()
+			Expect(f.runOfRef(ctx, first).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+			Expect(f.runOfRef(ctx, second).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
 
 			By("and a third, unrelated node ready but with no free slot at that concurrency")
 			third := f.createNode(ctx, &skiftv1.CreateNodeOp{
@@ -410,12 +520,18 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			By("when the next worker starts at the same concurrency")
 			journal := &bytes.Buffer{}
 			client, counter := f.counted()
+			// Both reclaimed runs pick up at commit, a real one for each; a
+			// single held script for both, cleaned up by killing the worker
+			// rather than draining it, keeps the two from committing to the
+			// fixture's one shared workspace at once (support_test.go).
+			f.script(fake.Script{Hold: true, Cancelled: fake.Terminal("stopped", nil, nil)})
 			next := f.workerOver(f.runner(quick, func(o *run.Options) { o.Skift = client }),
 				func(o *run.WorkerOptions) { o.Concurrency = 2; o.Out = journal })
-			resumed := startWorker(ctx, next)
+			killable, kill := context.WithCancel(ctx)
+			resumed := startWorker(killable, next)
 			DeferCleanup(func() {
-				next.Stop()
-				Eventually(resumed, time.Minute).Should(Receive(BeNil()))
+				kill()
+				Eventually(resumed, time.Minute).Should(Receive())
 			})
 
 			By("then its first two claims are the two runs it held, resumed rather than claimed fresh")
@@ -425,8 +541,15 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			Expect(f.runOfRef(ctx, second).GetId()).To(Equal(secondRunID), "the same run, not a new claim")
 			Expect(f.runOfRef(ctx, first).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
 			Expect(f.runOfRef(ctx, second).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
-			Expect(journal.String()).To(ContainSubstring("resumed " + first + ", aborted at"))
-			Expect(journal.String()).To(ContainSubstring("resumed " + second + ", aborted at"))
+			Expect(journal.String()).To(ContainSubstring("resumed " + first + ", last updated"))
+			Expect(journal.String()).To(ContainSubstring("resumed " + second + ", last updated"))
+
+			By("and each resumes at its next step in a fresh session, not a resume of implement's")
+			calls := f.harness.Calls()
+			Expect(calls).To(HaveLen(2), "one fresh session per reclaimed run's commit step")
+			for _, call := range calls {
+				Expect(call.Verb).To(Equal("start"), "commit has never been attempted before; nothing exists to resume")
+			}
 
 			By("and no new node is claimed until one of them frees a slot")
 			Consistently(func() skiftv1.Status { return f.statusOf(ctx, third) }, 2*time.Second, 100*time.Millisecond).
@@ -438,15 +561,14 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 		It("still claims fresh work with whatever concurrency reclaim did not use", func() {
 			By("given one node held under this worker")
 			resumable := f.node(ctx, "the interrupted fix", "Change the README's first line.")
-			f.script(
-				ok("context gathered"),
-				fake.Script{Hold: true, Cancelled: fake.Terminal("stopped", nil, nil)},
-			)
-			setup := f.workerOver(f.runner(quick))
+			var setup *run.Worker
+			implementDone := fake.Script{
+				Terminal: fake.Terminal("the change is made", nil, usage(20)),
+				Do:       func(harness.Session) { setup.Drain() },
+			}
+			f.script(ok("context gathered"), implementDone)
+			setup = f.workerOver(f.runner(quick))
 			setupDone := startWorker(ctx, setup)
-			Eventually(func() string { return f.runningStep(ctx, resumable) }, time.Minute, 100*time.Millisecond).
-				Should(Equal("implement"))
-			setup.Stop()
 			Eventually(setupDone, time.Minute).Should(Receive(BeNil()))
 			runID := f.runOfRef(ctx, resumable).GetId()
 
@@ -454,27 +576,28 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			fresh := f.node(ctx, "an unrelated fix", "Change the README's second line.")
 			// A run row exists as soon as the claim lands (openRun, before any
 			// workspace or session work) — proving the claim needs no more
-			// than that, so this holds rather than driving the fresh run
-			// through a real commit concurrently with the resumed run's own
-			// workspace, which races the fixture's single f.workspace field
-			// (support_test.go, shared across whichever run last attached or
-			// created one, and read by f.commits).
+			// than that, so this holds rather than driving either run through
+			// a real commit concurrently with the other's, which races the
+			// fixture's single f.workspace field (support_test.go, shared
+			// across whichever run last attached or created one, and read by
+			// f.commits).
 			f.script(fake.Script{Hold: true, Cancelled: fake.Terminal("stopped", nil, nil)})
 
 			By("when the next worker starts with a spare slot")
 			journal := &bytes.Buffer{}
 			next := f.workerOver(f.runner(quick), func(o *run.WorkerOptions) { o.Concurrency = 2; o.Out = journal })
-			resumed := startWorker(ctx, next)
+			killable, kill := context.WithCancel(ctx)
+			resumed := startWorker(killable, next)
 			DeferCleanup(func() {
-				next.Stop()
-				Eventually(resumed, time.Minute).Should(Receive(BeNil()))
+				kill()
+				Eventually(resumed, time.Minute).Should(Receive())
 			})
 
-			By("then the held run is resumed and the spare slot still claims the fresh node")
+			By("then the released run is resumed and the spare slot still claims the fresh node")
 			Eventually(func() *millv1.Run { return f.runOfRef(ctx, fresh) }, time.Minute, 100*time.Millisecond).
 				ShouldNot(BeNil(), "reclaim took only one slot; the other went to an ordinary claim")
 			Expect(f.runOfRef(ctx, resumable).GetId()).To(Equal(runID), "the same run, not a new claim")
-			Expect(journal.String()).To(ContainSubstring("resumed " + resumable + ", aborted at"))
+			Expect(journal.String()).To(ContainSubstring("resumed " + resumable + ", last updated"))
 			Expect(journal.String()).NotTo(ContainSubstring("resumed " + fresh))
 		})
 	})
@@ -530,7 +653,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 				func(o *run.WorkerOptions) { o.Startup = startup })
 			done := startWorker(ctx, worker)
 			DeferCleanup(func() {
-				worker.Stop()
+				worker.Drain()
 				Eventually(done, time.Minute).Should(Receive())
 			})
 

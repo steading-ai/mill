@@ -203,6 +203,16 @@ func (s *StoreService) AbortOpenStepRuns(ctx context.Context, req *connect.Reque
 	return connect.NewResponse(&millv1.AbortOpenStepRunsResponse{StepRuns: stepRuns}), nil
 }
 
+// ReleaseLease gives back a lease this worker currently holds, without
+// ending the run.
+func (s *StoreService) ReleaseLease(ctx context.Context, req *connect.Request[millv1.ReleaseLeaseRequest]) (*connect.Response[millv1.ReleaseLeaseResponse], error) {
+	run, err := s.svc.ReleaseLease(ctx, req.Msg.GetLeaseId(), req.Msg.GetRunId())
+	if err != nil {
+		return nil, connectError(err)
+	}
+	return connect.NewResponse(&millv1.ReleaseLeaseResponse{Run: run}), nil
+}
+
 // SupersedeSteps reopens a span of steps for a revise.
 func (s *StoreService) SupersedeSteps(ctx context.Context, req *connect.Request[millv1.SupersedeStepsRequest]) (*connect.Response[millv1.SupersedeStepsResponse], error) {
 	stepRuns, err := s.svc.SupersedeSteps(ctx, req.Msg.GetLeaseId(), req.Msg.GetRunId(), req.Msg.GetFromStep(), req.Msg.GetThroughStep())

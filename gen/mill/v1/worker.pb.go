@@ -14,6 +14,7 @@ package millv1
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	durationpb "google.golang.org/protobuf/types/known/durationpb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -25,6 +26,67 @@ const (
 	// Verify that runtime/protoimpl is sufficiently up-to-date.
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
+
+// WorkerState is a worker's own claim/drain state, as `mill status` and
+// `mill drain --wait` read it from Probe.
+type WorkerState int32
+
+const (
+	// WORKER_STATE_UNSPECIFIED is the zero value and carries no meaning.
+	WorkerState_WORKER_STATE_UNSPECIFIED WorkerState = 0
+	// WORKER_STATE_CLAIMING means the worker asks skift for work as its runs
+	// in flight finish.
+	WorkerState_WORKER_STATE_CLAIMING WorkerState = 1
+	// WORKER_STATE_DRAINING means the worker has stopped claiming and is
+	// waiting for its runs in flight to reach a boundary.
+	WorkerState_WORKER_STATE_DRAINING WorkerState = 2
+	// WORKER_STATE_IDLE means a drain has finished: no runs in flight, and
+	// none will be claimed.
+	WorkerState_WORKER_STATE_IDLE WorkerState = 3
+)
+
+// Enum value maps for WorkerState.
+var (
+	WorkerState_name = map[int32]string{
+		0: "WORKER_STATE_UNSPECIFIED",
+		1: "WORKER_STATE_CLAIMING",
+		2: "WORKER_STATE_DRAINING",
+		3: "WORKER_STATE_IDLE",
+	}
+	WorkerState_value = map[string]int32{
+		"WORKER_STATE_UNSPECIFIED": 0,
+		"WORKER_STATE_CLAIMING":    1,
+		"WORKER_STATE_DRAINING":    2,
+		"WORKER_STATE_IDLE":        3,
+	}
+)
+
+func (x WorkerState) Enum() *WorkerState {
+	p := new(WorkerState)
+	*p = x
+	return p
+}
+
+func (x WorkerState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (WorkerState) Descriptor() protoreflect.EnumDescriptor {
+	return file_mill_v1_worker_proto_enumTypes[0].Descriptor()
+}
+
+func (WorkerState) Type() protoreflect.EnumType {
+	return &file_mill_v1_worker_proto_enumTypes[0]
+}
+
+func (x WorkerState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use WorkerState.Descriptor instead.
+func (WorkerState) EnumDescriptor() ([]byte, []int) {
+	return file_mill_v1_worker_proto_rawDescGZIP(), []int{0}
+}
 
 // ProbeRequest asks the worker to run its own local-only probes. It takes
 // nothing: the worker answers for its own configuration, not one the caller
@@ -74,7 +136,12 @@ type ProbeResponse struct {
 	// The signing probe, from the worker's own signing key and workspace.
 	Signing *ProbeResult `protobuf:"bytes,2,opt,name=signing,proto3" json:"signing,omitempty"`
 	// The forge probe, from the worker's own credential and project.
-	Forge         *ProbeResult `protobuf:"bytes,3,opt,name=forge,proto3" json:"forge,omitempty"`
+	Forge *ProbeResult `protobuf:"bytes,3,opt,name=forge,proto3" json:"forge,omitempty"`
+	// The worker's own claim/drain state.
+	State WorkerState `protobuf:"varint,4,opt,name=state,proto3,enum=mill.v1.WorkerState" json:"state,omitempty"`
+	// The runs this worker is driving right now. Non-empty only while state is
+	// draining or claiming; empty once idle.
+	InFlight      []*InFlightRun `protobuf:"bytes,5,rep,name=in_flight,json=inFlight,proto3" json:"in_flight,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -130,6 +197,93 @@ func (x *ProbeResponse) GetForge() *ProbeResult {
 	return nil
 }
 
+func (x *ProbeResponse) GetState() WorkerState {
+	if x != nil {
+		return x.State
+	}
+	return WorkerState_WORKER_STATE_UNSPECIFIED
+}
+
+func (x *ProbeResponse) GetInFlight() []*InFlightRun {
+	if x != nil {
+		return x.InFlight
+	}
+	return nil
+}
+
+// InFlightRun is one run a worker is driving right now, as Probe reports it.
+type InFlightRun struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The run's id.
+	RunId string `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	// The node it drives.
+	NodeRef string `protobuf:"bytes,2,opt,name=node_ref,json=nodeRef,proto3" json:"node_ref,omitempty"`
+	// The step currently running.
+	CurrentStep string `protobuf:"bytes,3,opt,name=current_step,json=currentStep,proto3" json:"current_step,omitempty"`
+	// How long the current step has been running.
+	TimeInStep    *durationpb.Duration `protobuf:"bytes,4,opt,name=time_in_step,json=timeInStep,proto3" json:"time_in_step,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InFlightRun) Reset() {
+	*x = InFlightRun{}
+	mi := &file_mill_v1_worker_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InFlightRun) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InFlightRun) ProtoMessage() {}
+
+func (x *InFlightRun) ProtoReflect() protoreflect.Message {
+	mi := &file_mill_v1_worker_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InFlightRun.ProtoReflect.Descriptor instead.
+func (*InFlightRun) Descriptor() ([]byte, []int) {
+	return file_mill_v1_worker_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *InFlightRun) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *InFlightRun) GetNodeRef() string {
+	if x != nil {
+		return x.NodeRef
+	}
+	return ""
+}
+
+func (x *InFlightRun) GetCurrentStep() string {
+	if x != nil {
+		return x.CurrentStep
+	}
+	return ""
+}
+
+func (x *InFlightRun) GetTimeInStep() *durationpb.Duration {
+	if x != nil {
+		return x.TimeInStep
+	}
+	return nil
+}
+
 // ProbeResult is one probe's answer.
 type ProbeResult struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -143,7 +297,7 @@ type ProbeResult struct {
 
 func (x *ProbeResult) Reset() {
 	*x = ProbeResult{}
-	mi := &file_mill_v1_worker_proto_msgTypes[2]
+	mi := &file_mill_v1_worker_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -155,7 +309,7 @@ func (x *ProbeResult) String() string {
 func (*ProbeResult) ProtoMessage() {}
 
 func (x *ProbeResult) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_worker_proto_msgTypes[2]
+	mi := &file_mill_v1_worker_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -168,7 +322,7 @@ func (x *ProbeResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeResult.ProtoReflect.Descriptor instead.
 func (*ProbeResult) Descriptor() ([]byte, []int) {
-	return file_mill_v1_worker_proto_rawDescGZIP(), []int{2}
+	return file_mill_v1_worker_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *ProbeResult) GetOk() bool {
@@ -195,7 +349,7 @@ type ClaimsRequest struct {
 
 func (x *ClaimsRequest) Reset() {
 	*x = ClaimsRequest{}
-	mi := &file_mill_v1_worker_proto_msgTypes[3]
+	mi := &file_mill_v1_worker_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -207,7 +361,7 @@ func (x *ClaimsRequest) String() string {
 func (*ClaimsRequest) ProtoMessage() {}
 
 func (x *ClaimsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_worker_proto_msgTypes[3]
+	mi := &file_mill_v1_worker_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -220,7 +374,7 @@ func (x *ClaimsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClaimsRequest.ProtoReflect.Descriptor instead.
 func (*ClaimsRequest) Descriptor() ([]byte, []int) {
-	return file_mill_v1_worker_proto_rawDescGZIP(), []int{3}
+	return file_mill_v1_worker_proto_rawDescGZIP(), []int{4}
 }
 
 // ClaimsResponse carries the worker's already-resolved claim filter and the
@@ -241,7 +395,7 @@ type ClaimsResponse struct {
 
 func (x *ClaimsResponse) Reset() {
 	*x = ClaimsResponse{}
-	mi := &file_mill_v1_worker_proto_msgTypes[4]
+	mi := &file_mill_v1_worker_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -253,7 +407,7 @@ func (x *ClaimsResponse) String() string {
 func (*ClaimsResponse) ProtoMessage() {}
 
 func (x *ClaimsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_v1_worker_proto_msgTypes[4]
+	mi := &file_mill_v1_worker_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -266,7 +420,7 @@ func (x *ClaimsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClaimsResponse.ProtoReflect.Descriptor instead.
 func (*ClaimsResponse) Descriptor() ([]byte, []int) {
-	return file_mill_v1_worker_proto_rawDescGZIP(), []int{4}
+	return file_mill_v1_worker_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *ClaimsResponse) GetHost() string {
@@ -290,16 +444,100 @@ func (x *ClaimsResponse) GetLabels() []string {
 	return nil
 }
 
+// DrainRequest asks the worker to drain. It takes nothing: the worker drains
+// itself, not a configuration the caller names.
+type DrainRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DrainRequest) Reset() {
+	*x = DrainRequest{}
+	mi := &file_mill_v1_worker_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DrainRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DrainRequest) ProtoMessage() {}
+
+func (x *DrainRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_mill_v1_worker_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DrainRequest.ProtoReflect.Descriptor instead.
+func (*DrainRequest) Descriptor() ([]byte, []int) {
+	return file_mill_v1_worker_proto_rawDescGZIP(), []int{6}
+}
+
+// DrainResponse is empty: Drain is fire-and-forget, and the caller polls
+// Probe to learn when the worker has actually gone idle.
+type DrainResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DrainResponse) Reset() {
+	*x = DrainResponse{}
+	mi := &file_mill_v1_worker_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DrainResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DrainResponse) ProtoMessage() {}
+
+func (x *DrainResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_mill_v1_worker_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DrainResponse.ProtoReflect.Descriptor instead.
+func (*DrainResponse) Descriptor() ([]byte, []int) {
+	return file_mill_v1_worker_proto_rawDescGZIP(), []int{7}
+}
+
 var File_mill_v1_worker_proto protoreflect.FileDescriptor
 
 const file_mill_v1_worker_proto_rawDesc = "" +
 	"\n" +
-	"\x14mill/v1/worker.proto\x12\amill.v1\"\x0e\n" +
-	"\fProbeRequest\"\x9b\x01\n" +
+	"\x14mill/v1/worker.proto\x12\amill.v1\x1a\x1egoogle/protobuf/duration.proto\"\x0e\n" +
+	"\fProbeRequest\"\xfa\x01\n" +
 	"\rProbeResponse\x12.\n" +
 	"\asidecar\x18\x01 \x01(\v2\x14.mill.v1.ProbeResultR\asidecar\x12.\n" +
 	"\asigning\x18\x02 \x01(\v2\x14.mill.v1.ProbeResultR\asigning\x12*\n" +
-	"\x05forge\x18\x03 \x01(\v2\x14.mill.v1.ProbeResultR\x05forge\"5\n" +
+	"\x05forge\x18\x03 \x01(\v2\x14.mill.v1.ProbeResultR\x05forge\x12*\n" +
+	"\x05state\x18\x04 \x01(\x0e2\x14.mill.v1.WorkerStateR\x05state\x121\n" +
+	"\tin_flight\x18\x05 \x03(\v2\x14.mill.v1.InFlightRunR\binFlight\"\x9f\x01\n" +
+	"\vInFlightRun\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x19\n" +
+	"\bnode_ref\x18\x02 \x01(\tR\anodeRef\x12!\n" +
+	"\fcurrent_step\x18\x03 \x01(\tR\vcurrentStep\x12;\n" +
+	"\ftime_in_step\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\n" +
+	"timeInStep\"5\n" +
 	"\vProbeResult\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\"\x0f\n" +
@@ -307,10 +545,18 @@ const file_mill_v1_worker_proto_rawDesc = "" +
 	"\x0eClaimsResponse\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x1a\n" +
 	"\bprojects\x18\x02 \x03(\tR\bprojects\x12\x16\n" +
-	"\x06labels\x18\x03 \x03(\tR\x06labels2\x82\x01\n" +
+	"\x06labels\x18\x03 \x03(\tR\x06labels\"\x0e\n" +
+	"\fDrainRequest\"\x0f\n" +
+	"\rDrainResponse*x\n" +
+	"\vWorkerState\x12\x1c\n" +
+	"\x18WORKER_STATE_UNSPECIFIED\x10\x00\x12\x19\n" +
+	"\x15WORKER_STATE_CLAIMING\x10\x01\x12\x19\n" +
+	"\x15WORKER_STATE_DRAINING\x10\x02\x12\x15\n" +
+	"\x11WORKER_STATE_IDLE\x10\x032\xba\x01\n" +
 	"\rWorkerService\x126\n" +
 	"\x05Probe\x12\x15.mill.v1.ProbeRequest\x1a\x16.mill.v1.ProbeResponse\x129\n" +
-	"\x06Claims\x12\x16.mill.v1.ClaimsRequest\x1a\x17.mill.v1.ClaimsResponseB0Z.github.com/steading-ai/mill/gen/mill/v1;millv1b\x06proto3"
+	"\x06Claims\x12\x16.mill.v1.ClaimsRequest\x1a\x17.mill.v1.ClaimsResponse\x126\n" +
+	"\x05Drain\x12\x15.mill.v1.DrainRequest\x1a\x16.mill.v1.DrainResponseB0Z.github.com/steading-ai/mill/gen/mill/v1;millv1b\x06proto3"
 
 var (
 	file_mill_v1_worker_proto_rawDescOnce sync.Once
@@ -324,27 +570,38 @@ func file_mill_v1_worker_proto_rawDescGZIP() []byte {
 	return file_mill_v1_worker_proto_rawDescData
 }
 
-var file_mill_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_mill_v1_worker_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_mill_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_mill_v1_worker_proto_goTypes = []any{
-	(*ProbeRequest)(nil),   // 0: mill.v1.ProbeRequest
-	(*ProbeResponse)(nil),  // 1: mill.v1.ProbeResponse
-	(*ProbeResult)(nil),    // 2: mill.v1.ProbeResult
-	(*ClaimsRequest)(nil),  // 3: mill.v1.ClaimsRequest
-	(*ClaimsResponse)(nil), // 4: mill.v1.ClaimsResponse
+	(WorkerState)(0),            // 0: mill.v1.WorkerState
+	(*ProbeRequest)(nil),        // 1: mill.v1.ProbeRequest
+	(*ProbeResponse)(nil),       // 2: mill.v1.ProbeResponse
+	(*InFlightRun)(nil),         // 3: mill.v1.InFlightRun
+	(*ProbeResult)(nil),         // 4: mill.v1.ProbeResult
+	(*ClaimsRequest)(nil),       // 5: mill.v1.ClaimsRequest
+	(*ClaimsResponse)(nil),      // 6: mill.v1.ClaimsResponse
+	(*DrainRequest)(nil),        // 7: mill.v1.DrainRequest
+	(*DrainResponse)(nil),       // 8: mill.v1.DrainResponse
+	(*durationpb.Duration)(nil), // 9: google.protobuf.Duration
 }
 var file_mill_v1_worker_proto_depIdxs = []int32{
-	2, // 0: mill.v1.ProbeResponse.sidecar:type_name -> mill.v1.ProbeResult
-	2, // 1: mill.v1.ProbeResponse.signing:type_name -> mill.v1.ProbeResult
-	2, // 2: mill.v1.ProbeResponse.forge:type_name -> mill.v1.ProbeResult
-	0, // 3: mill.v1.WorkerService.Probe:input_type -> mill.v1.ProbeRequest
-	3, // 4: mill.v1.WorkerService.Claims:input_type -> mill.v1.ClaimsRequest
-	1, // 5: mill.v1.WorkerService.Probe:output_type -> mill.v1.ProbeResponse
-	4, // 6: mill.v1.WorkerService.Claims:output_type -> mill.v1.ClaimsResponse
-	5, // [5:7] is the sub-list for method output_type
-	3, // [3:5] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	4, // 0: mill.v1.ProbeResponse.sidecar:type_name -> mill.v1.ProbeResult
+	4, // 1: mill.v1.ProbeResponse.signing:type_name -> mill.v1.ProbeResult
+	4, // 2: mill.v1.ProbeResponse.forge:type_name -> mill.v1.ProbeResult
+	0, // 3: mill.v1.ProbeResponse.state:type_name -> mill.v1.WorkerState
+	3, // 4: mill.v1.ProbeResponse.in_flight:type_name -> mill.v1.InFlightRun
+	9, // 5: mill.v1.InFlightRun.time_in_step:type_name -> google.protobuf.Duration
+	1, // 6: mill.v1.WorkerService.Probe:input_type -> mill.v1.ProbeRequest
+	5, // 7: mill.v1.WorkerService.Claims:input_type -> mill.v1.ClaimsRequest
+	7, // 8: mill.v1.WorkerService.Drain:input_type -> mill.v1.DrainRequest
+	2, // 9: mill.v1.WorkerService.Probe:output_type -> mill.v1.ProbeResponse
+	6, // 10: mill.v1.WorkerService.Claims:output_type -> mill.v1.ClaimsResponse
+	8, // 11: mill.v1.WorkerService.Drain:output_type -> mill.v1.DrainResponse
+	9, // [9:12] is the sub-list for method output_type
+	6, // [6:9] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	6, // [6:6] is the sub-list for extension extendee
+	0, // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_mill_v1_worker_proto_init() }
@@ -357,13 +614,14 @@ func file_mill_v1_worker_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_mill_v1_worker_proto_rawDesc), len(file_mill_v1_worker_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   5,
+			NumEnums:      1,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_mill_v1_worker_proto_goTypes,
 		DependencyIndexes: file_mill_v1_worker_proto_depIdxs,
+		EnumInfos:         file_mill_v1_worker_proto_enumTypes,
 		MessageInfos:      file_mill_v1_worker_proto_msgTypes,
 	}.Build()
 	File_mill_v1_worker_proto = out.File

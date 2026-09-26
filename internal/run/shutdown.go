@@ -50,3 +50,24 @@ func (r *Runner) shutdownStep(ctx context.Context, s *state) error {
 	r.printf("shutting down; run %s stays resumable\n", s.run.GetId())
 	return errReleased
 }
+
+// drainStep gives the run's lease back at a step boundary, deliberately not
+// calling [Runner.shutdownStep]: nothing is open, so there is nothing for
+// AbortOpenStepRuns to abort. Like shutdownStep, it ends the loop by
+// returning errReleased: the run stays running with no lease
+// (docs/ledger.md §Resume), and nothing downstream needs to tell a drain's
+// release apart from any other.
+func (r *Runner) drainStep(ctx context.Context, s *state) error {
+	if _, err := call(ctx, r.options.Store.ReleaseLease, &millv1.ReleaseLeaseRequest{
+		LeaseId: s.leaseID(),
+		RunId:   s.run.GetId(),
+	}); err != nil {
+		return err
+	}
+	if err := r.options.Skift.Release(ctx, s.leaseID(),
+		skiftv1.ReleaseReason_RELEASE_REASON_PREEMPTED, "drain"); err != nil {
+		return err
+	}
+	r.printf("draining; run %s stays resumable\n", s.run.GetId())
+	return errReleased
+}

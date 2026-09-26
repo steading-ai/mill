@@ -161,7 +161,7 @@ var _ = Describe("Reconciliation on resume, in the loop", Label(testsupport.DBLa
 		}))
 		done := startWorker(ctx, worker)
 		DeferCleanup(func() {
-			worker.Stop()
+			worker.Drain()
 			Eventually(done, time.Minute).Should(Receive())
 		})
 
@@ -287,7 +287,7 @@ var _ = Describe("Reconciliation on resume, in the loop", Label(testsupport.DBLa
 			func(o *run.WorkerOptions) { o.Startup = startup })
 		done := startWorker(ctx, worker)
 		DeferCleanup(func() {
-			worker.Stop()
+			worker.Drain()
 			Eventually(done, time.Minute).Should(Receive())
 		})
 
@@ -316,7 +316,7 @@ var _ = Describe("Reconciliation on resume, in the loop", Label(testsupport.DBLa
 			func(o *run.WorkerOptions) { o.Startup = startup })
 		done := startWorker(ctx, worker)
 		DeferCleanup(func() {
-			worker.Stop()
+			worker.Drain()
 			Eventually(done, time.Minute).Should(Receive())
 		})
 
@@ -343,7 +343,7 @@ var _ = Describe("Reconciliation on resume, in the loop", Label(testsupport.DBLa
 		})
 		done := startWorker(ctx, worker)
 		DeferCleanup(func() {
-			worker.Stop()
+			worker.Drain()
 			Eventually(done, time.Minute).Should(Receive())
 		})
 
@@ -367,7 +367,7 @@ var _ = Describe("Reconciliation on resume, in the loop", Label(testsupport.DBLa
 		})
 		done := startWorker(ctx, worker)
 		DeferCleanup(func() {
-			worker.Stop()
+			worker.Drain()
 			Eventually(done, time.Minute).Should(Receive())
 		})
 

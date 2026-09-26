@@ -84,6 +84,15 @@ func (s *Service) SetLease(ctx context.Context, runID, leaseID, workerRef string
 	return s.store.SetLease(ctx, runID, leaseID, workerRef)
 }
 
+// ReleaseLease gives back the run's lease without ending it: the run stays
+// running, holding no lease, resumable by this worker's own reclaim or by
+// whichever worker's ClaimNext reaches it next (docs/ledger.md §Resume). Not
+// judged against [runTransitions]: the status does not change, only the
+// lease.
+func (s *Service) ReleaseLease(ctx context.Context, leaseID, runID string) (*millv1.Run, error) {
+	return s.store.ReleaseLease(ctx, leaseID, runID)
+}
+
 // MarkWaiting records the gate a run is blocked on and marks it waiting.
 func (s *Service) MarkWaiting(ctx context.Context, leaseID, runID, gateNodeID, stepRunID string) (*millv1.Run, error) {
 	if err := s.checkTransition(ctx, runID, millv1.RunStatus_RUN_STATUS_WAITING); err != nil {

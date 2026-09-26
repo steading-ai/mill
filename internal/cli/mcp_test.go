@@ -17,6 +17,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
 	"github.com/steading-ai/mill/internal/cli"
 	"github.com/steading-ai/mill/internal/domain"
 	"github.com/steading-ai/mill/internal/run"
@@ -131,7 +132,7 @@ var _ = Describe("mill mcp", Label(testsupport.DBLabel), func() {
 			To(HaveKeyWithValue("protocolVersion", "2025-06-18"))
 		Expect(s.toolNames()).To(ConsistOf(
 			"status", "inspect", "explain", "logs", "history", "cost",
-			"workflow_list", "workflow_show", "doctor", "cancel",
+			"workflow_list", "workflow_show", "doctor", "cancel", "drain",
 			"rerun", "workspace_show", "workspace_clean"))
 		// `run` executes in the calling process and is local to the mill's
 		// host and account; a session elsewhere files a skift node.
@@ -189,6 +190,25 @@ var _ = Describe("mill mcp", Label(testsupport.DBLabel), func() {
 		answer := s.tool("cancel", map[string]any{"run": "millcli#33", "reason": "an agent was asked to stop it"})
 		Expect(answer["run"].(map[string]any)).To(HaveKeyWithValue("cancel_requested", true))
 		Expect(r.reload(ctx).GetCancelRequested()).To(BeTrue())
+	})
+
+	It("drain over MCP dispatches to the same WorkerService.Drain the RPC does", func() {
+		r := openRun(ctx, "millcli#36", nodeID(36))
+		s := mcp(ctx, "--socket", r.mill.socket)
+		s.call("initialize", nil)
+
+		result := s.call("tools/call", map[string]any{"name": "drain", "arguments": map[string]any{}})
+		Expect(result["isError"]).To(Equal(true), "%v", result)
+		content, ok := result["content"].([]any)
+		Expect(ok).To(BeTrue(), "%v", result)
+		text, ok := content[0].(map[string]any)["text"].(string)
+		Expect(ok).To(BeTrue())
+		Expect(text).To(ContainSubstring("unimplemented"),
+			"this fixture's serve has no worker in it, the same failure a bare WorkerServiceClient.Drain call gets")
+
+		client := millv1connect.NewWorkerServiceClient(unixClient(r.mill.socket), "http://mill")
+		_, err := client.Drain(ctx, connect.NewRequest(&millv1.DrainRequest{}))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnimplemented), "the tool reaches the very same RPC")
 	})
 
 	It("reads logs over the RPC, tail and the step-the-run-is-on default both honored", func() {

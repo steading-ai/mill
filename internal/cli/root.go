@@ -69,7 +69,8 @@ func NewRootCommand(stdout, stderr io.Writer) *cobra.Command {
 "mill image" builds the base image and lists and prunes image subvolumes.
 "mill workflow" pushes, pulls, shows, and lists workflow definitions.
 "mill status", "inspect", "explain", "logs", "history" and "cost" read the
-ledger; "mill doctor" probes what a run depends on; "mill cancel" stops one.
+ledger; "mill doctor" probes what a run depends on; "mill cancel" stops one
+run, "mill drain" stops a worker.
 "mill mcp" serves those same tools to a session over stdio.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -103,6 +104,7 @@ ledger; "mill doctor" probes what a run depends on; "mill cancel" stops one.
 		newHistoryCommand(),
 		newCostCommand(),
 		newCancelCommand(),
+		newDrainCommand(),
 		newDoctorCommand(),
 		newMCPCommand(),
 	)

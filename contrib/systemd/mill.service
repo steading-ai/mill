@@ -80,12 +80,14 @@ RuntimeDirectoryMode=0750
 # in its workflow, as `env.passthrough` (docs/architecture.md §"Skill steps:
 # the harness adapter").
 ExecStart=/usr/bin/mill serve --work --env-mode strict --socket %t/mill/mill.sock --config %E/mill/config.yaml
-# On stop the worker goes first — it releases its lease as a preemption with
-# detail "shutdown" and leaves its run resumable — and the store drains
-# after it. That is the worker's --grace (30s by default) plus serve's
-# --shutdown-timeout (30s), so give it both and a margin. A second SIGTERM
-# inside the window kills the sessions, which is what SendSIGKILL does at
-# the end of this timeout anyway.
+# On stop the worker goes first: the first SIGTERM asks it to drain — stop
+# claiming, let every run in flight reach its next step boundary, release
+# its lease as a preemption with detail "drain", no attempt aborted — and
+# the store drains after it. That is the worker's --grace (30s by default)
+# plus serve's --shutdown-timeout (30s), so give it both and a margin. A
+# second SIGTERM inside the window kills whatever is still in flight —
+# the attempt left aborted, the lease released with detail "shutdown" —
+# which is what SendSIGKILL does at the end of this timeout anyway.
 TimeoutStopSec=90
 KillSignal=SIGTERM
 Restart=on-failure

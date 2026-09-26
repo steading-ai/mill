@@ -13,6 +13,7 @@ import (
 
 	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
 
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 	"github.com/steading-ai/mill/internal/forge"
 	"github.com/steading-ai/mill/internal/skift"
 )
@@ -119,14 +120,15 @@ type WorkerOptions struct {
 type Worker struct {
 	options  WorkerOptions
 	slots    chan struct{}
-	stopping chan struct{}
+	draining chan struct{}
 	once     sync.Once
 	// lastSweep is when the ledger was last swept against skift. Touched
 	// on the claim loop alone.
 	lastSweep time.Time
-	// inFlight is every node this process is driving, by id. The sweep
-	// leaves those alone whatever skift says of them: the run's own
-	// goroutine is the one that writes its ending.
+	// inFlight is every node this process is driving, by id, to a
+	// RunningNode carrying what Probe reports of it. The sweep leaves those
+	// alone whatever skift says of them: the run's own goroutine is the one
+	// that writes its ending.
 	inFlight sync.Map
 	// killed records that a run was still in flight when the kill context
 	// was cancelled, which is the only thing that makes a stop non-zero.
@@ -146,6 +148,18 @@ type Worker struct {
 	// regardless, so an entry surviving here past that point is only ever
 	// consulted if the Hold write itself failed.
 	backoff map[string]*nodeBackoff
+}
+
+// RunningNode is what Probe reports of one node this worker is driving.
+//
+// NodeRef, not a run id, is what is stored here: the run a claim opens is
+// not created until [Runner.openRun] runs inside drive, after spawn has
+// already returned, so no run id exists yet at the one place this is
+// populated. Probe resolves NodeRef to the live run and its current step
+// itself (WorkerServiceConfig's Store, an Inspect by node ref) when it needs
+// one.
+type RunningNode struct {
+	NodeRef string
 }
 
 // nodeBackoff is one node's current refusal streak: until is when the
@@ -180,22 +194,23 @@ func NewWorker(options WorkerOptions) (*Worker, error) {
 	return &Worker{
 		options:  options,
 		slots:    make(chan struct{}, options.Concurrency),
-		stopping: make(chan struct{}),
+		draining: make(chan struct{}),
 		backoff:  make(map[string]*nodeBackoff),
 	}, nil
 }
 
-// Stop asks the worker to stop claiming and every run in flight to reach a
-// boundary and leave itself resumable. It returns at once; [Worker.Run] is
-// what reports that the last run is done. Stopping twice is not an error.
-func (w *Worker) Stop() {
-	w.once.Do(func() { close(w.stopping) })
+// Drain asks the worker to stop claiming and every run in flight to reach a
+// boundary and leave itself resumable, with no attempt aborted. It returns at
+// once; [Worker.Run] is what reports that the last run is done. Draining
+// twice is not an error.
+func (w *Worker) Drain() {
+	w.once.Do(func() { close(w.draining) })
 }
 
 // Run claims and drives until the worker is stopped.
 //
 // ctx is the kill: cancelling it does not ask, it ends the sessions in
-// flight and returns [ErrKilled]. The graceful stop is [Worker.Stop].
+// flight and returns [ErrKilled]. The graceful stop is [Worker.Drain].
 func (w *Worker) Run(ctx context.Context) error {
 	if err := w.start(ctx); err != nil {
 		return err
@@ -323,7 +338,7 @@ func (w *Worker) claim(ctx context.Context, wg *sync.WaitGroup) error {
 	defer endClaims()
 	go func() {
 		select {
-		case <-w.stopping:
+		case <-w.draining:
 			endClaims()
 		case <-claiming.Done():
 		}
@@ -331,9 +346,9 @@ func (w *Worker) claim(ctx context.Context, wg *sync.WaitGroup) error {
 
 	for {
 		// Checked before the select below rather than only in it: once
-		// stopping is closed both of its cases are ready, and a select
+		// draining is closed both of its cases are ready, and a select
 		// would take either.
-		if w.stopped() || ctx.Err() != nil {
+		if w.isDraining() || ctx.Err() != nil {
 			return nil
 		}
 
@@ -356,7 +371,7 @@ func (w *Worker) claim(ctx context.Context, wg *sync.WaitGroup) error {
 		// set for no reason, and the worker would be heartbeating nothing.
 		select {
 		case w.slots <- struct{}{}:
-		case <-w.stopping:
+		case <-w.draining:
 			return nil
 		case <-ctx.Done():
 			return nil
@@ -366,7 +381,7 @@ func (w *Worker) claim(ctx context.Context, wg *sync.WaitGroup) error {
 		claimed, err := runner.options.Skift.ClaimNext(claiming, w.options.Projects, w.options.Labels, w.options.Wait)
 		if err != nil || claimed == nil {
 			<-w.slots
-			if err == nil || w.stopped() || ctx.Err() != nil {
+			if err == nil || w.isDraining() || ctx.Err() != nil {
 				continue
 			}
 			// Skift being unreachable is not something a worker can work
@@ -375,10 +390,10 @@ func (w *Worker) claim(ctx context.Context, wg *sync.WaitGroup) error {
 			return fmt.Errorf("work: claim: %w", err)
 		}
 
-		// A claim that landed as the stop did. Give it straight back rather
+		// A claim that landed as the drain did. Give it straight back rather
 		// than open a run only to stop it: nothing has been written yet, so
 		// the node simply returns to the ready set.
-		if w.releaseIfStopped(ctx, runner, claimed) {
+		if w.releaseIfDraining(ctx, runner, claimed) {
 			return nil
 		}
 
@@ -411,7 +426,7 @@ func (w *Worker) claim(ctx context.Context, wg *sync.WaitGroup) error {
 // inFlight entry the sweep reads, are released as it ends.
 func (w *Worker) spawn(ctx context.Context, wg *sync.WaitGroup, claimed *skift.Claimed) {
 	nodeID := claimed.Node.GetId()
-	w.inFlight.Store(nodeID, struct{}{})
+	w.inFlight.Store(nodeID, RunningNode{NodeRef: claimed.Node.GetReference()})
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -421,16 +436,16 @@ func (w *Worker) spawn(ctx context.Context, wg *sync.WaitGroup, claimed *skift.C
 	}()
 }
 
-// releaseIfStopped gives a claim straight back if it landed after the
-// worker had already begun stopping, and frees the slot it took: nothing
+// releaseIfDraining gives a claim straight back if it landed after the
+// worker had already begun draining, and frees the slot it took: nothing
 // has been written yet, so the node simply returns to the ready set.
-func (w *Worker) releaseIfStopped(ctx context.Context, runner *Runner, claimed *skift.Claimed) bool {
-	if !w.stopped() {
+func (w *Worker) releaseIfDraining(ctx context.Context, runner *Runner, claimed *skift.Claimed) bool {
+	if !w.isDraining() {
 		return false
 	}
 	if err := runner.options.Skift.Release(ctx, claimed.Lease.GetId(),
-		skiftv1.ReleaseReason_RELEASE_REASON_PREEMPTED, "shutdown"); err != nil {
-		w.options.Log.Warn("releasing a claim that landed as the worker stopped",
+		skiftv1.ReleaseReason_RELEASE_REASON_PREEMPTED, "drain"); err != nil {
+		w.options.Log.Warn("releasing a claim that landed as the worker began draining",
 			"node", claimed.Node.GetReference(), "error", err)
 	}
 	<-w.slots
@@ -458,7 +473,7 @@ func (w *Worker) reclaim(ctx context.Context, wg *sync.WaitGroup) error {
 		return fmt.Errorf("work: listing resumable runs before claiming: %w", err)
 	}
 	for _, c := range candidates {
-		if w.stopped() || ctx.Err() != nil {
+		if w.isDraining() || ctx.Err() != nil {
 			return nil
 		}
 		if len(w.options.Projects) > 0 && !slices.Contains(w.options.Projects, projectOf(c.NodeRef)) {
@@ -477,24 +492,24 @@ func (w *Worker) reclaim(ctx context.Context, wg *sync.WaitGroup) error {
 			continue
 		}
 
-		if w.releaseIfStopped(ctx, runner, claimed) {
+		if w.releaseIfDraining(ctx, runner, claimed) {
 			return nil
 		}
 
-		w.printf("resumed %s, aborted at %s\n", claimed.Node.GetReference(), c.AbortedAt.Format(time.RFC3339))
+		w.printf("resumed %s, last updated %s\n", claimed.Node.GetReference(), c.UpdatedAt.Format(time.RFC3339))
 		w.spawn(ctx, wg, claimed)
 	}
 	return nil
 }
 
 // sleepBackoff waits out one slice of a node's backoff window, cut short by
-// a stop or a kill so neither has to wait for it.
+// a drain or a kill so neither has to wait for it.
 func (w *Worker) sleepBackoff(ctx context.Context, d time.Duration) {
 	timer := time.NewTimer(d)
 	defer timer.Stop()
 	select {
 	case <-timer.C:
-	case <-w.stopping:
+	case <-w.draining:
 	case <-ctx.Done():
 	}
 }
@@ -508,7 +523,7 @@ func (w *Worker) sleepBackoff(ctx context.Context, d time.Duration) {
 func (w *Worker) drive(ctx context.Context, claimed *skift.Claimed) {
 	ref := claimed.Node.GetReference()
 	nodeID := claimed.Node.GetId()
-	err := w.options.Runner.ExecuteClaimed(ctx, claimed, w.stopping)
+	err := w.options.Runner.ExecuteClaimed(ctx, claimed, w.draining)
 	if ctx.Err() != nil {
 		w.killed.Store(true)
 	}
@@ -538,14 +553,42 @@ func (w *Worker) drive(ctx context.Context, claimed *skift.Claimed) {
 	}
 }
 
-// stopped reports whether a graceful stop has been asked for.
-func (w *Worker) stopped() bool {
+// isDraining reports whether a graceful stop has been asked for.
+func (w *Worker) isDraining() bool {
 	select {
-	case <-w.stopping:
+	case <-w.draining:
 		return true
 	default:
 		return false
 	}
+}
+
+// State reports what Probe tells a remote caller of this worker: draining
+// once asked to stop, idle once draining with nothing left in flight, and
+// claiming otherwise.
+func (w *Worker) State() millv1.WorkerState {
+	if !w.isDraining() {
+		return millv1.WorkerState_WORKER_STATE_CLAIMING
+	}
+	empty := true
+	w.inFlight.Range(func(_, _ any) bool {
+		empty = false
+		return false
+	})
+	if empty {
+		return millv1.WorkerState_WORKER_STATE_IDLE
+	}
+	return millv1.WorkerState_WORKER_STATE_DRAINING
+}
+
+// InFlight lists every node this worker is currently driving, for Probe.
+func (w *Worker) InFlight() []RunningNode {
+	var running []RunningNode
+	w.inFlight.Range(func(_, v any) bool {
+		running = append(running, v.(RunningNode))
+		return true
+	})
+	return running
 }
 
 // printf writes one line of the worker's progress.

@@ -203,6 +203,9 @@ func runStatus(cmd *cobra.Command, opts readOptions) error {
 	}
 	projects, labels := resolvedClaims(cmd.Context(), opts.socket, config)
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "worker claims from: %s\n", claimsFrom(projects, labels))
+	if err := printWorkerState(cmd, opts.socket); err != nil {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: worker state: %v\n", err)
+	}
 
 	if opts.ended {
 		return runStatusEnded(cmd, opts, statuses, v)
@@ -232,6 +235,33 @@ func runStatus(cmd *cobra.Command, opts readOptions) error {
 		return fmt.Errorf("status --follow: %w", err)
 	}
 	return nil
+}
+
+// printWorkerState reports the local worker's own drain state on
+// `mill status`, through the same workerProbe helper `doctor` uses: a
+// (nil, nil) answer means no worker is mounted behind this socket, so
+// nothing extra is printed. A non-nil error means the worker answered and
+// failed, which the caller reports as a warning rather than failing the
+// whole command over a worker-only problem.
+func printWorkerState(cmd *cobra.Command, socket string) error {
+	probe, err := workerProbe(cmd.Context(), socket)
+	if err != nil {
+		return err
+	}
+	if probe == nil {
+		return nil
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "worker state: %s\n", workerStateName(probe.GetState()))
+	if probe.GetState() != millv1.WorkerState_WORKER_STATE_DRAINING {
+		return nil
+	}
+	w := table(cmd)
+	_, _ = fmt.Fprintln(w, "RUN\tNODE\tSTEP\tIN STEP")
+	for _, n := range probe.GetInFlight() {
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
+			dash(n.GetRunId()), n.GetNodeRef(), dash(n.GetCurrentStep()), n.GetTimeInStep().AsDuration())
+	}
+	return w.Flush()
 }
 
 // watchRunsRetryDelay is how long followStatus waits before reopening
@@ -1313,6 +1343,10 @@ func runStatusName(status millv1.RunStatus) string {
 
 func stepRunStatusName(status millv1.StepRunStatus) string {
 	return enumWord(status.String(), "STEP_RUN_STATUS_")
+}
+
+func workerStateName(state millv1.WorkerState) string {
+	return enumWord(state.String(), "WORKER_STATE_")
 }
 
 func parkedReasonName(reason millv1.ParkedReason) string {
