@@ -3,6 +3,7 @@ package server_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"time"
 
 	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
@@ -10,6 +11,7 @@ import (
 
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
+	"github.com/steading-ai/mill/internal/gateway"
 	"github.com/steading-ai/mill/internal/run"
 	"github.com/steading-ai/mill/internal/server"
 )
@@ -61,6 +63,40 @@ var _ = Describe("WorkerService", Label("unit"), func() {
 		Expect(res.Msg.GetState()).To(Equal(millv1.WorkerState_WORKER_STATE_DRAINING))
 		Expect(res.Msg.GetInFlight()).To(HaveLen(1))
 		Expect(res.Msg.GetInFlight()[0].GetNodeRef()).To(Equal("millspec#1"))
+	})
+
+	It("reports UpstreamOutage only while State is WAITING_ON_UPSTREAM", func(ctx SpecContext) {
+		since := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+		reset := since.Add(2 * time.Minute)
+		ts := httptest.NewServer(workerMux(server.NewWorkerService(server.WorkerServiceConfig{
+			State: func() millv1.WorkerState { return millv1.WorkerState_WORKER_STATE_WAITING_ON_UPSTREAM },
+			Outage: func() *gateway.UpstreamRefusal {
+				return &gateway.UpstreamRefusal{Since: since, Reset: reset}
+			},
+		})))
+		DeferCleanup(ts.Close)
+		client := millv1connect.NewWorkerServiceClient(ts.Client(), ts.URL)
+
+		res, err := client.Probe(ctx, connect.NewRequest(&millv1.ProbeRequest{}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.Msg.GetState()).To(Equal(millv1.WorkerState_WORKER_STATE_WAITING_ON_UPSTREAM))
+		Expect(res.Msg.GetUpstreamOutage().GetSince().AsTime()).To(BeTemporally("==", since))
+		Expect(res.Msg.GetUpstreamOutage().GetResetAt().AsTime()).To(BeTemporally("==", reset))
+	})
+
+	It("carries no UpstreamOutage while claiming, even with one still recorded on the worker", func(ctx SpecContext) {
+		ts := httptest.NewServer(workerMux(server.NewWorkerService(server.WorkerServiceConfig{
+			State: func() millv1.WorkerState { return millv1.WorkerState_WORKER_STATE_CLAIMING },
+			Outage: func() *gateway.UpstreamRefusal {
+				return &gateway.UpstreamRefusal{Since: time.Now()}
+			},
+		})))
+		DeferCleanup(ts.Close)
+		client := millv1connect.NewWorkerServiceClient(ts.Client(), ts.URL)
+
+		res, err := client.Probe(ctx, connect.NewRequest(&millv1.ProbeRequest{}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.Msg.GetUpstreamOutage()).To(BeNil())
 	})
 
 	It("Drain calls the worker's own Drain function exactly once", func(ctx SpecContext) {

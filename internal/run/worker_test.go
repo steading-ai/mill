@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,6 +22,7 @@ import (
 
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/gateway"
 	"github.com/steading-ai/mill/internal/harness"
 	"github.com/steading-ai/mill/internal/harness/fake"
 	"github.com/steading-ai/mill/internal/run"
@@ -181,6 +185,78 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			}
 			Expect(later.GetCreatedAt().AsTime()).To(BeTemporally(">=", earlier.GetEndedAt().AsTime()),
 				"the runs did not overlap")
+		})
+	})
+
+	// mill#63: the worker-wide breaker. This drives a real *gateway.Gateway,
+	// not a fake with a scripted Outage(): the bug step 2 fixed was in
+	// exactly which condition clears g.outage, and a fake's Outage() could
+	// only ever return what the spec told it to, never reproduce that.
+	Describe("An upstream outage", func() {
+		It("stops claiming until a probe shows the upstream answering again", func() {
+			By("given a gateway whose upstream refuses every request, including the doctor's probe")
+			var healthy atomic.Bool
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !healthy.Load() {
+					w.WriteHeader(http.StatusTooManyRequests)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/v1/messages/count_tokens" {
+					_, _ = w.Write([]byte(`{"input_tokens":1}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"model":"claude-sonnet-4-5","id":"msg","type":"message","role":"assistant","content":[],"usage":{"input_tokens":1,"output_tokens":1}}`))
+			}))
+			DeferCleanup(upstream.Close)
+			server := newTestGateway(upstream.URL, "sk-ant-oat01-worker-breaker-subscription")
+			DeferCleanup(server.Close)
+			gw := server.Gateway()
+
+			By("and one request has already tripped the process-wide outage")
+			gw.Rotate("outage-probe", gateway.Step{
+				StepRunID: "outage-probe", StepName: "probe", Token: workspace.TokenFor("outage-probe-token"),
+			})
+			req, err := http.NewRequest(http.MethodPost, server.URL()+"/v1/messages",
+				strings.NewReader(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"ok"}]}`))
+			Expect(err).NotTo(HaveOccurred())
+			req.Header.Set("Authorization", "Bearer outage-probe-token")
+			resp, err := http.DefaultClient.Do(req)
+			Expect(err).NotTo(HaveOccurred())
+			_ = resp.Body.Close()
+			gw.Revoke("outage-probe")
+			Expect(gw.Outage()).NotTo(BeNil())
+
+			By("and a node ready for a worker wired to this gateway")
+			node := f.node(ctx, "a fix behind the breaker", "Change the README's first line.")
+			f.script(f.quickFixScripts()...)
+
+			client, counter := f.counted()
+			worker := f.workerOver(f.runner(quick, func(o *run.Options) {
+				o.Skift = client
+				o.Gateway = gw
+			}), func(o *run.WorkerOptions) { o.Wait = time.Second })
+			done := startWorker(ctx, worker)
+			DeferCleanup(func() {
+				worker.Drain()
+				Eventually(done, time.Minute).Should(Receive())
+			})
+
+			By("then the worker reports waiting on upstream and claims nothing")
+			Eventually(func() millv1.WorkerState { return worker.State() }, 2*time.Second, 20*time.Millisecond).
+				Should(Equal(millv1.WorkerState_WORKER_STATE_WAITING_ON_UPSTREAM))
+			Consistently(func() int64 { return counter.claims.Load() }, time.Second, 100*time.Millisecond).
+				Should(BeZero(), "no claim is made while the outage stands")
+			Expect(worker.Outage()).NotTo(BeNil())
+
+			By("when the upstream starts answering again")
+			healthy.Store(true)
+
+			By("then the worker's next probe clears the outage and it claims and finishes the node")
+			Eventually(func() skiftv1.Status { return f.statusOf(ctx, node) }, 2*time.Minute, 100*time.Millisecond).
+				Should(Equal(skiftv1.Status_STATUS_DONE))
+			Expect(worker.Outage()).To(BeNil())
+			Expect(worker.State()).To(Equal(millv1.WorkerState_WORKER_STATE_CLAIMING))
 		})
 	})
 

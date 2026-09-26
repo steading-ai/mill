@@ -8,7 +8,8 @@
 // Encoding. One protojson-encoded Request or Response per line, no framing
 // beyond the newline. Every message therefore has to survive a JSON
 // round-trip with no side channel: there are no bytes fields and no
-// well-known types beyond Struct, whose JSON is its own value.
+// well-known types beyond Struct and Timestamp, whose JSON is each its own
+// value.
 //
 // This package defines no service. The transport is a pipe, not Connect; a
 // unix socket with Connect is the upgrade if a sidecar ever has to outlive
@@ -26,6 +27,7 @@ import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	structpb "google.golang.org/protobuf/types/known/structpb"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -137,7 +139,11 @@ type ProcessExit struct {
 	Signal int32 `protobuf:"varint,2,opt,name=signal,proto3" json:"signal,omitempty"`
 	// Why the session ended, when the status alone does not say. Required
 	// whenever `status` is -1.
-	Reason        ExitReason `protobuf:"varint,3,opt,name=reason,proto3,enum=harness.v1.ExitReason" json:"reason,omitempty"`
+	Reason ExitReason `protobuf:"varint,3,opt,name=reason,proto3,enum=harness.v1.ExitReason" json:"reason,omitempty"`
+	// When the upstream itself named a time it will start answering again,
+	// for EXIT_REASON_UPSTREAM_REFUSED. Unset when the refusal named none, or
+	// for any other reason.
+	ResetAt       *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=reset_at,json=resetAt,proto3" json:"reset_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -191,6 +197,13 @@ func (x *ProcessExit) GetReason() ExitReason {
 		return x.Reason
 	}
 	return ExitReason_EXIT_REASON_UNSPECIFIED
+}
+
+func (x *ProcessExit) GetResetAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ResetAt
+	}
+	return nil
 }
 
 // TokenCounts is one model's token usage. Counts, never currency: a rate
@@ -1898,11 +1911,12 @@ var File_harness_v1_harness_proto protoreflect.FileDescriptor
 const file_harness_v1_harness_proto_rawDesc = "" +
 	"\n" +
 	"\x18harness/v1/harness.proto\x12\n" +
-	"harness.v1\x1a\x1cgoogle/protobuf/struct.proto\"m\n" +
+	"harness.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xa4\x01\n" +
 	"\vProcessExit\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\x05R\x06status\x12\x16\n" +
 	"\x06signal\x18\x02 \x01(\x05R\x06signal\x12.\n" +
-	"\x06reason\x18\x03 \x01(\x0e2\x16.harness.v1.ExitReasonR\x06reason\"{\n" +
+	"\x06reason\x18\x03 \x01(\x0e2\x16.harness.v1.ExitReasonR\x06reason\x125\n" +
+	"\breset_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\aresetAt\"{\n" +
 	"\vTokenCounts\x12\x14\n" +
 	"\x05input\x18\x01 \x01(\x03R\x05input\x12\x16\n" +
 	"\x06output\x18\x02 \x01(\x03R\x06output\x12\x1d\n" +
@@ -2060,70 +2074,72 @@ func file_harness_v1_harness_proto_rawDescGZIP() []byte {
 var file_harness_v1_harness_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_harness_v1_harness_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_harness_v1_harness_proto_goTypes = []any{
-	(ExitReason)(0),         // 0: harness.v1.ExitReason
-	(*ProcessExit)(nil),     // 1: harness.v1.ProcessExit
-	(*TokenCounts)(nil),     // 2: harness.v1.TokenCounts
-	(*Usage)(nil),           // 3: harness.v1.Usage
-	(*Settings)(nil),        // 4: harness.v1.Settings
-	(*Workspace)(nil),       // 5: harness.v1.Workspace
-	(*McpServer)(nil),       // 6: harness.v1.McpServer
-	(*Attachment)(nil),      // 7: harness.v1.Attachment
-	(*Start)(nil),           // 8: harness.v1.Start
-	(*Resume)(nil),          // 9: harness.v1.Resume
-	(*Cancel)(nil),          // 10: harness.v1.Cancel
-	(*Request)(nil),         // 11: harness.v1.Request
-	(*Text)(nil),            // 12: harness.v1.Text
-	(*Thinking)(nil),        // 13: harness.v1.Thinking
-	(*ToolCall)(nil),        // 14: harness.v1.ToolCall
-	(*ToolResult)(nil),      // 15: harness.v1.ToolResult
-	(*Heartbeat)(nil),       // 16: harness.v1.Heartbeat
-	(*Event)(nil),           // 17: harness.v1.Event
-	(*Terminal)(nil),        // 18: harness.v1.Terminal
-	(*Failure)(nil),         // 19: harness.v1.Failure
-	(*Response)(nil),        // 20: harness.v1.Response
-	nil,                     // 21: harness.v1.Usage.ByModelEntry
-	nil,                     // 22: harness.v1.McpServer.EnvEntry
-	nil,                     // 23: harness.v1.Start.McpServersEntry
-	nil,                     // 24: harness.v1.Resume.McpServersEntry
-	(*structpb.Struct)(nil), // 25: google.protobuf.Struct
+	(ExitReason)(0),               // 0: harness.v1.ExitReason
+	(*ProcessExit)(nil),           // 1: harness.v1.ProcessExit
+	(*TokenCounts)(nil),           // 2: harness.v1.TokenCounts
+	(*Usage)(nil),                 // 3: harness.v1.Usage
+	(*Settings)(nil),              // 4: harness.v1.Settings
+	(*Workspace)(nil),             // 5: harness.v1.Workspace
+	(*McpServer)(nil),             // 6: harness.v1.McpServer
+	(*Attachment)(nil),            // 7: harness.v1.Attachment
+	(*Start)(nil),                 // 8: harness.v1.Start
+	(*Resume)(nil),                // 9: harness.v1.Resume
+	(*Cancel)(nil),                // 10: harness.v1.Cancel
+	(*Request)(nil),               // 11: harness.v1.Request
+	(*Text)(nil),                  // 12: harness.v1.Text
+	(*Thinking)(nil),              // 13: harness.v1.Thinking
+	(*ToolCall)(nil),              // 14: harness.v1.ToolCall
+	(*ToolResult)(nil),            // 15: harness.v1.ToolResult
+	(*Heartbeat)(nil),             // 16: harness.v1.Heartbeat
+	(*Event)(nil),                 // 17: harness.v1.Event
+	(*Terminal)(nil),              // 18: harness.v1.Terminal
+	(*Failure)(nil),               // 19: harness.v1.Failure
+	(*Response)(nil),              // 20: harness.v1.Response
+	nil,                           // 21: harness.v1.Usage.ByModelEntry
+	nil,                           // 22: harness.v1.McpServer.EnvEntry
+	nil,                           // 23: harness.v1.Start.McpServersEntry
+	nil,                           // 24: harness.v1.Resume.McpServersEntry
+	(*timestamppb.Timestamp)(nil), // 25: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),       // 26: google.protobuf.Struct
 }
 var file_harness_v1_harness_proto_depIdxs = []int32{
 	0,  // 0: harness.v1.ProcessExit.reason:type_name -> harness.v1.ExitReason
-	21, // 1: harness.v1.Usage.by_model:type_name -> harness.v1.Usage.ByModelEntry
-	25, // 2: harness.v1.Settings.options:type_name -> google.protobuf.Struct
-	22, // 3: harness.v1.McpServer.env:type_name -> harness.v1.McpServer.EnvEntry
-	7,  // 4: harness.v1.Start.attachments:type_name -> harness.v1.Attachment
-	4,  // 5: harness.v1.Start.settings:type_name -> harness.v1.Settings
-	5,  // 6: harness.v1.Start.workspace:type_name -> harness.v1.Workspace
-	23, // 7: harness.v1.Start.mcp_servers:type_name -> harness.v1.Start.McpServersEntry
-	7,  // 8: harness.v1.Resume.attachments:type_name -> harness.v1.Attachment
-	4,  // 9: harness.v1.Resume.settings:type_name -> harness.v1.Settings
-	5,  // 10: harness.v1.Resume.workspace:type_name -> harness.v1.Workspace
-	24, // 11: harness.v1.Resume.mcp_servers:type_name -> harness.v1.Resume.McpServersEntry
-	8,  // 12: harness.v1.Request.start:type_name -> harness.v1.Start
-	9,  // 13: harness.v1.Request.resume:type_name -> harness.v1.Resume
-	10, // 14: harness.v1.Request.cancel:type_name -> harness.v1.Cancel
-	25, // 15: harness.v1.ToolCall.arguments:type_name -> google.protobuf.Struct
-	12, // 16: harness.v1.Event.text:type_name -> harness.v1.Text
-	14, // 17: harness.v1.Event.tool_call:type_name -> harness.v1.ToolCall
-	15, // 18: harness.v1.Event.tool_result:type_name -> harness.v1.ToolResult
-	3,  // 19: harness.v1.Event.usage:type_name -> harness.v1.Usage
-	16, // 20: harness.v1.Event.heartbeat:type_name -> harness.v1.Heartbeat
-	13, // 21: harness.v1.Event.thinking:type_name -> harness.v1.Thinking
-	25, // 22: harness.v1.Terminal.structured_output:type_name -> google.protobuf.Struct
-	3,  // 23: harness.v1.Terminal.usage:type_name -> harness.v1.Usage
-	1,  // 24: harness.v1.Terminal.exit:type_name -> harness.v1.ProcessExit
-	17, // 25: harness.v1.Response.event:type_name -> harness.v1.Event
-	18, // 26: harness.v1.Response.terminal:type_name -> harness.v1.Terminal
-	19, // 27: harness.v1.Response.failure:type_name -> harness.v1.Failure
-	2,  // 28: harness.v1.Usage.ByModelEntry.value:type_name -> harness.v1.TokenCounts
-	6,  // 29: harness.v1.Start.McpServersEntry.value:type_name -> harness.v1.McpServer
-	6,  // 30: harness.v1.Resume.McpServersEntry.value:type_name -> harness.v1.McpServer
-	31, // [31:31] is the sub-list for method output_type
-	31, // [31:31] is the sub-list for method input_type
-	31, // [31:31] is the sub-list for extension type_name
-	31, // [31:31] is the sub-list for extension extendee
-	0,  // [0:31] is the sub-list for field type_name
+	25, // 1: harness.v1.ProcessExit.reset_at:type_name -> google.protobuf.Timestamp
+	21, // 2: harness.v1.Usage.by_model:type_name -> harness.v1.Usage.ByModelEntry
+	26, // 3: harness.v1.Settings.options:type_name -> google.protobuf.Struct
+	22, // 4: harness.v1.McpServer.env:type_name -> harness.v1.McpServer.EnvEntry
+	7,  // 5: harness.v1.Start.attachments:type_name -> harness.v1.Attachment
+	4,  // 6: harness.v1.Start.settings:type_name -> harness.v1.Settings
+	5,  // 7: harness.v1.Start.workspace:type_name -> harness.v1.Workspace
+	23, // 8: harness.v1.Start.mcp_servers:type_name -> harness.v1.Start.McpServersEntry
+	7,  // 9: harness.v1.Resume.attachments:type_name -> harness.v1.Attachment
+	4,  // 10: harness.v1.Resume.settings:type_name -> harness.v1.Settings
+	5,  // 11: harness.v1.Resume.workspace:type_name -> harness.v1.Workspace
+	24, // 12: harness.v1.Resume.mcp_servers:type_name -> harness.v1.Resume.McpServersEntry
+	8,  // 13: harness.v1.Request.start:type_name -> harness.v1.Start
+	9,  // 14: harness.v1.Request.resume:type_name -> harness.v1.Resume
+	10, // 15: harness.v1.Request.cancel:type_name -> harness.v1.Cancel
+	26, // 16: harness.v1.ToolCall.arguments:type_name -> google.protobuf.Struct
+	12, // 17: harness.v1.Event.text:type_name -> harness.v1.Text
+	14, // 18: harness.v1.Event.tool_call:type_name -> harness.v1.ToolCall
+	15, // 19: harness.v1.Event.tool_result:type_name -> harness.v1.ToolResult
+	3,  // 20: harness.v1.Event.usage:type_name -> harness.v1.Usage
+	16, // 21: harness.v1.Event.heartbeat:type_name -> harness.v1.Heartbeat
+	13, // 22: harness.v1.Event.thinking:type_name -> harness.v1.Thinking
+	26, // 23: harness.v1.Terminal.structured_output:type_name -> google.protobuf.Struct
+	3,  // 24: harness.v1.Terminal.usage:type_name -> harness.v1.Usage
+	1,  // 25: harness.v1.Terminal.exit:type_name -> harness.v1.ProcessExit
+	17, // 26: harness.v1.Response.event:type_name -> harness.v1.Event
+	18, // 27: harness.v1.Response.terminal:type_name -> harness.v1.Terminal
+	19, // 28: harness.v1.Response.failure:type_name -> harness.v1.Failure
+	2,  // 29: harness.v1.Usage.ByModelEntry.value:type_name -> harness.v1.TokenCounts
+	6,  // 30: harness.v1.Start.McpServersEntry.value:type_name -> harness.v1.McpServer
+	6,  // 31: harness.v1.Resume.McpServersEntry.value:type_name -> harness.v1.McpServer
+	32, // [32:32] is the sub-list for method output_type
+	32, // [32:32] is the sub-list for method input_type
+	32, // [32:32] is the sub-list for extension type_name
+	32, // [32:32] is the sub-list for extension extendee
+	0,  // [0:32] is the sub-list for field type_name
 }
 
 func init() { file_harness_v1_harness_proto_init() }

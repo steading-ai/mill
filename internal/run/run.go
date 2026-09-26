@@ -306,6 +306,16 @@ type Gateway interface {
 	// Exceeded is the refusal an attempt earned by spending its budget,
 	// or nil.
 	Exceeded(stepRunID string) *gateway.BudgetError
+	// Refused is the upstream's own refusal of an attempt's requests, or
+	// nil. Unlike Exceeded, it never removes the attempt from the
+	// gateway: the caller decides when that happens.
+	Refused(stepRunID string) *gateway.UpstreamRefusal
+	// Outage is the process-wide upstream refusal every attempt is
+	// waiting out, or nil once the upstream answers again.
+	Outage() *gateway.UpstreamRefusal
+	// Probe makes one request through the gateway's own proxy path,
+	// which clears Outage the moment the upstream answers with a 200.
+	Probe(ctx context.Context) error
 }
 
 // Answerer is a person at a terminal, asked a gate's question. It is the

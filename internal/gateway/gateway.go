@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -81,6 +82,7 @@ type live struct {
 	step     Step
 	consumed int64
 	refused  *BudgetError
+	upstream *UpstreamRefusal
 }
 
 // BudgetError is a request refused because the attempt has spent its
@@ -117,6 +119,29 @@ func (e *ModelError) Error() string {
 		e.Model, e.StepName, strings.Join(e.Pinned, ", "))
 }
 
+// UpstreamRefusal is a refusal observed from the model's own upstream — a
+// forwarded 429 or 5xx, or a request that reached no response at all — as
+// opposed to the gateway's own budget refusal, which never reaches this far
+// (ServeHTTP answers it before the request is proxied). It is what lets the
+// run loop wait out a real outage instead of spending the step's retries,
+// and what lets the worker stop claiming until the upstream answers again.
+type UpstreamRefusal struct {
+	// StepName is the step whose request was refused.
+	StepName string
+	// StepRunID is the attempt refused.
+	StepRunID string
+	// Status is the HTTP status the upstream answered with, or 0 when it
+	// could not be reached at all.
+	Status int
+	// Since is when this streak of refusals began.
+	Since time.Time
+	// Last is when the most recent refusal in the streak was observed.
+	Last time.Time
+	// Reset is when the upstream itself said it would answer again, or the
+	// zero time when the response named none.
+	Reset time.Time
+}
+
 // Config is what a gateway is built from.
 type Config struct {
 	// Upstream is where requests go. Empty means [DefaultUpstream].
@@ -140,8 +165,9 @@ type Gateway struct {
 	log        *slog.Logger
 	proxy      *httputil.ReverseProxy
 
-	mu    sync.Mutex
-	steps map[string]*live
+	mu     sync.Mutex
+	steps  map[string]*live
+	outage *UpstreamRefusal
 }
 
 // New builds a gateway.
@@ -207,6 +233,28 @@ func (g *Gateway) Exceeded(stepRunID string) *BudgetError {
 		}
 	}
 	return nil
+}
+
+// Refused reports the upstream refusal an attempt has observed, or nil. The
+// run loop reads it after a failed turn, before it revokes the step.
+func (g *Gateway) Refused(stepRunID string) *UpstreamRefusal {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for _, l := range g.steps {
+		if l.step.StepRunID == stepRunID {
+			return l.upstream
+		}
+	}
+	return nil
+}
+
+// Outage reports the upstream refusal the gateway is observing process-wide,
+// or nil. The worker's breaker reads it to decide whether to keep claiming,
+// for a caller with no step of its own to ask [Refused] about.
+func (g *Gateway) Outage() *UpstreamRefusal {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.outage
 }
 
 // Consumed is what an attempt has billed through the gateway so far, in
@@ -318,10 +366,20 @@ func (g *Gateway) rewrite(pr *httputil.ProxyRequest) {
 }
 
 // modifyResponse puts the observer on a forwarded response, so that what
-// the upstream billed is counted as the bytes pass to the client.
+// the upstream billed is counted as the bytes pass to the client, and
+// records what the response says about the upstream's own health.
 func (g *Gateway) modifyResponse(resp *http.Response) error {
 	l, _ := resp.Request.Context().Value(stepKey{}).(*live)
-	if l == nil || resp.StatusCode != http.StatusOK || !strings.HasSuffix(resp.Request.URL.Path, messagesPath) {
+	if l == nil {
+		return nil
+	}
+	switch {
+	case resp.StatusCode == http.StatusOK:
+		g.clearUpstream(l)
+	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
+		g.observeUpstreamRefusal(l, resp.StatusCode, resp.Header)
+	}
+	if resp.StatusCode != http.StatusOK || !strings.HasSuffix(resp.Request.URL.Path, messagesPath) {
 		return nil
 	}
 	streaming := strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream")
@@ -333,6 +391,92 @@ func (g *Gateway) modifyResponse(resp *http.Response) error {
 		g.count(l, usage)
 	})
 	return nil
+}
+
+// clearUpstream records that a step's request just succeeded, and clears the
+// gateway's process-wide outage unconditionally: any request the upstream
+// answers with 200 proves the account is not capped right now, whether or
+// not this step is the one that first observed the refusal. This has to hold
+// for [Gateway.Probe]'s own request too, which runs under a `live` of its
+// own (run id "doctor") that never itself saw a refusal — an outage cleared
+// only by the identical `live` that set it would never clear on a probe, or
+// on any other step's unrelated success, and would latch until restart.
+func (g *Gateway) clearUpstream(l *live) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	l.upstream = nil
+	if g.outage != nil {
+		g.log.Info("gateway: upstream recovered", "since", g.outage.Since, "last", g.outage.Last)
+	}
+	g.outage = nil
+}
+
+// observeUpstreamRefusal records a forwarded 429 or 5xx, or an unreachable
+// upstream (status 0, nil header), both per step and process-wide. It logs
+// once on the transition into an outage, not on every refused request in the
+// streak.
+func (g *Gateway) observeUpstreamRefusal(l *live, status int, header http.Header) {
+	now := time.Now()
+	reset := parseReset(header, now)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	l.upstream = recordUpstreamRefusal(l.upstream, l.step, status, now, reset)
+	first := g.outage == nil
+	g.outage = recordUpstreamRefusal(g.outage, l.step, status, now, reset)
+	if first {
+		g.log.Warn("gateway: upstream refusing", "step", l.step.StepName, "step_run", l.step.StepRunID, "status", status, "reset", reset)
+	}
+}
+
+// recordUpstreamRefusal folds one more refused response into an existing
+// streak, or starts one, the update [observeUpstreamRefusal] applies
+// identically to a step's own record and the gateway's process-wide one.
+func recordUpstreamRefusal(u *UpstreamRefusal, step Step, status int, now, reset time.Time) *UpstreamRefusal {
+	if u == nil {
+		u = &UpstreamRefusal{StepName: step.StepName, StepRunID: step.StepRunID, Since: now}
+	}
+	u.Status = status
+	u.Last = now
+	if !reset.IsZero() {
+		u.Reset = reset
+	}
+	return u
+}
+
+// parseReset reads the earliest time a forwarded response's headers name the
+// upstream will answer again, or the zero time when none do. retry-after
+// (RFC 7231: delta-seconds or an HTTP-date) is tried first, since it is
+// documented for both an ordinary rate limit and the account-wide cap; the
+// anthropic-ratelimit-*-reset headers (RFC 3339) are the fallback, taking
+// the earliest among whichever of them are present.
+func parseReset(header http.Header, now time.Time) time.Time {
+	if header == nil {
+		return time.Time{}
+	}
+	if v := strings.TrimSpace(header.Get("Retry-After")); v != "" {
+		if secs, err := strconv.Atoi(v); err == nil {
+			return now.Add(time.Duration(secs) * time.Second)
+		}
+		if t, err := http.ParseTime(v); err == nil {
+			return t
+		}
+	}
+	var reset time.Time
+	for _, name := range []string{
+		"Anthropic-Ratelimit-Requests-Reset",
+		"Anthropic-Ratelimit-Tokens-Reset",
+		"Anthropic-Ratelimit-Input-Tokens-Reset",
+		"Anthropic-Ratelimit-Output-Tokens-Reset",
+	} {
+		v := header.Get(name)
+		if v == "" {
+			continue
+		}
+		if t, err := time.Parse(time.RFC3339, v); err == nil && (reset.IsZero() || t.Before(reset)) {
+			reset = t
+		}
+	}
+	return reset
 }
 
 // count records one response's usage: in the attempt's running total, and
@@ -364,6 +508,9 @@ func (g *Gateway) upstreamError(w http.ResponseWriter, r *http.Request, err erro
 		return
 	}
 	g.log.Warn("gateway: upstream", "upstream", g.upstream.Host, "path", r.URL.Path, "error", err)
+	if l, ok := r.Context().Value(stepKey{}).(*live); ok && l != nil {
+		g.observeUpstreamRefusal(l, 0, nil)
+	}
 	refuse(w, http.StatusBadGateway, "api_error", "the upstream could not be reached through the mill's credential gateway")
 }
 

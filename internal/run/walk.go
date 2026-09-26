@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 	"github.com/steading-ai/mill/internal/evidence"
@@ -252,14 +254,36 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 	s.token = token.GetStepToken().GetId()
 	result, execErr := r.execute(ctx, s, step, sr, detail, token.GetStepToken(), feedback)
 
+	// The upstream's own refusal is read before gatewayRefusal's Revoke,
+	// which deletes the live entry it reads.
+	refusal := r.gatewayUpstreamRefusal(sr)
+
 	// What the gateway refused the attempt for is the attempt's failure,
 	// whatever the session made of being refused: a step that spent its
 	// budget is over, and the budget is the reason the ledger records
-	// (docs/sandbox.md §Credentials).
+	// (docs/sandbox.md §Credentials). The gateway's own budget refusal
+	// takes precedence over an upstream refusal observed in the same
+	// attempt: the step spent what it was allowed to spend, and that is
+	// a real failure the workflow's on_failure expects, not an outage to
+	// wait out.
 	if over := r.gatewayRefusal(s, sr); over != nil {
 		execErr = errors.Join(execErr, over)
 		if result.feedback == "" {
 			result.feedback = over.Error()
+		}
+	} else if refusal != nil {
+		// Every request this attempt made was refused by the upstream
+		// itself, whatever the sidecar's own exit classification made of
+		// it: the gateway saw every response, the sidecar only its own
+		// process's view of one. A step with no exit at all — a gate, or
+		// one whose commit was already made — never reaches here, since
+		// no request of its was ever live in the gateway to refuse.
+		if result.exit == nil {
+			result.exit = &harnessv1.ProcessExit{Status: -1}
+		}
+		result.exit.Reason = harnessv1.ExitReason_EXIT_REASON_UPSTREAM_REFUSED
+		if !refusal.Reset.IsZero() {
+			result.exit.ResetAt = timestamppb.New(refusal.Reset)
 		}
 	}
 
@@ -422,6 +446,17 @@ func (r *Runner) gatewayRefusal(s *state, sr *millv1.StepRun) *gateway.BudgetErr
 	over := r.options.Gateway.Exceeded(sr.GetId())
 	r.options.Gateway.Revoke(s.run.GetId())
 	return over
+}
+
+// gatewayUpstreamRefusal reads the upstream's own refusal of an attempt's
+// requests, if any. Unlike gatewayRefusal it takes nothing out of the
+// gateway, so it must be called before gatewayRefusal's Revoke, which
+// deletes the live entry this reads.
+func (r *Runner) gatewayUpstreamRefusal(sr *millv1.StepRun) *gateway.UpstreamRefusal {
+	if r.options.Gateway == nil {
+		return nil
+	}
+	return r.options.Gateway.Refused(sr.GetId())
 }
 
 // closeStep records the evidence that closes an attempt.
