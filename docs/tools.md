@@ -508,10 +508,12 @@ is left out and named on standard error, as `status` names it.
 
 A run selects from what is stored here, never from a directory on disk: the
 newest version this command prints for a name is the one a run without an
-explicit `--workflow` version pin follows. `mill serve` pushes every
-directory under `workflows-root` (§Configuration) at its own start, so what
-this prints follows a merged change to a workflow directory once the
-service holding it has restarted, with no `mill workflow push` in between.
+explicit `--workflow` version pin follows. Newest means newest by when it
+was last pushed, not first created: a version pushed again moves back to
+the top even though its row is not new. `mill serve` pushes every directory
+under `workflows-root` (§Configuration) at its own start, so what this
+prints follows a merged change to a workflow directory once the service
+holding it has restarted, with no `mill workflow push` in between.
 
 ```
 $ mill workflow list
@@ -526,10 +528,13 @@ Store a workflow directory — `workflow.yaml` beside `skills/` — as a
 version, and every skill its steps pin. The version is the hash of the
 definition, so pushing unchanged files stores nothing and names the version
 already there; one changed byte of one skill body is a new digest and a new
-version. `--scope org|project` overrides the definition's scope, `--project`
-names the project when the scope is `project`. A definition the loader
-refuses — a step with no `timeout`, a preparatory step with a check's
-contract — is refused here, naming the step. Needs the `operator` role.
+version. Pushing a version that already exists still moves it back to the
+one `workflow list` and a new run select: the last push wins, not the first
+creation. `--scope org|project` overrides the definition's scope,
+`--project` names the project when the scope is `project`. A definition the
+loader refuses — a step with no `timeout`, a preparatory step with a
+check's contract — is refused here, naming the step. Needs the `operator`
+role.
 
 ## workflow pull
 

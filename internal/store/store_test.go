@@ -350,6 +350,66 @@ var _ = Describe("The catalog", Label(testsupport.DBLabel), func() {
 		Expect(listed).To(HaveLen(2))
 	}, SpecTimeout(time.Minute))
 
+	It("re-pushing a version wins selection back from one created after it", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		a := &millv1.Workflow{
+			Name: "feature", Scope: millv1.Scope_SCOPE_ORG,
+			Steps: []*millv1.Step{{Name: "implement", Kind: millv1.StepKind_STEP_KIND_SKILL}},
+		}
+		b := &millv1.Workflow{
+			Name: "feature", Scope: millv1.Scope_SCOPE_ORG,
+			Steps: []*millv1.Step{
+				{Name: "implement", Kind: millv1.StepKind_STEP_KIND_SKILL},
+				{Name: "review", Kind: millv1.StepKind_STEP_KIND_GATE},
+			},
+		}
+		first, created, err := l.store.PutWorkflow(ctx, a)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeTrue())
+
+		second, created, err := l.store.PutWorkflow(ctx, b)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeTrue())
+
+		newest, err := l.store.GetWorkflow(ctx, store.GetWorkflowParams{
+			Name: "feature", Scope: millv1.Scope_SCOPE_ORG})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(newest.GetId()).To(Equal(second.GetId()), "B was pushed after A, so B is newest so far")
+
+		again, created, err := l.store.PutWorkflow(ctx, a)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeFalse(), "A's content already exists as a version; re-pushing it stores nothing new")
+		Expect(again.GetId()).To(Equal(first.GetId()), "still the same row, not a duplicate")
+
+		newest, err = l.store.GetWorkflow(ctx, store.GetWorkflowParams{
+			Name: "feature", Scope: millv1.Scope_SCOPE_ORG})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(newest.GetId()).To(Equal(first.GetId()),
+			"a new run of this name pins A: the re-push moved it back ahead of B")
+
+		listed, _, err := l.store.ListWorkflows(ctx, store.WorkflowFilter{Name: "feature", Scope: millv1.Scope_SCOPE_ORG})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(listed).To(HaveLen(1))
+		Expect(listed[0].GetId()).To(Equal(first.GetId()), "`workflow list` shows the re-pushed version first")
+	}, SpecTimeout(time.Minute))
+
+	It("touching pushed_at on a re-push is permitted to the application role, updating a workflow's content is not", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		stored, _, err := l.store.PutWorkflow(ctx, &millv1.Workflow{
+			Name: "feature", Scope: millv1.Scope_SCOPE_ORG,
+			Steps: []*millv1.Step{{Name: "implement"}},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		app := l.asAppRole(ctx)
+		_, err = app.Exec(ctx, `UPDATE workflows SET pushed_at = now() WHERE id = $1`, stored.GetId())
+		Expect(err).NotTo(HaveOccurred(), "mill serve's own re-push, run as mill_app, must be able to touch pushed_at")
+
+		_, err = app.Exec(ctx, `UPDATE workflows SET version = 'x' WHERE id = $1`, stored.GetId())
+		Expect(err).To(MatchError(ContainSubstring("permission denied for table workflows")),
+			"the grant is scoped to pushed_at alone; a workflow's content stays unupdatable")
+	}, SpecTimeout(time.Minute))
+
 	It("resolves a project workflow before the org's, and falls back to it", func(ctx SpecContext) {
 		l := newLedger(ctx)
 		org, _, err := l.store.PutWorkflow(ctx, &millv1.Workflow{
