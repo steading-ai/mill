@@ -8,7 +8,8 @@
 // Encoding. One protojson-encoded Request or Response per line, no framing
 // beyond the newline. Every message therefore has to survive a JSON
 // round-trip with no side channel: there are no bytes fields and no
-// well-known types beyond Struct, whose JSON is its own value.
+// well-known types beyond Struct and Timestamp, whose JSON is each its own
+// value.
 //
 // This package defines no service. The transport is a pipe, not Connect; a
 // unix socket with Connect is the upgrade if a sidecar ever has to outlive
@@ -19,6 +20,7 @@ syntax = "proto3";
 package harness.v1;
 
 import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/steading-ai/mill/gen/harness/v1;harnessv1";
 
@@ -70,6 +72,10 @@ message ProcessExit {
   // Why the session ended, when the status alone does not say. Required
   // whenever `status` is -1.
   ExitReason reason = 3;
+  // When the upstream itself named a time it will start answering again,
+  // for EXIT_REASON_UPSTREAM_REFUSED. Unset when the refusal named none, or
+  // for any other reason.
+  google.protobuf.Timestamp reset_at = 4;
 }
 
 // TokenCounts is one model's token usage. Counts, never currency: a rate

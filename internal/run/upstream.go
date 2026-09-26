@@ -30,8 +30,15 @@ const upstreamMaxWait = 5 * time.Minute
 
 // upstreamGiveUpAfter is how long a step may wait out an outage before the
 // breaker trips: past this, a human is told once rather than the run
-// retrying silently forever.
+// retrying silently forever. It only applies once the streak has named no
+// reset, or one already in the past: a known, still-future reset is waited
+// for instead (mill#63).
 const upstreamGiveUpAfter = 30 * time.Minute
+
+// UpstreamResetMargin is added past a reset the upstream itself named before
+// the next attempt is made, to absorb clock skew and the cap's own
+// propagation delay without meaningfully lengthening the wait.
+const UpstreamResetMargin = 30 * time.Second
 
 // UpstreamWait is how long to wait before the next attempt after consecutive
 // refusals in a row: 15s, 30s, 1m, doubling, capped at 5m.
@@ -47,14 +54,19 @@ func UpstreamWait(consecutive int64) time.Duration {
 }
 
 // UpstreamStreak is the trailing run of consecutive upstream refusals at
-// step, and when the first of them ended: how long the run has been waiting
-// out this outage. Zero and the zero time when the step's latest attempt was
-// not itself a refusal, so an ordinary failure — or a close — ends the streak
-// exactly as it ends the run's wait.
+// step, when the first of them ended (how long the run has been waiting out
+// this outage), and the reset the upstream itself most recently named, if
+// any. Zero, the zero time and the zero time when the step's latest attempt
+// was not itself a refusal, so an ordinary failure — or a close — ends the
+// streak exactly as it ends the run's wait.
+//
+// reset comes from the freshest attempt that named one: an attempt further
+// back in the streak is only a fallback when the newest one carried none, so
+// a reset the upstream has since revised is not shadowed by a stale one.
 //
 // Steps arrive in ledger order (attempts increase as it goes), the same
 // assumption [latestAttempt] makes, so walking from the end needs no sort.
-func UpstreamStreak(detail *millv1.InspectResponse, step string) (count int64, since time.Time) {
+func UpstreamStreak(detail *millv1.InspectResponse, step string) (count int64, since, reset time.Time) {
 	steps := detail.GetSteps()
 	for i := len(steps) - 1; i >= 0; i-- {
 		sr := steps[i].GetStepRun()
@@ -66,8 +78,13 @@ func UpstreamStreak(detail *millv1.InspectResponse, step string) (count int64, s
 		}
 		count++
 		since = sr.GetEndedAt().AsTime()
+		if reset.IsZero() {
+			if r := sr.GetExit().GetResetAt(); r != nil {
+				reset = r.AsTime()
+			}
+		}
 	}
-	return count, since
+	return count, since, reset
 }
 
 // UpstreamGiveUp reports whether an outage a step has been waiting out is old
@@ -100,8 +117,25 @@ func (r *Runner) upstreamRefusal(ctx context.Context, s *state, step *millv1.Ste
 	if err != nil {
 		return outcome{}, err
 	}
-	count, since := UpstreamStreak(fresh, step.GetName())
+	count, since, reset := UpstreamStreak(fresh, step.GetName())
 	now := r.options.Now()
+
+	// A reset the upstream itself named, and which has not already passed,
+	// is waited for rather than escalated past and given up on: the work
+	// order's own decision for mill#63. A reset already in the past — one
+	// the run waited out itself, or one only now discovered after a
+	// restart later than the reset — carries no more information than
+	// having none, so it falls through to the escalating wait below.
+	if !reset.IsZero() && reset.After(now) {
+		wait := reset.Add(UpstreamResetMargin).Sub(now)
+		if wait < upstreamBaseWait {
+			wait = upstreamBaseWait
+		}
+		reason := fmt.Sprintf("the upstream refused every request; waiting %s for its own reset at %s before attempt %d",
+			wait.Round(time.Second), reset.UTC().Format(time.RFC3339), count+1)
+		r.printf("  upstream refused %s; waiting %s for its own reset\n", step.GetName(), wait.Round(time.Second))
+		return r.waitAndRetry(ctx, s, step, sr, wait, reason)
+	}
 
 	if UpstreamGiveUp(since, now) {
 		reason := fmt.Sprintf("the upstream refused every request for %d attempts since %s; that has outlasted the wait, so a human is being asked",
@@ -120,11 +154,18 @@ func (r *Runner) upstreamRefusal(ctx context.Context, s *state, step *millv1.Ste
 
 	wait := UpstreamWait(count)
 	reason := fmt.Sprintf("the upstream refused every request; waiting %s before attempt %d", wait, count+1)
+	r.printf("  upstream refused %s; retrying in %s\n", step.GetName(), wait)
+	return r.waitAndRetry(ctx, s, step, sr, wait, reason)
+}
+
+// waitAndRetry records the failed attempt's reason and waits out d before the
+// run's next attempt at step, the tail [upstreamRefusal]'s reset-aware wait
+// and its escalating backoff both end in.
+func (r *Runner) waitAndRetry(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, d time.Duration, reason string) (outcome, error) {
 	if err := r.endActivity(ctx, s, step, sr, millv1.StepRunStatus_STEP_RUN_STATUS_FAILED, millv1.EvidenceKind_EVIDENCE_KIND_UNSPECIFIED, reason); err != nil {
 		return outcome{}, err
 	}
-	r.printf("  upstream refused %s; retrying in %s\n", step.GetName(), wait)
-	r.wait(ctx, wait)
+	r.wait(ctx, d)
 	if err := ctx.Err(); err != nil {
 		return outcome{}, r.stopped(ctx, s)
 	}

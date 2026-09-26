@@ -7,12 +7,14 @@ import (
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
 	"github.com/steading-ai/mill/internal/doctor"
 	"github.com/steading-ai/mill/internal/domain"
 	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/gateway"
 	"github.com/steading-ai/mill/internal/run"
 )
 
@@ -56,6 +58,10 @@ type WorkerServiceConfig struct {
 	// State and InFlight report the local worker's own state for Probe.
 	State    func() millv1.WorkerState
 	InFlight func() []run.RunningNode
+	// Outage reports the upstream refusal the local worker is waiting out,
+	// or nil, for Probe's UpstreamOutage field (mill#63). Nil func reports
+	// none, the same as a worker with no gateway in front of it.
+	Outage func() *gateway.UpstreamRefusal
 	// Store resolves an in-flight node's current step for Probe, by its
 	// node ref.
 	//
@@ -129,14 +135,32 @@ func (s *WorkerService) Probe(ctx context.Context, _ *connect.Request[millv1.Pro
 			inFlight = append(inFlight, s.inFlightRun(ctx, n))
 		}
 	}
+	var outage *millv1.UpstreamOutage
+	if state == millv1.WorkerState_WORKER_STATE_WAITING_ON_UPSTREAM && s.cfg.Outage != nil {
+		outage = upstreamOutageProto(s.cfg.Outage())
+	}
 
 	return connect.NewResponse(&millv1.ProbeResponse{
-		Sidecar:  probeResultProto(sidecar),
-		Signing:  probeResultProto(signing),
-		Forge:    probeResultProto(forgeResult),
-		State:    state,
-		InFlight: inFlight,
+		Sidecar:        probeResultProto(sidecar),
+		Signing:        probeResultProto(signing),
+		Forge:          probeResultProto(forgeResult),
+		State:          state,
+		InFlight:       inFlight,
+		UpstreamOutage: outage,
 	}), nil
+}
+
+// upstreamOutageProto reports the outage a waiting worker is watching, or
+// nil when it cleared between State and this read.
+func upstreamOutageProto(o *gateway.UpstreamRefusal) *millv1.UpstreamOutage {
+	if o == nil {
+		return nil
+	}
+	out := &millv1.UpstreamOutage{Since: timestamppb.New(o.Since)}
+	if !o.Reset.IsZero() {
+		out.ResetAt = timestamppb.New(o.Reset)
+	}
+	return out
 }
 
 // inFlightRun looks up one in-flight node's current step, tolerating a

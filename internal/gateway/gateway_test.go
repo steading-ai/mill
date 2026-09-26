@@ -1,15 +1,21 @@
 package gateway_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/steading-ai/mill/internal/gateway"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // The credential gateway of docs/sandbox.md §Credentials: the session holds
@@ -136,6 +142,10 @@ var _ = Describe("The credential gateway", func() {
 		Expect(over.Consumed).To(Equal(int64(20)))
 		Expect(over.StepRunID).To(Equal("01STEP3"))
 		Expect(over.Error()).To(ContainSubstring("token budget of 20"))
+
+		By("and the gateway's own budget refusal is never mistaken for the upstream's")
+		Expect(w.gateway.Refused("01STEP3")).To(BeNil())
+		Expect(w.gateway.Outage()).To(BeNil())
 	})
 
 	It("An unpinned model is refused", func() {
@@ -276,4 +286,173 @@ var _ = Describe("The credential gateway", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(none.Probe(context.Background())).To(MatchError(gateway.ErrNoCredential))
 	})
+
+	It("An upstream refusal is observed with the reset it names", func() {
+		By("given the upstream refuses with retry-after in seconds")
+		before := time.Now()
+		w := newWorld(func(rw http.ResponseWriter, _ *http.Request) {
+			rw.Header().Set("Retry-After", "20")
+			rw.WriteHeader(http.StatusTooManyRequests)
+		})
+		w.step("01STEP1", "implement", stepToken1, 0)
+		resp, _ := w.request(stepToken1, model, false)
+		Expect(resp.StatusCode).To(Equal(http.StatusTooManyRequests))
+
+		refusal := w.gateway.Refused("01STEP1")
+		Expect(refusal).NotTo(BeNil())
+		Expect(refusal.Status).To(Equal(http.StatusTooManyRequests))
+		Expect(refusal.Reset).To(BeTemporally("~", before.Add(20*time.Second), 5*time.Second))
+		Expect(w.gateway.Outage()).To(Equal(refusal))
+
+		By("and a reset named by a unified rate-limit header instead")
+		later := before.Add(time.Hour).UTC().Truncate(time.Second)
+		w2 := newWorld(func(rw http.ResponseWriter, _ *http.Request) {
+			rw.Header().Set("anthropic-ratelimit-tokens-reset", later.Format(time.RFC3339))
+			rw.WriteHeader(http.StatusTooManyRequests)
+		})
+		w2.step("01STEP1", "implement", stepToken1, 0)
+		resp, _ = w2.request(stepToken1, model, false)
+		Expect(resp.StatusCode).To(Equal(http.StatusTooManyRequests))
+		Expect(w2.gateway.Refused("01STEP1").Reset).To(BeTemporally("==", later))
+
+		By("and a refusal naming neither header leaves the reset unknown")
+		w3 := newWorld(func(rw http.ResponseWriter, _ *http.Request) { rw.WriteHeader(http.StatusTooManyRequests) })
+		w3.step("01STEP1", "implement", stepToken1, 0)
+		resp, _ = w3.request(stepToken1, model, false)
+		Expect(resp.StatusCode).To(Equal(http.StatusTooManyRequests))
+		Expect(w3.gateway.Refused("01STEP1").Reset).To(BeZero())
+
+		By("and a 5xx is an outage the same way a 429 is")
+		w4 := newWorld(func(rw http.ResponseWriter, _ *http.Request) { rw.WriteHeader(http.StatusServiceUnavailable) })
+		w4.step("01STEP1", "implement", stepToken1, 0)
+		resp, _ = w4.request(stepToken1, model, false)
+		Expect(resp.StatusCode).To(Equal(http.StatusServiceUnavailable))
+		Expect(w4.gateway.Refused("01STEP1").Status).To(Equal(http.StatusServiceUnavailable))
+	})
+
+	It("An unreachable upstream is an outage too", func() {
+		By("given a gateway pointed at nothing listening")
+		closed := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		addr := closed.URL
+		closed.Close()
+		log := &bytes.Buffer{}
+		gw, err := gateway.New(gateway.Config{
+			Upstream:   addr,
+			Credential: gateway.CredentialOf(subscription),
+			Log:        slog.New(slog.NewTextHandler(log, nil)),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		srv, err := gateway.Listen("127.0.0.1:0", gw)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(srv.Close)
+		gw.Rotate(runID, gateway.Step{StepRunID: "01STEP1", StepName: "implement", Token: workspace.TokenFor(stepToken1)})
+
+		By("when a request is made")
+		req, err := http.NewRequest(http.MethodPost, srv.URL()+"/v1/messages", strings.NewReader(`{"model":"`+model+`"}`))
+		Expect(err).NotTo(HaveOccurred())
+		req.Header.Set("Authorization", "Bearer "+stepToken1)
+		resp, err := http.DefaultClient.Do(req)
+		Expect(err).NotTo(HaveOccurred())
+		_ = resp.Body.Close()
+
+		By("then it is recorded as a refusal with no status and no reset")
+		Expect(resp.StatusCode).To(Equal(http.StatusBadGateway))
+		refusal := gw.Refused("01STEP1")
+		Expect(refusal).NotTo(BeNil())
+		Expect(refusal.Status).To(Equal(0))
+		Expect(refusal.Reset).To(BeZero())
+		Expect(gw.Outage()).NotTo(BeNil())
+	})
+
+	It("A success clears the outage, whichever step it comes from", func() {
+		By("given step A's request is refused")
+		var refuse atomic.Bool
+		refuse.Store(true)
+		w := newWorld(toggledRefusal(&refuse))
+		w.step("01STEPA", "implement", stepToken1, 0)
+		resp, _ := w.request(stepToken1, model, false)
+		Expect(resp.StatusCode).To(Equal(http.StatusTooManyRequests))
+		Expect(w.gateway.Outage()).NotTo(BeNil())
+
+		By("when that same step succeeds")
+		refuse.Store(false)
+		resp, _ = w.request(stepToken1, model, false)
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		Expect(w.gateway.Refused("01STEPA")).To(BeNil())
+		Expect(w.gateway.Outage()).To(BeNil())
+	})
+
+	It("An unrelated step's success clears an outage it never saw", func() {
+		By("given step A's request is refused")
+		var refuse atomic.Bool
+		refuse.Store(true)
+		w := newWorld(toggledRefusal(&refuse))
+		w.step("01STEPA", "implement", stepToken1, 0)
+		resp, _ := w.request(stepToken1, model, false)
+		Expect(resp.StatusCode).To(Equal(http.StatusTooManyRequests))
+		Expect(w.gateway.Outage()).NotTo(BeNil())
+
+		By("when an unrelated step's request succeeds")
+		refuse.Store(false)
+		w.step("01STEPB", "review", stepToken2, 0)
+		resp, _ = w.request(stepToken2, model, false)
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+
+		By("then the process-wide outage is cleared even though step B never saw a refusal")
+		Expect(w.gateway.Outage()).To(BeNil())
+	})
+
+	It("The doctor's probe clears an outage another step observed", func() {
+		By("given a step's request is refused while count_tokens still answers")
+		w := newWorld(func(rw http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/v1/messages/count_tokens" {
+				rw.Header().Set("Content-Type", "application/json")
+				_, _ = rw.Write([]byte(`{"input_tokens":8}`))
+				return
+			}
+			rw.WriteHeader(http.StatusTooManyRequests)
+		})
+		w.step("01STEP1", "implement", stepToken1, 0)
+		resp, _ := w.request(stepToken1, model, false)
+		Expect(resp.StatusCode).To(Equal(http.StatusTooManyRequests))
+		Expect(w.gateway.Outage()).NotTo(BeNil())
+
+		By("when the probe succeeds")
+		Expect(w.gateway.Probe(context.Background())).To(Succeed())
+
+		By("then the outage is cleared, though the probe's own live never itself saw the refusal")
+		Expect(w.gateway.Outage()).To(BeNil())
+	})
+
+	It("A streak of refusals logs once, and recovery logs once", func() {
+		var refuse atomic.Bool
+		refuse.Store(true)
+		w := newWorld(toggledRefusal(&refuse))
+		w.step("01STEP1", "implement", stepToken1, 0)
+
+		for range 3 {
+			resp, _ := w.request(stepToken1, model, false)
+			Expect(resp.StatusCode).To(Equal(http.StatusTooManyRequests))
+		}
+		Expect(strings.Count(w.log.String(), "gateway: upstream refusing")).To(Equal(1))
+
+		refuse.Store(false)
+		resp, _ := w.request(stepToken1, model, false)
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		Expect(strings.Count(w.log.String(), "gateway: upstream recovered")).To(Equal(1))
+	})
 })
+
+// toggledRefusal answers 429 while refuse holds true, and a bare successful
+// Messages response once it is flipped false — the fixture behind every spec
+// in this file that needs an upstream it can cap and un-cap mid-test.
+func toggledRefusal(refuse *atomic.Bool) func(http.ResponseWriter, *http.Request) {
+	return func(rw http.ResponseWriter, _ *http.Request) {
+		if refuse.Load() {
+			rw.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		rw.Header().Set("Content-Type", "application/json")
+		_, _ = rw.Write([]byte(`{"model":"` + model + `","id":"msg","type":"message","role":"assistant","content":[],"usage":{"input_tokens":1,"output_tokens":1}}`))
+	}
+}
