@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -78,28 +79,65 @@ func runDrain(cmd *cobra.Command, opts drainOptions) error {
 // waitForIdle polls Probe until the worker reports idle or timeout elapses,
 // naming the timeout rather than surfacing a bare context error when it
 // does, since that is the one outcome `mill drain --wait` promises to
-// report distinctly.
+// report distinctly. It also prints each run's release as it drops out of
+// Probe's in-flight list, and, on timeout, names whatever is still there.
 func waitForIdle(ctx context.Context, out io.Writer, client millv1connect.WorkerServiceClient, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	ticker := time.NewTicker(drainPollInterval)
 	defer ticker.Stop()
+
+	var inFlight []*millv1.InFlightRun
+	timedOut := func() error {
+		return fmt.Errorf("drain --wait: worker did not reach idle within %s: still in flight: %s",
+			timeout, describeInFlight(inFlight))
+	}
 	for {
 		if ctx.Err() != nil {
-			return fmt.Errorf("drain --wait: worker did not reach idle within %s", timeout)
+			return timedOut()
 		}
 		res, err := client.Probe(ctx, connect.NewRequest(&millv1.ProbeRequest{}))
 		if err != nil {
 			return fmt.Errorf("drain --wait: %w", err)
 		}
+		reportReleased(out, inFlight, res.Msg.GetInFlight())
+		inFlight = res.Msg.GetInFlight()
 		if res.Msg.GetState() == millv1.WorkerState_WORKER_STATE_IDLE {
 			_, _ = fmt.Fprintln(out, "worker is idle; drain complete")
 			return nil
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("drain --wait: worker did not reach idle within %s", timeout)
+			return timedOut()
 		case <-ticker.C:
 		}
 	}
+}
+
+// reportReleased prints a line for each run present in before but no longer
+// in after: a run whose lease was released, its step boundary closed,
+// between the two polls that produced them.
+func reportReleased(out io.Writer, before, after []*millv1.InFlightRun) {
+	still := make(map[string]bool, len(after))
+	for _, run := range after {
+		still[run.GetRunId()] = true
+	}
+	for _, run := range before {
+		if !still[run.GetRunId()] {
+			_, _ = fmt.Fprintf(out, "released %s (%s)\n", run.GetRunId(), run.GetNodeRef())
+		}
+	}
+}
+
+// describeInFlight names the runs `--wait` is still waiting on, for a
+// timeout error.
+func describeInFlight(runs []*millv1.InFlightRun) string {
+	if len(runs) == 0 {
+		return "none reported"
+	}
+	names := make([]string, len(runs))
+	for i, run := range runs {
+		names[i] = fmt.Sprintf("%s (%s)", run.GetRunId(), run.GetNodeRef())
+	}
+	return strings.Join(names, ", ")
 }

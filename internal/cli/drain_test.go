@@ -8,6 +8,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/run"
 	"github.com/steading-ai/mill/internal/server"
 	"github.com/steading-ai/mill/internal/testsupport"
 )
@@ -66,5 +67,27 @@ var _ = Describe("mill drain", Label(testsupport.DBLabel), func() {
 		out, err := w.try(ctx, "drain", "--wait", "--timeout", "1500ms")
 
 		Expect(err).To(MatchError(ContainSubstring("did not reach idle within 1.5s")), out)
+	})
+
+	It("a drain that outlasts its timeout leaves the run alone", func() {
+		m := serving(ctx)
+		r := openRunOn(ctx, m, "millcli#80", nodeID(80))
+		// Opened and never closed: the run is genuinely mid-step, the lease
+		// still its own, not a stub standing in for one.
+		r.start(ctx, "gather-context", millv1.StepKind_STEP_KIND_SKILL)
+
+		w := workerSocket(ctx, m, server.WorkerServiceConfig{
+			Drain:    func() {},
+			State:    func() millv1.WorkerState { return millv1.WorkerState_WORKER_STATE_DRAINING },
+			InFlight: func() []run.RunningNode { return []run.RunningNode{{NodeRef: r.nodeRef}} },
+		})
+
+		out, err := w.try(ctx, "drain", "--wait", "--timeout", "1500ms")
+
+		Expect(err).To(MatchError(ContainSubstring(r.nodeRef)), out)
+		reloaded := r.reload(ctx)
+		Expect(reloaded.GetLeaseId()).To(Equal(r.lease),
+			"a drain that never reaches a boundary must not touch the run's lease")
+		Expect(reloaded.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
 	})
 })

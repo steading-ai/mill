@@ -230,6 +230,53 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			Eventually(resumed, time.Minute).Should(Receive(BeNil()))
 		})
 
+		It("releases both runs at their next boundary at concurrency two, claiming nothing more", func() {
+			By("given two nodes held under this worker at concurrency two")
+			first := f.node(ctx, "the first fix mid-drain", "Change the README's first line.")
+			second := f.node(ctx, "the second fix mid-drain", "Change the README's second line.")
+			var worker *run.Worker
+			implementDone := fake.Script{
+				Terminal: fake.Terminal("the change is made", nil, usage(20)),
+				Do:       func(harness.Session) { worker.Drain() },
+			}
+			f.script(ok("context gathered"), ok("context gathered"), implementDone, implementDone)
+			client, counter := f.counted()
+			worker = f.workerOver(f.runner(quick, func(o *run.Options) { o.Skift = client }),
+				func(o *run.WorkerOptions) { o.Concurrency = 2 })
+			done := startWorker(ctx, worker)
+			Eventually(func() *millv1.Run { return f.runOfRef(ctx, first) }, time.Minute, 100*time.Millisecond).
+				ShouldNot(BeNil())
+			Eventually(func() *millv1.Run { return f.runOfRef(ctx, second) }, time.Minute, 100*time.Millisecond).
+				ShouldNot(BeNil())
+
+			By("and a third, unrelated node ready with no free slot at that concurrency")
+			third := f.createNode(ctx, &skiftv1.CreateNodeOp{
+				Title: "a third fix with no free slot", Body: "Change the README's third line.",
+			})
+
+			By("then both runs reach their next boundary, and the worker exits zero with neither aborted")
+			Eventually(done, time.Minute).Should(Receive(BeNil()))
+
+			for _, ref := range []string{first, second} {
+				released := f.runOfRef(ctx, ref)
+				Expect(released.GetLeaseId()).To(BeEmpty(), ref+"'s lease was released, not held past the boundary")
+				Expect(released.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+				detail := f.inspectRun(ctx, released.GetId())
+				implemented := stepRuns(detail, "implement")
+				Expect(implemented).To(HaveLen(1))
+				Expect(implemented[0].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED),
+					"a step already attempted finishes exactly as if no drain had been requested")
+				Expect(stepRuns(detail, "commit")).To(BeEmpty(),
+					"a step never attempted is the one a drain releases in front of")
+			}
+
+			By("and neither release's freed slot was used to claim the third node")
+			Expect(f.statusOf(ctx, third)).To(Equal(skiftv1.Status_STATUS_OPEN))
+			Expect(f.runOfRef(ctx, third)).To(BeNil())
+			Expect(counter.claims.Load()).To(Equal(int64(2)),
+				"draining stops claiming; a slot a release frees claims nothing more")
+		})
+
 		It("does not drain mid-retry: the retry a failed attempt earns finishes before the drain takes effect", func() {
 			By("given gather-context fails once, requesting a drain during the attempt that earns it a retry")
 			f.node(ctx, "a fix drained mid-retry", "Change the README's first line.")
@@ -496,6 +543,13 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			Expect(f.runOfRef(ctx, second).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
 			Expect(journal.String()).To(ContainSubstring("resumed " + first + ", last updated"))
 			Expect(journal.String()).To(ContainSubstring("resumed " + second + ", last updated"))
+
+			By("and each resumes at its next step in a fresh session, not a resume of implement's")
+			calls := f.harness.Calls()
+			Expect(calls).To(HaveLen(2), "one fresh session per reclaimed run's commit step")
+			for _, call := range calls {
+				Expect(call.Verb).To(Equal("start"), "commit has never been attempted before; nothing exists to resume")
+			}
 
 			By("and no new node is claimed until one of them frees a slot")
 			Consistently(func() skiftv1.Status { return f.statusOf(ctx, third) }, 2*time.Second, 100*time.Millisecond).

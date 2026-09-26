@@ -329,6 +329,16 @@ func supervise(ctx context.Context, worker stopper, grace time.Duration, signals
 		select {
 		case <-signals:
 		case <-ctx.Done():
+			// A caller whose ctx is itself signal-derived delivers one
+			// SIGTERM to both destinations: ctx is cancelled and the same
+			// signal lands on the channel, dispatched back to back by the
+			// same os/signal loop. Drop a copy already queued from that
+			// delivery so the second select below does not read it as an
+			// unrelated second stop.
+			select {
+			case <-signals:
+			default:
+			}
 		case <-done:
 			return
 		}
