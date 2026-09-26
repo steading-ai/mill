@@ -485,6 +485,10 @@ type fixtureForge struct {
 	defaultSHA    string
 	// failingChecks is what FailingChecks reports for defaultSHA.
 	failingChecks []forge.CheckResult
+	// credential is what Authenticate hands back, standing in for the token
+	// a real forge's GitAuth carries — set by a spec that needs to prove the
+	// credential never leaks into a filed finding's body.
+	credential string
 }
 
 // mergeCalls is how many times the forge was asked to merge the pull
@@ -507,9 +511,13 @@ func (f *fixtureForge) checksCalls() int {
 
 // Authenticate is the credential the workspace hands a clone or a push. The
 // fixture's origin is a path on this host, so there is nothing to prove and
-// nothing to inject.
+// nothing to inject beyond whatever credential a spec set to prove it never
+// leaks elsewhere.
 func (f *fixtureForge) Authenticate(context.Context) (forge.GitAuth, error) {
-	return forge.GitAuth{}, nil
+	if f.credential == "" {
+		return forge.GitAuth{}, nil
+	}
+	return forge.GitAuth{Env: map[string]string{forge.EnvToken: f.credential}}, nil
 }
 
 func (f *fixtureForge) Push(_ context.Context, request forge.PushRequest) (string, error) {

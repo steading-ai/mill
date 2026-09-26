@@ -81,7 +81,11 @@ var _ = Describe("The healing reconciler", Label(testsupport.DBLabel), func() {
 		}
 	}
 
-	It("files a finding once, and a repeated call with the same finding attempts nothing", func() {
+	// Scenario: The same finding arrives from two sources
+	//   Given a red-main finding already reconciled
+	//   When the same finding is reconciled again
+	//   Then no node, comment or drop is written
+	It("the same finding arrives from two sources", func() {
 		red := redMain("red-main:group/thing:main", "group/thing's main is red at "+strings.Repeat("a", 40)+".")
 
 		actions, err := run.Reconcile(ctx, base, []string{project}, []run.Finding{red})
@@ -132,7 +136,11 @@ var _ = Describe("The healing reconciler", Label(testsupport.DBLabel), func() {
 		Expect(counting.applyPatchCount()).To(Equal(before))
 	})
 
-	It("drops an unclaimed finding once its branch is green, and comments-green a claimed one", func() {
+	// Scenario: Main heals itself before anyone claims the node
+	//   Given an open red-main node nobody has claimed
+	//   When main's head is green at the next sweep
+	//   Then the node is dropped as no longer relevant
+	It("main heals itself before anyone claims the node", func() {
 		red := redMain("red-main:group/thing:main", "red: "+strings.Repeat("a", 40))
 		filed, err := run.Reconcile(ctx, base, []string{project}, []run.Finding{red})
 		Expect(err).NotTo(HaveOccurred())
@@ -224,6 +232,7 @@ var _ = Describe("The red-main probe", Label(testsupport.DBLabel), func() {
 		}
 		f.forge.defaultBranch = "main"
 		f.forge.defaultSHA = strings.Repeat("c", 40)
+		f.forge.credential = "forge-secret-token"
 
 		var warnings []string
 		findings := run.RedMainFindings(ctx, []string{project}, projectNamed(f), f.repositories(),
@@ -240,6 +249,7 @@ var _ = Describe("The red-main probe", Label(testsupport.DBLabel), func() {
 		Expect(found.Body).To(ContainSubstring("lint"))
 		Expect(found.Body).To(ContainSubstring("https://forge.test/group/thing/builds/1"))
 		Expect(found.Body).NotTo(ContainSubstring(f.worker), "the probe never names the worker's own host")
+		Expect(found.Body).NotTo(ContainSubstring(f.forge.credential), "the probe never names the forge's credential")
 	})
 
 	It("finds nothing when the default branch is pending or green", func() {
@@ -266,6 +276,55 @@ var _ = Describe("The red-main probe", Label(testsupport.DBLabel), func() {
 
 		Expect(warnings).To(Equal([]string{"broken"}))
 		Expect(findings).To(HaveLen(1), "the healthy project after the broken one still yields its finding")
+	})
+})
+
+var _ = Describe("The sweep's healing pass", Label(testsupport.DBLabel), func() {
+	var f *fixture
+	var ctx context.Context
+
+	BeforeEach(func() {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(context.Background())
+		DeferCleanup(cancel)
+		f = start(ctx)
+	})
+
+	// Scenario: A catch-up race breaks main
+	//   Given two branches merged within a minute and main's checks failed on the second
+	//   When the sweep runs
+	//   Then one bug node is open in the project naming the sha and the failing check
+	//   And the next sweep files nothing more
+	It("a catch-up race breaks main", func() {
+		f.forge.checksAt = forge.Failed
+		f.forge.defaultBranch = "main"
+		f.forge.defaultSHA = strings.Repeat("c", 40)
+		f.forge.failingChecks = []forge.CheckResult{
+			{Name: "build", URL: "https://forge.test/group/thing/builds/1"},
+		}
+
+		By("when the sweep runs")
+		report, err := f.runner().Sweep(ctx, nil, []string{project})
+		Expect(err).NotTo(HaveOccurred())
+
+		By("then one bug node is open in the project naming the sha and the failing check")
+		Expect(report.Of(run.FindingHealFiled)).To(HaveLen(1))
+		found, err := f.client.Findings(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(HaveLen(1))
+		Expect(found[0].GetTitle()).To(ContainSubstring(strings.Repeat("c", 7)))
+		Expect(found[0].GetTitle()).To(ContainSubstring("build"))
+		Expect(found[0].GetBody()).To(ContainSubstring(strings.Repeat("c", 40)))
+		Expect(found[0].GetBody()).To(ContainSubstring("build"))
+
+		By("and the next sweep files nothing more")
+		again, err := f.runner().Sweep(ctx, nil, []string{project})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(again.Of(run.FindingHealFiled)).To(BeEmpty())
+		Expect(again.Of(run.FindingHealCommented)).To(BeEmpty())
+		stillFound, err := f.client.Findings(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stillFound).To(HaveLen(1), "the second sweep filed nothing more")
 	})
 })
 
