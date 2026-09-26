@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -256,6 +257,9 @@ func (w *activityWriter) append(a *millv1.Activity) error {
 	if w.ceiling > 0 && w.written > w.ceiling {
 		w.applyCeiling(a)
 	}
+	if sanitizeUTF8(a.ProtoReflect()) {
+		a.Sanitized = true
+	}
 
 	raw, err := proto.Marshal(a)
 	if err != nil {
@@ -489,6 +493,96 @@ func activityBodyField(a *millv1.Activity) protoreflect.FieldDescriptor {
 		return nil
 	}
 	return a.ProtoReflect().WhichOneof(activityBodyOneof)
+}
+
+// sanitizeUTF8 walks m's string fields — recursing into messages, lists and
+// maps the same way [redact.Redactor.Message] does — and rewrites any that
+// hold bytes that are not valid UTF-8 with the replacement character:
+// proto.Marshal refuses a string field that holds them outright, and a tool
+// result or session text is exactly where they arrive (a `find /` over a
+// filesystem, raw test output). Reports whether anything was rewritten, so
+// the caller can mark the record rather than let it silently disagree with
+// what the tool actually produced. A `bytes` field — verb and check output —
+// is untouched: only proto3's `string` kind has this restriction.
+func sanitizeUTF8(m protoreflect.Message) bool {
+	changed := false
+	m.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
+		switch {
+		case fd.IsMap():
+			mp := v.Map()
+			switch fd.MapValue().Kind() {
+			case protoreflect.StringKind:
+				mp.Range(func(k protoreflect.MapKey, mv protoreflect.Value) bool {
+					if s, ok := sanitizedString(mv.String()); ok {
+						mp.Set(k, protoreflect.ValueOfString(s))
+						changed = true
+					}
+					return true
+				})
+			case protoreflect.MessageKind:
+				mp.Range(func(_ protoreflect.MapKey, mv protoreflect.Value) bool {
+					if sanitizeUTF8(mv.Message()) {
+						changed = true
+					}
+					return true
+				})
+			}
+		case fd.IsList():
+			l := v.List()
+			switch fd.Kind() {
+			case protoreflect.StringKind:
+				for i := 0; i < l.Len(); i++ {
+					if s, ok := sanitizedString(l.Get(i).String()); ok {
+						l.Set(i, protoreflect.ValueOfString(s))
+						changed = true
+					}
+				}
+			case protoreflect.MessageKind:
+				for i := 0; i < l.Len(); i++ {
+					if sanitizeUTF8(l.Get(i).Message()) {
+						changed = true
+					}
+				}
+			}
+		case fd.Kind() == protoreflect.StringKind:
+			if s, ok := sanitizedString(v.String()); ok {
+				m.Set(fd, protoreflect.ValueOfString(s))
+				changed = true
+			}
+		case fd.Kind() == protoreflect.MessageKind:
+			if sanitizeUTF8(v.Message()) {
+				changed = true
+			}
+		}
+		return true
+	})
+	return changed
+}
+
+// sanitizedString reports s rewritten with the replacement character in
+// place of any invalid UTF-8, and whether it had to rewrite anything —
+// [sanitizeUTF8]'s one rule, applied once per string field.
+func sanitizedString(s string) (string, bool) {
+	if utf8.ValidString(s) {
+		return s, false
+	}
+	return strings.ToValidUTF8(s, "�"), true
+}
+
+// activityLogFields is what a warning about a's record adds to the ones its
+// caller already has (run, step_run), so a marshal failure a reader has to
+// chase — the one this package cannot itself sanitize away — names the kind
+// of record it lost and, where the kind carries one, the tool call it
+// answered, rather than only the error `activity: marshal: ...` gives.
+func activityLogFields(a *millv1.Activity) []any {
+	fields := []any{"source", a.GetSource().String()}
+	if field := activityBodyField(a); field != nil {
+		fields = append(fields, "kind", string(field.Name()))
+	}
+	if tr, ok := a.GetBody().(*millv1.Activity_ToolResult); ok {
+		fields = append(fields, "call_id", tr.ToolResult.GetCallId())
+	}
+	return fields
 }
 
 // bodySize is a's body, marshaled alone: what [Activity.bytes] reports.
