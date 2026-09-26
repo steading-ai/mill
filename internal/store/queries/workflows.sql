@@ -12,18 +12,25 @@ SELECT * FROM workflows WHERE id = $1;
 SELECT * FROM workflows
 WHERE name = $1 AND scope = $2 AND project = $3 AND version = $4;
 
--- A name resolves to the newest version in its scope unless a run pins one.
+-- A push that finds its version already stored touches pushed_at instead of
+-- leaving the row alone, so a re-push of an existing version wins selection
+-- back from a later-created one.
+-- name: TouchWorkflow :one
+UPDATE workflows SET pushed_at = now() WHERE id = $1 RETURNING *;
+
+-- A name resolves to the newest-pushed version in its scope unless a run
+-- pins one.
 -- name: GetNewestWorkflow :one
 SELECT * FROM workflows
 WHERE name = $1 AND scope = $2 AND project = $3
-ORDER BY created_at DESC, id DESC LIMIT 1;
+ORDER BY pushed_at DESC, id DESC LIMIT 1;
 
 -- name: ListWorkflows :many
 SELECT * FROM workflows
 WHERE (sqlc.narg('name')::text IS NULL OR name = sqlc.narg('name')::text)
   AND (sqlc.narg('scope')::text IS NULL OR scope = sqlc.narg('scope')::text)
   AND (sqlc.narg('project')::text IS NULL OR project = sqlc.narg('project')::text)
-ORDER BY name, created_at DESC, id DESC;
+ORDER BY name, pushed_at DESC, id DESC;
 
 -- name: InsertSkill :one
 INSERT INTO skills (id, name, digest, description, body, files, metadata, source)
