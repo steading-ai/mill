@@ -252,7 +252,13 @@ func printWorkerState(cmd *cobra.Command, socket string) error {
 		return nil
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "worker state: %s\n", workerStateName(probe.GetState()))
-	if probe.GetState() != millv1.WorkerState_WORKER_STATE_DRAINING {
+	switch probe.GetState() {
+	case millv1.WorkerState_WORKER_STATE_WAITING_ON_UPSTREAM:
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", upstreamOutageLine(probe.GetUpstreamOutage()))
+		return nil
+	case millv1.WorkerState_WORKER_STATE_DRAINING:
+		// falls through to the in-flight table below.
+	default:
 		return nil
 	}
 	w := table(cmd)
@@ -262,6 +268,20 @@ func printWorkerState(cmd *cobra.Command, socket string) error {
 			dash(n.GetRunId()), n.GetNodeRef(), dash(n.GetCurrentStep()), n.GetTimeInStep().AsDuration())
 	}
 	return w.Flush()
+}
+
+// upstreamOutageLine is `mill status`'s sentence for a worker reporting
+// WORKER_STATE_WAITING_ON_UPSTREAM: the same reset-aware wording
+// waitingOnUpstream gives a step waiting out the same outage, since a
+// worker's breaker and a step's own wait read the same upstream fact.
+func upstreamOutageLine(o *millv1.UpstreamOutage) string {
+	since := o.GetSince().AsTime()
+	if reset := o.GetResetAt(); reset != nil && reset.AsTime().After(time.Now()) {
+		retryAt := reset.AsTime().Add(runpkg.UpstreamResetMargin)
+		return fmt.Sprintf("waiting for the upstream's cap to reset; retries at %s (refusing since %s)",
+			retryAt.UTC().Format(time.RFC3339), since.UTC().Format(time.RFC3339))
+	}
+	return fmt.Sprintf("waiting for the upstream to recover (refusing since %s)", since.UTC().Format(time.RFC3339))
 }
 
 // watchRunsRetryDelay is how long followStatus waits before reopening
@@ -791,13 +811,20 @@ func waitingOn(e *Explanation, run *millv1.Run, detail *millv1.InspectResponse) 
 // upstream refused is not idle waiting for a worker to claim it — a worker
 // already has, and is waiting out the outage before it asks again. Empty
 // when the latest attempt was not a refusal, so waitingOn falls through to
-// what it already said.
+// what it already said. When the upstream itself named a reset still ahead
+// of now, the retry time comes from it (mill#63) rather than from
+// [runpkg.UpstreamWait]'s escalating guess.
 func waitingOnUpstream(e *Explanation, detail *millv1.InspectResponse) string {
 	latest := latestAttempt(detail.GetSteps(), e.Step)
 	if latest.GetStepRun().GetExit().GetReason() != harnessv1.ExitReason_EXIT_REASON_UPSTREAM_REFUSED {
 		return ""
 	}
-	count, since := runpkg.UpstreamStreak(detail, e.Step)
+	count, since, reset := runpkg.UpstreamStreak(detail, e.Step)
+	if !reset.IsZero() && reset.After(time.Now()) {
+		retryAt := reset.Add(runpkg.UpstreamResetMargin)
+		return fmt.Sprintf("the upstream's cap to reset; step %s retries at %s (refused %d times in a row since %s)",
+			e.Step, retryAt.UTC().Format(time.RFC3339), count, since.UTC().Format(time.RFC3339))
+	}
 	retryAt := latest.GetStepRun().GetEndedAt().AsTime().Add(runpkg.UpstreamWait(count))
 	return fmt.Sprintf("the upstream to recover; step %s retries at %s (refused %d times in a row since %s)",
 		e.Step, retryAt.UTC().Format(time.RFC3339), count, since.UTC().Format(time.RFC3339))

@@ -147,6 +147,7 @@ type Workflow struct {
 	Definition []byte
 	Source     []byte
 	CreatedAt  time.Time
+	PushedAt   time.Time
 }
 
 type Workspace struct {
