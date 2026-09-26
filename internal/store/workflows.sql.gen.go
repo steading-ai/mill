@@ -10,9 +10,9 @@ import (
 )
 
 const getNewestWorkflow = `-- name: GetNewestWorkflow :one
-SELECT id, name, scope, project, version, definition, source, created_at FROM workflows
+SELECT id, name, scope, project, version, definition, source, created_at, pushed_at FROM workflows
 WHERE name = $1 AND scope = $2 AND project = $3
-ORDER BY created_at DESC, id DESC LIMIT 1
+ORDER BY pushed_at DESC, id DESC LIMIT 1
 `
 
 type GetNewestWorkflowParams struct {
@@ -21,7 +21,8 @@ type GetNewestWorkflowParams struct {
 	Project string
 }
 
-// A name resolves to the newest version in its scope unless a run pins one.
+// A name resolves to the newest-pushed version in its scope unless a run
+// pins one.
 func (q *Queries) GetNewestWorkflow(ctx context.Context, arg GetNewestWorkflowParams) (Workflow, error) {
 	row := q.db.QueryRow(ctx, getNewestWorkflow, arg.Name, arg.Scope, arg.Project)
 	var i Workflow
@@ -34,6 +35,7 @@ func (q *Queries) GetNewestWorkflow(ctx context.Context, arg GetNewestWorkflowPa
 		&i.Definition,
 		&i.Source,
 		&i.CreatedAt,
+		&i.PushedAt,
 	)
 	return i, err
 }
@@ -65,7 +67,7 @@ func (q *Queries) GetSkillByDigest(ctx context.Context, arg GetSkillByDigestPara
 }
 
 const getWorkflowByID = `-- name: GetWorkflowByID :one
-SELECT id, name, scope, project, version, definition, source, created_at FROM workflows WHERE id = $1
+SELECT id, name, scope, project, version, definition, source, created_at, pushed_at FROM workflows WHERE id = $1
 `
 
 func (q *Queries) GetWorkflowByID(ctx context.Context, id string) (Workflow, error) {
@@ -80,12 +82,13 @@ func (q *Queries) GetWorkflowByID(ctx context.Context, id string) (Workflow, err
 		&i.Definition,
 		&i.Source,
 		&i.CreatedAt,
+		&i.PushedAt,
 	)
 	return i, err
 }
 
 const getWorkflowByVersion = `-- name: GetWorkflowByVersion :one
-SELECT id, name, scope, project, version, definition, source, created_at FROM workflows
+SELECT id, name, scope, project, version, definition, source, created_at, pushed_at FROM workflows
 WHERE name = $1 AND scope = $2 AND project = $3 AND version = $4
 `
 
@@ -113,6 +116,7 @@ func (q *Queries) GetWorkflowByVersion(ctx context.Context, arg GetWorkflowByVer
 		&i.Definition,
 		&i.Source,
 		&i.CreatedAt,
+		&i.PushedAt,
 	)
 	return i, err
 }
@@ -164,7 +168,7 @@ const insertWorkflow = `-- name: InsertWorkflow :one
 
 INSERT INTO workflows (id, name, scope, project, version, definition, source)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, name, scope, project, version, definition, source, created_at
+RETURNING id, name, scope, project, version, definition, source, created_at, pushed_at
 `
 
 type InsertWorkflowParams struct {
@@ -198,16 +202,17 @@ func (q *Queries) InsertWorkflow(ctx context.Context, arg InsertWorkflowParams) 
 		&i.Definition,
 		&i.Source,
 		&i.CreatedAt,
+		&i.PushedAt,
 	)
 	return i, err
 }
 
 const listWorkflows = `-- name: ListWorkflows :many
-SELECT id, name, scope, project, version, definition, source, created_at FROM workflows
+SELECT id, name, scope, project, version, definition, source, created_at, pushed_at FROM workflows
 WHERE ($1::text IS NULL OR name = $1::text)
   AND ($2::text IS NULL OR scope = $2::text)
   AND ($3::text IS NULL OR project = $3::text)
-ORDER BY name, created_at DESC, id DESC
+ORDER BY name, pushed_at DESC, id DESC
 `
 
 type ListWorkflowsParams struct {
@@ -234,6 +239,7 @@ func (q *Queries) ListWorkflows(ctx context.Context, arg ListWorkflowsParams) ([
 			&i.Definition,
 			&i.Source,
 			&i.CreatedAt,
+			&i.PushedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -243,4 +249,28 @@ func (q *Queries) ListWorkflows(ctx context.Context, arg ListWorkflowsParams) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const touchWorkflow = `-- name: TouchWorkflow :one
+UPDATE workflows SET pushed_at = now() WHERE id = $1 RETURNING id, name, scope, project, version, definition, source, created_at, pushed_at
+`
+
+// A push that finds its version already stored touches pushed_at instead of
+// leaving the row alone, so a re-push of an existing version wins selection
+// back from a later-created one.
+func (q *Queries) TouchWorkflow(ctx context.Context, id string) (Workflow, error) {
+	row := q.db.QueryRow(ctx, touchWorkflow, id)
+	var i Workflow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Scope,
+		&i.Project,
+		&i.Version,
+		&i.Definition,
+		&i.Source,
+		&i.CreatedAt,
+		&i.PushedAt,
+	)
+	return i, err
 }

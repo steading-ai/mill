@@ -1799,9 +1799,12 @@ func (s *Store) ListWorkflows(ctx context.Context, p WorkflowFilter) ([]*millv1.
 
 // PutWorkflow stores a workflow version, idempotent by content hash: the
 // version is computed from the definition, and storing the same definition
-// twice returns the row already there. A workflow is never edited, so a
-// changed definition is a new version and runs in flight keep the one they
-// started with.
+// twice creates no new row. A workflow is never edited, so a changed
+// definition is a new version and runs in flight keep the one they started
+// with. Finding the version already there still touches its pushed_at, so a
+// version pushed again wins selection back from one created later — see
+// GetNewestWorkflow and ListWorkflows, which order on pushed_at rather than
+// created_at for exactly this reason.
 //
 // This is one of the two mutations Invariant 9 does not fence: a workflow
 // belongs to no run, so there is no lease to compare against.
@@ -1829,6 +1832,10 @@ func (s *Store) PutWorkflow(ctx context.Context, workflow *millv1.Workflow) (*mi
 			Name: workflow.GetName(), Scope: scope, Project: project, Version: version,
 		})
 		if err == nil {
+			row, err = q.TouchWorkflow(ctx, row.ID)
+			if err != nil {
+				return fmt.Errorf("touch workflow %s: %w", workflow.GetName(), err)
+			}
 			stored, err = workflowProto(row)
 			return err
 		}
