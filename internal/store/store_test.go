@@ -291,13 +291,40 @@ var _ = Describe("Resume", Label(testsupport.DBLabel), func() {
 		open := l.start(ctx, run.GetId(), "implement")
 		failed, err := l.store.FailStepRun(ctx, l.lease, open.GetId(), &harnessv1.ProcessExit{
 			Status: -1, Reason: harnessv1.ExitReason_EXIT_REASON_TIMEOUT,
-		})
+		}, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(failed.GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_FAILED))
 		Expect(failed.GetExit().GetStatus()).To(Equal(int32(-1)))
 		Expect(failed.GetExit().GetReason()).To(Equal(harnessv1.ExitReason_EXIT_REASON_TIMEOUT))
 
-		_, err = l.store.FailStepRun(ctx, l.lease, open.GetId(), nil)
+		_, err = l.store.FailStepRun(ctx, l.lease, open.GetId(), nil, nil)
+		Expect(err).To(MatchError(store.ErrNotRunning))
+	}, SpecTimeout(time.Minute))
+
+	It("records a revise verdict as the evidence of the attempt it failed", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		run, _ := l.runWithWorkflow(ctx, "mill#8")
+		open := l.start(ctx, run.GetId(), "review")
+		failed, err := l.store.FailStepRun(ctx, l.lease, open.GetId(), nil,
+			reviseEvidence("AC-1", "the plan names no proof"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(failed.GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_FAILED))
+
+		detail, err := l.store.Inspect(ctx, store.InspectParams{ID: run.GetId()})
+		Expect(err).NotTo(HaveOccurred())
+		var found *millv1.Evidence
+		for _, step := range detail.Steps {
+			if step.GetStepRun().GetId() == open.GetId() {
+				found = step.GetEvidence()
+			}
+		}
+		Expect(found.GetKind()).To(Equal(millv1.EvidenceKind_EVIDENCE_KIND_VERDICT))
+		Expect(found.GetVerdict().GetDecision()).To(Equal(millv1.VerdictDecision_VERDICT_DECISION_REVISE))
+		Expect(found.GetVerdict().GetFindings()[0].GetSummary()).To(Equal("the plan names no proof"))
+
+		// Failing again with no evidence is unaffected: a plain failure still
+		// leaves no row.
+		_, err = l.store.FailStepRun(ctx, l.lease, open.GetId(), nil, nil)
 		Expect(err).To(MatchError(store.ErrNotRunning))
 	}, SpecTimeout(time.Minute))
 })
@@ -608,7 +635,7 @@ var _ = Describe("ListRuns", Label(testsupport.DBLabel), func() {
 		}
 		firstReview := l.fail(ctx, run.GetId(), "review")
 		secondReview := l.revise(ctx, run.GetId(), "review", firstReview.GetId())
-		_, err := l.store.FailStepRun(ctx, l.lease, secondReview.GetId(), nil)
+		_, err := l.store.FailStepRun(ctx, l.lease, secondReview.GetId(), nil, nil)
 		Expect(err).NotTo(HaveOccurred())
 		_, err = l.store.Failed(ctx, l.lease, run.GetId(), "denied")
 		Expect(err).NotTo(HaveOccurred())

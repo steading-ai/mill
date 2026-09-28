@@ -110,8 +110,16 @@ func (s *Service) CloseStepRun(ctx context.Context, leaseID string, p CloseStepR
 }
 
 // FailStepRun marks an attempt failed with how its process ended, so the
-// step's on_failure can be applied.
-func (s *Service) FailStepRun(ctx context.Context, leaseID, stepRunID string, exit *harnessv1.ProcessExit) (*millv1.StepRun, error) {
+// step's on_failure can be applied. When the failure is a reviewer's verdict,
+// evidence carries it: a revise never closes the step it fails, but it is
+// still recorded on the attempt, so Inspect returns it the way it returns an
+// approved review's (docs/domain-model.md §Evidence).
+func (s *Service) FailStepRun(ctx context.Context, leaseID, stepRunID string, exit *harnessv1.ProcessExit, evidence *millv1.Evidence) (*millv1.StepRun, error) {
+	if evidence != nil {
+		if err := ValidateFailureEvidence(evidence); err != nil {
+			return nil, err
+		}
+	}
 	open, err := s.store.GetStepRun(ctx, stepRunID)
 	if err != nil {
 		return nil, err
@@ -119,7 +127,7 @@ func (s *Service) FailStepRun(ctx context.Context, leaseID, stepRunID string, ex
 	if err := s.checkStepTransition(open, millv1.StepRunStatus_STEP_RUN_STATUS_FAILED); err != nil {
 		return nil, err
 	}
-	return s.store.FailStepRun(ctx, leaseID, stepRunID, exit)
+	return s.store.FailStepRun(ctx, leaseID, stepRunID, exit, evidence)
 }
 
 // AbortOpenStepRuns marks any still-running attempt aborted. Called on

@@ -26,8 +26,9 @@ func (e *EvidenceError) Error() string {
 // hex digits under SHA-1, sixty-four under SHA-256.
 var commitSHA = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
 
-// ValidateEvidence checks that evidence carries the value its kind defines.
-// The kind and the value are two fields of one message — the kind is stored
+// ValidateEvidence checks that evidence carries the value its kind defines
+// and, for a verdict, that its decision is the one that closes a step. The
+// kind and the value are two fields of one message — the kind is stored
 // beside the value so a row reads without unpacking it — so a request can
 // disagree with itself, and this is where that is caught: before the store
 // is touched, so a rejected close leaves no evidence row and no closed
@@ -35,6 +36,33 @@ var commitSHA = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
 //
 // docs/domain-model.md §Evidence is the table of what each kind proves.
 func ValidateEvidence(evidence *millv1.Evidence) error {
+	if err := validateEvidenceShape(evidence); err != nil {
+		return err
+	}
+	// A verdict closes a review step only when it approves. A revise fails
+	// the step and returns to its target; it is recorded through
+	// ValidateFailureEvidence instead, which carries no such rule.
+	if evidence.GetKind() == millv1.EvidenceKind_EVIDENCE_KIND_VERDICT &&
+		evidence.GetVerdict().GetDecision() != millv1.VerdictDecision_VERDICT_DECISION_APPROVE {
+		return &EvidenceError{Kind: evidence.GetKind(), Reason: "a verdict closes a step only when its decision is approve"}
+	}
+	return nil
+}
+
+// ValidateFailureEvidence checks that evidence recorded on a failed attempt
+// carries the value its kind defines. Unlike ValidateEvidence, a verdict's
+// decision is not restricted: a revise is exactly the evidence a failed
+// review attempt carries, and recording it here does not close the step
+// (docs/domain-model.md §Evidence, §Verdict).
+func ValidateFailureEvidence(evidence *millv1.Evidence) error {
+	return validateEvidenceShape(evidence)
+}
+
+// validateEvidenceShape is the structural check every evidence value passes
+// through, whichever path records it: kind is set, value is present and
+// belongs to that kind, and the value itself is shaped like the kind
+// defines.
+func validateEvidenceShape(evidence *millv1.Evidence) error {
 	if evidence == nil {
 		return &EvidenceError{Reason: "no evidence: a step run is closed by evidence or not at all"}
 	}
@@ -90,10 +118,8 @@ func validateValue(evidence *millv1.Evidence) error {
 			return fail(fmt.Sprintf("%q is not a git object name", evidence.GetCommit()))
 		}
 	case millv1.EvidenceKind_EVIDENCE_KIND_VERDICT:
-		// A verdict closes a review step only when it approves. A revise
-		// fails the step and returns to its target; it never closes one.
-		if decision := evidence.GetVerdict().GetDecision(); decision != millv1.VerdictDecision_VERDICT_DECISION_APPROVE {
-			return fail("a verdict closes a step only when its decision is approve")
+		if evidence.GetVerdict().GetDecision() == millv1.VerdictDecision_VERDICT_DECISION_UNSPECIFIED {
+			return fail("no decision")
 		}
 	case millv1.EvidenceKind_EVIDENCE_KIND_URL:
 		parsed, err := url.Parse(evidence.GetUrl())

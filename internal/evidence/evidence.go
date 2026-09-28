@@ -299,15 +299,17 @@ func Verify(ctx context.Context, kind millv1.EvidenceKind, step Step) (Evidence,
 		return Evidence{}, &NotVerifiedError{Kind: kind, Reason: "no verifier: a step is closed by evidence of a kind the model defines"}
 	}
 	evidence, err := verifier(ctx, step)
-	if err != nil {
-		return evidence, err
-	}
+	// A revise verdict carries both: a value, because it is still evidence
+	// recorded on the attempt it fails, and a NotVerifiedError, because it
+	// does not close the step. The value is stamped whichever way this
+	// came back, or a revise's evidence would reach the ledger with no
+	// kind.
 	if evidence.Value != nil {
 		evidence.Value.Kind = kind
 		evidence.Value.VerifiedBy = verifiedBy(kind, step)
 		evidence.Value.VerifiedAt = timestamppb.New(step.now())
 	}
-	return evidence, nil
+	return evidence, err
 }
 
 // verifiers is one verifier per evidence kind. The table is the domain
@@ -555,19 +557,24 @@ func verifyVerdict(_ context.Context, step Step) (Evidence, error) {
 		verdict.Findings = append(verdict.Findings, finding)
 	}
 
+	result := Evidence{
+		Value:    &millv1.Evidence{Value: &millv1.Evidence_Verdict{Verdict: verdict}},
+		Warnings: warnings,
+		Verdict:  verdict,
+	}
 	if verdict.GetDecision() == millv1.VerdictDecision_VERDICT_DECISION_REVISE {
 		if blocking == 0 {
 			return refuse("the verdict says revise and no finding has severity \"blocking\": "+
 				"a revise carries the finding that blocks it", nil)
 		}
-		return Evidence{Verdict: verdict, Warnings: warnings}, &NotVerifiedError{Kind: kind, Reason: fmt.Sprintf(
+		// A revise never closes the step, but it is still evidence: the
+		// caller records it on the attempt it failed, so Inspect returns the
+		// findings for a failed review the same way it returns an approved
+		// one's (docs/domain-model.md §Evidence).
+		return result, &NotVerifiedError{Kind: kind, Reason: fmt.Sprintf(
 			"the reviewer asked for changes: %d blocking %s", blocking, plural(blocking, "finding", "findings"))}
 	}
-	return Evidence{
-		Value:    &millv1.Evidence{Value: &millv1.Evidence_Verdict{Verdict: verdict}},
-		Warnings: warnings,
-		Verdict:  verdict,
-	}, nil
+	return result, nil
 }
 
 // VerdictSchema is docs/domain-model.md §Verdict as a schema. The verdict is

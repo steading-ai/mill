@@ -32,15 +32,23 @@ import (
 
 // failStep records a failed attempt and applies the step's retries, then its
 // on_failure.
-func (r *Runner) failStep(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, detail *millv1.InspectResponse, res result, cause error) (outcome, error) {
+func (r *Runner) failStep(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, detail *millv1.InspectResponse, verified evidence.Evidence, res result, cause error) (outcome, error) {
 	exit := res.exit
 	if exit == nil {
 		exit = &harnessProcessExit
+	}
+	// A reviewer's verdict never closes the attempt it fails, but it is
+	// still recorded on it: Inspect returns a revise the same way it
+	// returns an approve (docs/architecture.md §Evidence).
+	var failEvidence *millv1.Evidence
+	if res.judgment {
+		failEvidence = verified.Value
 	}
 	if _, err := call(ctx, r.options.Store.FailStepRun, &millv1.FailStepRunRequest{
 		LeaseId:   s.leaseID(),
 		StepRunId: sr.GetId(),
 		Exit:      exit,
+		Evidence:  failEvidence,
 	}); err != nil {
 		return outcome{}, err
 	}

@@ -82,6 +82,26 @@ var _ = Describe("Evidence validation", Label("unit"), func() {
 		Expect(err).To(MatchError(ContainSubstring("exit")))
 	})
 
+	It("accepts a revise verdict recorded on a failed attempt, unlike a closing one", func() {
+		revise := &millv1.Evidence{
+			Kind: millv1.EvidenceKind_EVIDENCE_KIND_VERDICT,
+			Value: &millv1.Evidence_Verdict{Verdict: &millv1.Verdict{
+				Decision: millv1.VerdictDecision_VERDICT_DECISION_REVISE,
+			}},
+		}
+		Expect(domain.ValidateFailureEvidence(revise)).To(Succeed())
+		Expect(domain.ValidateEvidence(revise)).To(HaveOccurred())
+	})
+
+	It("still refuses a structurally broken value on the failure path", func() {
+		err := domain.ValidateFailureEvidence(&millv1.Evidence{
+			Kind:  millv1.EvidenceKind_EVIDENCE_KIND_COMMIT,
+			Value: &millv1.Evidence_Exit{Exit: &harnessv1.ProcessExit{Status: 0}},
+		})
+		Expect(err).To(MatchError(ContainSubstring("commit")))
+		Expect(err).To(MatchError(ContainSubstring("exit")))
+	})
+
 	It("accepts structured output with fields and refuses an empty document", func() {
 		document, err := structpb.NewStruct(map[string]any{"workflow": "feature"})
 		Expect(err).NotTo(HaveOccurred())

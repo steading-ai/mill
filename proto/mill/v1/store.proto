@@ -422,6 +422,10 @@ message FailStepRunRequest {
   string step_run_id = 2;
   // How the process ended. A status of -1 means it never ran.
   harness.v1.ProcessExit exit = 3;
+  // The verdict that failed it, when the failure was a reviewer's revise.
+  // Never closes the attempt, but is still recorded as its evidence, so
+  // Inspect returns it the way it returns an approved review's.
+  Evidence evidence = 4;
 }
 
 // FailStepRunResponse carries the failed attempt.

@@ -4118,7 +4118,8 @@ type StepRunDetail struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// The attempt.
 	StepRun *StepRun `protobuf:"bytes,1,opt,name=step_run,json=stepRun,proto3" json:"step_run,omitempty"`
-	// The evidence that closed it, if it closed.
+	// The evidence recorded on this attempt: what closed it, or the verdict
+	// that failed it. Unset for an attempt with neither.
 	Evidence *Evidence `protobuf:"bytes,2,opt,name=evidence,proto3" json:"evidence,omitempty"`
 	// The session it ran in, for a skill step.
 	Session *Session `protobuf:"bytes,3,opt,name=session,proto3" json:"session,omitempty"`
