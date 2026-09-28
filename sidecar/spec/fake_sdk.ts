@@ -17,6 +17,7 @@ import type { Readable, Writable } from "node:stream";
 
 import type { Options, QueryFn, SDKMessage, SDKUserMessage } from "../src/sdk.js";
 import { taskOutputPath } from "../src/tasks.js";
+import type { TurnTokens } from "../src/usage.js";
 
 // McpChild is a mounted server spawned with a piped stdin/stdout — the shape
 // `stdio: ["pipe", "pipe", "inherit"]` produces — and the type mcpLine and
@@ -105,8 +106,16 @@ function streamEvent(event: Record<string, unknown>, parentToolUseId: string | n
   return { type: "stream_event", parent_tool_use_id: parentToolUseId, event } as unknown as SDKMessage;
 }
 
-function messageStart(id: string): Record<string, unknown> {
-  return { type: "message_start", message: { id } };
+function messageStart(id: string, model: string, usage: Partial<TurnTokens>): Record<string, unknown> {
+  return { type: "message_start", message: { id, model, usage } };
+}
+
+// messageDelta stands for the raw event that closes a response: the real
+// SSE shape guarantees only output_tokens, so the fake carries nothing else
+// — a scenario that needs input/cache tokens has to get them from the
+// message_start that opened the same response.
+function messageDelta(usage: { output_tokens?: number | null }, stopReason: string): Record<string, unknown> {
+  return { type: "message_delta", delta: { stop_reason: stopReason }, usage };
 }
 
 function blockStart(index: number, kind: "text" | "thinking"): Record<string, unknown> {
@@ -290,7 +299,15 @@ async function* play(
   await prompts.next();
   switch (scenario) {
     case "trivial":
+      yield streamEvent(
+        messageStart("msg_trivial", "claude-opus-5", {
+          input_tokens: 4,
+          cache_read_input_tokens: 25513,
+          cache_creation_input_tokens: 25789,
+        }),
+      );
       yield assistantText("Read the node body and summarised it.");
+      yield streamEvent(messageDelta({ output_tokens: 150 }, "end_turn"));
       yield success("Read the node body and summarised it.");
       return;
     case "structured":
@@ -337,7 +354,11 @@ async function* play(
       yield success("Looks like nothing to do here.");
       return;
     case "hang": {
+      yield streamEvent(
+        messageStart("msg_hang", "claude-opus-5", { input_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }),
+      );
       yield toolCall("toolu_hang", "Bash", { command: "python3 -c 'import time; time.sleep(120)'" });
+      yield streamEvent(messageDelta({ output_tokens: 2 }, "tool_use"));
       const signal = options.abortController?.signal;
       await new Promise<never>((_resolve, reject) => {
         if (signal === undefined) {
@@ -407,21 +428,35 @@ async function* play(
       // A text block that arrives as deltas, the way includePartialMessages
       // reports it, followed by the completed assistant message the SDK
       // still sends for it (docs/activity.md §"Streaming text").
-      yield streamEvent(messageStart("msg_stream_text"));
+      yield streamEvent(
+        messageStart("msg_stream_text", "claude-opus-5", {
+          input_tokens: 4,
+          cache_read_input_tokens: 25513,
+          cache_creation_input_tokens: 25789,
+        }),
+      );
       yield streamEvent(blockStart(0, "text"));
       yield streamEvent(textDelta(0, "Hello"));
       yield streamEvent(textDelta(0, ", world!"));
       yield streamEvent(blockStop(0));
+      yield streamEvent(messageDelta({ output_tokens: 150 }, "end_turn"));
       yield assistantText("Hello, world!");
       yield success("Hello, world!");
       return;
     }
     case "streamed-thinking": {
-      yield streamEvent(messageStart("msg_stream_thinking"));
+      yield streamEvent(
+        messageStart("msg_stream_thinking", "claude-opus-5", {
+          input_tokens: 4,
+          cache_read_input_tokens: 25513,
+          cache_creation_input_tokens: 25789,
+        }),
+      );
       yield streamEvent(blockStart(0, "thinking"));
       yield streamEvent(thinkingDelta(0, "weighing "));
       yield streamEvent(thinkingDelta(0, "the options"));
       yield streamEvent(blockStop(0));
+      yield streamEvent(messageDelta({ output_tokens: 150 }, "end_turn"));
       yield assistantText("Decided.");
       yield success("Decided.");
       return;
@@ -433,10 +468,14 @@ async function* play(
       // §Subagents).
       const agentCallId = "toolu_agent";
       yield toolCall(agentCallId, "Agent", { description: "look something up" });
-      yield streamEvent(messageStart("msg_sub"), agentCallId);
+      yield streamEvent(
+        messageStart("msg_sub", "claude-opus-5", { input_tokens: 4, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }),
+        agentCallId,
+      );
       yield streamEvent(blockStart(0, "text"), agentCallId);
       yield streamEvent(textDelta(0, "Looking into it."), agentCallId);
       yield streamEvent(blockStop(0), agentCallId);
+      yield streamEvent(messageDelta({ output_tokens: 12 }, "tool_use"), agentCallId);
       yield toolCall("toolu_sub_read", "Read", { file_path: "/tmp/x" }, agentCallId);
       yield toolResult("toolu_sub_read", "file contents", false, agentCallId);
       yield assistantText("Looking into it.", agentCallId);
@@ -450,12 +489,44 @@ async function* play(
       // arrives: the turn ends with the subagent still running.
       const agentCallId = "toolu_agent_open";
       yield toolCall(agentCallId, "Agent", { description: "look something up" });
-      yield streamEvent(messageStart("msg_sub_open"), agentCallId);
+      yield streamEvent(
+        messageStart("msg_sub_open", "claude-opus-5", {
+          input_tokens: 4,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        }),
+        agentCallId,
+      );
       yield streamEvent(blockStart(0, "text"), agentCallId);
       yield streamEvent(textDelta(0, "Still looking into it."), agentCallId);
       yield streamEvent(blockStop(0), agentCallId);
+      yield streamEvent(messageDelta({ output_tokens: 12 }, "end_turn"), agentCallId);
       yield assistantText("Waiting on the subagent.");
       yield success("Waiting on the subagent.");
+      return;
+    }
+    case "straddled-response": {
+      // One response straddling a text block and a tool_use block, each its
+      // own synthesized "assistant" message with stop_reason null
+      // (SDKAssistantMessage's own doc comment); message_delta arrives once,
+      // after both, reporting only output_tokens. The merged usage —
+      // message_start's input/cache numbers plus message_delta's output
+      // number — is a total neither event carries alone.
+      yield streamEvent(
+        messageStart("msg_straddle", "claude-opus-5", {
+          input_tokens: 10,
+          cache_read_input_tokens: 100,
+          cache_creation_input_tokens: 5,
+        }),
+      );
+      yield streamEvent(blockStart(0, "text"));
+      yield streamEvent(textDelta(0, "Checking the file."));
+      yield streamEvent(blockStop(0));
+      yield assistantText("Checking the file.");
+      yield toolCall("toolu_straddle", "Read", { file_path: "/tmp/y" });
+      yield streamEvent(messageDelta({ output_tokens: 20 }, "tool_use"));
+      yield toolResult("toolu_straddle", "file contents");
+      yield success("Read the file.");
       return;
     }
     case "large-result": {

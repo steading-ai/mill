@@ -1,7 +1,9 @@
 package sidecar_test
 
 import (
+	"bytes"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +19,8 @@ import (
 	. "github.com/onsi/gomega"
 
 	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
+	"github.com/steading-ai/mill/internal/gateway"
+	"github.com/steading-ai/mill/internal/workspace"
 )
 
 // The live specs spend a real session against the Claude Agent SDK, using
@@ -195,6 +199,62 @@ var _ = Describe("A live session", Label("live"), Serial, func() {
 		By("and the host's own model credential did not reach the session")
 		Expect(printed).NotTo(ContainSubstring("CLAUDE_CODE_OAUTH_TOKEN"))
 		Expect(printed).NotTo(ContainSubstring(upstream))
+	})
+
+	It("records one usage event per response the gateway itself logged", func() {
+		By("given a real gateway in-process, holding the subscription credential and logging to a buffer")
+		// mill#80 AC3: the sidecar's usage-event count must equal the
+		// gateway's own "gateway: usage" log-line count for the step — the
+		// same production log line asserted in
+		// internal/gateway/live_test.go's "There is no login in the machine",
+		// captured here from an in-process buffer since this spec has no
+		// running mill.service/journal to read.
+		upstream := os.Getenv("CLAUDE_CODE_OAUTH_TOKEN")
+		if upstream == "" {
+			Skip("set CLAUDE_CODE_OAUTH_TOKEN to a `claude setup-token` to run the spec that counts usage through a real gateway")
+		}
+		const stepToken = "step-token-live-usage"
+		var log bytes.Buffer
+		g, err := gateway.New(gateway.Config{Credential: gateway.CredentialOf(upstream), Log: slog.New(slog.NewTextHandler(&log, nil))})
+		Expect(err).NotTo(HaveOccurred())
+		server, err := gateway.Listen("127.0.0.1:0", g)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(server.Close)
+		token := workspace.TokenFor(stepToken)
+		token.ID = "01STEPTOKENLIVEUSAGE"
+		g.Rotate("01RUNLIVEUSAGE", gateway.Step{StepRunID: "01STEPRUNLIVEUSAGE", StepName: "implement", Token: token})
+		decided := map[string]string{
+			"ANTHROPIC_BASE_URL":   server.URL(),
+			"ANTHROPIC_AUTH_TOKEN": stepToken,
+		}
+
+		By("when a session runs a tool before its final reply, forcing at least two model responses")
+		line := request(&harnessv1.Request{
+			Id: "live-usage",
+			Body: &harnessv1.Request_Start{Start: &harnessv1.Start{
+				SessionId: sessionID,
+				TimeoutMs: stepTimeoutMs,
+				Prompt:    "Run the shell command `pwd` with the Bash tool, exactly once, then reply with exactly the directory it printed and nothing else.",
+				Cwd:       workdir,
+				Settings: settings(map[string]any{"tools": map[string]any{
+					"allow": []any{"Bash"},
+					"deny":  []any{"Write", "Edit", "NotebookEdit", "Task", "WebFetch", "WebSearch"},
+				}}),
+			}},
+		})
+		s := runFor(entrypoint, decided, line, liveTimeout)
+		Expect(s.terminal().GetExit().GetStatus()).To(BeZero(), s.terminal().GetFinalMessage())
+
+		By("then the number of usage events on the wire equals the gateway's own usage log lines")
+		var usageEvents int
+		for _, event := range s.events() {
+			if event.GetUsage() != nil {
+				usageEvents++
+			}
+		}
+		logged := strings.Count(log.String(), "gateway: usage")
+		Expect(usageEvents).To(BeNumerically(">", 0), "the session produced no usage events to compare")
+		Expect(usageEvents).To(Equal(logged), "the sidecar's usage-event count must match the gateway's own log")
 	})
 
 	It("A long foreground command is not backgrounded", func() {

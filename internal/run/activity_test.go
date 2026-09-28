@@ -132,6 +132,43 @@ var _ = Describe("The activity writer", Label("unit"), func() {
 		Expect(activities[2].GetTurn()).To(Equal(activities[0].GetTurn() + 1))
 	})
 
+	It("does not split the turn when usage arrives while a text block is still open", func() {
+		// The stream's message_delta usage can land between a block's own
+		// deltas and its closing final record (docs/activity.md §Turns): the
+		// turn must not close until the block does, so every record through
+		// the final shares one turn, and only a later usage lets the next
+		// text open turn+1.
+		w := open()
+		Expect(w.Record(&millv1.Activity{
+			Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+			Body:   &millv1.Activity_Text{Text: &millv1.Text{BlockId: "b1", Text: "one", Delta: true}},
+		})).To(Succeed())
+		Expect(w.Record(&millv1.Activity{
+			Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+			Body:   &millv1.Activity_Usage{Usage: &harnessv1.Usage{}},
+		})).To(Succeed())
+		Expect(w.Record(&millv1.Activity{
+			Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+			Body:   &millv1.Activity_Text{Text: &millv1.Text{BlockId: "b1", Final: true}},
+		})).To(Succeed())
+		Expect(w.Record(&millv1.Activity{
+			Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+			Body:   &millv1.Activity_Usage{Usage: &harnessv1.Usage{}},
+		})).To(Succeed())
+		Expect(w.Record(&millv1.Activity{
+			Source: millv1.ActivitySource_ACTIVITY_SOURCE_HARNESS,
+			Body:   &millv1.Activity_Text{Text: &millv1.Text{BlockId: "b2", Text: "two", Final: true}},
+		})).To(Succeed())
+		Expect(w.Close()).To(Succeed())
+
+		activities := read()
+		Expect(activities).To(HaveLen(5))
+		Expect(activities[1].GetTurn()).To(Equal(activities[0].GetTurn()), "usage mid-block takes the open turn")
+		Expect(activities[2].GetTurn()).To(Equal(activities[0].GetTurn()), "the block's final record still shares the turn")
+		Expect(activities[3].GetTurn()).To(Equal(activities[0].GetTurn()), "the deferred usage closes on the block's final, and itself takes that same turn")
+		Expect(activities[4].GetTurn()).To(Equal(activities[0].GetTurn()+1), "only the later usage, after the block closed, lets the next text open a new turn")
+	})
+
 	It("gives turn 0 to a record with no session, whatever source it names", func() {
 		w := open()
 		for _, source := range []millv1.ActivitySource{

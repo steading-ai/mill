@@ -89,9 +89,16 @@ type activityWriter struct {
 	// opened in, so its tool_result — or a subagent record naming it as
 	// parent_call_id — takes that turn regardless of what currentTurn is
 	// doing by the time it arrives.
-	currentTurn int64
-	turnOpen    bool
-	callTurn    map[string]int64
+	//
+	// openBlocks holds the block ids of text/thinking blocks seen non-final
+	// but not yet final. A usage arriving while it is nonempty defers the
+	// close (usagePending) until the last open block's final record clears
+	// it, so a turn is never split mid-block.
+	currentTurn  int64
+	turnOpen     bool
+	callTurn     map[string]int64
+	openBlocks   map[string]bool
+	usagePending bool
 
 	textHoldback     *redact.DeltaHoldback
 	thinkingHoldback *redact.DeltaHoldback
@@ -194,6 +201,7 @@ func newActivityWriterOver(file *os.File, seq, written int64, redactor *redact.R
 		now:              now,
 		seq:              seq,
 		callTurn:         map[string]int64{},
+		openBlocks:       map[string]bool{},
 		textHoldback:     redact.NewDeltaHoldback(redactor),
 		thinkingHoldback: redact.NewDeltaHoldback(redactor),
 		verbChunks:       map[string]*redact.Chunker{},
@@ -423,6 +431,18 @@ func (w *activityWriter) assignTurn(a *millv1.Activity) {
 		a.Turn = w.currentTurn
 		if call, ok := body.(*millv1.Activity_ToolCall); ok {
 			w.callTurn[call.ToolCall.GetCallId()] = w.currentTurn
+			break
+		}
+		if _, blockID, final, ok := textLike(a); ok {
+			if final {
+				delete(w.openBlocks, blockID)
+				if len(w.openBlocks) == 0 && w.usagePending {
+					w.turnOpen = false
+					w.usagePending = false
+				}
+			} else {
+				w.openBlocks[blockID] = true
+			}
 		}
 	case *millv1.Activity_ToolResult:
 		if turn, ok := w.callTurn[body.ToolResult.GetCallId()]; ok {
@@ -432,7 +452,11 @@ func (w *activityWriter) assignTurn(a *millv1.Activity) {
 		}
 	case *millv1.Activity_Usage:
 		a.Turn = w.currentTurn
-		w.turnOpen = false
+		if len(w.openBlocks) == 0 {
+			w.turnOpen = false
+		} else {
+			w.usagePending = true
+		}
 	default:
 		a.Turn = w.currentTurn
 	}
