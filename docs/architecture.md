@@ -234,7 +234,7 @@ A redactor sits in front of every log the mill writes, seeded from the step's cr
 ## Trust boundaries
 
 - **Between a session and the host.** The session holds a socket and a token. It reaches files, commands, git, and the forge only through the workspace, with the step's capabilities. Nothing it can read is reusable elsewhere.
-- **Between the implementer and the reviewer.** Different sessions, different step tokens, different tool policies. The reviewer's token grants no `write`. The ledger records which session produced the verdict.
+- **Between the implementer and the reviewer.** Different sessions, different step tokens, different tool policies. The reviewer's token grants no `write`. The ledger records which session produced the verdict — a `revise` is recorded as evidence on the attempt it fails, the same as an `approve` is on the attempt it closes, so `Inspect` returns a revised round's decision and findings exactly as it would an approved one's.
 - **Between the mill and skift.** The mill holds no database credential for skift; it is a transport-resolved principal like any agent. Every write is fenced by the lease.
 - **Between runs.** One workspace per run, never shared; one step token per step, never reused.
 - **Between predecessor content and instructions.** A node's inputs are other principals' claims. They are rendered as delimited, attributed data in prompts. The mill is skift's first consumer that has to take that rule seriously, because it is the one that turns content into actions.

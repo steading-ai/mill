@@ -186,7 +186,7 @@ func (s *StoreService) CloseStepRun(ctx context.Context, req *connect.Request[mi
 
 // FailStepRun marks an attempt failed with how its process ended.
 func (s *StoreService) FailStepRun(ctx context.Context, req *connect.Request[millv1.FailStepRunRequest]) (*connect.Response[millv1.FailStepRunResponse], error) {
-	stepRun, err := s.svc.FailStepRun(ctx, req.Msg.GetLeaseId(), req.Msg.GetStepRunId(), req.Msg.GetExit())
+	stepRun, err := s.svc.FailStepRun(ctx, req.Msg.GetLeaseId(), req.Msg.GetStepRunId(), req.Msg.GetExit(), req.Msg.GetEvidence())
 	if err != nil {
 		return nil, connectError(err)
 	}

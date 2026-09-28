@@ -955,7 +955,8 @@ message RunSummary {
 message StepRunDetail {
   // The attempt.
   StepRun step_run = 1;
-  // The evidence that closed it, if it closed.
+  // The evidence recorded on this attempt: what closed it, or the verdict
+  // that failed it. Unset for an attempt with neither.
   Evidence evidence = 2;
   // The session it ran in, for a skill step.
   Session session = 3;

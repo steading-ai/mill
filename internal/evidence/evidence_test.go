@@ -342,7 +342,8 @@ var _ = Describe("The verdict verifier", Label("unit"), func() {
 		})
 
 		Expect(err).To(MatchError(ContainSubstring("1 blocking finding")))
-		Expect(result.Value).To(BeNil())
+		Expect(result.Value.GetVerdict().GetDecision()).To(Equal(millv1.VerdictDecision_VERDICT_DECISION_REVISE),
+			"a revise is still evidence: it is recorded on the failed attempt, not used to close it")
 		Expect(result.Verdict.GetFindings()).To(HaveLen(1))
 		Expect(result.Verdict.GetFindings()[0].GetSummary()).To(Equal("the status verifier treats pending as failure"))
 	})

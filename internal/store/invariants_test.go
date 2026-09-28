@@ -114,6 +114,37 @@ var _ = Describe("Invariants", Label(testsupport.DBLabel), func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(closed.GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED))
 		Expect(evidence.GetCommit()).To(Equal("sha"))
+
+		// The one named exception (00026_verdict_evidence_on_failed_step.sql):
+		// a review's revise verdict is recorded on the attempt it failed, not
+		// only on one it closed. Narrow to `kind = 'verdict'` and
+		// `status = 'failed'` — every other kind still requires closed, and a
+		// verdict still requires the row to be closed or failed, not running.
+		failedReview := l.fail(ctx, run.GetId(), "review")
+		err = inTx(ctx, l, func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx,
+				`INSERT INTO evidence (step_run_id, kind, value) VALUES ($1, 'verdict', '{"verdict":{"decision":"VERDICT_DECISION_REVISE"}}'::jsonb)`,
+				failedReview.GetId())
+			return err
+		})
+		Expect(err).NotTo(HaveOccurred(), "a verdict is admitted on a failed row, not only a closed one")
+
+		failedImplement := l.fail(ctx, run.GetId(), "implement")
+		err = inTx(ctx, l, func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx,
+				`INSERT INTO evidence (step_run_id, kind, value) VALUES ($1, 'commit', '{}'::jsonb)`, failedImplement.GetId())
+			return err
+		})
+		Expect(err).To(MatchError(ContainSubstring("not closed")), "the exception is verdict only, not every kind")
+
+		runningSimplify := l.start(ctx, run.GetId(), "simplify")
+		err = inTx(ctx, l, func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx,
+				`INSERT INTO evidence (step_run_id, kind, value) VALUES ($1, 'verdict', '{"verdict":{"decision":"VERDICT_DECISION_REVISE"}}'::jsonb)`,
+				runningSimplify.GetId())
+			return err
+		})
+		Expect(err).To(MatchError(ContainSubstring("not closed")), "a verdict still requires closed or failed, not running")
 	}, SpecTimeout(time.Minute))
 
 	It(`Invariant 6: "Evidence is never updated or deleted." No UPDATE or DELETE grants on the table for the application role`, func(ctx SpecContext) {
@@ -197,7 +228,7 @@ var _ = Describe("Invariants", Label(testsupport.DBLabel), func() {
 		_, _, err = l.store.CloseStepRun(ctx, l.lease, store.CloseStepRunParams{
 			StepRunID: open.GetId(), Evidence: commitEvidence("sha")})
 		Expect(err).To(MatchError(store.ErrFenced))
-		_, err = l.store.FailStepRun(ctx, l.lease, open.GetId(), nil)
+		_, err = l.store.FailStepRun(ctx, l.lease, open.GetId(), nil, nil)
 		Expect(err).To(MatchError(store.ErrFenced))
 		_, err = l.store.StartStepRun(ctx, l.lease, store.StartStepRunParams{
 			RunID: run.GetId(), StepName: "simplify", Kind: millv1.StepKind_STEP_KIND_SKILL})

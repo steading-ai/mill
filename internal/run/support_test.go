@@ -1087,6 +1087,18 @@ func stepRuns(detail *millv1.InspectResponse, name string) []*millv1.StepRun {
 	return runs
 }
 
+// stepRunDetail is one attempt's own detail row, by its id — what a spec
+// needs to read a specific attempt's evidence when a step has more than one,
+// since evidenceOf only ever returns the latest.
+func stepRunDetail(detail *millv1.InspectResponse, stepRunID string) *millv1.StepRunDetail {
+	for _, d := range detail.GetSteps() {
+		if d.GetStepRun().GetId() == stepRunID {
+			return d
+		}
+	}
+	return nil
+}
+
 // sessionsOf is the session id each attempt at a step ran in.
 // The step is a parameter because the helper is about any step; that every
 // spec so far asks about `implement` is a fact about those specs.

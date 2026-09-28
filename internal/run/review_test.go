@@ -148,6 +148,40 @@ var _ = Describe("The reviewer's verdict", Label(testsupport.DBLabel), func() {
 			To(Equal(millv1.VerdictDecision_VERDICT_DECISION_APPROVE))
 	})
 
+	It("A revise verdict is recorded as evidence on the attempt it failed", func() {
+		By("given a feature run whose first review verdict was revise and second approved")
+		const finding = "the second criterion has no spec: nothing fails if the step is skipped"
+		featureRun(
+			fake.Script{Terminal: fake.Terminal("", revises("AC-2", finding), usage(5))},
+			fake.Script{Terminal: fake.Terminal("", approves("AC-2", "the spec asserts the Then clause now"), usage(5))},
+		)
+
+		By("when Inspect is read back")
+		detail := f.inspect(ctx)
+
+		By("then the review attempt that failed carries the revise verdict as its own evidence")
+		reviews := stepRuns(detail, "review")
+		Expect(reviews).To(HaveLen(2))
+		// The revise that sends the work back to implement also supersedes
+		// review's own latest attempt — the span it moves runs from the
+		// revise target through the reviewing step itself. The evidence
+		// that attempt was failed with stays on it regardless: a revise is
+		// as much a record of what the run did as an approve.
+		Expect(reviews[0].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_SUPERSEDED))
+		failed := stepRunDetail(detail, reviews[0].GetId())
+		Expect(failed).NotTo(BeNil())
+		verdict := failed.GetEvidence().GetVerdict()
+		Expect(verdict.GetDecision()).To(Equal(millv1.VerdictDecision_VERDICT_DECISION_REVISE))
+		Expect(verdict.GetFindings()).To(HaveLen(1))
+		Expect(verdict.GetFindings()[0].GetCriterion()).To(Equal("AC-2"))
+		Expect(verdict.GetFindings()[0].GetSummary()).To(Equal(finding))
+
+		By("and the second, approved attempt still carries its own evidence too")
+		Expect(reviews[1].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED))
+		Expect(evidenceOf(detail, "review").GetVerdict().GetDecision()).
+			To(Equal(millv1.VerdictDecision_VERDICT_DECISION_APPROVE))
+	})
+
 	It("A verdict is parsed, not read", func() {
 		By("given a reviewer session whose final message praises the work in prose and emits no structured output")
 		featureRun(fake.Script{

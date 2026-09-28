@@ -407,7 +407,7 @@ func (r *Runner) step(ctx context.Context, s *state, step *millv1.Step, detail *
 			// second reason, it is noise (mill#34).
 			cause = execErr
 		}
-		return r.failStep(ctx, s, step, sr, detail, result, cause)
+		return r.failStep(ctx, s, step, sr, detail, verified, result, cause)
 	}
 }
 

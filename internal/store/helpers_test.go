@@ -137,7 +137,7 @@ func (l *ledger) close(ctx context.Context, runID, stepName string) *millv1.Step
 func (l *ledger) fail(ctx context.Context, runID, stepName string) *millv1.StepRun {
 	GinkgoHelper()
 	stepRun := l.start(ctx, runID, stepName)
-	failed, err := l.store.FailStepRun(ctx, l.lease, stepRun.GetId(), nil)
+	failed, err := l.store.FailStepRun(ctx, l.lease, stepRun.GetId(), nil, nil)
 	Expect(err).NotTo(HaveOccurred())
 	return failed
 }
@@ -191,6 +191,23 @@ func commitEvidence(sha string) *millv1.Evidence {
 	return &millv1.Evidence{
 		Kind:       millv1.EvidenceKind_EVIDENCE_KIND_COMMIT,
 		Value:      &millv1.Evidence_Commit{Commit: sha},
+		VerifiedBy: "spec",
+	}
+}
+
+// reviseEvidence is a revise verdict, the fact a failed review attempt
+// carries: it never closes the step, but it is still evidence.
+func reviseEvidence(criterion, summary string) *millv1.Evidence {
+	return &millv1.Evidence{
+		Kind: millv1.EvidenceKind_EVIDENCE_KIND_VERDICT,
+		Value: &millv1.Evidence_Verdict{Verdict: &millv1.Verdict{
+			Decision: millv1.VerdictDecision_VERDICT_DECISION_REVISE,
+			Findings: []*millv1.Finding{{
+				Criterion: criterion,
+				Severity:  millv1.FindingSeverity_FINDING_SEVERITY_BLOCKING,
+				Summary:   summary,
+			}},
+		}},
 		VerifiedBy: "spec",
 	}
 }

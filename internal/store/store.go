@@ -1010,7 +1010,15 @@ func (s *Store) CloseStepRun(ctx context.Context, leaseID string, p CloseStepRun
 // FailStepRun marks an attempt failed with how its process ended, so the
 // step's on_failure can be applied. Its tokens are revoked in the same
 // transaction (Invariant 8).
-func (s *Store) FailStepRun(ctx context.Context, leaseID, stepRunID string, exit *harnessv1.ProcessExit) (*millv1.StepRun, error) {
+//
+// evidence is nil for a failure that is not a reviewer's verdict. When it is
+// set — a revise, which never closes the step it fails — it is inserted in
+// the same transaction as the failure, so Inspect returns it exactly like an
+// approved review's evidence (docs/domain-model.md §Evidence). The deferred
+// constraint trigger evidence_closes_step_run (00006_evidence.sql,
+// 00026_verdict_evidence_on_failed_step.sql) is what allows verdict evidence
+// on a row this transaction is about to leave failed rather than closed.
+func (s *Store) FailStepRun(ctx context.Context, leaseID, stepRunID string, exit *harnessv1.ProcessExit, evidence *millv1.Evidence) (*millv1.StepRun, error) {
 	var stepRun *millv1.StepRun
 	err := s.withTx(ctx, func(ctx context.Context, tx pgx.Tx, q *Queries) error {
 		open, err := q.GetStepRun(ctx, stepRunID)
@@ -1033,6 +1041,20 @@ func (s *Store) FailStepRun(ctx context.Context, leaseID, stepRunID string, exit
 		}
 		if err != nil {
 			return fmt.Errorf("fail step run %s: %w", stepRunID, err)
+		}
+		if evidence != nil {
+			value, err := evidenceValue(evidence)
+			if err != nil {
+				return err
+			}
+			if _, err := q.InsertEvidence(ctx, InsertEvidenceParams{
+				StepRunID:  stepRunID,
+				Kind:       enumText(evidence.GetKind()),
+				Value:      value,
+				VerifiedBy: evidence.GetVerifiedBy(),
+			}); err != nil {
+				return fmt.Errorf("record evidence for step run %s: %w", stepRunID, err)
+			}
 		}
 		if _, err := q.RevokeStepTokensForStepRun(ctx, stepRunID); err != nil {
 			return fmt.Errorf("revoke step tokens of %s: %w", stepRunID, err)
