@@ -26,12 +26,30 @@ export interface ModelTotals {
 }
 
 // TurnTokens is the usage block on one assistant message, in the Messages
-// API's spelling.
+// API's spelling. Every field is nullable because the two events that supply
+// it disagree on which ones they guarantee: message_start's usage always has
+// input/output, but message_delta's usage — the Messages API's own
+// `BetaMessageDeltaUsage` — allows input_tokens and the cache fields to come
+// back null, leaving only output_tokens certain. mergeTurn is what
+// reconciles the two.
 export interface TurnTokens {
-  input_tokens?: number;
-  output_tokens?: number;
+  input_tokens?: number | null;
+  output_tokens?: number | null;
   cache_read_input_tokens?: number | null;
   cache_creation_input_tokens?: number | null;
+}
+
+// mergeTurn overlays delta's own fields onto base, field by field, the way
+// internal/gateway/usage.go's usageBlock.apply reconciles the same two
+// events on the gateway side. A field delta leaves null or undefined keeps
+// base's value rather than zeroing it out.
+export function mergeTurn(base: TurnTokens, delta: TurnTokens): TurnTokens {
+  return {
+    input_tokens: delta.input_tokens ?? base.input_tokens,
+    output_tokens: delta.output_tokens ?? base.output_tokens,
+    cache_read_input_tokens: delta.cache_read_input_tokens ?? base.cache_read_input_tokens,
+    cache_creation_input_tokens: delta.cache_creation_input_tokens ?? base.cache_creation_input_tokens,
+  };
 }
 
 function counts(input: number, output: number, cacheRead: number, cacheWrite: number): TokenCounts {

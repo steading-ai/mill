@@ -121,6 +121,28 @@ var _ = Describe("Streaming", Label("unit"), func() {
 		Expect(s.terminal().GetFinalMessage()).To(ContainSubstring("toolu_agent_open"))
 	})
 
+	It("merges message_start's input/cache tokens with message_delta's output tokens into one usage event", func() {
+		// message_start and message_delta each carry only part of a
+		// response's usage (docs/activity.md §Turns); the merged total below
+		// is the sum of both, a value neither event reports alone, so this
+		// only passes if the sidecar actually merges them.
+		s := run(fakeEntrypoint, map[string]string{"MILL_FAKE_SCENARIO": "straddled-response"}, startRequest("straddle-1", nil))
+
+		var usages []*harnessv1.Usage
+		for _, event := range s.events() {
+			if usage := event.GetUsage(); usage != nil {
+				usages = append(usages, usage)
+			}
+		}
+		Expect(usages).To(HaveLen(1), "one response, straddling a text and a tool_use block, produces one usage event")
+
+		counts := usages[0].GetByModel()["claude-opus-5"]
+		Expect(counts.GetInput()).To(Equal(int64(10)), "from message_start, which message_delta does not repeat")
+		Expect(counts.GetOutput()).To(Equal(int64(20)), "from message_delta, which message_start does not know yet")
+		Expect(counts.GetCacheRead()).To(Equal(int64(100)))
+		Expect(counts.GetCacheWrite()).To(Equal(int64(5)))
+	})
+
 	It("forwards a several-hundred-KB tool result whole, with no limit of its own", func() {
 		s := run(fakeEntrypoint, map[string]string{"MILL_FAKE_SCENARIO": "large-result"}, startRequest("large-result-1", nil))
 

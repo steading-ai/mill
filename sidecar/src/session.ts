@@ -39,7 +39,7 @@ import {
   heartbeatPrompt,
   killChildren,
 } from "./tasks.js";
-import { fromModelUsage, fromTurn, type UsageAccumulator } from "./usage.js";
+import { fromModelUsage, fromTurn, mergeTurn, type TurnTokens, type UsageAccumulator } from "./usage.js";
 
 // ENVIRONMENT_PASSTHROUGH is what a session's tools inherit from the host
 // besides what the workspace decided: enough for a process to start, and
@@ -882,22 +882,36 @@ interface ResultOfTurn {
 // block's index, which is why the id has to be remembered rather than read
 // straight off each event.
 class StreamBlocks {
-  private readonly scopes = new Map<string, { messageId: string; open: Map<number, "text" | "thinking"> }>();
+  private readonly scopes = new Map<
+    string,
+    { messageId: string; open: Map<number, "text" | "thinking">; model: string; usage: TurnTokens }
+  >();
 
-  private scope(parentToolUseId: string | null): { messageId: string; open: Map<number, "text" | "thinking"> } {
+  private scope(
+    parentToolUseId: string | null,
+  ): { messageId: string; open: Map<number, "text" | "thinking">; model: string; usage: TurnTokens } {
     const key = parentToolUseId ?? "";
     let entry = this.scopes.get(key);
     if (entry === undefined) {
-      entry = { messageId: "", open: new Map() };
+      entry = { messageId: "", open: new Map(), model: "", usage: {} };
       this.scopes.set(key, entry);
     }
     return entry;
   }
 
-  // start records a fresh assistant message beginning for this scope: a new
-  // message id, and no blocks open yet under it.
-  start(parentToolUseId: string | null, messageId: string): void {
-    this.scopes.set(parentToolUseId ?? "", { messageId, open: new Map() });
+  // seedResponse records a fresh assistant response beginning for this
+  // scope: a new message id, no blocks open yet under it, and the baseline
+  // usage message_start carries — the only event guaranteed to report
+  // input/cache tokens (usage.ts's TurnTokens doc comment).
+  seedResponse(parentToolUseId: string | null, messageId: string, model: string, usage: TurnTokens): void {
+    this.scopes.set(parentToolUseId ?? "", { messageId, open: new Map(), model, usage });
+  }
+
+  // response reports the model and usage baseline seeded for this scope, for
+  // message_delta to merge its own usage onto.
+  response(parentToolUseId: string | null): { model: string; usage: TurnTokens } {
+    const entry = this.scope(parentToolUseId);
+    return { model: entry.model, usage: entry.usage };
   }
 
   // blockStart records that index is a text or thinking block, so blockStop
@@ -937,8 +951,12 @@ function handleMessage(
       // Text is not emitted here: with includePartialMessages on, every
       // text block already reached emitEvent as stream_event deltas, and
       // the complete message that follows them would just repeat it
-      // (docs/activity.md §"Streaming text"). tool_use and usage are not
-      // streamed, so they still come from here.
+      // (docs/activity.md §"Streaming text"). tool_use is not streamed, so
+      // it still comes from here. Usage is not read from this message
+      // either — every synthesized assistant message's usage is a
+      // non-final copy of the response's running total (SDKAssistantMessage's
+      // own doc comment), so the stream's message_start/message_delta pair
+      // is the only source that does not double-count it.
       const parentCallId = message.parent_tool_use_id ?? undefined;
       for (const block of message.message.content) {
         if (block.type === "tool_use") {
@@ -957,11 +975,6 @@ function handleMessage(
             parentCallId,
           );
         }
-      }
-      const usage = fromTurn(message.message.model, message.message.usage);
-      if (Object.keys(usage.byModel).length > 0) {
-        accumulated.add(usage);
-        emitEvent({ case: "usage", value: usage }, parentCallId);
       }
       return undefined;
     }
@@ -995,7 +1008,7 @@ function handleMessage(
       const event = message.event;
       switch (event.type) {
         case "message_start":
-          blocks.start(message.parent_tool_use_id, event.message.id);
+          blocks.seedResponse(message.parent_tool_use_id, event.message.id, event.message.model, event.message.usage);
           return undefined;
         case "content_block_start":
           if (event.content_block.type === "text" || event.content_block.type === "thinking") {
@@ -1027,6 +1040,16 @@ function handleMessage(
             emitEvent({ case: "text", value: create(TextSchema, { blockId, final: true }) }, parentCallId);
           } else if (kind === "thinking") {
             emitEvent({ case: "thinking", value: create(ThinkingSchema, { blockId, final: true }) }, parentCallId);
+          }
+          return undefined;
+        }
+        case "message_delta": {
+          const response = blocks.response(message.parent_tool_use_id);
+          const merged = mergeTurn(response.usage, event.usage);
+          const usage = fromTurn(response.model, merged);
+          if (Object.keys(usage.byModel).length > 0) {
+            accumulated.add(usage);
+            emitEvent({ case: "usage", value: usage }, parentCallId);
           }
           return undefined;
         }
