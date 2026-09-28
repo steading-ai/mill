@@ -1,0 +1,14 @@
+- events:
+    - kind: tool_call
+      call_id: call-1
+      name: fs.write
+      dispatch: fs.write
+      arguments:
+        path: "${artifact_path}"
+        content: "irrelevant to the delay this fixture proves"
+    - kind: text
+      request_id: r2
+      text: after the dispatch's synthetic tool_result
+      after: 200ms
+  terminal:
+    final_message: done

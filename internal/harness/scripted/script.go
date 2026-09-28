@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -56,6 +57,15 @@ type Turn struct {
 	// A script never writes the tool_result for a dispatching call itself:
 	// the adapter builds it from the real response.
 	Dispatches map[int]Dispatch
+	// Delays maps an index into Events to how long the adapter waits,
+	// honouring the step's context, before sending that event — a script's
+	// `after` field, decoded. A missing entry sends the event with no
+	// delay.
+	Delays map[int]time.Duration
+	// TerminalAfter is how long the adapter waits before ending the turn
+	// once every event has been sent — a turn's `terminal.after`, decoded.
+	// Zero ends the turn immediately.
+	TerminalAfter time.Duration
 }
 
 // Dispatch is a real workspace verb a turn's tool_call asks the adapter to
@@ -110,6 +120,9 @@ type turnYAML struct {
 type eventYAML struct {
 	Kind      string `yaml:"kind" json:"kind"`
 	RequestID string `yaml:"request_id,omitempty" json:"request_id,omitempty"`
+	// After is how long the adapter waits before sending this event, in Go
+	// duration syntax. Empty means no wait.
+	After string `yaml:"after,omitempty" json:"after,omitempty"`
 
 	// text
 	Text string `yaml:"text,omitempty" json:"text,omitempty"`
@@ -151,6 +164,9 @@ type terminalYAML struct {
 	FinalMessage     string         `yaml:"final_message,omitempty" json:"final_message,omitempty"`
 	StructuredOutput map[string]any `yaml:"structured_output,omitempty" json:"structured_output,omitempty"`
 	Exit             *exitYAML      `yaml:"exit,omitempty" json:"exit,omitempty"`
+	// After is how long the adapter waits, once every event has been sent,
+	// before ending the turn — Go duration syntax, empty for no wait.
+	After string `yaml:"after,omitempty" json:"after,omitempty"`
 }
 
 type exitYAML struct {
@@ -177,46 +193,69 @@ func (t terminalYAML) toHarness() *harness.Terminal {
 func (t turnYAML) toTurn() (Turn, error) {
 	turn := Turn{}
 	for i, e := range t.Events {
-		event, dispatch, err := e.toEvent()
+		event, dispatch, delay, err := e.toEvent()
 		if err != nil {
 			return Turn{}, fmt.Errorf("event %d: %w", i, err)
 		}
 		turn.Events = append(turn.Events, event)
+		index := len(turn.Events) - 1
 		if dispatch != nil {
 			if turn.Dispatches == nil {
 				turn.Dispatches = map[int]Dispatch{}
 			}
-			turn.Dispatches[len(turn.Events)-1] = *dispatch
+			turn.Dispatches[index] = *dispatch
+		}
+		if delay > 0 {
+			if turn.Delays == nil {
+				turn.Delays = map[int]time.Duration{}
+			}
+			turn.Delays[index] = delay
 		}
 	}
 	if t.Terminal != nil {
 		turn.Terminal = t.Terminal.toHarness()
+		if t.Terminal.After != "" {
+			after, err := time.ParseDuration(t.Terminal.After)
+			if err != nil {
+				return Turn{}, fmt.Errorf("terminal: after %q: not a valid duration (Go duration syntax, e.g. \"5s\")", t.Terminal.After)
+			}
+			turn.TerminalAfter = after
+		}
 	}
 	return turn, nil
 }
 
-// toEvent decodes one event, and — for a dispatching tool_call — the
-// [Dispatch] the adapter performs for it.
-func (e eventYAML) toEvent() (*harnessv1.Event, *Dispatch, error) {
+// toEvent decodes one event, the [Dispatch] a dispatching tool_call's
+// adapter performs for it, and how long the adapter waits before sending
+// it.
+func (e eventYAML) toEvent() (*harnessv1.Event, *Dispatch, time.Duration, error) {
+	var delay time.Duration
+	if e.After != "" {
+		parsed, err := time.ParseDuration(e.After)
+		if err != nil {
+			return nil, nil, 0, fmt.Errorf("after %q: not a valid duration (Go duration syntax, e.g. \"5s\")", e.After)
+		}
+		delay = parsed
+	}
 	switch e.Kind {
 	case "text":
-		return fake.Text(e.RequestID, e.Text), nil, nil
+		return fake.Text(e.RequestID, e.Text), nil, delay, nil
 	case "tool_call":
 		event := fake.ToolCall(e.RequestID, e.CallID, e.Name, e.Arguments)
 		if e.Dispatch == "" {
-			return event, nil, nil
+			return event, nil, delay, nil
 		}
 		if !dispatchVerbs[e.Dispatch] {
-			return nil, nil, fmt.Errorf("dispatch %q: not a verb this harness can call", e.Dispatch)
+			return nil, nil, 0, fmt.Errorf("dispatch %q: not a verb this harness can call", e.Dispatch)
 		}
-		return event, &Dispatch{Verb: e.Dispatch, Arguments: e.Arguments}, nil
+		return event, &Dispatch{Verb: e.Dispatch, Arguments: e.Arguments}, delay, nil
 	case "tool_result":
 		return &harnessv1.Event{
 			RequestId: e.RequestID,
 			Body: &harnessv1.Event_ToolResult{
 				ToolResult: &harnessv1.ToolResult{CallId: e.CallID, Content: e.Content, IsError: e.IsError},
 			},
-		}, nil, nil
+		}, nil, delay, nil
 	case "usage":
 		usage := make(harness.Usage, len(e.Usage))
 		for model, counts := range e.Usage {
@@ -225,10 +264,10 @@ func (e eventYAML) toEvent() (*harnessv1.Event, *Dispatch, error) {
 				CacheRead: counts.CacheRead, CacheWrite: counts.CacheWrite,
 			}
 		}
-		return fake.UsageEvent(e.RequestID, usage), nil, nil
+		return fake.UsageEvent(e.RequestID, usage), nil, delay, nil
 	case "heartbeat":
-		return fake.Heartbeat(e.RequestID, e.Strike, e.Strikes, e.WaitingSeconds, e.Tasks...), nil, nil
+		return fake.Heartbeat(e.RequestID, e.Strike, e.Strikes, e.WaitingSeconds, e.Tasks...), nil, delay, nil
 	default:
-		return nil, nil, fmt.Errorf("event kind %q is not one of text, tool_call, tool_result, usage, heartbeat", e.Kind)
+		return nil, nil, 0, fmt.Errorf("event kind %q is not one of text, tool_call, tool_result, usage, heartbeat", e.Kind)
 	}
 }

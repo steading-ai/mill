@@ -2,6 +2,7 @@
     - kind: text
       request_id: r1
       text: gathering context
+      after: 300ms
     - kind: tool_call
       request_id: r1
       call_id: call-1
@@ -28,6 +29,7 @@
         - reading the repo
   terminal:
     final_message: gathered
+    after: 5s
 - events:
     - kind: tool_call
       request_id: r2

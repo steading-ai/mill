@@ -1,6 +1,8 @@
 package scripted_test
 
 import (
+	"time"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -25,6 +27,9 @@ var _ = Describe("Loading a script", Label("unit"), func() {
 		Expect(first.Events[4].GetHeartbeat().GetTasks()).To(Equal([]string{"reading the repo"}))
 		Expect(first.Terminal.FinalMessage).To(Equal("gathered"))
 		Expect(first.Dispatches).To(BeEmpty())
+		Expect(first.Delays).To(HaveKeyWithValue(0, 300*time.Millisecond),
+			"the first event's after decodes to a wait keyed by its own index")
+		Expect(first.TerminalAfter).To(Equal(5 * time.Second))
 
 		second := script[1]
 		Expect(second.Events).To(HaveLen(1))
@@ -53,5 +58,10 @@ var _ = Describe("Loading a script", Label("unit"), func() {
 	It("refuses a dispatch verb outside the fixed list", func() {
 		_, err := scripted.Load("testdata/unknown-dispatch.yaml")
 		Expect(err).To(MatchError(ContainSubstring(`dispatch "forge.pr"`)))
+	})
+
+	It("refuses an after that is not a valid duration, naming the field", func() {
+		_, err := scripted.Load("testdata/bad-after.yaml")
+		Expect(err).To(MatchError(ContainSubstring(`after "5x"`)))
 	})
 })
