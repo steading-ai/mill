@@ -48,12 +48,15 @@
     final_message: the plan is written; see the file this step closes on
 
 # 4. implement: dispatches fs.write of the real change, so commit has
-#    something real to commit.
+#    something real to commit. after: 5s holds the attempt open long enough
+#    for a poller (a client's Status/Inspect, mill#79) to observe implement
+#    running before the turn closes.
 - events:
     - kind: tool_call
       call_id: implement-write-1
       name: fs.write
       dispatch: fs.write
+      after: 5s
       arguments:
         path: notes/scripted-fixture.md
         content: |

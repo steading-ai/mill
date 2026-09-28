@@ -69,11 +69,28 @@ var _ = Describe("Acceptance", Label("acceptance"), func() {
 
 		By("when mill run is invoked for it with the scripted-feature workflow")
 		options := runOptions{Workflow: "scripted-feature", Tier: "feature", WorkflowDir: scriptedFeatureDir}
-		Expect(s.start(ctx, options).wait(scriptedTimeout)).To(BeZero(), "mill run exited cleanly")
+		worker := s.start(ctx, options)
+
+		By("and while implement's after: 5s holds its dispatch open, mill status reports the run running at implement")
+		running := runningStep(ctx, s.NodeRef, "implement", scriptedTimeout)
+		statusRes, err := suite.service.Store.Status(ctx, connect.NewRequest(&millv1.StatusRequest{Project: s.Graph.Slug}))
+		Expect(err).NotTo(HaveOccurred(), "mill status")
+		summary := runSummary(statusRes.Msg.GetRuns(), running.GetRunId())
+		Expect(summary).NotTo(BeNil(), "mill status listed the run implement is running on")
+		Expect(summary.GetRun().GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+		Expect(summary.GetCurrentStep()).To(Equal("implement"))
+
+		Expect(worker.wait(scriptedTimeout)).To(BeZero(), "mill run exited cleanly")
 
 		By("then the run reached done")
 		detail := inspect(ctx, s.NodeRef)
 		Expect(detail.GetSummary().GetRun().GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_DONE))
+
+		By("and implement's first attempt took at least the 5s its after named, the window a poller had to observe it running")
+		first := attempts(detail, "implement")[0].GetStepRun()
+		Expect(first.GetStartedAt()).NotTo(BeNil())
+		Expect(first.GetEndedAt()).NotTo(BeNil())
+		Expect(first.GetEndedAt().AsTime().Sub(first.GetStartedAt().AsTime())).To(BeNumerically(">=", 5*time.Second))
 
 		By("and mill cost reports zero tokens: no usage bucket exists for a run that never emitted one")
 		cost, err := suite.service.Store.Cost(ctx, connect.NewRequest(&millv1.CostRequest{Project: s.Graph.Slug}))
@@ -194,6 +211,16 @@ func assertScriptedActivity(logDir string, detail *millv1.InspectResponse) {
 				"%s attempt %d: turns out of order: %v", sr.GetStepName(), sr.GetAttempt(), turns)
 		}
 	}
+}
+
+// runSummary is the entry mill status carries for a run, found by id.
+func runSummary(runs []*millv1.RunSummary, runID string) *millv1.RunSummary {
+	for _, r := range runs {
+		if r.GetRun().GetId() == runID {
+			return r
+		}
+	}
+	return nil
 }
 
 // millInspectRefs is `mill inspect --view refs`: step, attempt and status

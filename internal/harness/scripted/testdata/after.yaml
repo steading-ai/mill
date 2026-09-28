@@ -1,0 +1,17 @@
+- events:
+    - kind: text
+      request_id: r1
+      text: no wait
+    - kind: text
+      request_id: r2
+      text: waited
+      after: 300ms
+  terminal:
+    final_message: done
+- events:
+    - kind: text
+      request_id: r1
+      text: paused a long time
+      after: 10m
+  terminal:
+    final_message: never gets here

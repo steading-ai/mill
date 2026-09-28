@@ -471,6 +471,20 @@ without the variable, and again in the run's own harness registry, so
 nothing reachable from `mill run`, `mill work`, or `mill serve` can select it
 by accident.
 
+A scripted turn otherwise replays instantly — every event lands in the same
+instant the turn opens — which is right for proving a run's shape but wrong
+for a fixture that has to be caught mid-step: a browser spec polling for a
+step's running state, or `mill status`/`mill inspect` read while the run is
+still on it. An event may carry `after: <duration>` (Go duration syntax,
+e.g. `after: 5s`); the adapter waits that long, honouring the step's own
+context, before sending that event, so the wait ends early on cancellation
+rather than outliving the step. A turn's `terminal` may carry `after` too,
+delaying the turn's end once every event has been sent, for a fixture that
+has nothing left to say but still needs to stay open. Either wait is charged
+against the step's own timeout, since it runs inside the same context the
+step's harness call already carries — a script that pauses longer than the
+step allows fails the step, the same as a real session that took too long.
+
 ## Without a forge
 
 With `MILL_ACCEPTANCE_FORGE_URL` unset, the suite runs in local-origin mode:
