@@ -2,6 +2,8 @@ package run_test
 
 import (
 	"context"
+	"strings"
+	"sync/atomic"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -99,6 +101,101 @@ var _ = Describe("The circuit breaker", Label(testsupport.DBLabel), func() {
 			// step and no other.
 			Expect(stepRuns(f.inspect(ctx), "review")).To(HaveLen(10))
 			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_PARKED))
+		})
+
+		It("trims findings that exceed skift's limits, and attaches every round in full", func() {
+			// Given a review that never likes the change and, unlike the
+			// scripted one above, says so at a size a comment and a gate body
+			// cannot hold as-is — and no revise this time, so the park is the
+			// step's own fourth failure rather than its fifth.
+			workflow := f.variant(ctx, "review-parks-with-big-findings", func(definition *millv1.Workflow) {
+				review := reviewStep(stepOf(definition, "implement").GetSkill())
+				review.Harness = map[string]*millv1.HarnessSettings{
+					run.DefaultHarness: {Options: options(map[string]any{"model": reviewModel})},
+				}
+				review.OnFailure = nil
+				insertAfter(definition, "clean-tree", review)
+			})
+			adapter := &reviewer{model: reviewModel, commits: f.commits, size: 60 << 10}
+
+			// When the step runs out of retries.
+			Expect(f.runner(withHarness(adapter), func(o *run.Options) {
+				o.Workflow = workflow
+			}).Execute(ctx, f.nodeRef)).To(Succeed())
+
+			detail := f.inspect(ctx)
+			Expect(stepRuns(detail, "review")).To(HaveLen(4), "no revise: OnFailure is nil")
+
+			parked := f.runOf(ctx)
+			Expect(parked.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_PARKED))
+			Expect(parked.GetParkedReason()).To(Equal(millv1.ParkedReason_PARKED_REASON_RETRIES))
+
+			// Then the comment fits skift's ceiling and ends with a cut
+			// marker naming what to read instead.
+			comments := f.comments(ctx)
+			Expect(comments).To(HaveLen(1), "one comment, not one per round")
+			Expect(len(comments[0])).To(BeNumerically("<=", 64<<10))
+			Expect(comments[0]).To(ContainSubstring("bytes cut"))
+			Expect(comments[0]).To(ContainSubstring("mill logs"))
+
+			// And the gate's body fits too.
+			gate := f.theGate(ctx)
+			Expect(len(gate.GetBody())).To(BeNumerically("<=", 256<<10))
+
+			// And every round is attached in full, regardless of what the
+			// comment above had room for.
+			var artifacts []*skiftv1.Artifact
+			for _, artifact := range f.nodeArtifacts(ctx) {
+				if strings.Contains(artifact.GetName(), "-round-") {
+					artifacts = append(artifacts, artifact)
+				}
+			}
+			Expect(artifacts).To(HaveLen(4))
+			for i, artifact := range artifacts {
+				Expect(artifact.GetParts()).NotTo(BeEmpty(), "round %d", i+1)
+				Expect(len(artifact.GetParts()[0].GetText().GetText())).
+					To(BeNumerically(">=", 60<<10), "round %d kept in full", i+1)
+			}
+		})
+
+		It("still parks and files the gate when skift refuses the findings comment", func() {
+			// Given the same losing review, and a client that refuses the
+			// first add_comment op it sees — whatever size the comment turns
+			// out to be, the refusal stands in for any reason skift might
+			// give one.
+			workflow := f.reviewedFix(ctx, reviewModel)
+			adapter := &reviewer{model: reviewModel, commits: f.commits}
+			var refused atomic.Bool
+			client := f.failingPatches(func(op *skiftv1.PatchOp) bool {
+				if op.GetAddComment() == nil {
+					return false
+				}
+				return !refused.Swap(true)
+			})
+
+			// When the step runs out of retries.
+			Expect(f.runner(withHarness(adapter), func(o *run.Options) {
+				o.Workflow = workflow
+				o.Skift = client
+			}).Execute(ctx, f.nodeRef)).To(Succeed())
+
+			// Then the run still parks...
+			parked := f.runOf(ctx)
+			Expect(parked.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_PARKED))
+			Expect(parked.GetParkedReason()).To(Equal(millv1.ParkedReason_PARKED_REASON_RETRIES))
+			// ...the gate is filed...
+			Expect(parked.GetGateNodeId()).To(Equal(f.theGate(ctx).GetId()))
+			// ...and the lease is released with reason budget, same as a
+			// park whose comment went through cleanly.
+			reason, _ := f.releasedLease(ctx)
+			Expect(reason).To(Equal("budget"))
+
+			// And the one comment on the node is the one-line refusal
+			// notice, not the findings the first write was refused.
+			comments := f.comments(ctx)
+			Expect(comments).To(HaveLen(1))
+			Expect(comments[0]).To(ContainSubstring("findings comment was refused"))
+			Expect(comments[0]).NotTo(ContainSubstring("the change still does the wrong thing"))
 		})
 	})
 

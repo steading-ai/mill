@@ -995,6 +995,18 @@ func (f *fixture) comments(ctx context.Context) []string {
 	return bodies
 }
 
+// nodeArtifacts are what the node itself carries — as opposed to
+// [artifactNames], which reads a step's result — in the order skift
+// returns them.
+func (f *fixture) nodeArtifacts(ctx context.Context) []*skiftv1.Artifact {
+	GinkgoHelper()
+	res, err := f.graph.GetNode(ctx, connect.NewRequest(&skiftv1.GetNodeRequest{
+		Project: project, Node: f.nodeRef, View: skiftv1.View_VIEW_FULL,
+	}))
+	Expect(err).NotTo(HaveOccurred())
+	return res.Msg.GetArtifacts()
+}
+
 // approveGate is a person answering a gate out of band, by completing it —
 // the only answer that satisfies the edge and lets the node be claimed
 // again. It writes as a human does: no lease, and no mill request id.
@@ -1315,6 +1327,10 @@ type reviewer struct {
 	// reviewer that never finds the work good, which is what the circuit
 	// breaker's specs need.
 	until int
+	// size is about how many bytes a failing review turn's final message
+	// carries, or zero for the short default — set to force findings large
+	// enough for the circuit breaker's own trimming.
+	size int
 
 	mu       sync.Mutex
 	rounds   int
@@ -1354,8 +1370,13 @@ func (r *reviewer) play(verb string, session harness.Session, prompt harness.Pro
 	turn := harness.NewTurn()
 	go func() {
 		if failing {
+			final := fmt.Sprintf("round %d: the change still does the wrong thing", round)
+			if r.size > 0 {
+				final = fmt.Sprintf("round %d: the change still does the wrong thing; ", round)
+				final += strings.Repeat("x", r.size-len(final))
+			}
 			turn.Finish(&harness.Terminal{
-				FinalMessage: fmt.Sprintf("round %d: the change still does the wrong thing", round),
+				FinalMessage: final,
 				Exit:         harness.ProcessExit{Status: 1},
 				Usage:        usage(1),
 			}, nil)
