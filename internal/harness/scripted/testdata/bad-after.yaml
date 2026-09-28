@@ -1,0 +1,4 @@
+- events:
+    - kind: text
+      text: this event's after is not a duration
+      after: 5x

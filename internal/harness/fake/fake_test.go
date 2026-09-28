@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -153,5 +154,46 @@ var _ = Describe("The fake harness", Label("unit"), func() {
 		_, err := replay.Start(ctx, session, harness.Prompt{}, nil)
 
 		Expect(err).To(MatchError(refused))
+	})
+
+	It("waits After before sending the event it names, and TerminalAfter before finishing", func(ctx context.Context) {
+		replay := fake.New(fake.Script{
+			Events:        []*harnessv1.Event{fake.Text("r1", "paused")},
+			After:         map[int]time.Duration{0: 50 * time.Millisecond},
+			TerminalAfter: 50 * time.Millisecond,
+			Terminal:      fake.Terminal("done", nil, nil),
+		})
+
+		started := time.Now()
+		turn, err := replay.Start(ctx, session, harness.Prompt{}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		terminal, err := turn.Wait(ctx)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(terminal.FinalMessage).To(Equal("done"))
+		Expect(time.Since(started)).To(BeNumerically(">=", 100*time.Millisecond),
+			"the event's own After and the turn's TerminalAfter must both have been waited out")
+		Expect(log.collected()).To(HaveLen(1))
+	})
+
+	It("ends a paused turn with the context's error when the context is cancelled first", func() {
+		startCtx, cancel := context.WithCancel(context.Background())
+		replay := fake.New(fake.Script{
+			Events:   []*harnessv1.Event{fake.Text("r1", "paused")},
+			After:    map[int]time.Duration{0: 10 * time.Minute},
+			Terminal: fake.Terminal("done", nil, nil),
+		})
+
+		turn, err := replay.Start(startCtx, session, harness.Prompt{}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		cancel()
+
+		waitCtx, waitCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer waitCancel()
+		terminal, err := turn.Wait(waitCtx)
+
+		Expect(err).To(MatchError(context.Canceled), "the turn must end on startCtx's own cancellation, not waitCtx's unrelated timeout")
+		Expect(terminal).To(BeNil())
+		Expect(log.collected()).To(BeEmpty(), "the paused event must never have been sent")
 	})
 })

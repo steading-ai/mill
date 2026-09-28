@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
 	"github.com/steading-ai/mill/internal/harness"
@@ -111,9 +112,14 @@ func (a *Adapter) next(session harness.Session) (Turn, error) {
 // — for every tool_call the turn dispatches — a tool_result event this call
 // appends right after it, whose content a single Do closure fills from the
 // real workspace before fake.Harness sends any event, exactly as
-// fake.Script documents Do running before the send loop.
+// fake.Script documents Do running before the send loop. A delay the turn
+// put on one of its own events follows that event to wherever it lands in
+// the output slice, since a dispatch ahead of it shifts every later index;
+// the synthetic tool_result a dispatch appends never carries a delay of its
+// own — nothing in a script addresses it.
 func (a *Adapter) build(turn Turn, prompt harness.Prompt) fake.Script {
 	events := make([]*harnessv1.Event, 0, len(turn.Events)+len(turn.Dispatches))
+	var after map[int]time.Duration
 	type pending struct {
 		result   *harnessv1.ToolResult
 		dispatch Dispatch
@@ -121,6 +127,12 @@ func (a *Adapter) build(turn Turn, prompt harness.Prompt) fake.Script {
 	var pendings []pending
 	for i, event := range turn.Events {
 		events = append(events, event)
+		if delay, ok := turn.Delays[i]; ok {
+			if after == nil {
+				after = map[int]time.Duration{}
+			}
+			after[len(events)-1] = delay
+		}
 		dispatch, ok := turn.Dispatches[i]
 		if !ok {
 			continue
@@ -141,7 +153,7 @@ func (a *Adapter) build(turn Turn, prompt harness.Prompt) fake.Script {
 			}
 		}
 	}
-	return fake.Script{Events: events, Terminal: turn.Terminal, Do: do}
+	return fake.Script{Events: events, Terminal: turn.Terminal, Do: do, After: after, TerminalAfter: turn.TerminalAfter}
 }
 
 // artifactPathPattern matches artifactBrief's literal

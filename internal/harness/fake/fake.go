@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -43,6 +44,18 @@ type Script struct {
 	// spec can act as a session acts mid-step: register a value with the
 	// workspace's redactor, touch the checkout, take a lease away.
 	Do func(session harness.Session)
+	// After delays event i by the given duration, waited immediately before
+	// that event is sent, so a fixture can be observed mid-step rather than
+	// closing in the same instant it opens. The wait honours the caller's
+	// context: a context that ends first ends the turn with that error
+	// instead of sending the event. A zero or absent entry sends the event
+	// with no delay.
+	After map[int]time.Duration
+	// TerminalAfter delays Finish the same way After delays an event,
+	// applied once every event has been sent. It has no effect when Hold is
+	// set: a held turn already stays open until cancelled, and does not use
+	// TerminalAfter to decide when to close.
+	TerminalAfter time.Duration
 }
 
 // Call is one thing a spec asked the harness to do. The whole session is
@@ -125,10 +138,18 @@ func (h *Harness) play(ctx context.Context, verb string, session harness.Session
 		if script.Do != nil {
 			script.Do(session)
 		}
-		for _, event := range script.Events {
+		for i, event := range script.Events {
+			if err := wait(ctx, script.After[i]); err != nil {
+				turn.Finish(nil, err)
+				return
+			}
 			session.Events.Send(event)
 		}
 		if !script.Hold {
+			if err := wait(ctx, script.TerminalAfter); err != nil {
+				turn.Finish(nil, err)
+				return
+			}
 			turn.Finish(script.Terminal, nil)
 			return
 		}
@@ -143,6 +164,23 @@ func (h *Harness) play(ctx context.Context, verb string, session harness.Session
 		turn.Finish(cancelled, nil)
 	}()
 	return turn, nil
+}
+
+// wait pauses for d, ending early with the context's error if it ends
+// first. A non-positive duration returns immediately, so a script with no
+// After or TerminalAfter set waits on nothing.
+func wait(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Calls are the calls the harness has been made, in order.
