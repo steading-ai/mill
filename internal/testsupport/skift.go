@@ -256,6 +256,11 @@ func drain(reader io.Reader) func() string {
 	}
 }
 
+// SkiftRepo is the checkout skift's migrations are read from, or empty when
+// none is found — the one lookup [Postgres.StartSkift] and a spec that reads
+// skift's own source, rather than running it, both use.
+func SkiftRepo() string { return skiftRepo() }
+
 // skiftRepo is the checkout skift's migrations are read from, or empty.
 func skiftRepo() string {
 	candidates := []string{os.Getenv(SkiftRepoEnv)}
