@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,6 +43,19 @@ type describedTool struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
 	InputSchema map[string]any `json:"inputSchema"`
+}
+
+// socketAnswers reports whether something is listening on a unix socket
+// path. Every session and check in a mill workspace is handed a dead
+// MILL_SOCKET on purpose (internal/workspace/exec.go's DeadSockets), so
+// "set" does not mean "reachable": this is what tells the two apart.
+func socketAnswers(path string) bool {
+	conn, err := net.DialTimeout("unix", path, 200*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 // millBinary builds the binary once for the specs that drive it.
@@ -264,8 +278,12 @@ var _ = Describe("The mill plugin", Label("unit", "slow"), func() {
 	// choices; this one asserts about the server the session would reach.
 	It("A session can read a run", func() {
 		By("given a running mill and a session with the plugin")
-		if os.Getenv("MILL_SOCKET") == "" {
+		socket := os.Getenv("MILL_SOCKET")
+		if socket == "" {
 			Skip("MILL_SOCKET is unset: no running mill for a session to read")
+		}
+		if !socketAnswers(socket) {
+			Skip("MILL_SOCKET names a socket nothing answers on")
 		}
 		s := startPluginSession(millBinary(), pluginServers()["mill"])
 		Expect(s.call("initialize", map[string]any{"protocolVersion": "2025-06-18"})).

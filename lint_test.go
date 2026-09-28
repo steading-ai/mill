@@ -12,7 +12,7 @@ import (
 )
 
 var _ = Describe("Lint and package boundaries", Label("unit", "slow"), func() {
-	It("make lint passes on the current tree", func() {
+	It("make lint passes on the current tree", Serial, func() {
 		Expect(makeTarget(checkout(), "lint")).To(gexec.Exit(0))
 	})
 
@@ -47,7 +47,7 @@ var _ = Describe("Lint and package boundaries", Label("unit", "slow"), func() {
 		}
 	})
 
-	It("The forbidigo rule guards the workspace chokepoint", func() {
+	It("The forbidigo rule guards the workspace chokepoint", Serial, func() {
 		By("given a file internal/run/x.go that calls exec.Command")
 		dir := checkout()
 		writeFile(dir, "internal/run/x.go",
@@ -65,7 +65,7 @@ var _ = Describe("Lint and package boundaries", Label("unit", "slow"), func() {
 		))
 	})
 
-	It("Specs stay in Ginkgo", func() {
+	It("Specs stay in Ginkgo", Serial, func() {
 		By(`given a test file that is not a suite bootstrap importing "testing"`)
 		dir := checkout()
 		writeFile(dir, "internal/version/helper_test.go",
@@ -82,7 +82,7 @@ var _ = Describe("Lint and package boundaries", Label("unit", "slow"), func() {
 		))
 	})
 
-	It("make lint still refuses generated code that lags its proto", func() {
+	It("make lint still refuses generated code that lags its proto", Serial, func() {
 		By("given a proto whose generated code has not been rewritten")
 		dir := checkout()
 		path := filepath.Join(dir, "proto/harness/v1/harness.proto")
@@ -100,7 +100,7 @@ var _ = Describe("Lint and package boundaries", Label("unit", "slow"), func() {
 		Expect(string(session.Out.Contents())).To(ContainSubstring("run make generate"))
 	})
 
-	It("Only the domain layer may reach the store", func() {
+	It("Only the domain layer may reach the store", Serial, func() {
 		By(`given a file under "internal/worker" importing "internal/store"`)
 		dir := checkout()
 		writeFile(dir, "internal/worker/worker.go",

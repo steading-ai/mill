@@ -53,8 +53,11 @@ func writeFile(root, rel, content string) {
 }
 
 // makeTarget runs one make target in the given checkout and waits for it to
-// exit. Every package compiles from the shared build cache, so a couple of
-// minutes covers a cold golangci-lint run with margin.
+// exit. The lint specs that drive this helper carry Serial, isolating them
+// from this suite's own parallel procs, but a shared guest's other tenants
+// can still make a single `make lint` run take longer than idle or
+// moderately-loaded measurements suggest: nine minutes is a 3x margin on the
+// three-minute wait that a live-tier run on this guest still exceeded.
 func makeTarget(dir, target string) *gexec.Session {
 	GinkgoHelper()
 	cmd := exec.Command("make", target)
@@ -62,7 +65,7 @@ func makeTarget(dir, target string) *gexec.Session {
 	cmd.Env = scratchEnv()
 	session, err := gexec.Start(cmd, GinkgoWriter, GinkgoWriter)
 	Expect(err).NotTo(HaveOccurred())
-	return session.Wait(3 * time.Minute)
+	return session.Wait(9 * time.Minute)
 }
 
 // scratchEnv is the environment for a subprocess that operates on a scratch
