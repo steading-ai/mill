@@ -135,6 +135,7 @@ func (f *fixture) commits(harness.Session) {
 	f.mu.Lock()
 	f.made = append(f.made, info.SHA)
 	f.mu.Unlock()
+	f.forge.setHead(info.SHA)
 }
 
 // commitsMade is every commit the scripted sessions made, in order.
@@ -476,8 +477,14 @@ type fixtureForge struct {
 	// which cannot tell one call from the next.
 	checksQueue []forge.Status
 	checks      int
-	comments    []string
-	deleted     []string
+	// headSHA is the pull request's HeadSHA once a commit has landed, kept
+	// in step with the branch by setHead: what a real forge's own index
+	// would do on its own once a push reached it, and what this fixture has
+	// to be told by hand instead. Empty until then, so PR's constant stands
+	// for a spec that never commits at all.
+	headSHA  string
+	comments []string
+	deleted  []string
 	// defaultBranch and defaultSHA are what DefaultHead reports; a spec that
 	// never sets them gets "main" at a fixed sha, which is enough for
 	// anything that does not care.
@@ -537,7 +544,20 @@ func (f *fixtureForge) PR(_ context.Context, branch string) (forge.PullRequest, 
 			Branch: branch, Target: "main", HeadSHA: strings.Repeat("a", 40), State: "open",
 		}
 	}
+	if f.headSHA != "" {
+		f.pr.HeadSHA = f.headSHA
+	}
 	return f.pr, nil
+}
+
+// setHead is a commit landing on the branch becoming this forge's idea of
+// the pull request's head, the way a real forge's own index would once a
+// push reached it (mill#91: the status verifier's per-head clock has to see
+// a head that actually changes when the branch does).
+func (f *fixtureForge) setHead(sha string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.headSHA = sha
 }
 
 func (f *fixtureForge) Checks(context.Context, string) (forge.Status, error) {

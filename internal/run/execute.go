@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
@@ -647,16 +646,27 @@ func (r *Runner) head(ctx context.Context, s *state) (string, error) {
 // new head as its base would call that commit "already there" and ask for
 // another. Inheriting the base of the aborted attempt keeps the span the
 // same one, so the commit that was made still closes the step.
+//
+// A status-evidence step is the opposite case, and is exempted from that
+// carry-forward. Its abort-and-retry is a merge gate's pending check timing
+// out its poll, not unfinished work: the next attempt has to ask about
+// wherever the branch's head is now, catch-up included, and inheriting the
+// aborted attempt's base would hide exactly the head movement a merge gate
+// exists to notice — the same base, forever, however many times the head
+// has actually moved underneath it (mill#91).
 func (r *Runner) baseCommit(ctx context.Context, s *state, step *millv1.Step, detail *millv1.InspectResponse) (string, error) {
-	if carried := abortedBase(detail, step.GetName()); carried != "" {
-		return carried, nil
+	if step.GetEvidence() != millv1.EvidenceKind_EVIDENCE_KIND_STATUS {
+		if carried := abortedBase(detail, step.GetName()); carried != "" {
+			return carried, nil
+		}
 	}
 	return r.head(ctx, s)
 }
 
 // abortedBase is the base of the latest attempt at a step, when that attempt
 // was aborted. A failed or superseded attempt is not continued — its work
-// was judged and sent back — so only an abort carries its base forward.
+// was judged and sent back — so only an abort carries its base forward. Not
+// consulted at all for a status-evidence step; see baseCommit.
 func abortedBase(detail *millv1.InspectResponse, step string) string {
 	var latest *millv1.StepRun
 	for _, d := range detail.GetSteps() {
@@ -917,24 +927,4 @@ func (r *Runner) pullRequest(ctx context.Context, s *state) (forge.PullRequest, 
 		Title:       s.node.GetTitle(),
 		Description: s.node.GetBody(),
 	})
-}
-
-// verifyStep timing: how long the current step has been waiting for a fact
-// that has not settled, which the `status` verifier compares against the
-// workflow's cap.
-func elapsed(detail *millv1.InspectResponse, step string, now time.Time) time.Duration {
-	var first time.Time
-	for _, d := range detail.GetSteps() {
-		if d.GetStepRun().GetStepName() != step {
-			continue
-		}
-		started := d.GetStepRun().GetStartedAt().AsTime()
-		if first.IsZero() || started.Before(first) {
-			first = started
-		}
-	}
-	if first.IsZero() {
-		return 0
-	}
-	return now.Sub(first)
 }

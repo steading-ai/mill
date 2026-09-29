@@ -149,6 +149,18 @@ type Session struct {
 	Transcript Transcript
 }
 
+// StatusRead is one past read of the forge's checks for a head, folded by
+// the `status` verifier into how long that head itself has been waited on
+// (see Step.headWait). A run's `status` step may read many heads across its
+// attempts — a catch-up or a revise can move the branch between them — and
+// a head's own wait is measured from its own earliest read, not the step's.
+type StatusRead struct {
+	// Head is the sha the read was for.
+	Head string
+	// At is when the read happened.
+	At time.Time
+}
+
 // Step is one step run, and everything a verifier may consult about it.
 type Step struct {
 	// Name is the step's name in the workflow, for the record of what
@@ -183,10 +195,12 @@ type Step struct {
 	// Session is what the session produced. Only `verdict` and `structured`
 	// read it, and only its structured output.
 	Session Session
-	// Elapsed is how long this step has been waiting for a fact that has not
-	// settled, across attempts. The `status` verifier compares it against
-	// the workflow's cap.
-	Elapsed time.Duration
+	// StatusHistory is every past read of the forge's checks at this step,
+	// across attempts, for the `status` verifier's headWait to fold down to
+	// how long the head it is currently asked about has itself been waited
+	// on. A head that changed since the last read starts its own wait at
+	// zero rather than inheriting an earlier head's (mill#91).
+	StatusHistory []StatusRead
 	// Base is the head of the run's branch when this attempt started, as the
 	// ledger recorded it. `commit` evidence has to descend from it and not
 	// be it: a step closes on a commit it made, not on whatever the branch
@@ -686,7 +700,7 @@ func verifyStatus(ctx context.Context, step Step) (Evidence, error) {
 		return refuse(fmt.Sprintf("the forge reports the checks on %s as failed", sha), nil)
 	case forge.Pending:
 		interval, limit := step.statusPolicy()
-		if step.Elapsed >= limit {
+		if step.headWait(sha) >= limit {
 			return refuse(fmt.Sprintf("the checks on %s had not settled after %s", sha, limit), nil)
 		}
 		return Evidence{}, &PendingError{
@@ -796,6 +810,27 @@ func verifiedBy(kind millv1.EvidenceKind, step Step) string {
 		return "preparatory " + step.Name
 	}
 	return "evidence." + kindName(kind)
+}
+
+// headWait is how long head has itself been waited on: now, minus the
+// earliest StatusHistory entry that read that same head, or zero when this
+// is the first read of it. A different head's history never counts against
+// this one (mill#91).
+func (s Step) headWait(head string) time.Duration {
+	now := s.now()
+	var earliest time.Time
+	for _, read := range s.StatusHistory {
+		if read.Head != head {
+			continue
+		}
+		if earliest.IsZero() || read.At.Before(earliest) {
+			earliest = read.At
+		}
+	}
+	if earliest.IsZero() {
+		return 0
+	}
+	return now.Sub(earliest)
 }
 
 func (s Step) now() time.Time {

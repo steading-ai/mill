@@ -26,23 +26,23 @@ func (r *Runner) verify(ctx context.Context, s *state, step *millv1.Step, sr *mi
 		return *res.verified, nil
 	}
 	asked := evidence.Step{
-		Name:         step.GetName(),
-		Definition:   step,
-		Workflow:     s.workflow,
-		Branch:       s.run.GetBranch(),
-		Claim:        res.claim,
-		AutoApproved: autoApprovedBy(step, res),
-		Base:         sr.GetBaseCommit(),
-		EarliestBase: earliestBase(step, detail),
-		Committer:    committer(s.workspace),
-		Exit:         res.exit,
-		Session:      res.session,
-		Elapsed:      elapsed(detail, step.GetName(), r.options.Now()),
-		Git:          s.workspace.GitRunner(),
-		Forge:        s.repo.Forge,
-		Artifacts:    artifacts{client: s.skift, ref: s.node.GetReference()},
-		Gates:        gates{runner: r, state: s},
-		Now:          r.options.Now,
+		Name:          step.GetName(),
+		Definition:    step,
+		Workflow:      s.workflow,
+		Branch:        s.run.GetBranch(),
+		Claim:         res.claim,
+		AutoApproved:  autoApprovedBy(step, res),
+		Base:          sr.GetBaseCommit(),
+		EarliestBase:  earliestBase(step, detail),
+		Committer:     committer(s.workspace),
+		Exit:          res.exit,
+		Session:       res.session,
+		StatusHistory: statusHistory(detail, step.GetName()),
+		Git:           s.workspace.GitRunner(),
+		Forge:         s.repo.Forge,
+		Artifacts:     artifacts{client: s.skift, ref: s.node.GetReference()},
+		Gates:         gates{runner: r, state: s},
+		Now:           r.options.Now,
 	}
 	return evidence.Verify(ctx, step.GetEvidence(), asked)
 }
@@ -434,4 +434,26 @@ func earliestBase(step *millv1.Step, detail *millv1.InspectResponse) string {
 		return ""
 	}
 	return firstBase(detail, step.GetName())
+}
+
+// statusHistory is every attempt at a step as a read of the forge's checks:
+// the attempt's base commit as the head it checked, and when the attempt
+// started. It is only a trustworthy record of what was actually checked
+// because baseCommit (execute.go) no longer carries a status-evidence
+// step's base forward across an aborted attempt — each attempt's base is
+// freshly read from the branch, so it names that attempt's own head rather
+// than an earlier one's (mill#91).
+func statusHistory(detail *millv1.InspectResponse, step string) []evidence.StatusRead {
+	var history []evidence.StatusRead
+	for _, d := range detail.GetSteps() {
+		sr := d.GetStepRun()
+		if sr.GetStepName() != step || sr.GetBaseCommit() == "" {
+			continue
+		}
+		history = append(history, evidence.StatusRead{
+			Head: sr.GetBaseCommit(),
+			At:   sr.GetStartedAt().AsTime(),
+		})
+	}
+	return history
 }
