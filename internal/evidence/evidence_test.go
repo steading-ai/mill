@@ -3,6 +3,7 @@ package evidence_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -516,6 +517,57 @@ var _ = Describe("The status verifier", Label("unit"), func() {
 		Expect(result.Value).To(BeNil())
 		Expect(evidence.Pending(err)).To(BeFalse())
 		Expect(err).To(MatchError(ContainSubstring("as failed")))
+	})
+
+	It("names the failing check and quotes its log, filtered to the assertion (AC1)", func() {
+		s := step(forge.Failed)
+		s.Forge = &fixtureForge{
+			status: forge.Failed,
+			failingChecks: []forge.CheckResult{
+				{Name: "e2e", Conclusion: "failure", LogID: "987"},
+			},
+			checkLogs: map[string]string{
+				"987": "noise\nrun-verbs.spec.ts:67\nError: expect(locator).toBeDisabled() failed\nmore noise\n",
+			},
+		}
+
+		_, err := verify(s)
+
+		var refused *evidence.NotVerifiedError
+		Expect(errors.As(err, &refused)).To(BeTrue(), "%v", err)
+		Expect(refused.Reason).To(ContainSubstring("as failed"))
+		Expect(refused.Reason).To(ContainSubstring("e2e"))
+		Expect(refused.Reason).To(ContainSubstring("run-verbs.spec.ts:67"))
+		Expect(refused.Reason).To(ContainSubstring("expect(locator).toBeDisabled() failed"))
+	})
+
+	It("names why a failing check's log could not be read, rather than swallowing it (AC3)", func() {
+		s := step(forge.Failed)
+		s.Forge = &fixtureForge{
+			status: forge.Failed,
+			failingChecks: []forge.CheckResult{
+				{Name: "e2e", Conclusion: "failure", LogID: "987"},
+			},
+			checkLogErrs: map[string]error{"987": errors.New("github: e2e: read job log: 403 Forbidden")},
+		}
+
+		_, err := verify(s)
+
+		var refused *evidence.NotVerifiedError
+		Expect(errors.As(err, &refused)).To(BeTrue(), "%v", err)
+		Expect(refused.Reason).To(ContainSubstring("e2e"))
+		Expect(refused.Reason).To(ContainSubstring("403 Forbidden"))
+	})
+
+	It("falls back to the bare sentence when FailingChecks itself errors: nothing to point at", func() {
+		s := step(forge.Failed)
+		s.Forge = &fixtureForge{status: forge.Failed, failingChecksErr: errors.New("github: rate limited")}
+
+		_, err := verify(s)
+
+		var refused *evidence.NotVerifiedError
+		Expect(errors.As(err, &refused)).To(BeTrue(), "%v", err)
+		Expect(refused.Reason).To(Equal(fmt.Sprintf("the forge reports the checks on %s as failed", sha)))
 	})
 
 	It("watches on the documented interval and cap when the workflow names none", func() {

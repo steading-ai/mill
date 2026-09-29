@@ -81,6 +81,11 @@ type Forge interface {
 	PR(ctx context.Context, branch string) (forge.PullRequest, error)
 	// Checks is what the forge's checks say about a commit.
 	Checks(ctx context.Context, sha string) (forge.Status, error)
+	// FailingChecks is every check on a commit that is not green, so a
+	// failed `status` can say which check and, through CheckLog, why.
+	FailingChecks(ctx context.Context, sha string) ([]forge.CheckResult, error)
+	// CheckLog is one failing check's log, filtered and capped (mill#95).
+	CheckLog(ctx context.Context, check forge.CheckResult) (string, error)
 }
 
 // Committer is the identity the mill's own commits carry: the name and
@@ -697,7 +702,7 @@ func verifyStatus(ctx context.Context, step Step) (Evidence, error) {
 	case forge.Success:
 		return Evidence{Value: &millv1.Evidence{Value: &millv1.Evidence_Status{Status: string(forge.Success)}}}, nil
 	case forge.Failed:
-		return refuse(fmt.Sprintf("the forge reports the checks on %s as failed", sha), nil)
+		return refuse(failureReason(ctx, step.Forge, sha), nil)
 	case forge.Pending:
 		interval, limit := step.statusPolicy()
 		if step.headWait(sha) >= limit {
@@ -711,6 +716,39 @@ func verifyStatus(ctx context.Context, step Step) (Evidence, error) {
 	default:
 		return refuse(fmt.Sprintf("the forge reports %q, which is not a status", status), nil)
 	}
+}
+
+// failureReason is what a failed status tells the implementer: the bare
+// sentence naming the failed status, followed by one block per failing
+// check naming its log — or, when a check's log could not be read, naming
+// why — so the implementer fixes what the checks actually reported instead
+// of guessing (docs/prd.md R-28, mill#95). A forge that cannot say more than
+// "failed" — FailingChecks itself errors, or names no check — falls back to
+// the bare sentence rather than inventing a message with no check to point
+// at, which keeps this additive for the case nothing here changes.
+func failureReason(ctx context.Context, f Forge, sha string) string {
+	bare := fmt.Sprintf("the forge reports the checks on %s as failed", sha)
+	checks, err := f.FailingChecks(ctx, sha)
+	if err != nil || len(checks) == 0 {
+		return bare
+	}
+	var b strings.Builder
+	b.WriteString(bare)
+	b.WriteString(":\n")
+	for _, check := range checks {
+		fmt.Fprintf(&b, "\n%s (%s)\n", check.Name, check.Conclusion)
+		excerpt, err := f.CheckLog(ctx, check)
+		switch {
+		case err != nil:
+			fmt.Fprintf(&b, "the log could not be read: %s\n", err)
+		case excerpt == "":
+			b.WriteString("the log named nothing that looked like a failure\n")
+		default:
+			b.WriteString(excerpt)
+			b.WriteString("\n")
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // statusPolicy is how this run watches the forge's checks: the workflow's

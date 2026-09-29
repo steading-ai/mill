@@ -113,6 +113,17 @@ func (s *stub) on(method, path string, status int, fixture string) {
 	s.routes[method+" "+path] = answer{status: status, body: body}
 }
 
+// onBody answers job 987's trace with a body a spec builds in memory rather
+// than reading from testdata — built with theToken so a spec can assert the
+// token never survives filtering, which a static fixture file could not do
+// without hard-coding theToken's value a second place.
+func (s *stub) onBody(status int, body []byte) {
+	GinkgoHelper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.routes[http.MethodGet+" "+escaped+"/jobs/987/trace"] = answer{status: status, body: body}
+}
+
 // onMerge answers a merge the way GitLab 19 does: the request must name the
 // commit it merges, and it must be the branch's head. A merge with no `sha`
 // is `400 SHA must be provided when merging`; one naming anything but head

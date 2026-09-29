@@ -492,6 +492,11 @@ type fixtureForge struct {
 	defaultSHA    string
 	// failingChecks is what FailingChecks reports for defaultSHA.
 	failingChecks []forge.CheckResult
+	// checkLogs maps a CheckResult's LogID to the raw log CheckLog returns,
+	// filtered through the real forge.FilterLog so a spec proves the whole
+	// path rather than a hand-trimmed stand-in. A LogID with no entry
+	// refuses, the same as a real forge's answer to a log it cannot serve.
+	checkLogs map[string]string
 	// credential is what Authenticate hands back, standing in for the token
 	// a real forge's GitAuth carries — set by a spec that needs to prove the
 	// credential never leaks into a filed finding's body.
@@ -597,6 +602,16 @@ func (f *fixtureForge) FailingChecks(context.Context, string) ([]forge.CheckResu
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.failingChecks, nil
+}
+
+func (f *fixtureForge) CheckLog(_ context.Context, check forge.CheckResult) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	raw, ok := f.checkLogs[check.LogID]
+	if !ok {
+		return "", fmt.Errorf("fixtureForge: no log scripted for check %q", check.Name)
+	}
+	return forge.FilterLog([]byte(raw)), nil
 }
 
 func (f *fixtureForge) Merge(_ context.Context, pr forge.PullRequest) (forge.PullRequest, error) {

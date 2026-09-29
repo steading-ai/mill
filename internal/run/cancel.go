@@ -42,8 +42,8 @@ var errCancelled = errors.New("run: cancelled")
 // lease is released with preempted, and the run is left resumable.
 //
 // It is called with a context the heartbeat has not cancelled — the step's
-// context is already dead by the time this runs — because these two writes
-// are the point of the cancellation and must land.
+// context is already dead by the time this runs — because these writes are
+// the point of the cancellation and must land.
 func (r *Runner) cancelStep(ctx context.Context, s *state) error {
 	if _, err := call(ctx, r.options.Store.AbortOpenStepRuns, &millv1.AbortOpenStepRunsRequest{
 		LeaseId: s.leaseID(),

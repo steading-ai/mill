@@ -136,11 +136,12 @@ var _ = Describe("SetLease", Label(testsupport.DBLabel), func() {
 })
 
 // ReleaseLease is a cancel, a graceful drain's release
-// (internal/run/shutdown.go's drainStep), or a shutdown: the run stops,
-// holding no lease, so a reclaim or another worker's ClaimNext can pick it
-// up at its next step boundary (docs/ledger.md §Resume). Unlike SetLease it
-// never takes a run over — it only gives one back — so it is fenced like an
-// ordinary write rather than checking [claimableStatuses].
+// (internal/run/shutdown.go's drainStep), or a shutdown after aborting the
+// open attempt: the run stops, holding no lease, so a reclaim or another
+// worker's ClaimNext can pick it up at its next step boundary
+// (docs/ledger.md §Resume). Unlike SetLease it never takes a run over — it
+// only gives one back — so it is fenced like an ordinary write rather than
+// checking [claimableStatuses].
 var _ = Describe("ReleaseLease", Label(testsupport.DBLabel), func() {
 	It("gives back a running run's lease and stops it", func(ctx SpecContext) {
 		l := newLedger(ctx)

@@ -351,7 +351,9 @@ func (s *Store) MarkWaiting(ctx context.Context, leaseID, runID, gateNodeID, ste
 // worker's ClaimNext reaches it next (docs/ledger.md §Resume). Admits a
 // running or a selecting run — a cancel or shutdown can land before a
 // workflow is even chosen. A graceful drain calls this at a step boundary,
-// where AbortOpenStepRuns would have nothing open to abort.
+// where AbortOpenStepRuns would have nothing open to abort; a cancel and a
+// shutdown call it after AbortOpenStepRuns, so the ledger lets go of the
+// lease when skift does.
 func (s *Store) ReleaseLease(ctx context.Context, leaseID, runID string) (*millv1.Run, error) {
 	var run *millv1.Run
 	err := s.withTx(ctx, func(ctx context.Context, tx pgx.Tx, q *Queries) error {

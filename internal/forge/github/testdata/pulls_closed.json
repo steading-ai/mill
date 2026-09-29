@@ -1,0 +1,18 @@
+[
+  {
+    "number": 5,
+    "state": "closed",
+    "html_url": "https://github.com/octo-org/thing/pull/5",
+    "title": "mill#13: the forge adapter",
+    "merged_at": null,
+    "merge_commit_sha": "0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c",
+    "mergeable_state": "unknown",
+    "head": {
+      "ref": "mill/mill-13",
+      "sha": "1111111111111111111111111111111111111111"
+    },
+    "base": {
+      "ref": "main"
+    }
+  }
+]
