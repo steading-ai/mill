@@ -221,6 +221,7 @@ func runStatus(cmd *cobra.Command, opts readOptions) error {
 	if err := renderStatus(cmd, res.Msg.GetRuns(), v); err != nil {
 		return err
 	}
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), heldSummaryLine(res.Msg.GetRuns()))
 	reportUndecodable(cmd, res.Msg.GetFindings())
 	if !opts.follow {
 		return nil
@@ -447,6 +448,20 @@ func renderStatus(cmd *cobra.Command, runs []*millv1.RunSummary, v view) error {
 		}
 	}
 	return w.Flush()
+}
+
+// heldSummaryLine is the count a drain's operator reads at a glance: how
+// many of the listed runs a worker is actually holding right now versus
+// parked, waiting, or otherwise unowned (RunSummary.held, mill#93) — the
+// distinction a table column would cost too much blast radius to carry.
+func heldSummaryLine(runs []*millv1.RunSummary) string {
+	held := 0
+	for _, summary := range runs {
+		if summary.GetHeld() {
+			held++
+		}
+	}
+	return fmt.Sprintf("%d held, %d parked or unowned", held, len(runs)-held)
 }
 
 // lastStepText is the step a run most recently attempted, with the status

@@ -948,6 +948,16 @@ message RunSummary {
   // (docs/ledger.md §"Queries the CLI needs"). 1 for a run that has never
   // been sent back.
   int64 rounds = 9;
+  // Whether a lease is currently held on this run and its last attempt did
+  // not abort: selecting or running, with a lease_id set, and last_step_status
+  // not aborted (mill#93). False for a parked run, a run waiting on a gate,
+  // a run a drain released at its boundary, and a cancelled run with no
+  // worker driving it — none of these can reach a step boundary on their
+  // own, so a drain does not wait on them. A lease a dead worker never
+  // released and skift has not yet expired still reads true here: only
+  // skift, not the ledger, judges a lease's liveness, so `mill drain --wait`
+  // remains the precise answer for that case and this field is not.
+  bool held = 10;
 }
 
 // StepRunDetail is one attempt with everything hanging off it, which is what

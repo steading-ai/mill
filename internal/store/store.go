@@ -2284,6 +2284,7 @@ func summarize(ctx context.Context, q *Queries, row Run) (*millv1.RunSummary, *U
 		LastStep:       lastStep,
 		LastStepStatus: lastStepStatus,
 		Rounds:         feedback + 1,
+		Held:           held(state.Run, lastStepStatus),
 	}
 	// The run's cost is what its sessions reported. The gateway's count is
 	// read per attempt, beside the adapter's, and never summed into it.
@@ -2301,6 +2302,23 @@ func summarize(ctx context.Context, q *Queries, row Run) (*millv1.RunSummary, *U
 		})
 	}
 	return summary, finding, nil
+}
+
+// held reports whether a lease is currently held on run and its last
+// attempt did not abort (mill#93): selecting or running, with a lease_id
+// set, and lastStepStatus not aborted. A parked run, a run waiting on a
+// gate, and a run a drain released at its boundary all clear lease_id
+// leaving that shape, and a cancelled run's last attempt is the one
+// AbortOpenStepRuns marks aborted — none of the three can reach a step
+// boundary on their own, so this is false for all three without asking
+// skift. A lease a dead worker never released and skift has not yet
+// expired still reads true: whether a lease has expired is skift's
+// judgement, not the ledger's (see claimableStatuses above), so this is
+// not a substitute for `mill drain --wait`'s own answer.
+func held(run *millv1.Run, lastStepStatus millv1.StepRunStatus) bool {
+	status := run.GetStatus()
+	selectingOrRunning := status == millv1.RunStatus_RUN_STATUS_SELECTING || status == millv1.RunStatus_RUN_STATUS_RUNNING
+	return selectingOrRunning && run.GetLeaseId() != "" && lastStepStatus != millv1.StepRunStatus_STEP_RUN_STATUS_ABORTED
 }
 
 // RunDetail is one run in full: what `mill inspect` renders.
