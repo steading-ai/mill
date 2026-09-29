@@ -706,8 +706,9 @@ type CacheCandidate interface {
 // containers included — is reaped when the step ends and nothing outlives it
 // (docs/sandbox.md §"Step boundary"). The machine backend runs each step
 // under its own systemd slice, `mill-step-<ordinal>.slice`, and reaps the
-// step by stopping the slice; the local backend has no such boundary and
-// does not implement it, so the loop asks nothing of it.
+// step by stopping the slice; the local backend implements the same
+// interface with a systemd `--user` scope where the account has one, or a
+// plain process group otherwise (internal/workspace/local's boundary.go).
 //
 // EndStep carries whether the step closed on evidence, because a step that
 // did leaves a promotion candidate — a snapshot of the run's cache copies
@@ -740,6 +741,22 @@ type StepResumer interface {
 	// workspace no step has begun in, and the reaped slice's own ordinal
 	// for one attached mid-step.
 	NextOrdinal() int
+}
+
+// SessionExecer is a workspace whose skill-step sessions are not already
+// spawned through their own [Workspace.Exec]. The machine backend does not
+// implement it: `harnessesFor` already hands the workspace itself to the
+// harness adapter as its execer, so a session runs through Exec like a
+// check or a preparatory step does. The local backend does implement it: a
+// session's sidecar is spawned by the harness adapter directly, with its
+// own default execer, so without this a [StepBoundary]'s scope or process
+// group would reach a check or a preparatory step's commands and never a
+// session's — the e2e stacks, browsers and builds a step's own evidence is
+// usually about.
+type SessionExecer interface {
+	// SessionExec is the execer a skill step's session should be spawned
+	// through, in place of the harness adapter's own default.
+	SessionExec() Execer
 }
 
 // Provisioned is a workspace that provisions a machine for its run
