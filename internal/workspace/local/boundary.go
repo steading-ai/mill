@@ -45,6 +45,7 @@ const (
 // anything.
 type stepState struct {
 	name string // "mill-<runID>-<ordinal>", unique across the host
+	dir  string // the step's directory under the run's, holding bin
 	tmp  string // TMPDIR every command in the step gets
 	bin  string // PATH-prepended directory holding the podman/docker shims
 
@@ -60,6 +61,23 @@ func (w *Workspace) grace() time.Duration {
 		return w.options.Grace
 	}
 	return DefaultGrace
+}
+
+// stepTmp is the TMPDIR a step's commands get: a directory of its own under
+// the worker's temporary directory, named for the end of the run's id and
+// the step's ordinal. It is not under the run's directory because a unix
+// socket's path holds 107 bytes, and what a command builds beneath its
+// TMPDIR (a test's own scratch, then a socket in it) has to fit: beneath
+// the run's directory the TMPDIR alone was 63 bytes, and mill's own specs'
+// sockets came to 116. The end of a ULID is its random part, so eight
+// characters of it and the ordinal do not collide across the runs of one
+// host.
+func stepTmp(runID string, ordinal int) string {
+	short := runID
+	if len(short) > 8 {
+		short = short[len(short)-8:]
+	}
+	return filepath.Join(os.TempDir(), "m"+short+"-"+strconv.Itoa(ordinal))
 }
 
 // BeginStep implements workspace.StepBoundary: it names the step, gives it
@@ -81,8 +99,11 @@ func (w *Workspace) BeginStep(ctx context.Context, ordinal int) error {
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("workspace: begin step %d: %w", ordinal, err)
 	}
-	tmp := filepath.Join(dir, "tmp")
+	tmp := stepTmp(handle.RunID, ordinal)
 	bin := filepath.Join(dir, "bin")
+	if err := os.RemoveAll(tmp); err != nil {
+		return fmt.Errorf("workspace: begin step %d: %w", ordinal, err)
+	}
 	if err := os.MkdirAll(tmp, 0o700); err != nil {
 		return fmt.Errorf("workspace: begin step %d: %w", ordinal, err)
 	}
@@ -91,7 +112,7 @@ func (w *Workspace) BeginStep(ctx context.Context, ordinal int) error {
 	}
 
 	w.stepMu.Lock()
-	w.step = &stepState{name: name, tmp: tmp, bin: bin}
+	w.step = &stepState{name: name, dir: dir, tmp: tmp, bin: bin}
 	w.stepMu.Unlock()
 	return nil
 }
@@ -120,8 +141,10 @@ func (w *Workspace) EndStep(ctx context.Context, _ int, _ bool) error {
 	if err := w.sweepContainers(ctx, step.name); err != nil {
 		errs = append(errs, err)
 	}
-	if err := os.RemoveAll(filepath.Dir(step.tmp)); err != nil {
-		errs = append(errs, fmt.Errorf("workspace: end step: %w", err))
+	for _, scratch := range []string{step.tmp, step.dir} {
+		if err := os.RemoveAll(scratch); err != nil {
+			errs = append(errs, fmt.Errorf("workspace: end step: %w", err))
+		}
 	}
 	return errors.Join(errs...)
 }

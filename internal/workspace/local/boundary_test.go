@@ -63,7 +63,16 @@ var _ = Describe("The local workspace's step boundary", Label("unit"), func() {
 
 		tmp := capture(ws, workspace.Command{Path: "/bin/sh", Args: []string{"-c", `printf %s "$TMPDIR"`}})
 		Expect(tmp).To(BeADirectory())
-		Expect(tmp).To(HavePrefix(root))
+		Expect(tmp).To(HavePrefix(os.TempDir()))
+		Expect(tmp).NotTo(HavePrefix(root), "a TMPDIR under the run's directory is too long to hold a socket")
+		// What mill's own specs build beneath a TMPDIR before they bind a
+		// socket: a test's scratch directory, a run directory named by a
+		// ULID, and the socket. It has to fit a unix socket's 107 bytes
+		// under the TMPDIR a deployment gives a step, which in the guest
+		// is a step directory under /tmp/stead-build.
+		beneath := "/ginkgo1455761095/run/01jrunlifecycle0000000000a/ws.sock"
+		deployed := filepath.Join("/tmp/stead-build", filepath.Base(tmp))
+		Expect(len(deployed) + len(beneath)).To(BeNumerically("<=", 107))
 
 		// SessionExec is what the harness adapter's session sidecar runs
 		// through: it calls with ClearEnv true and an environment it has
