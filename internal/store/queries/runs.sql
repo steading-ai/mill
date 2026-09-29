@@ -68,7 +68,7 @@ RETURNING *;
 -- name: ReleaseRunLease :one
 UPDATE runs
 SET lease_id = NULL
-WHERE id = $1 AND lease_id = $2 AND status = 'running'
+WHERE id = $1 AND lease_id = $2 AND status IN ('selecting', 'running')
 RETURNING *;
 
 -- name: ParkRun :one

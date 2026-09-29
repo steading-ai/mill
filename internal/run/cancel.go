@@ -25,6 +25,8 @@ import (
 //   - the lease is released `preempted` with detail `cancel`, so skift's
 //     event log distinguishes a node taken back on purpose from one whose
 //     worker died;
+//   - the run gives its lease back in the ledger too, as a drain does, so an
+//     operator's rerun is not refused as held by a worker that has let go;
 //   - nothing else is written. The run keeps its status, its workflow, and
 //     its branch, so the next claim resumes at the same step, one attempt
 //     further on.
@@ -40,13 +42,19 @@ var errCancelled = errors.New("run: cancelled")
 // the lease is released with preempted, and the run is left resumable.
 //
 // It is called with a context the heartbeat has not cancelled — the step's
-// context is already dead by the time this runs — because these two writes
-// are the point of the cancellation and must land.
+// context is already dead by the time this runs — because these writes are
+// the point of the cancellation and must land.
 func (r *Runner) cancelStep(ctx context.Context, s *state) error {
 	if _, err := call(ctx, r.options.Store.AbortOpenStepRuns, &millv1.AbortOpenStepRunsRequest{
 		LeaseId: s.leaseID(),
 		RunId:   s.run.GetId(),
 		Reason:  "cancelled",
+	}); err != nil {
+		return err
+	}
+	if _, err := call(ctx, r.options.Store.ReleaseLease, &millv1.ReleaseLeaseRequest{
+		LeaseId: s.leaseID(),
+		RunId:   s.run.GetId(),
 	}); err != nil {
 		return err
 	}

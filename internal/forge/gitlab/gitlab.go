@@ -311,13 +311,17 @@ func (c *Client) Push(ctx context.Context, request forge.PushRequest) (string, e
 // earlier generation's push last put there (steading#17), and its cached
 // head is stale until this same wait catches it up, the way the create path
 // below already waits for a brand new branch.
+//
+// A closed or merged merge request for the branch is passed over and a new one
+// opened: it is an earlier generation's, and returning it (steading#17, the
+// closed #19) hands the run a merge request it can neither review nor merge.
 func (c *Client) OpenPR(ctx context.Context, request forge.OpenPRRequest) (forge.PullRequest, error) {
 	if request.Branch == "" {
 		return forge.PullRequest{}, errors.New("gitlab: opening a merge request needs a branch")
 	}
 	existing, err := c.PR(ctx, request.Branch)
 	switch {
-	case err == nil:
+	case err == nil && existing.Open():
 		if request.Head == "" {
 			return existing, nil
 		}
@@ -325,7 +329,7 @@ func (c *Client) OpenPR(ctx context.Context, request forge.OpenPRRequest) (forge
 			return forge.PullRequest{}, err
 		}
 		return c.PR(ctx, request.Branch)
-	case !errors.Is(err, forge.ErrNoPullRequest):
+	case err != nil && !errors.Is(err, forge.ErrNoPullRequest):
 		return forge.PullRequest{}, err
 	}
 
