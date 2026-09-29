@@ -890,12 +890,13 @@ func workspacesFor(kind workspace.Kind, opts runOptions, redactor *redact.Redact
 func localWorkspaces(opts runOptions, redactor *redact.Redactor) run.Workspaces {
 	return func(ctx context.Context, spec workspace.Spec, repo run.Repository) (run.Workspace, error) {
 		ws := local.New(local.Options{
-			Root:     opts.workspaceDir,
-			Origin:   repo.Origin,
-			Forge:    repo.Forge,
-			Name:     opts.name,
-			Identity: opts.identity,
-			Redactor: redactor,
+			Root:          opts.workspaceDir,
+			Origin:        repo.Origin,
+			Forge:         repo.Forge,
+			Name:          opts.name,
+			Identity:      opts.identity,
+			Redactor:      redactor,
+			SkiftCheckout: opts.sandbox.skiftCheckout,
 		})
 		if _, err := ws.Attach(ctx, spec); err == nil {
 			return ws, nil

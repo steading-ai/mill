@@ -364,7 +364,10 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 			Expect(after(detail, "merge")).To(Equal("implement"))
 			Expect(stepRuns(detail, "implement")).To(HaveLen(2), "the conflict cost implement an attempt")
 			Expect(stepRuns(detail, "merge")).To(HaveLen(2), "merge ran again once caught up")
-			Expect(stepRuns(detail, "merge")[0].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_FAILED))
+			// revise supersedes every step from its target through the
+			// failing step itself (internal/run/revise.go), so the first
+			// merge attempt's own failed row ends up superseded, not failed.
+			Expect(stepRuns(detail, "merge")[0].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_SUPERSEDED))
 
 			By("the finding names the file and never reached the forge")
 			calls := f.harness.Calls()
@@ -373,7 +376,7 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 			Expect(revised).To(ContainSubstring("## What the last attempt failed on"))
 			Expect(revised).To(ContainSubstring(overlapFile))
 			Expect(revised).To(ContainSubstring("Catching up with the target branch"))
-			Expect(revised).To(ContainSubstring("Do not run `git merge` or commit yourself"))
+			Expect(revised).To(ContainSubstring("do not run `git merge` or commit yourself"))
 
 			By("and the run went on to merge without a human, spending exactly one forge merge")
 			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_DONE))

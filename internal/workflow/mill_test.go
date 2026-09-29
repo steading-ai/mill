@@ -41,7 +41,7 @@ var _ = Describe("The mill project's workflows", Label("unit"), func() {
 			live := step(mill, liveTierStep)
 			Expect(live).NotTo(BeNil(), "%s has no %s step", "mill-"+name, liveTierStep)
 			Expect(live.GetKind()).To(Equal(millv1.StepKind_STEP_KIND_CHECK))
-			Expect(live.GetCheck().GetCommand()).To(Equal([]string{"sh", "-c", "MILL_SANDBOX_HOST=1 mise exec -- make test 1>&2"}))
+			Expect(live.GetCheck().GetCommand()).To(Equal([]string{"sh", "-c", "MILL_SANDBOX_HOST=1 MILL_REQUIRE_FIXTURES=1 mise exec -- make test 1>&2"}))
 			Expect(live.GetCheck().GetExit()).To(Equal([]int32{0}))
 			Expect(live.GetEvidence()).To(Equal(millv1.EvidenceKind_EVIDENCE_KIND_EXIT))
 			Expect(live.GetCapabilities()).To(Equal([]millv1.Capability{millv1.Capability_CAPABILITY_EXEC}))

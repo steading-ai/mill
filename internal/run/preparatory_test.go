@@ -67,9 +67,14 @@ func (p *provisioned) Installs() []workspace.Install {
 // checkout's mise.toml and nothing of the account's. The local workspace
 // gives a command no environment at all, so the spec lends it the process's
 // own PATH and HOME to find mise and its state; the machine has its own.
+// mise picks a config file's format from its own extension, so /dev/null is
+// not the empty config it looks like — an actual empty file stands in.
 func miseInstall() string {
+	GinkgoHelper()
+	empty := filepath.Join(GinkgoT().TempDir(), "empty.toml")
+	Expect(os.WriteFile(empty, nil, 0o644)).To(Succeed())
 	return `HOME="` + os.Getenv("HOME") + `" PATH="` + os.Getenv("PATH") + `" ` +
-		`MISE_GLOBAL_CONFIG_FILE=/dev/null MISE_SYSTEM_CONFIG_FILE=/dev/null MISE_TRUSTED_CONFIG_PATHS="$PWD" mise install`
+		`MISE_GLOBAL_CONFIG_FILE="` + empty + `" MISE_SYSTEM_CONFIG_FILE="` + empty + `" MISE_TRUSTED_CONFIG_PATHS="$PWD" mise install`
 }
 
 var _ = Describe("Preparatory steps", Label(testsupport.DBLabel), func() {
