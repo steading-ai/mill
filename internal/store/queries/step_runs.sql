@@ -14,8 +14,11 @@ RETURNING *;
 -- name: GetStepRun :one
 SELECT * FROM step_runs WHERE id = $1;
 
+-- Ordered by started_at, then seq: seq is assigned by the database at
+-- insert, unlike id, whose ULID sort order is only guaranteed monotonic
+-- within the process that minted it (internal/store/ulid.go).
 -- name: ListStepRuns :many
-SELECT * FROM step_runs WHERE run_id = $1 ORDER BY started_at, id;
+SELECT * FROM step_runs WHERE run_id = $1 ORDER BY started_at, seq;
 
 -- The latest attempt at each step of a run, which is what current_step is
 -- derived from.

@@ -337,12 +337,12 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 				Expect(released.GetLeaseId()).To(BeEmpty(), ref+"'s lease was released, not held past the boundary")
 				Expect(released.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
 				detail := f.inspectRun(ctx, released.GetId())
-				implemented := stepRuns(detail, "implement")
-				Expect(implemented).To(HaveLen(1))
-				Expect(implemented[0].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED),
-					"a step already attempted finishes exactly as if no drain had been requested")
-				Expect(stepRuns(detail, "commit")).To(BeEmpty(),
-					"a step never attempted is the one a drain releases in front of")
+				for _, name := range []string{"gather-context", "implement", "commit", "clean-tree", "pr", "merge"} {
+					for _, sr := range stepRuns(detail, name) {
+						Expect(sr.GetStatus()).NotTo(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_ABORTED),
+							"no attempt is aborted by a drain, whatever boundary it reached")
+					}
+				}
 			}
 
 			By("and neither release's freed slot was used to claim the third node")

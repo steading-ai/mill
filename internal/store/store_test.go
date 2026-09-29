@@ -645,6 +645,38 @@ var _ = Describe("The reads the CLI needs", Label(testsupport.DBLabel), func() {
 		Expect(detail.Summary.GetCurrentStep()).To(Equal("simplify"))
 	}, SpecTimeout(time.Minute))
 
+	It("orders step runs by insertion, not by id, when started_at ties", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		run, _ := l.runWithWorkflow(ctx, "mill#8")
+
+		// Inserted directly, not through l.start/l.close: those mint ids
+		// with newULID(), whose per-process clock already keeps them in
+		// insertion order, which would prove nothing about the tiebreak.
+		// These two ids are both valid ULIDs but sort the opposite of the
+		// order they're inserted in, so the spec only passes once seq, not
+		// id, breaks the started_at tie.
+		const firstID = "7ZZZZZZZZZZZZZZZZZZZZZZZZZ"
+		const secondID = "00000000000000000000000000"
+		startedAt := time.Now().UTC()
+		// failed, not closed: a closed row needs an evidence row to satisfy
+		// step_runs_closed_has_evidence, which this spec has no use for.
+		for i, id := range []string{firstID, secondID} {
+			_, err := l.db.Exec(ctx,
+				`INSERT INTO step_runs (id, run_id, step_name, attempt, kind, status, started_at, ended_at)
+				 VALUES ($1, $2, 'implement', $3, 'skill', 'failed', $4, $4)`,
+				id, run.GetId(), i+1, startedAt)
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		detail, err := l.store.Inspect(ctx, store.InspectParams{NodeRef: "mill#8"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(detail.Steps).To(HaveLen(3), "assess, then the two implement attempts")
+		Expect(detail.Steps[1].GetStepRun().GetId()).To(Equal(firstID), "attempt 1, inserted first")
+		Expect(detail.Steps[1].GetStepRun().GetAttempt()).To(Equal(int64(1)))
+		Expect(detail.Steps[2].GetStepRun().GetId()).To(Equal(secondID), "attempt 2, inserted second")
+		Expect(detail.Steps[2].GetStepRun().GetAttempt()).To(Equal(int64(2)))
+	}, SpecTimeout(time.Minute))
+
 	It("writes the audit trail as it writes the change", func(ctx SpecContext) {
 		l := newLedger(ctx)
 		run, _ := l.runWithWorkflow(ctx, "mill#8")

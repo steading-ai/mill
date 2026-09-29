@@ -114,6 +114,7 @@ type StepRun struct {
 	EnvStripped    []string
 	BaseCommit     string
 	SessionStarted bool
+	Seq            *int64
 }
 
 type StepToken struct {
