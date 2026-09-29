@@ -11,7 +11,7 @@ import (
 // Resumable is one of this worker's own runs left in a shape it can pick
 // back up before the next ClaimNext (docs/architecture.md §"Failure and
 // stop", "Stop.", mill#44): either an aborted attempt (a kill) or a run left
-// running with no lease (a drain's boundary release).
+// `stopped` (a drain's boundary release, a cancel, or a shutdown).
 type Resumable struct {
 	// RunID is the run's id, for Inspect.
 	RunID string
@@ -34,7 +34,11 @@ type Resumable struct {
 // without the sweep's own TTL guard.
 func (r *Runner) Resumable(ctx context.Context) ([]Resumable, error) {
 	res, err := call(ctx, r.options.Store.Status, &millv1.StatusRequest{
-		Statuses: []millv1.RunStatus{millv1.RunStatus_RUN_STATUS_RUNNING, millv1.RunStatus_RUN_STATUS_SELECTING},
+		Statuses: []millv1.RunStatus{
+			millv1.RunStatus_RUN_STATUS_RUNNING,
+			millv1.RunStatus_RUN_STATUS_SELECTING,
+			millv1.RunStatus_RUN_STATUS_STOPPED,
+		},
 	})
 	if err != nil {
 		return nil, err

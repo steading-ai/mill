@@ -62,10 +62,10 @@ var (
 
 // claimableStatuses are the run statuses a new claim may take over, from
 // Invariant 9: selecting, running with an expired or absent lease, waiting,
-// parked, or done with the node still open. Whether a lease has expired is
-// skift's judgement, not the ledger's — skift issues a new lease only when
-// the old one is gone — so a status is admitted on the strength of the
-// caller holding a lease skift just granted.
+// parked, stopped, or done with the node still open. Whether a lease has
+// expired is skift's judgement, not the ledger's — skift issues a new lease
+// only when the old one is gone — so a status is admitted on the strength of
+// the caller holding a lease skift just granted.
 //
 // `selecting` is among them for the same reason `running` is. A run is
 // created holding the lease of the claim that created it, so ordinarily
@@ -74,12 +74,18 @@ var (
 // lease skift has since expired, and refusing that claim leaves the node
 // unrecoverable by any mill command. A selecting run is never a reason to
 // refuse a claim: skift has already decided who holds the node.
+//
+// `stopped` holds no lease by construction — a cancel, a drain's boundary
+// release, a shutdown, or a failed reclaim all clear it in the same write
+// that sets this status — so it is always claimable, with no lease to have
+// expired at all.
 var claimableStatuses = map[string]bool{
 	"selecting": true,
 	"running":   true,
 	"waiting":   true,
 	"parked":    true,
 	"done":      true,
+	"stopped":   true,
 }
 
 // claimable admits a run a new claim may take over.
@@ -340,12 +346,14 @@ func (s *Store) MarkWaiting(ctx context.Context, leaseID, runID, gateNodeID, ste
 	return run, nil
 }
 
-// ReleaseLease gives back the run's lease without ending it: the run keeps
-// its status, holding no lease, resumable by this worker's own reclaim or by
-// whichever worker's ClaimNext reaches it next (docs/ledger.md §Resume). A
-// graceful drain calls this at a step boundary, where AbortOpenStepRuns
-// would have nothing open to abort; a cancel and a shutdown call it after
-// AbortOpenStepRuns, so the ledger lets go of the lease when skift does.
+// ReleaseLease gives back the run's lease without ending it: the run stops,
+// holding no lease, resumable by this worker's own reclaim or by whichever
+// worker's ClaimNext reaches it next (docs/ledger.md §Resume). Admits a
+// running or a selecting run — a cancel or shutdown can land before a
+// workflow is even chosen. A graceful drain calls this at a step boundary,
+// where AbortOpenStepRuns would have nothing open to abort; a cancel and a
+// shutdown call it after AbortOpenStepRuns, so the ledger lets go of the
+// lease when skift does.
 func (s *Store) ReleaseLease(ctx context.Context, leaseID, runID string) (*millv1.Run, error) {
 	var run *millv1.Run
 	err := s.withTx(ctx, func(ctx context.Context, tx pgx.Tx, q *Queries) error {
@@ -1208,7 +1216,7 @@ type RerunResult struct {
 // terminal to the run loop — nothing mill does on its own leaves that state
 // — but a rerun is a person saying the ending was wrong, and a span
 // superseded on a run no claim can take over would leave the node stuck for
-// good. The run goes back to `running` holding no lease, which is the state
+// good. The run goes back to `stopped`, holding no lease, which is the state
 // a claim resumes (Invariant 9), and the gate and the park reason of the
 // ending it left are cleared. `abandoned` is not reopened: a later
 // generation has taken the node, and reviving the old one would put two
@@ -2038,7 +2046,7 @@ func latestState(ctx context.Context, q *Queries, row Run) (RunState, error) {
 func (s *Store) Status(ctx context.Context, statuses []millv1.RunStatus, project string) ([]*millv1.RunSummary, []UndecodableWorkflow, error) {
 	wanted := enumTexts(statuses)
 	if len(wanted) == 0 {
-		wanted = []string{"selecting", "running", "waiting", "parked"}
+		wanted = []string{"selecting", "running", "waiting", "parked", "stopped"}
 	}
 	q := New(s.pool)
 	rows, err := q.ListRuns(ctx, ListRunsParams{Statuses: wanted, Project: nullable(project)})

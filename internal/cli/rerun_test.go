@@ -180,7 +180,7 @@ var _ = Describe("mill rerun", Label(testsupport.DBLabel), func() {
 		// Resumable: a claim is admitted, and it resumes this run rather
 		// than opening a generation over it.
 		row := r.reload(ctx)
-		Expect(row.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+		Expect(row.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
 		Expect(row.GetGeneration()).To(Equal(int64(1)))
 		claimed, err := r.store.SetLease(ctx, connect.NewRequest(&millv1.SetLeaseRequest{
 			RunId: r.run.GetId(), LeaseId: "01HZZZZZZZZZZZZZZZZZZZZZZA", WorkerRef: "spec@host",

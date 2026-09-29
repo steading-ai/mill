@@ -15,6 +15,7 @@ import (
 var drawn = map[millv1.RunStatus][]millv1.RunStatus{
 	millv1.RunStatus_RUN_STATUS_SELECTING: {
 		millv1.RunStatus_RUN_STATUS_RUNNING,
+		millv1.RunStatus_RUN_STATUS_STOPPED,
 		millv1.RunStatus_RUN_STATUS_FAILED,
 		millv1.RunStatus_RUN_STATUS_ABANDONED,
 	},
@@ -22,6 +23,7 @@ var drawn = map[millv1.RunStatus][]millv1.RunStatus{
 		millv1.RunStatus_RUN_STATUS_DONE,
 		millv1.RunStatus_RUN_STATUS_WAITING,
 		millv1.RunStatus_RUN_STATUS_PARKED,
+		millv1.RunStatus_RUN_STATUS_STOPPED,
 		millv1.RunStatus_RUN_STATUS_FAILED,
 		millv1.RunStatus_RUN_STATUS_ABANDONED,
 	},
@@ -32,6 +34,10 @@ var drawn = map[millv1.RunStatus][]millv1.RunStatus{
 	},
 	millv1.RunStatus_RUN_STATUS_PARKED: {
 		millv1.RunStatus_RUN_STATUS_RUNNING,
+		millv1.RunStatus_RUN_STATUS_FAILED,
+		millv1.RunStatus_RUN_STATUS_ABANDONED,
+	},
+	millv1.RunStatus_RUN_STATUS_STOPPED: {
 		millv1.RunStatus_RUN_STATUS_FAILED,
 		millv1.RunStatus_RUN_STATUS_ABANDONED,
 	},

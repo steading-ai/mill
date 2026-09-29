@@ -64,7 +64,7 @@ var _ = Describe("The stranded-run sweep", Label(testsupport.DBLabel), func() {
 	}
 
 	// atStepTwo drives the node until its second step's session is in
-	// flight, then cancels: the run is `running` at step 2 with its lease
+	// flight, then cancels: the run is `stopped` at step 2 with its lease
 	// released, exactly as a worker that was stopped there leaves it — and
 	// with no live lease, skift admits a drop.
 	atStepTwo := func() {
@@ -80,7 +80,7 @@ var _ = Describe("The stranded-run sweep", Label(testsupport.DBLabel), func() {
 			Should(Equal("implement"), "the second step's session is in flight")
 		Expect(f.cancelRun(ctx)).To(Succeed())
 		Eventually(done, interval+10*time.Second).Should(Receive(BeNil()))
-		Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+		Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
 	}
 
 	// parked drives the node into the circuit breaker: `implement` names no
@@ -221,8 +221,16 @@ var _ = Describe("The stranded-run sweep", Label(testsupport.DBLabel), func() {
 		By("given a run whose completing patch landed and whose store write did not")
 		atStepTwo()
 		first := f.runOf(ctx)
-		_, err := f.store.SetCompleteRequestId(ctx, connect.NewRequest(&millv1.SetCompleteRequestIdRequest{
-			LeaseId: first.GetLeaseId(), RunId: first.GetId(), RequestId: "mill-" + first.GetId() + "-complete-1",
+		// atStepTwo leaves the run stopped, lease cleared: a worker takes it
+		// over first, exactly as claiming the node again would, before
+		// minting the complete-request-id its patch carries.
+		const lease = "spec-lease-complete"
+		_, err := f.store.SetLease(ctx, connect.NewRequest(&millv1.SetLeaseRequest{
+			LeaseId: lease, RunId: first.GetId(), WorkerRef: f.worker,
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = f.store.SetCompleteRequestId(ctx, connect.NewRequest(&millv1.SetCompleteRequestIdRequest{
+			LeaseId: lease, RunId: first.GetId(), RequestId: "mill-" + first.GetId() + "-complete-1",
 		}))
 		Expect(err).NotTo(HaveOccurred())
 		f.complete(ctx, f.nodeRef)
@@ -328,6 +336,50 @@ var _ = Describe("The stranded-run sweep", Label(testsupport.DBLabel), func() {
 			To(Equal(millv1.RunStatus_RUN_STATUS_FAILED))
 		Expect(f.failReason(ctx)).To(HavePrefix("node dropped underneath the run"))
 		Expect(f.leaseOf(ctx)).To(BeNil(), "no lease was taken")
+	})
+
+	// Scenario: A running run whose node reads open and unclaimed is stopped
+	//   Given a run left running under a lease skift no longer shows a claim for
+	//   When the worker sweeps
+	//   Then the run's open attempt is aborted, its lease given back, and a stopped finding recorded
+	It("A running run whose node reads open and unclaimed is stopped", func() {
+		By("given a run left running under a lease skift no longer shows a claim for")
+		// The node made in BeforeEach is open and unclaimed from the start:
+		// nothing here ever claims it in skift. The store-side run is built
+		// directly, the way reclaim_test.go's fixtures do, to reach `running`
+		// with a lease that has no matching claim at all — exactly the shape
+		// a worker that vanished without a heartbeat to fence leaves behind.
+		node, err := f.client.Node(ctx, f.nodeRef)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(node.GetClaimed()).To(BeFalse())
+		const lease = "spec-lease-unclaimed"
+		created, err := f.store.CreateRun(ctx, connect.NewRequest(&millv1.CreateRunRequest{
+			LeaseId: lease, NodeId: node.GetId(), NodeRef: f.nodeRef, ContextId: "spec-ctx",
+			WorkerRef: f.worker, Branch: "mill/unclaimed",
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		runID := created.Msg.GetRun().GetId()
+		_, err = f.store.SetLease(ctx, connect.NewRequest(&millv1.SetLeaseRequest{
+			LeaseId: lease, RunId: runID, WorkerRef: f.worker,
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = f.store.StartStepRun(ctx, connect.NewRequest(&millv1.StartStepRunRequest{
+			LeaseId: lease, RunId: runID, StepName: "implement",
+			Kind: millv1.StepKind_STEP_KIND_SKILL, WorkerRef: f.worker,
+		}))
+		Expect(err).NotTo(HaveOccurred())
+
+		By("when the worker sweeps")
+		report := sweep()
+
+		By("then the run's open attempt is aborted, its lease given back, and a stopped finding recorded")
+		after := f.runOf(ctx)
+		Expect(after.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
+		Expect(after.GetLeaseId()).To(BeEmpty())
+		Expect(f.openStepRun(ctx)).To(BeNil(), "no attempt is left open")
+		stopped := report.Of(run.FindingStopped)
+		Expect(stopped).To(HaveLen(1))
+		Expect(stopped[0].Name).To(Equal(runID))
 	})
 
 	// Scenario: mill restart refuses a node that is not open

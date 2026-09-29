@@ -285,7 +285,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			Expect(reason).To(Equal("preempted"))
 			Expect(detail).To(Equal("drain"))
 			Expect(f.leaseOf(ctx).GetId()).To(BeEmpty(), "the node is claimable again")
-			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
 
 			detailAfter := f.inspect(ctx)
 			implemented := stepRuns(detailAfter, "implement")
@@ -335,7 +335,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			for _, ref := range []string{first, second} {
 				released := f.runOfRef(ctx, ref)
 				Expect(released.GetLeaseId()).To(BeEmpty(), ref+"'s lease was released, not held past the boundary")
-				Expect(released.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+				Expect(released.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
 				detail := f.inspectRun(ctx, released.GetId())
 				implemented := stepRuns(detail, "implement")
 				Expect(implemented).To(HaveLen(1))
@@ -376,7 +376,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			Expect(reason).To(Equal("preempted"))
 			Expect(detail).To(Equal("drain"))
 			Expect(f.leaseOf(ctx).GetId()).To(BeEmpty(), "the node is claimable again")
-			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
 
 			detailAfter := f.inspect(ctx)
 			gathered := stepRuns(detailAfter, "gather-context")
@@ -437,7 +437,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			Expect(reason).To(Equal("preempted"))
 			Expect(detail).To(Equal("drain"))
 			Expect(f.leaseOf(ctx).GetId()).To(BeEmpty(), "the node is claimable again")
-			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
 
 			detailAfter := f.inspect(ctx)
 			prs := stepRuns(detailAfter, "pr")
@@ -569,8 +569,8 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 		It("skips a node it was fenced out of and goes back to claiming", func() {
 			taken := f.node(ctx, "a node taken by somebody else", "Change the README's first line.")
 			// Mid-step, another principal takes the lease. The next
-			// heartbeat is refused, which is the whole of the worker's
-			// notice: it abandons the run locally and writes nothing more.
+			// heartbeat is refused; the worker's own reclaim loses the race,
+			// so it releases the run (stopped) and abandons it locally.
 			f.script(fake.Script{Hold: true, Do: func(harness.Session) {
 				defer GinkgoRecover()
 				f.expire(ctx, f.leaseOf(ctx).GetId())
@@ -590,8 +590,8 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			var err error
 			Eventually(done, time.Minute).Should(Receive(&err))
 			Expect(err).NotTo(HaveOccurred(), "being fenced out is not the worker's failure")
-			Expect(f.runOfRef(ctx, taken).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING),
-				"the run is left as it stands, for whoever holds the node now")
+			Expect(f.runOfRef(ctx, taken).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED),
+				"the failed reclaim releases the run, for whoever holds the node now")
 		})
 	})
 
@@ -703,8 +703,8 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			setupDone := startWorker(ctx, setup)
 			Eventually(setupDone, time.Minute).Should(Receive(BeNil()))
 			firstRunID, secondRunID := f.runOfRef(ctx, first).GetId(), f.runOfRef(ctx, second).GetId()
-			Expect(f.runOfRef(ctx, first).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
-			Expect(f.runOfRef(ctx, second).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+			Expect(f.runOfRef(ctx, first).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
+			Expect(f.runOfRef(ctx, second).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
 
 			By("and a third, unrelated node ready but with no free slot at that concurrency")
 			third := f.createNode(ctx, &skiftv1.CreateNodeOp{

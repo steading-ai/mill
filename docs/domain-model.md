@@ -15,7 +15,7 @@ One node, worked through one workflow, by this mill. The unit a worker takes and
 | `generation` | 1 for the first run on a node; incremented by `restart`. `(node_id, generation)` is unique; at most one run per node is live. See [Restart](#restart) |
 | `context_id` | Skift's context id for the node, copied at creation. Every session in the run derives from it and the generation |
 | `workflow_id` | The immutable workflow version this run follows. Fixed at selection; never changes mid-run |
-| `status` | `selecting`, `running`, `waiting`, `parked`, `done`, `failed`, `abandoned`. See [Run states](#run-states) |
+| `status` | `selecting`, `running`, `waiting`, `parked`, `done`, `failed`, `abandoned`, `stopped`. See [Run states](#run-states) |
 | `lease_id` | The current skift lease, or null while `waiting` or `parked`. The fencing token on every skift write |
 | `worker_ref` | Where the current attempt runs. Free string; a hostname and account today |
 | `parked_reason` | Set with `parked`: `retries`, `budget`, `denied`, `timeout`, `refused` |
@@ -31,23 +31,25 @@ Derived, never stored: `current_step` (the first step whose latest step run is n
 
 ```
 selecting ──▶ running ──▶ done
-                │  ▲
-                │  └──── waiting   (gate filed; lease released with reason `gate`)
-                │  ▲
-                │  └──── parked    (circuit breaker; lease released with reason `budget` or `crash`)
-                │
-                ├──────▶ failed    (terminal; gate denied, or the node was closed underneath the run)
+  │             │  ▲
+  │             │  └──── waiting   (gate filed; lease released with reason `gate`)
+  │             │  ▲
+  │             │  └──── parked    (circuit breaker; lease released with reason `budget` or `crash`)
+  │             │
+  │             ├──────▶ stopped   (no worker holds it; a cancel, drain, shutdown, or fenced reclaim)
+  └─────────────┼──────▶ failed    (terminal; gate denied, or the node was closed underneath the run)
                 └──────▶ abandoned (terminal; a human restarted the node — a new generation exists)
 ```
 
-`abandoned` and `failed` are reachable from every state a run can still be live in — `selecting`, `running`, `waiting`, `parked`. `abandoned` because [Restart](#restart) applies to the live run whatever it is doing, and a run waiting on a human is the ordinary thing to restart; `failed` because a node is closed underneath a run only while the run holds no live lease — skift refuses to drop or complete a leased node — which is any of those states, and the sweep that records it finds the run wherever it stopped (`docs/ledger.md` §Sweep). `parked` returns to `running` the same way `waiting` does: the gate is answered, the node becomes ready, and the next claim resumes the run at the step it stopped on.
+`abandoned` and `failed` are reachable from every state a run can still be live in — `selecting`, `running`, `waiting`, `parked`, `stopped`. `abandoned` because [Restart](#restart) applies to the live run whatever it is doing, and a run waiting on a human is the ordinary thing to restart; `failed` because a node is closed underneath a run only while the run holds no live lease — skift refuses to drop or complete a leased node — which is any of those states, and the sweep that records it finds the run wherever it stopped (`docs/ledger.md` §Sweep). `parked` returns to `running` the same way `waiting` does: the gate is answered, the node becomes ready, and the next claim resumes the run at the step it stopped on. `stopped` is reachable from `running` and `selecting`, since a cancel or shutdown can land before a workflow is even chosen.
 
 - `selecting` — claimed, no workflow yet. The assessment step runs here.
 - `running` — a lease is held and a step is executing or about to.
 - `waiting` — a gate node exists and blocks this node. The run holds no lease and no worker. When the gate completes, the node becomes ready again, `ClaimNext` returns it, and the worker that gets it resumes this run: it finds `gate_node_id` set and the current step a gate step, reads the gate's result, and closes that step with `gate` evidence — it does not file the gate again.
 - `parked` — the circuit breaker fired. A comment with the last findings is on the node, a gate asks a human what to do, and the lease is released. Structurally identical to `waiting`; distinguished so `status` can say why.
+- `stopped` — no worker holds the run: a cancel, a drain's boundary release, a shutdown, or a heartbeat whose reclaim failed after fencing all leave the run here, lease cleared. The next claim resumes it at the step it stopped on, exactly like `waiting` or `parked` resuming to `running` — the run was never in danger, only unheld.
 - `done` — the terminal step closed with evidence and `Complete` was accepted by skift.
-- `failed` — a gate was denied, the node was closed underneath the run (dropped, or completed by someone other than the run), the run's machine is gone (a lost sandbox), or selection ended in a configuration or content problem no retry of the same run would get past — an unknown workflow, a missing or malformed `build-workflow` definition, or an assessment that exhausted its retries. The gate's denial is written by the worker holding the lease; a closed node is found by the worker's sweep of the ledger against skift, which writes the reason and gives back what the run held (`docs/ledger.md` §Sweep). The lost-sandbox and selection cases additionally hold the node in skift, under the same reason and lease, so `ClaimNext` does not return it into the identical failure — a person clears the hold before the node is claimed again. Terminal to the run loop: nothing mill does on its own leaves this state. An operator's `mill rerun <run> --from <step>` does, by overruling the ending — it supersedes the span and returns the run to `running` holding no lease, so the next claim resumes it at that step. `abandoned` has no such door: a later generation already holds the node.
+- `failed` — a gate was denied, the node was closed underneath the run (dropped, or completed by someone other than the run), the run's machine is gone (a lost sandbox), or selection ended in a configuration or content problem no retry of the same run would get past — an unknown workflow, a missing or malformed `build-workflow` definition, or an assessment that exhausted its retries. The gate's denial is written by the worker holding the lease; a closed node is found by the worker's sweep of the ledger against skift, which writes the reason and gives back what the run held (`docs/ledger.md` §Sweep). The lost-sandbox and selection cases additionally hold the node in skift, under the same reason and lease, so `ClaimNext` does not return it into the identical failure — a person clears the hold before the node is claimed again. Terminal to the run loop: nothing mill does on its own leaves this state. An operator's `mill rerun <run> --from <step>` does, by overruling the ending — it supersedes the span and returns the run to `stopped`, so the next claim resumes it at that step. `abandoned` has no such door: a later generation already holds the node.
 - `abandoned` — a human restarted the node. Terminal. The run's record stays; the new generation is a different run.
 
 ### Restart

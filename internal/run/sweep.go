@@ -24,11 +24,15 @@ import (
 // that already exist (Destroy, FinishWorkspace, the orphan and leftover
 // passes) do the rest.
 //
-// What it never does is act on a node that is open in any readiness. A
+// The one open-node exception is a run left `running` or `selecting` whose
+// node skift shows open and unclaimed: the worker that held it is gone
+// entirely, with no heartbeat left to fail and fence it, so the sweep is
+// the only thing that ever notices. Every other open node is left alone. A
 // parked run's node is blocked by its own gate and a held node is parked
 // by a person; both are live runs waiting for exactly what they are waiting
-// for. The predicate is skift's closed status and nothing looser, by name
-// and never by "everything not in the ledger" (mill#49).
+// for. The predicate is skift's closed status, or open-and-unclaimed, and
+// nothing looser, by name and never by "everything not in the ledger"
+// (mill#49).
 
 const (
 	// DefaultSweepInterval is how long a worker goes between sweeps. It is
@@ -39,6 +43,11 @@ const (
 	// with it: `failed`, or `done` when the run's own completing patch had
 	// landed and the store missed it.
 	FindingStranded machine.FindingKind = "stranded"
+	// FindingStopped is a live run whose node skift still shows open, but
+	// with no lease held: the worker that had it is simply gone, with no
+	// heartbeat left to fail, so the sweep gives its lease back rather than
+	// waiting for a fence that will never come.
+	FindingStopped machine.FindingKind = "stopped"
 	// FindingHealFiled is a new bug node filed for a project's default
 	// branch found red.
 	FindingHealFiled machine.FindingKind = "heal-filed"
@@ -133,6 +142,11 @@ func (r *Runner) sweepOne(ctx context.Context, report *machine.Report, summary *
 		})
 		return
 	}
+	live := run.GetStatus() == millv1.RunStatus_RUN_STATUS_RUNNING || run.GetStatus() == millv1.RunStatus_RUN_STATUS_SELECTING
+	if node.GetStatus() == skiftv1.Status_STATUS_OPEN && !node.GetClaimed() && live {
+		r.sweepOpenUnclaimed(ctx, report, summary, run)
+		return
+	}
 	if node.GetStatus() == skiftv1.Status_STATUS_OPEN {
 		return
 	}
@@ -144,14 +158,49 @@ func (r *Runner) sweepOne(ctx context.Context, report *machine.Report, summary *
 		})
 		return
 	}
-	step := summary.GetCurrentStep()
-	if step == "" {
-		step = "(selecting)"
-	}
 	report.Findings = append(report.Findings, machine.Finding{
 		Kind: FindingStranded, Name: run.GetId(), Action: action,
-		Detail: fmt.Sprintf("%s is %s; the ledger's step was %s", run.GetNodeRef(), skiftStatus(node.GetStatus()), step),
+		Detail: fmt.Sprintf("%s is %s; the ledger's step was %s", run.GetNodeRef(), skiftStatus(node.GetStatus()), stepLabel(summary)),
 	})
+}
+
+// sweepOpenUnclaimed gives back the lease of a live run whose node skift
+// shows open with nobody holding it (FindingStopped's doc has why).
+func (r *Runner) sweepOpenUnclaimed(ctx context.Context, report *machine.Report, summary *millv1.RunSummary, run *millv1.Run) {
+	fail := func(err error) {
+		report.Findings = append(report.Findings, machine.Finding{
+			Kind: machine.FindingFailure, Name: run.GetId(),
+			Detail: fmt.Sprintf("stopping %s: %v", run.GetNodeRef(), err),
+		})
+	}
+	if _, err := call(ctx, r.options.Store.AbortOpenStepRuns, &millv1.AbortOpenStepRunsRequest{
+		LeaseId: run.GetLeaseId(),
+		RunId:   run.GetId(),
+		Reason:  "node open with no lease held",
+	}); err != nil {
+		fail(err)
+		return
+	}
+	if _, err := call(ctx, r.options.Store.ReleaseLease, &millv1.ReleaseLeaseRequest{
+		LeaseId: run.GetLeaseId(),
+		RunId:   run.GetId(),
+	}); err != nil {
+		fail(err)
+		return
+	}
+	report.Findings = append(report.Findings, machine.Finding{
+		Kind: FindingStopped, Name: run.GetId(),
+		Detail: fmt.Sprintf("%s is open with no lease held; the ledger's step was %s", run.GetNodeRef(), stepLabel(summary)),
+	})
+}
+
+// stepLabel is a run summary's current step, or a placeholder for one still
+// selecting a workflow.
+func stepLabel(summary *millv1.RunSummary) string {
+	if step := summary.GetCurrentStep(); step != "" {
+		return step
+	}
+	return "(selecting)"
 }
 
 // sweepDue reports whether a worker that last swept at last is due another
