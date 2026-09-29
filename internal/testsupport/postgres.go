@@ -78,6 +78,19 @@ func Start(ctx context.Context, migrate Migrate) (*Postgres, error) {
 			},
 			// Spec databases are disposable, so trade durability for speed.
 			Cmd: []string{"-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off"},
+			// The image declares /var/lib/postgresql as a VOLUME (`podman
+			// image inspect --format '{{json .Config.Volumes}}'` against the
+			// pinned digest above; PGDATA itself is a subdirectory of it),
+			// so every container podman starts for a spec run gets an
+			// anonymous volume backing it whether this suite asks for one
+			// or not. Mounting tmpfs at that exact path keeps the data
+			// where the declaration expects it — a fresh directory, gone
+			// with the container — so there is nothing for a suite's
+			// database files to leave behind and nothing for `podman
+			// volume ls` to ever list (Ryuk removes the container; this is
+			// what stops there being a volume for Ryuk to also need to
+			// remove).
+			Tmpfs: map[string]string{"/var/lib/postgresql": ""},
 			// Readiness is judged by the server answering over TCP, in
 			// awaitConnections, not by the container log: podman's journald
 			// log driver intermittently drops everything the server writes

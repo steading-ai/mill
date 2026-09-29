@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/steading-ai/mill/internal/forge"
 	"github.com/steading-ai/mill/internal/workspace"
@@ -44,6 +45,11 @@ const (
 	// of the run's directory rather than shared across every run the way
 	// the account's signing key is.
 	browserDir = "browser"
+	// stepDirName holds each step's scratch: its TMPDIR and its podman/docker
+	// PATH shims, under a subdirectory named for the step's ordinal. BeginStep
+	// creates it and EndStep removes it, so it never outlives the step that
+	// opened it (workspace.StepBoundary).
+	stepDirName = "step"
 	// gitConfigFile is the git configuration every process the workspace
 	// spawns runs under, the session's own git included. It carries the
 	// run's identity and the mill's signing key, so who a commit is by is
@@ -109,6 +115,11 @@ type Options struct {
 	// [workspace.ErrNoForge], which is what a run on a project with no
 	// repository gets.
 	Forge forge.Forge
+	// Grace is how long a step's processes may take to stop cleanly once
+	// EndStep asks them to, before it escalates to SIGKILL (group mode) or
+	// lets systemd's own TimeoutStopSec escalate (scope mode). Zero means
+	// [DefaultGrace].
+	Grace time.Duration
 }
 
 // Workspace is one run's local workspace.
@@ -126,6 +137,12 @@ type Workspace struct {
 	signer    *signing.Key
 	gitConfig string
 	egress    workspace.Egress
+
+	killOnce sync.Once
+	killMode killMode
+
+	stepMu sync.Mutex
+	step   *stepState
 }
 
 // New returns a workspace for one run. Nothing exists on disk until Create.
@@ -535,13 +552,24 @@ func (w *Workspace) Exec(ctx context.Context, command workspace.Command) (*works
 	for name, value := range w.environmentFor(token) {
 		env[name] = value
 	}
-	return w.execer.Exec(ctx, workspace.Command{
+	return attemptExecer{w: w}.Exec(ctx, workspace.Command{
 		Path: command.Path,
 		Args: command.Args,
 		Dir:  dir,
 		Env:  env,
 	})
 }
+
+// SessionExec is the execer a skill step's session sidecar — and everything
+// it spawns beneath it, an e2e stack, a browser, a `go build` — runs
+// through, reached by [workspace.SessionExecer] rather than by Exec above:
+// the harness adapter already builds a session's whole environment and
+// calls with ClearEnv true (docs/architecture.md §"Skill steps: the harness
+// adapter"), so this hands back the step boundary's own decorator
+// undecorated by Exec's WORKSPACE_SOCKET/STEP_TOKEN construction, which
+// only adds to whatever Command.Env the caller already built rather than
+// replacing it.
+func (w *Workspace) SessionExec() workspace.Execer { return attemptExecer{w: w} }
 
 // Read reads a file in the checkout.
 func (w *Workspace) Read(_ context.Context, path string) ([]byte, error) {
@@ -781,3 +809,7 @@ func (w *Workspace) git(ctx context.Context, dir string, args ...string) (string
 var _ workspace.Workspace = (*Workspace)(nil)
 
 var _ workspace.ActivitySink = (*Workspace)(nil)
+
+var _ workspace.StepBoundary = (*Workspace)(nil)
+
+var _ workspace.SessionExecer = (*Workspace)(nil)
