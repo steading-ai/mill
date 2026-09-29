@@ -24,10 +24,10 @@ import (
 // polling the design allows and the only place a cancellation is noticed.
 //
 // Stopping is not the heartbeat's concern: a graceful stop is decided by
-// walk() at the next step boundary (internal/run/walk.go's stepAttempted
-// check), not by cancelling a step in flight. Only a kill — a second signal,
-// or the grace window elapsing, which cancels ctx, the step context's parent
-// — reaches the heartbeat, through stepCtx.Done() below.
+// walk() at the next step boundary, not by cancelling a step in flight. Only
+// a kill — a second signal, or the grace window elapsing, which cancels ctx,
+// the step context's parent — reaches the heartbeat, through stepCtx.Done()
+// below.
 type heartbeat struct {
 	// ctx is the context every step runs under. Cancelling it is how a
 	// fenced or cancelled run stops what is in flight.

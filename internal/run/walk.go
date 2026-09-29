@@ -90,16 +90,15 @@ func (r *Runner) walk(ctx context.Context, s *state) error {
 		}
 
 		// A drain releases here, before the step it is about to run has
-		// written anything: nothing to abort, only a lease to give back. A
-		// step already attempted at least once — a retry continuing its
-		// session, or a revise target current_step has moved back onto — is
-		// never drained, which is what lets it finish exactly as if no drain
-		// had been requested (docs/architecture.md §"Failure and stop").
+		// written anything: nothing to abort, only a lease to give back. The
+		// previous attempt, if any, already closed before this pass began —
+		// nothing is in flight — so this releases whatever the next step is:
+		// a first visit, a retry continuing its session, or a revise target
+		// current_step has moved back onto (docs/architecture.md §"Failure
+		// and stop").
 		select {
 		case <-s.draining:
-			if !stepAttempted(detail, step.GetName()) {
-				return r.drainStep(ctx, s)
-			}
+			return r.drainStep(ctx, s)
 		default:
 		}
 
@@ -524,24 +523,6 @@ func stepNamed(workflow *millv1.Workflow, name string) *millv1.Step {
 		}
 	}
 	return nil
-}
-
-// stepAttempted reports whether the named step has any StepRun of its own in
-// detail already, regardless of session, attempt number, or outcome. This is
-// what a drain gates on rather than whether the step's session has started
-// ([sessionStarted], [anySessionStarted]): this repository's own workflows
-// give one session name to several distinct steps, so "session started"
-// would be true for the whole group the moment the first of them opens,
-// while "this step has a row" is true only for the step actually attempted —
-// which is what lets a retry or an on_failure: revise target finish
-// uninterrupted while a fresh step still releases at its own boundary.
-func stepAttempted(detail *millv1.InspectResponse, name string) bool {
-	for _, d := range detail.GetSteps() {
-		if d.GetStepRun().GetStepName() == name {
-			return true
-		}
-	}
-	return false
 }
 
 // short is a content hash, abbreviated for a progress line.

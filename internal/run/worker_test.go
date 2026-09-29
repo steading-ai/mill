@@ -268,10 +268,9 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			scripts := f.quickFixScripts()
 			implement := scripts[1]
 			scripts[1] = fake.Script{Terminal: implement.Terminal, Do: func(session harness.Session) {
-				// Draining mid-step, once the step has already been
-				// attempted, must not touch it: walk() only checks for a
-				// drain before a step it has not yet attempted
-				// (internal/run/walk.go's stepAttempted).
+				// Draining mid-step must not touch it: walk() only checks
+				// for a drain at the top of its loop, before an attempt
+				// starts, never once one is already running.
 				implement.Do(session)
 				worker.Drain()
 			}}
@@ -353,37 +352,117 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 				"draining stops claiming; a slot a release frees claims nothing more")
 		})
 
-		It("does not drain mid-retry: the retry a failed attempt earns finishes before the drain takes effect", func() {
+		It("drains in front of a step's own retry, not only a step never attempted", func() {
 			By("given gather-context fails once, requesting a drain during the attempt that earns it a retry")
-			f.node(ctx, "a fix drained mid-retry", "Change the README's first line.")
+			node := f.node(ctx, "a fix drained mid-retry", "Change the README's first line.")
 			var worker *run.Worker
 			round1 := failed("round 1")
 			scripts := append([]fake.Script{{Terminal: round1.Terminal, Do: func(session harness.Session) {
-				// gather-context already has a StepRun row the moment this
-				// attempt starts, so the boundary check the next pass of
-				// walk() makes finds it stepAttempted and skips the drain,
-				// the same way a step already on its second attempt does.
+				// The failed attempt has already closed by the time walk()'s
+				// loop reaches the top again for gather-context's retry:
+				// nothing is in flight there, so the drain releases in
+				// front of it exactly as it would in front of any other
+				// step's next attempt.
 				worker.Drain()
 			}}}, f.quickFixScripts()...)
 			f.script(scripts...)
 			worker = f.workerOver(f.runner(quick))
 			done := startWorker(ctx, worker)
 
-			By("then the retry runs and closes, and the drain releases in front of implement instead")
+			By("then the run releases in front of gather-context's retry, which never starts")
 			Eventually(done, time.Minute).Should(Receive(BeNil()))
 
 			reason, detail := f.releasedLease(ctx)
 			Expect(reason).To(Equal("preempted"))
 			Expect(detail).To(Equal("drain"))
+			Expect(f.leaseOf(ctx).GetId()).To(BeEmpty(), "the node is claimable again")
 			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
 
 			detailAfter := f.inspect(ctx)
 			gathered := stepRuns(detailAfter, "gather-context")
-			Expect(gathered).To(HaveLen(2), "the failed attempt and its retry, uninterrupted by the drain")
+			Expect(gathered).To(HaveLen(1), "the failed attempt only; its retry is the one a drain releases in front of")
 			Expect(gathered[0].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_FAILED))
-			Expect(gathered[1].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_CLOSED))
-			Expect(stepRuns(detailAfter, "implement")).To(BeEmpty(),
-				"a step never attempted is the one a drain releases in front of")
+
+			By("and the next worker resumes it as a fresh attempt of the same step")
+			f.script(f.quickFixScripts()...)
+			next := f.workerOver(f.runner(quick))
+			resumed := startWorker(ctx, next)
+			Eventually(func() skiftv1.Status { return f.statusOf(ctx, node) }, 3*time.Minute, 200*time.Millisecond).
+				Should(Equal(skiftv1.Status_STATUS_DONE))
+			next.Drain()
+			Eventually(resumed, time.Minute).Should(Receive(BeNil()))
+		})
+
+		It("drains in front of a review that would answer a revise", func() {
+			By("given a feature run whose review attempt 1 asked for changes and whose implement round 2 has just closed through pr")
+			f.pushWorkflowFrom(ctx, featureDir)
+			node := f.node(ctx, "a fix drained before a second review", "Change the README's first line.")
+			var worker *run.Worker
+			writesPlan := func(harness.Session) {
+				defer GinkgoRecover()
+				Expect(f.workspace.Write(context.Background(), planPath(f.nodeRef),
+					[]byte(planBody(f.runOf(context.Background()).GetId(), f.nodeRef)))).To(Succeed())
+			}
+			f.script(
+				ok("context gathered"),
+				ok("explored the problem"),
+				fake.Script{Terminal: fake.Terminal("planned", nil, usage(10)), Do: writesPlan},
+				fake.Script{Terminal: fake.Terminal("", approves("AC-1", "the plan names its proof"), usage(5))},
+				fake.Script{Terminal: fake.Terminal("the change is made", nil, usage(20)), Do: f.commits},
+				fake.Script{Terminal: fake.Terminal("simplified", nil, usage(10)), Do: f.commits},
+				fake.Script{Terminal: fake.Terminal("committed", nil, usage(5)), Do: f.commits},
+				fake.Script{Terminal: fake.Terminal("opened the pull request", nil, usage(5)), Do: f.commits},
+				fake.Script{Terminal: fake.Terminal("", revises("AC-2", "needs another pass"), usage(5))},
+				fake.Script{Terminal: fake.Terminal("the change is made again", nil, usage(20)), Do: f.commits},
+				fake.Script{Terminal: fake.Terminal("simplified again", nil, usage(10)), Do: f.commits},
+				fake.Script{Terminal: fake.Terminal("committed again", nil, usage(5)), Do: f.commits},
+				fake.Script{Terminal: fake.Terminal("opened the pull request again", nil, usage(5)), Do: func(session harness.Session) {
+					f.commits(session)
+					// review already has a StepRun row from its first
+					// attempt — exactly the boundary the old stepAttempted
+					// check would have skipped.
+					worker.Drain()
+				}},
+			)
+			worker = f.workerOver(f.runner(quick, func(o *run.Options) {
+				o.Workflow = "feature"
+				o.WorkflowDir = mustAbs(featureDir)
+			}))
+			done := startWorker(ctx, worker)
+
+			By("then the run releases in front of review's second attempt, which never starts")
+			Eventually(done, time.Minute).Should(Receive(BeNil()))
+
+			reason, detail := f.releasedLease(ctx)
+			Expect(reason).To(Equal("preempted"))
+			Expect(detail).To(Equal("drain"))
+			Expect(f.leaseOf(ctx).GetId()).To(BeEmpty(), "the node is claimable again")
+			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+
+			detailAfter := f.inspect(ctx)
+			prs := stepRuns(detailAfter, "pr")
+			Expect(prs).To(HaveLen(2), "both pr attempts ran, uninterrupted: the drain caught the boundary after")
+			for _, name := range []string{"implement", "simplify", "commit", "clean-tree", "pr"} {
+				for _, sr := range stepRuns(detailAfter, name) {
+					Expect(sr.GetStatus()).NotTo(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_ABORTED),
+						"no attempt is aborted by a drain")
+				}
+			}
+			reviews := stepRuns(detailAfter, "review")
+			Expect(reviews).To(HaveLen(1), "review's first attempt only; its second is the one a drain releases in front of")
+			Expect(reviews[0].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_SUPERSEDED))
+
+			By("and the next worker resumes at review as a fresh attempt")
+			f.script(fake.Script{Terminal: fake.Terminal("", approves("AC-2", "the fix addresses the finding"), usage(5))})
+			next := f.workerOver(f.runner(quick, func(o *run.Options) {
+				o.Workflow = "feature"
+				o.WorkflowDir = mustAbs(featureDir)
+			}))
+			resumed := startWorker(ctx, next)
+			Eventually(func() skiftv1.Status { return f.statusOf(ctx, node) }, 3*time.Minute, 200*time.Millisecond).
+				Should(Equal(skiftv1.Status_STATUS_DONE))
+			next.Drain()
+			Eventually(resumed, time.Minute).Should(Receive(BeNil()))
 		})
 
 		It("lets the run finish normally when the drain lands on its last step, with nothing left to run", func() {
