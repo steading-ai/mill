@@ -116,6 +116,21 @@ func (c *Client) Comment(ctx context.Context, requestID, leaseID, ref, body stri
 	return err
 }
 
+// ResolveComment marks a comment resolved. Resolving, like adding, is not a
+// write to the node it is on: skift fences node writes against whichever
+// lease holds the node, but a comment "changes neither the node's row nor
+// its readiness" (skift internal/domain/comment.go), so this needs no
+// lease — the same exemption CommentFinding already relies on for
+// AddComment.
+func (c *Client) ResolveComment(ctx context.Context, requestID, commentID string) error {
+	_, err := c.ApplyPatch(ctx, requestID, "", &skiftv1.PatchOp{
+		Op: &skiftv1.PatchOp_ResolveComment{ResolveComment: &skiftv1.ResolveCommentOp{
+			CommentId: commentID,
+		}},
+	})
+	return err
+}
+
 // Gate is what a gate step or the circuit breaker asks a human.
 type Gate struct {
 	// Title is the gate node's title.
