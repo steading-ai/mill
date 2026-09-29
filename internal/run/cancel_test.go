@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -71,6 +72,37 @@ var _ = Describe("Cancelling a run", Label(testsupport.DBLabel), func() {
 		Expect(detail).To(Equal("cancel"))
 		Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
 		Expect(f.leaseOf(ctx).GetId()).To(BeEmpty(), "the node is claimable again")
+		Expect(f.runOf(ctx).GetLeaseId()).To(BeEmpty(),
+			"the ledger lets go of the lease when skift does, as a drain's release does")
+	})
+
+	It("a cancelled run can be rerun before any worker claims it again", func() {
+		// steading#17, 2026-09-29: a run cancelled so an operator could move
+		// it back to its pr step was refused as "held under a live lease"
+		// by the ledger, while skift showed the node unleased and no worker
+		// held it; the only way on was to let a worker resume the step the
+		// operator wanted to undo.
+		f.node(ctx, "a step an operator wants back", "Cancelled, then rerun from its first step.")
+		f.script(fake.Script{Hold: true, Cancelled: fake.Terminal("stopped", nil, nil)})
+
+		runner := f.runner(func(o *run.Options) {
+			o.TTL = 3 * interval
+			o.Interval = interval
+			o.Grace = grace
+		})
+		done := make(chan error, 1)
+		go func() { done <- runner.Execute(ctx, f.nodeRef) }()
+		Eventually(func() int { return len(f.harness.Calls()) }, 30*time.Second, 100*time.Millisecond).
+			Should(BeNumerically(">", 0))
+		Expect(f.cancelRun(ctx)).To(Succeed())
+		Eventually(done, interval+grace).Should(Receive(BeNil()))
+
+		_, err := f.store.Rerun(ctx, connect.NewRequest(&millv1.RerunRequest{
+			RunId:    f.runOf(ctx).GetId(),
+			FromStep: "gather-context",
+			Reason:   "the operator wants the step back",
+		}))
+		Expect(err).NotTo(HaveOccurred(), "a run no worker holds is the operator's to move")
 	})
 
 	It("resumes at the cancelled step with attempt 2 when the node is run again", func() {

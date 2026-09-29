@@ -586,7 +586,7 @@ func (q *Queries) ParkRun(ctx context.Context, arg ParkRunParams) (Run, error) {
 const releaseRunLease = `-- name: ReleaseRunLease :one
 UPDATE runs
 SET lease_id = NULL
-WHERE id = $1 AND lease_id = $2 AND status = 'running'
+WHERE id = $1 AND lease_id = $2 AND status IN ('selecting', 'running')
 RETURNING id, node_id, node_ref, generation, context_id, workflow_id, status, lease_id, worker_ref, gate_node_id, parked_reason, cancel_requested, branch, tier, created_at, updated_at, ended_at, complete_request_id
 `
 

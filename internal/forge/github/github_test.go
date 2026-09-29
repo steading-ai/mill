@@ -164,6 +164,22 @@ var _ = Describe("The GitHub forge adapter", Label("unit"), func() {
 			Expect(api.count(http.MethodPost, repoAPI+"/pulls")).To(BeZero(), "an existing pull request is reused, not recreated")
 		})
 
+		It("OpenPR opens a new pull request over a closed one on the same branch", func(ctx context.Context) {
+			// steading#17, 2026-09-29: a restart reuses the branch name, the
+			// earlier generation's pull request was closed, and PR looked up
+			// by branch answered with it, so the new generation reviewed and
+			// tried to merge a pull request that could never land.
+			api.on(http.MethodGet, repoAPI, http.StatusOK, "repository.json")
+			api.on(http.MethodGet, repoAPI+"/pulls", http.StatusOK, "pulls_closed.json")
+			api.on(http.MethodPost, repoAPI+"/pulls", http.StatusCreated, "pull_opened.json")
+
+			pr, err := client.OpenPR(ctx, forge.OpenPRRequest{Branch: branch, Title: "mill#13: the forge adapter"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pr.Number).To(Equal(7), "the new pull request, not the closed #5")
+			Expect(pr.Open()).To(BeTrue())
+			Expect(api.count(http.MethodPost, repoAPI+"/pulls")).To(Equal(1))
+		})
+
 		It("OpenPR does not reuse a pull request whose branch never reaches the requested head", func(ctx context.Context) {
 			api.on(http.MethodGet, repoAPI, http.StatusOK, "repository.json")
 			api.on(http.MethodGet, repoAPI+"/pulls", http.StatusOK, "pulls_open.json")
