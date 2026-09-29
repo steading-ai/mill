@@ -1,10 +1,8 @@
 package store_test
 
 import (
-	"errors"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -67,6 +65,12 @@ var _ = Describe("SetLease", Label(testsupport.DBLabel), func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 			return run
+		}, true),
+		Entry("stopped, left by a cancel, a drain, a shutdown, or a failed reclaim", func(l *ledger, ctx SpecContext) *millv1.Run {
+			run, _ := l.runWithWorkflow(ctx, "mill#8")
+			stopped, err := l.store.ReleaseLease(ctx, l.lease, run.GetId())
+			Expect(err).NotTo(HaveOccurred())
+			return stopped
 		}, true),
 		Entry("failed", func(l *ledger, ctx SpecContext) *millv1.Run {
 			run, _ := l.runWithWorkflow(ctx, "mill#8")
@@ -131,21 +135,34 @@ var _ = Describe("SetLease", Label(testsupport.DBLabel), func() {
 	}, SpecTimeout(time.Minute))
 })
 
-// ReleaseLease is a graceful drain's release (internal/run/shutdown.go's
-// drainStep): the run stays running, holding no lease, so a reclaim or
-// another worker's ClaimNext can pick it up at its next step boundary
-// (docs/ledger.md §Resume). Unlike SetLease it never takes a run over —
-// it only gives one back — so it is fenced like an ordinary write rather
-// than checking [claimableStatuses].
+// ReleaseLease is a cancel, a graceful drain's release
+// (internal/run/shutdown.go's drainStep), or a shutdown: the run stops,
+// holding no lease, so a reclaim or another worker's ClaimNext can pick it
+// up at its next step boundary (docs/ledger.md §Resume). Unlike SetLease it
+// never takes a run over — it only gives one back — so it is fenced like an
+// ordinary write rather than checking [claimableStatuses].
 var _ = Describe("ReleaseLease", Label(testsupport.DBLabel), func() {
-	It("gives back a running run's lease and leaves it running", func(ctx SpecContext) {
+	It("gives back a running run's lease and stops it", func(ctx SpecContext) {
 		l := newLedger(ctx)
 		run, _ := l.runWithWorkflow(ctx, "mill#8")
 
 		released, err := l.store.ReleaseLease(ctx, l.lease, run.GetId())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(released.GetLeaseId()).To(BeEmpty())
-		Expect(released.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+		Expect(released.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
+	}, SpecTimeout(time.Minute))
+
+	It("gives back a selecting run's lease and stops it too", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		// l.run leaves a fresh run selecting, still holding l.lease: a
+		// cancel or shutdown can land before a workflow is even chosen.
+		run := l.run(ctx, "mill#9")
+		Expect(run.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_SELECTING))
+
+		released, err := l.store.ReleaseLease(ctx, l.lease, run.GetId())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(released.GetLeaseId()).To(BeEmpty())
+		Expect(released.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
 	}, SpecTimeout(time.Minute))
 
 	It("refuses a lease that is not the run's current one", func(ctx SpecContext) {
@@ -158,25 +175,6 @@ var _ = Describe("ReleaseLease", Label(testsupport.DBLabel), func() {
 		unchanged, err := l.store.GetRun(ctx, run.GetId())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(unchanged.GetLeaseId()).To(Equal(l.lease), "a fenced-out write writes nothing")
-	}, SpecTimeout(time.Minute))
-
-	It("refuses a run that is not running, rather than silently succeeding", func(ctx SpecContext) {
-		l := newLedger(ctx)
-		// l.run leaves a fresh run selecting, still holding l.lease — the
-		// one status a matching lease can reach that is not running,
-		// since every later status (waiting, parked, done...) clears
-		// lease_id on its way out.
-		run := l.run(ctx, "mill#9")
-		Expect(run.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_SELECTING))
-
-		_, err := l.store.ReleaseLease(ctx, l.lease, run.GetId())
-		Expect(err).To(HaveOccurred())
-		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue(),
-			"the query's own status = 'running' guard is what refuses it")
-
-		unchanged, err := l.store.GetRun(ctx, run.GetId())
-		Expect(err).NotTo(HaveOccurred())
-		Expect(unchanged.GetLeaseId()).To(Equal(l.lease), "refused, not silently released")
 	}, SpecTimeout(time.Minute))
 })
 
@@ -543,12 +541,16 @@ var _ = Describe("The reads the CLI needs", Label(testsupport.DBLabel), func() {
 		summaries, _, err := l.store.Status(ctx, nil, "mill")
 		Expect(err).NotTo(HaveOccurred())
 		held := make(map[string]bool, len(summaries))
+		status := make(map[string]millv1.RunStatus, len(summaries))
 		for _, s := range summaries {
 			held[s.GetRun().GetNodeRef()] = s.GetHeld()
+			status[s.GetRun().GetNodeRef()] = s.GetRun().GetStatus()
 		}
 		Expect(held[running.GetNodeRef()]).To(BeTrue(), "a plain running run holds its lease")
 		Expect(held[parked.GetNodeRef()]).To(BeFalse(), "Park clears the lease")
 		Expect(held[cancelled.GetNodeRef()]).To(BeFalse(), "the last attempt aborted; no worker is driving it")
+		Expect(status).To(HaveKey(released.GetNodeRef()), "Status with no filter lists a stopped run")
+		Expect(status[released.GetNodeRef()]).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED), "a drain released the lease at the boundary")
 		Expect(held[released.GetNodeRef()]).To(BeFalse(), "a drain released the lease at the boundary")
 	}, SpecTimeout(time.Minute))
 

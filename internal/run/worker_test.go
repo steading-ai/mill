@@ -285,7 +285,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			Expect(reason).To(Equal("preempted"))
 			Expect(detail).To(Equal("drain"))
 			Expect(f.leaseOf(ctx).GetId()).To(BeEmpty(), "the node is claimable again")
-			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
 
 			detailAfter := f.inspect(ctx)
 			implemented := stepRuns(detailAfter, "implement")
@@ -335,7 +335,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			for _, ref := range []string{first, second} {
 				released := f.runOfRef(ctx, ref)
 				Expect(released.GetLeaseId()).To(BeEmpty(), ref+"'s lease was released, not held past the boundary")
-				Expect(released.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+				Expect(released.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
 				detail := f.inspectRun(ctx, released.GetId())
 				implemented := stepRuns(detail, "implement")
 				Expect(implemented).To(HaveLen(1))
@@ -376,7 +376,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			Expect(reason).To(Equal("preempted"))
 			Expect(detail).To(Equal("drain"))
 			Expect(f.leaseOf(ctx).GetId()).To(BeEmpty(), "the node is claimable again")
-			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
 
 			detailAfter := f.inspect(ctx)
 			gathered := stepRuns(detailAfter, "gather-context")
@@ -437,7 +437,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			Expect(reason).To(Equal("preempted"))
 			Expect(detail).To(Equal("drain"))
 			Expect(f.leaseOf(ctx).GetId()).To(BeEmpty(), "the node is claimable again")
-			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
 
 			detailAfter := f.inspect(ctx)
 			prs := stepRuns(detailAfter, "pr")
@@ -703,8 +703,8 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			setupDone := startWorker(ctx, setup)
 			Eventually(setupDone, time.Minute).Should(Receive(BeNil()))
 			firstRunID, secondRunID := f.runOfRef(ctx, first).GetId(), f.runOfRef(ctx, second).GetId()
-			Expect(f.runOfRef(ctx, first).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
-			Expect(f.runOfRef(ctx, second).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+			Expect(f.runOfRef(ctx, first).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
+			Expect(f.runOfRef(ctx, second).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
 
 			By("and a third, unrelated node ready but with no free slot at that concurrency")
 			third := f.createNode(ctx, &skiftv1.CreateNodeOp{

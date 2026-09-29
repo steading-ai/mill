@@ -10,6 +10,8 @@ import (
 	. "github.com/onsi/gomega"
 
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/harness/fake"
+	"github.com/steading-ai/mill/internal/run"
 	"github.com/steading-ai/mill/internal/testsupport"
 )
 
@@ -148,6 +150,87 @@ var _ = Describe("Resumable", Label(testsupport.DBLabel), func() {
 		candidates, err := f.runner().Resumable(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(candidates).To(BeEmpty())
+	})
+})
+
+// A fenced heartbeat whose reclaim fails is the other half of Resumable's
+// promise: the run has to actually reach `stopped` before a resume can find
+// it there, and the write that gets it there has to tolerate a race it
+// loses (internal/run/heartbeat.go's reclaimFailedStep).
+var _ = Describe("A fenced heartbeat whose reclaim fails", Label(testsupport.DBLabel), func() {
+	var f *fixture
+	var ctx context.Context
+
+	BeforeEach(func() {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(context.Background())
+		DeferCleanup(cancel)
+		f = start(ctx)
+	})
+
+	It("ends the run stopped with no lease, not left running behind a dead one", func() {
+		f.node(ctx, "a held step", "This one is taken away mid-flight and nobody wins it back.")
+		f.script(fake.Script{Hold: true, Cancelled: fake.Terminal("stopped", nil, nil)})
+
+		runner := f.runner(func(o *run.Options) {
+			o.TTL = 12 * time.Second
+			o.Interval = 200 * time.Millisecond
+		})
+		done := make(chan error, 1)
+		go func() { done <- runner.Execute(ctx, f.nodeRef) }()
+
+		Eventually(func() int { return len(f.harness.Calls()) }, 30*time.Second, 100*time.Millisecond).
+			Should(BeNumerically(">", 0))
+		first := f.leaseOf(ctx).GetId()
+		Expect(first).NotTo(BeEmpty())
+
+		// Force the expiry, then let another principal take the node in
+		// skift alone: the worker's own reclaim loses the race, and its
+		// heartbeat has to write stopped rather than leave the run behind
+		// the lease skift already moved on from.
+		f.expire(ctx, first)
+		second := f.reclaim(ctx)
+		Expect(second).NotTo(Equal(first))
+
+		Eventually(done, 30*time.Second).Should(Receive(MatchError(run.ErrFenced)))
+
+		Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
+		Expect(f.runOf(ctx).GetLeaseId()).To(BeEmpty())
+	})
+
+	It("leaves another worker's row untouched when its own store-side claim already landed", func() {
+		f.node(ctx, "a held step", "This one is taken away mid-flight, and the winner has already claimed it in the ledger too.")
+		f.script(fake.Script{Hold: true, Cancelled: fake.Terminal("stopped", nil, nil)})
+
+		runner := f.runner(func(o *run.Options) {
+			o.TTL = 12 * time.Second
+			o.Interval = 200 * time.Millisecond
+		})
+		done := make(chan error, 1)
+		go func() { done <- runner.Execute(ctx, f.nodeRef) }()
+
+		Eventually(func() int { return len(f.harness.Calls()) }, 30*time.Second, 100*time.Millisecond).
+			Should(BeNumerically(">", 0))
+		first := f.leaseOf(ctx).GetId()
+		Expect(first).NotTo(BeEmpty())
+		runID := f.runOf(ctx).GetId()
+
+		// Force the expiry, then let another principal take the node in
+		// skift *and* the ledger: its SetLease lands before this worker's
+		// own reclaimFailedStep tries to write, so that write is fenced and
+		// must be tolerated rather than clobbering the winner's row.
+		f.expire(ctx, first)
+		second := f.reclaim(ctx)
+		Expect(second).NotTo(Equal(first))
+		_, err := f.store.SetLease(ctx, connect.NewRequest(&millv1.SetLeaseRequest{
+			LeaseId: second, RunId: runID, WorkerRef: "other@host",
+		}))
+		Expect(err).NotTo(HaveOccurred())
+
+		Eventually(done, 30*time.Second).Should(Receive(MatchError(run.ErrFenced)))
+
+		Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+		Expect(f.runOf(ctx).GetLeaseId()).To(Equal(second))
 	})
 })
 

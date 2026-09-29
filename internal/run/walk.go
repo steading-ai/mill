@@ -166,10 +166,17 @@ func (r *Runner) underBoundary(ctx context.Context, s *state, step *millv1.Step,
 }
 
 // stopped is what a cancelled step context means: the heartbeat stopped it,
-// and why decides what is written. A fence writes nothing at all.
+// and why decides what is written. A plain fence writes nothing; a fence
+// whose reclaim failed releases the run so another worker can claim it.
 func (r *Runner) stopped(ctx context.Context, s *state) error {
 	err := s.beat.err()
 	switch {
+	case errors.Is(err, errReclaimFailed):
+		if stopErr := r.reclaimFailedStep(context.WithoutCancel(ctx), s); stopErr != nil {
+			r.options.Log.Warn("releasing the lease after a failed reclaim", "error", stopErr)
+		}
+		r.printf("reclaim failed for %s; releasing the run so another worker can claim it\n", s.node.GetReference())
+		return ErrFenced
 	case errors.Is(err, ErrFenced):
 		r.printf("fenced out of %s; abandoning the run locally\n", s.node.GetReference())
 		return ErrFenced

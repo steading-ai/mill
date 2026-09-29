@@ -51,6 +51,9 @@ enum RunStatus {
   // state from its status list; docs/domain-model.md §Run defines it and
   // wins.
   RUN_STATUS_ABANDONED = 7;
+  // RUN_STATUS_STOPPED means no worker holds the run; the next claim
+  // resumes it, exactly like a leaseless running run.
+  RUN_STATUS_STOPPED = 8;
 }
 
 // ParkedReason says why the circuit breaker tripped, so the gate that asks a

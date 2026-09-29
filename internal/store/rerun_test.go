@@ -50,4 +50,45 @@ var _ = Describe("Rerun", Label(testsupport.DBLabel), func() {
 		Expect(result.Superseded[1].GetId()).To(Equal(failed.GetId()))
 		Expect(l.currentStep(ctx, run.GetId(), workflow)).To(Equal("simplify"))
 	}, SpecTimeout(time.Minute))
+
+	// Scenario: a failed run is reopened by a rerun
+	It("reopens a failed run to stopped, which a claim can resume", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		run, workflow := l.runWithWorkflow(ctx, "mill#65")
+		l.close(ctx, run.GetId(), "implement")
+		l.fail(ctx, run.GetId(), "simplify")
+		_, err := l.store.Failed(ctx, l.lease, run.GetId(), "denied")
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := l.store.Rerun(ctx, run.GetId(), "simplify", "ivy", "the check had no PATH")
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Reopened).To(BeTrue())
+		Expect(result.Run.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
+		Expect(result.Run.GetLeaseId()).To(BeEmpty())
+		Expect(l.currentStep(ctx, run.GetId(), workflow)).To(Equal("simplify"))
+	}, SpecTimeout(time.Minute))
+
+	// Scenario: a run already stopped (not failed) is rerun without a claim
+	It("reruns an already-stopped run in place, leaving it stopped and unclaimed", func(ctx SpecContext) {
+		l := newLedger(ctx)
+		run, workflow := l.runWithWorkflow(ctx, "mill#94")
+		l.close(ctx, run.GetId(), "implement")
+		l.start(ctx, run.GetId(), "simplify")
+		_, err := l.store.AbortOpenStepRuns(ctx, l.lease, run.GetId(), "cancelled")
+		Expect(err).NotTo(HaveOccurred())
+		_, err = l.store.ReleaseLease(ctx, l.lease, run.GetId())
+		Expect(err).NotTo(HaveOccurred())
+		stopped, err := l.store.GetRun(ctx, run.GetId())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stopped.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
+
+		result, err := l.store.Rerun(ctx, run.GetId(), "simplify", "ivy", "resume after cancel")
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Reopened).To(BeFalse(), "the run was already live; rerun only supersedes the span")
+		Expect(result.Run.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
+		Expect(result.Run.GetLeaseId()).To(BeEmpty())
+		Expect(l.currentStep(ctx, run.GetId(), workflow)).To(Equal("simplify"))
+	}, SpecTimeout(time.Minute))
 })

@@ -21,6 +21,7 @@ var EveryRunStatus = []millv1.RunStatus{
 	millv1.RunStatus_RUN_STATUS_DONE,
 	millv1.RunStatus_RUN_STATUS_FAILED,
 	millv1.RunStatus_RUN_STATUS_ABANDONED,
+	millv1.RunStatus_RUN_STATUS_STOPPED,
 }
 
 // CreateRunParams opens a run on a claimed node.
@@ -84,12 +85,16 @@ func (s *Service) SetLease(ctx context.Context, runID, leaseID, workerRef string
 	return s.store.SetLease(ctx, runID, leaseID, workerRef)
 }
 
-// ReleaseLease gives back the run's lease without ending it: the run stays
-// running, holding no lease, resumable by this worker's own reclaim or by
-// whichever worker's ClaimNext reaches it next (docs/ledger.md §Resume). Not
-// judged against [runTransitions]: the status does not change, only the
-// lease.
+// ReleaseLease gives back the run's lease and stops it: no worker holds it,
+// resumable by this worker's own reclaim or by whichever worker's ClaimNext
+// reaches it next (docs/ledger.md §Resume). Judged against [runTransitions]
+// like every other status change; admitted from either `running` or
+// `selecting`, since a cancel or shutdown can land before a workflow is even
+// chosen.
 func (s *Service) ReleaseLease(ctx context.Context, leaseID, runID string) (*millv1.Run, error) {
+	if err := s.checkTransition(ctx, runID, millv1.RunStatus_RUN_STATUS_STOPPED); err != nil {
+		return nil, err
+	}
 	return s.store.ReleaseLease(ctx, leaseID, runID)
 }
 

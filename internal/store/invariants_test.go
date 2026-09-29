@@ -334,6 +334,42 @@ var _ = Describe("Invariants", Label(testsupport.DBLabel), func() {
 		Expect(l.db.QueryRow(ctx, `SELECT gate_node_id FROM runs WHERE id = $1`, run.GetId()).Scan(&gate)).To(Succeed())
 		Expect(gate).To(BeNil())
 	}, SpecTimeout(time.Minute))
+
+	It(`Invariant 13: "running always has a lease." No write leaves status = 'running' with lease_id null`, func(ctx SpecContext) {
+		l := newLedger(ctx)
+
+		// ReleaseLease on a running run stops it rather than leaving it
+		// running with the lease cleared.
+		running, _ := l.runWithWorkflow(ctx, "mill#8")
+		stopped, err := l.store.ReleaseLease(ctx, l.lease, running.GetId())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stopped.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
+		Expect(stopped.GetLeaseId()).To(BeEmpty())
+
+		// A selecting run releases the same way: a cancel or shutdown can
+		// land before a workflow is even chosen.
+		selecting := l.run(ctx, "mill#8b")
+		stoppedSelecting, err := l.store.ReleaseLease(ctx, l.lease, selecting.GetId())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stoppedSelecting.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
+		Expect(stoppedSelecting.GetLeaseId()).To(BeEmpty())
+
+		// Rerun's reopen of a failed run lands on stopped for the same
+		// reason: a lease-holding claim is what running promises.
+		failed, _ := l.runWithWorkflow(ctx, "mill#8c")
+		l.fail(ctx, failed.GetId(), "implement")
+		_, err = l.store.Failed(ctx, l.lease, failed.GetId(), "denied")
+		Expect(err).NotTo(HaveOccurred())
+		result, err := l.store.Rerun(ctx, failed.GetId(), "implement", "ivy", "")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Run.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
+		Expect(result.Run.GetLeaseId()).To(BeEmpty())
+
+		var count int
+		Expect(l.db.QueryRow(ctx,
+			`SELECT count(*) FROM runs WHERE status = 'running' AND lease_id IS NULL`).Scan(&count)).To(Succeed())
+		Expect(count).To(BeZero())
+	}, SpecTimeout(time.Minute))
 })
 
 // inTx runs fn in a transaction of its own and returns the first error,

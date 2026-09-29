@@ -62,14 +62,14 @@ var _ = Describe("Cancelling a run", Label(testsupport.DBLabel), func() {
 		By("and the run is resumable at that step")
 		// Resumable means three things, and the ledger and skift hold all
 		// three: the attempt is aborted rather than left running, the lease
-		// is given back as a preemption rather than a crash, and the run
-		// keeps its workflow and its status.
+		// is given back as a preemption rather than a crash, and the run is
+		// left `stopped` rather than `running` with no worker behind it.
 		Expect(f.stepRunStatus(ctx, stepRunID)).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_ABORTED))
 		Expect(f.abortReason(ctx, stepRunID)).To(Equal("cancelled"))
 		reason, detail := f.releasedLease(ctx)
 		Expect(reason).To(Equal("preempted"))
 		Expect(detail).To(Equal("cancel"))
-		Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+		Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
 		Expect(f.leaseOf(ctx).GetId()).To(BeEmpty(), "the node is claimable again")
 	})
 

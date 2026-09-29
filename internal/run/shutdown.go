@@ -21,9 +21,9 @@ import (
 // That is a cancellation in every respect but who asked for it and what the
 // event log records, so it is the same mechanism: the heartbeat raises
 // [errShutdown], the step's context is cancelled, the adapter stops the
-// session, and [Runner.shutdownStep] writes the two facts that make the run
+// session, and [Runner.shutdownStep] writes the facts that make the run
 // resumable. "Resume is the crash path" is the whole of the recovery: the
-// next claim finds a `running` run with an aborted attempt and starts the
+// next claim finds a `stopped` run with an aborted attempt and starts the
 // next attempt at the same step, in the same session.
 
 // errShutdown is the process going away. The step is aborted, the lease
@@ -34,12 +34,18 @@ var errShutdown = errors.New("run: shutting down")
 // shutdownStep leaves the run where the next worker can pick it up.
 //
 // It is called with a context the heartbeat has not cancelled, because these
-// two writes are the point of the shutdown and must land.
+// writes are the point of the shutdown and must land.
 func (r *Runner) shutdownStep(ctx context.Context, s *state) error {
 	if _, err := call(ctx, r.options.Store.AbortOpenStepRuns, &millv1.AbortOpenStepRunsRequest{
 		LeaseId: s.leaseID(),
 		RunId:   s.run.GetId(),
 		Reason:  "shutdown",
+	}); err != nil {
+		return err
+	}
+	if _, err := call(ctx, r.options.Store.ReleaseLease, &millv1.ReleaseLeaseRequest{
+		LeaseId: s.leaseID(),
+		RunId:   s.run.GetId(),
 	}); err != nil {
 		return err
 	}
@@ -54,7 +60,7 @@ func (r *Runner) shutdownStep(ctx context.Context, s *state) error {
 // drainStep gives the run's lease back at a step boundary, deliberately not
 // calling [Runner.shutdownStep]: nothing is open, so there is nothing for
 // AbortOpenStepRuns to abort. Like shutdownStep, it ends the loop by
-// returning errReleased: the run stays running with no lease
+// returning errReleased: the run is left `stopped` with no lease
 // (docs/ledger.md §Resume), and nothing downstream needs to tell a drain's
 // release apart from any other.
 func (r *Runner) drainStep(ctx context.Context, s *state) error {

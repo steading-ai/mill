@@ -69,6 +69,9 @@ const (
 	// state from its status list; docs/domain-model.md §Run defines it and
 	// wins.
 	RunStatus_RUN_STATUS_ABANDONED RunStatus = 7
+	// RUN_STATUS_STOPPED means no worker holds the run; the next claim
+	// resumes it, exactly like a leaseless running run.
+	RunStatus_RUN_STATUS_STOPPED RunStatus = 8
 )
 
 // Enum value maps for RunStatus.
@@ -82,6 +85,7 @@ var (
 		5: "RUN_STATUS_DONE",
 		6: "RUN_STATUS_FAILED",
 		7: "RUN_STATUS_ABANDONED",
+		8: "RUN_STATUS_STOPPED",
 	}
 	RunStatus_value = map[string]int32{
 		"RUN_STATUS_UNSPECIFIED": 0,
@@ -92,6 +96,7 @@ var (
 		"RUN_STATUS_DONE":        5,
 		"RUN_STATUS_FAILED":      6,
 		"RUN_STATUS_ABANDONED":   7,
+		"RUN_STATUS_STOPPED":     8,
 	}
 )
 
@@ -6544,7 +6549,7 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	" \x01(\tR\x04tool\x12\x14\n" +
 	"\x05bytes\x18\v \x01(\x03R\x05bytes\x12\x1c\n" +
 	"\ttruncated\x18\f \x01(\bR\ttruncated\x12\x16\n" +
-	"\x06offset\x18\r \x01(\x03R\x06offset*\xce\x01\n" +
+	"\x06offset\x18\r \x01(\x03R\x06offset*\xe6\x01\n" +
 	"\tRunStatus\x12\x1a\n" +
 	"\x16RUN_STATUS_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14RUN_STATUS_SELECTING\x10\x01\x12\x16\n" +
@@ -6553,7 +6558,8 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"\x11RUN_STATUS_PARKED\x10\x04\x12\x13\n" +
 	"\x0fRUN_STATUS_DONE\x10\x05\x12\x15\n" +
 	"\x11RUN_STATUS_FAILED\x10\x06\x12\x18\n" +
-	"\x14RUN_STATUS_ABANDONED\x10\a*\xb2\x01\n" +
+	"\x14RUN_STATUS_ABANDONED\x10\a\x12\x16\n" +
+	"\x12RUN_STATUS_STOPPED\x10\b*\xb2\x01\n" +
 	"\fParkedReason\x12\x1d\n" +
 	"\x19PARKED_REASON_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15PARKED_REASON_RETRIES\x10\x01\x12\x18\n" +
