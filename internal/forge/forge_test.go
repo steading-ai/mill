@@ -30,6 +30,7 @@ func (s *stubForge) DefaultHead(context.Context) (string, string, error)  { retu
 func (s *stubForge) FailingChecks(context.Context, string) ([]forge.CheckResult, error) {
 	return nil, nil
 }
+func (s *stubForge) CheckLog(context.Context, forge.CheckResult) (string, error) { return "", nil }
 func (s *stubForge) Merge(context.Context, forge.PullRequest) (forge.PullRequest, error) {
 	return forge.PullRequest{}, nil
 }

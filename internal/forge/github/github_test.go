@@ -249,6 +249,72 @@ var _ = Describe("The GitHub forge adapter", Label("unit"), func() {
 		})
 	})
 
+	Describe("the failing checks on a commit, and their logs", func() {
+		It("gives a failing check run its conclusion and a log id to ask a log for", func(ctx context.Context) {
+			api.on(http.MethodGet, repoAPI+"/commits/"+head+"/check-runs", http.StatusOK, "check_runs_failed.json")
+			api.on(http.MethodGet, repoAPI+"/commits/"+head+"/statuses", http.StatusOK, "statuses_empty.json")
+
+			failing, err := client.FailingChecks(ctx, head)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(failing).To(ConsistOf(forge.CheckResult{Conclusion: "failure", LogID: "2"}))
+		})
+
+		It("gives a failing commit status no log id: there is no job behind one", func(ctx context.Context) {
+			api.on(http.MethodGet, repoAPI+"/commits/"+head+"/check-runs", http.StatusOK, "check_runs_empty.json")
+			api.on(http.MethodGet, repoAPI+"/commits/"+head+"/statuses", http.StatusOK, "statuses_failure.json")
+
+			failing, err := client.FailingChecks(ctx, head)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(failing).To(ConsistOf(forge.CheckResult{
+				Name: "buildkite/thing", URL: "https://ci.example/1", Conclusion: "failure",
+			}))
+		})
+
+		It("reads a check run's job log, filtered to the failing assertion", func(ctx context.Context) {
+			body := "noise\nrun-verbs.spec.ts:67\nError: expect(locator).toBeDisabled() failed\nmore noise\n"
+			api.onBody(http.StatusOK, []byte(body))
+
+			excerpt, err := client.CheckLog(ctx, forge.CheckResult{Name: "e2e", LogID: "2"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(excerpt).To(ContainSubstring("run-verbs.spec.ts:67"))
+			Expect(excerpt).To(ContainSubstring("expect(locator).toBeDisabled() failed"))
+		})
+
+		It("never lets the minted token survive into a log excerpt", func(ctx context.Context) {
+			body := "Error: leaked token " + theToken + " must not reach the excerpt\n"
+			api.onBody(http.StatusOK, []byte(body))
+
+			excerpt, err := client.CheckLog(ctx, forge.CheckResult{Name: "e2e", LogID: "2"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(excerpt).NotTo(ContainSubstring(theToken))
+			Expect(excerpt).To(ContainSubstring("[redacted]"))
+		})
+
+		It("names why when GitHub cannot find a job's log", func(ctx context.Context) {
+			api.onBody(http.StatusNotFound, []byte(`{"message":"Not Found"}`))
+
+			_, err := client.CheckLog(ctx, forge.CheckResult{Name: "e2e", LogID: "2"})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("404"))
+		})
+
+		It("names why when GitHub forbids a job's log", func(ctx context.Context) {
+			api.onBody(http.StatusForbidden, []byte(`{"message":"Forbidden"}`))
+
+			_, err := client.CheckLog(ctx, forge.CheckResult{Name: "e2e", LogID: "2"})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("403"))
+		})
+
+		It("refuses a check with no log id without a network call", func(ctx context.Context) {
+			excerpt, err := client.CheckLog(ctx, forge.CheckResult{Name: "buildkite/thing", Conclusion: "failure"})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("no log to read"))
+			Expect(excerpt).To(Equal(""))
+			Expect(api.calls()).To(BeEmpty())
+		})
+	})
+
 	Describe("merging", func() {
 		It("Merging a pull request names the head it merges, by the method the repository allows", func(ctx context.Context) {
 			api.on(http.MethodGet, repoAPI, http.StatusOK, "repository.json")

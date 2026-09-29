@@ -175,6 +175,14 @@ type CheckResult struct {
 	Name string
 	// URL is where the forge shows it, empty when the forge names none.
 	URL string
+	// Conclusion is the forge's own word for how it failed: GitHub's
+	// check-run conclusion or commit-status state, GitLab's job status.
+	Conclusion string
+	// LogID is what [Forge.CheckLog] needs to read this check's log, opaque
+	// to everything but the adapter that set it. Empty means this check has
+	// no log a forge can be asked for — GitHub's older commit statuses are
+	// not backed by a job.
+	LogID string
 }
 
 // PullRequest is the forge's pull request — GitLab's merge request — as the
@@ -336,6 +344,12 @@ type Forge interface {
 	// check, named and linked where the forge gives a URL. Empty means
 	// everything is green or there is nothing to check.
 	FailingChecks(ctx context.Context, sha string) ([]CheckResult, error)
+	// CheckLog is check's log, filtered to the lines naming a failure and
+	// capped to [MaxExcerptBytes] (see [FilterLog]). It refuses with an
+	// error naming why — never a panic, never a silently empty string —
+	// when check.LogID is empty or the forge cannot serve the log (expired,
+	// forbidden).
+	CheckLog(ctx context.Context, check CheckResult) (string, error)
 	// Merge merges a pull request, squashing when the project's settings
 	// say so. The merge names pr's head, so what merges is the commit the
 	// caller read: a head that moved since yields a *[HeadMovedError], and

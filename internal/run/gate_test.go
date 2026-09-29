@@ -518,6 +518,27 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 			Expect(revised).To(ContainSubstring("Nothing was merged"))
 		})
 
+		// A red merge gate's revise carries the failing check's own log,
+		// filtered to the assertion that failed — steading#9's own
+		// scenario, run 36535810888.
+		It("names the failing check and quotes its log in the revise", func() {
+			f.forge.checksAt = forge.Failed
+			f.forge.failingChecks = []forge.CheckResult{
+				{Name: "e2e", Conclusion: "failure", LogID: "36535810888"},
+			}
+			f.forge.checkLogs = map[string]string{
+				"36535810888": "noise\nrun-verbs.spec.ts:67\n" +
+					"Error: expect(locator).toBeDisabled() failed\nmore noise\n",
+			}
+
+			Expect(f.runner().Execute(ctx, f.nodeRef)).To(Succeed())
+
+			calls := f.harness.Calls()
+			revised := calls[4].Prompt.Text
+			Expect(revised).To(ContainSubstring("run-verbs.spec.ts:67"))
+			Expect(revised).To(ContainSubstring("expect(locator).toBeDisabled() failed"))
+		})
+
 		It("waits on a head whose checks are still pending, bounded by the workflow's own timeout", func() {
 			workflow := f.variant(ctx, "short-status-timeout", func(definition *millv1.Workflow) {
 				definition.Status = &millv1.StatusPolicy{
