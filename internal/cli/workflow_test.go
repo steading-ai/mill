@@ -3,7 +3,7 @@ package cli_test
 import (
 	"bytes"
 	"context"
-	"os"
+	"net"
 	"path/filepath"
 	"strings"
 	"time"
@@ -103,10 +103,15 @@ func servingWith(ctx context.Context, extra ...string) mill {
 	})
 	// The service migrates before it binds, and several of these run at
 	// once, so the wait is generous: this is "has it started", not a bound
-	// on how long starting may take.
+	// on how long starting may take. Stat only tells us bind() has run;
+	// listen() is what makes the socket acceptable, so this dials it
+	// instead, closing each successful attempt.
 	Eventually(func() error {
-		_, err := os.Stat(socket)
-		return err
+		conn, err := net.Dial("unix", socket)
+		if err != nil {
+			return err
+		}
+		return conn.Close()
 	}, 60*time.Second, 50*time.Millisecond).Should(Succeed(), stderr.String())
 	return mill{socket: socket, databaseURL: databaseURL}
 }
