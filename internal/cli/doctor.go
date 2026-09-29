@@ -592,6 +592,12 @@ func probeForge(ctx context.Context, opts doctorOptions, worker *millv1.ProbeRes
 	if opts.project == "" {
 		return fail("forge", "no project to read the repository from: pass --project or set %s", skiftProjectEnv)
 	}
+	ctx, cancel := context.WithTimeout(ctx, doctor.ProbeTimeout)
+	defer cancel()
+	f, repositoryURL, err := resolveForgeProject(ctx, opts.skiftSocket, opts.project, opts.forge)
+	if err != nil {
+		return fail("forge", "%v", err)
+	}
 	token, err := loadForgeToken()
 	if err != nil {
 		return fail("forge", "%v", err)
@@ -599,12 +605,6 @@ func probeForge(ctx context.Context, opts doctorOptions, worker *millv1.ProbeRes
 	if token.value == "" {
 		return fail("forge", "the mill holds no forge credential: deliver %s to the credential store or set $%s",
 			forgeCredentialName, forgeTokenEnv)
-	}
-	ctx, cancel := context.WithTimeout(ctx, doctor.ProbeTimeout)
-	defer cancel()
-	f, repositoryURL, err := resolveForgeProject(ctx, opts.skiftSocket, opts.project, opts.forge)
-	if err != nil {
-		return fail("forge", "%v", err)
 	}
 	result := doctor.Forge(ctx, f, token.source, repositoryURL)
 	return probe{Name: "forge", OK: result.OK, Reason: result.Reason}
