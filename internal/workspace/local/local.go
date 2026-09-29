@@ -45,10 +45,11 @@ const (
 	// of the run's directory rather than shared across every run the way
 	// the account's signing key is.
 	browserDir = "browser"
-	// stepDirName holds each step's scratch: its TMPDIR and its podman/docker
-	// PATH shims, under a subdirectory named for the step's ordinal. BeginStep
-	// creates it and EndStep removes it, so it never outlives the step that
-	// opened it (workspace.StepBoundary).
+	// stepDirName holds each step's podman/docker PATH shims, under a
+	// subdirectory named for the step's ordinal; the step's TMPDIR is
+	// elsewhere, where its path is short (stepTmp). BeginStep creates both
+	// and EndStep removes both, so neither outlives the step that opened it
+	// (workspace.StepBoundary).
 	stepDirName = "step"
 	// gitConfigFile is the git configuration every process the workspace
 	// spawns runs under, the session's own git included. It carries the
