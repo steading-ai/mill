@@ -12,11 +12,12 @@ import (
 // one is refused with both states named.
 //
 //	selecting ──▶ running ──▶ done
-//	                │  ▲
-//	                │  └──── waiting
-//	                │  ▲
-//	                │  └──── parked
-//	                ├──────▶ failed
+//	  │             │  ▲
+//	  │             │  └──── waiting
+//	  │             │  ▲
+//	  │             │  └──── parked
+//	  │             ├──────▶ stopped
+//	  └─────────────┼──────▶ failed
 //	                └──────▶ abandoned
 //
 // done, failed and abandoned are terminal and have no outgoing edges.
@@ -26,7 +27,10 @@ import (
 // a gate is denied under a lease, but a node is closed underneath a run only
 // while the run holds none — waiting, parked, or selecting with its claim
 // gone — and the sweep that records it finds the run wherever it stopped
-// (docs/ledger.md §Sweep).
+// (docs/ledger.md §Sweep). stopped is reachable from running and selecting:
+// a cancel, a drain, a shutdown, or a fenced heartbeat's failed reclaim can
+// each land while the run has not yet chosen a workflow, and it can in turn
+// only fail or be abandoned — the next claim is what returns it to running.
 //
 // One write is deliberately not governed by this table: SetLease, the
 // takeover a new claim performs. The proto and docs/ledger.md Invariant 9
@@ -37,6 +41,7 @@ import (
 var runTransitions = map[millv1.RunStatus]map[millv1.RunStatus]bool{
 	millv1.RunStatus_RUN_STATUS_SELECTING: {
 		millv1.RunStatus_RUN_STATUS_RUNNING:   true,
+		millv1.RunStatus_RUN_STATUS_STOPPED:   true,
 		millv1.RunStatus_RUN_STATUS_FAILED:    true,
 		millv1.RunStatus_RUN_STATUS_ABANDONED: true,
 	},
@@ -44,6 +49,7 @@ var runTransitions = map[millv1.RunStatus]map[millv1.RunStatus]bool{
 		millv1.RunStatus_RUN_STATUS_DONE:      true,
 		millv1.RunStatus_RUN_STATUS_WAITING:   true,
 		millv1.RunStatus_RUN_STATUS_PARKED:    true,
+		millv1.RunStatus_RUN_STATUS_STOPPED:   true,
 		millv1.RunStatus_RUN_STATUS_FAILED:    true,
 		millv1.RunStatus_RUN_STATUS_ABANDONED: true,
 	},
@@ -57,20 +63,16 @@ var runTransitions = map[millv1.RunStatus]map[millv1.RunStatus]bool{
 		millv1.RunStatus_RUN_STATUS_FAILED:    true,
 		millv1.RunStatus_RUN_STATUS_ABANDONED: true,
 	},
+	millv1.RunStatus_RUN_STATUS_STOPPED: {
+		millv1.RunStatus_RUN_STATUS_FAILED:    true,
+		millv1.RunStatus_RUN_STATUS_ABANDONED: true,
+	},
 }
 
 // RunStatuses is every run status in the model, terminal ones included. The
 // transition table is exhaustive over it.
 func RunStatuses() []millv1.RunStatus {
-	return []millv1.RunStatus{
-		millv1.RunStatus_RUN_STATUS_SELECTING,
-		millv1.RunStatus_RUN_STATUS_RUNNING,
-		millv1.RunStatus_RUN_STATUS_WAITING,
-		millv1.RunStatus_RUN_STATUS_PARKED,
-		millv1.RunStatus_RUN_STATUS_DONE,
-		millv1.RunStatus_RUN_STATUS_FAILED,
-		millv1.RunStatus_RUN_STATUS_ABANDONED,
-	}
+	return EveryRunStatus
 }
 
 // RunTransitionError is a move the diagram does not draw. It names both

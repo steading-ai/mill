@@ -809,7 +809,7 @@ func waitingOn(e *Explanation, run *millv1.Run, detail *millv1.InspectResponse) 
 		return "a human to answer park gate " + e.Gate
 	case millv1.RunStatus_RUN_STATUS_SELECTING:
 		return "a workflow to be selected"
-	case millv1.RunStatus_RUN_STATUS_RUNNING:
+	case millv1.RunStatus_RUN_STATUS_RUNNING, millv1.RunStatus_RUN_STATUS_STOPPED:
 		if outage := waitingOnUpstream(e, detail); outage != "" {
 			return outage
 		}

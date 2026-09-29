@@ -74,6 +74,25 @@ var _ = Describe("mill explain", Label(testsupport.DBLabel), func() {
 		Expect(out).To(ContainSubstring("refused 1 times in a row since"))
 	})
 
+	It("on a stopped run says a worker may claim the node and resume, same as a leaseless running one", func() {
+		r := openRun(ctx, "millcli#13", nodeID(13))
+		r.closeGatherContext(ctx, "sha256:"+strings.Repeat("a", 64))
+		r.start(ctx, "implement", millv1.StepKind_STEP_KIND_SKILL)
+		_, err := r.store.AbortOpenStepRuns(ctx, connect.NewRequest(&millv1.AbortOpenStepRunsRequest{
+			LeaseId: r.lease, RunId: r.run.GetId(), Reason: "spec: stop",
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = r.store.ReleaseLease(ctx, connect.NewRequest(&millv1.ReleaseLeaseRequest{
+			LeaseId: r.lease, RunId: r.run.GetId(),
+		}))
+		Expect(err).NotTo(HaveOccurred())
+
+		out := r.cli(ctx, "explain", "millcli#13")
+
+		Expect(out).To(ContainSubstring("millcli#13 run " + r.run.GetId() + " is stopped"))
+		Expect(out).To(ContainSubstring("waiting   a worker to claim the node and resume at step implement"))
+	})
+
 	It("on a waiting run prints the gate node's reference and the gate's title", func() {
 		g := skiftNode(ctx)
 		r := openRun(ctx, g.nodeRef, g.nodeID)

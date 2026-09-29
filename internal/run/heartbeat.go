@@ -87,7 +87,7 @@ func (r *Runner) beat(ctx context.Context, s *state) error {
 		// A fenced renewal does not necessarily mean this run lost the
 		// race for the node: try to win it back before giving up.
 		if reclaimErr := r.reclaim(ctx, s); reclaimErr != nil {
-			return errors.Join(ErrFenced, reclaimErr)
+			return errors.Join(errReclaimFailed, ErrFenced, reclaimErr)
 		}
 	}
 	run, _, err := r.runByNode(ctx, s.node.GetId())
@@ -102,6 +102,13 @@ func (r *Runner) beat(ctx context.Context, s *state) error {
 	}
 	return nil
 }
+
+// errReclaimFailed marks a fenced heartbeat whose reclaim did not win the
+// node back, so walk.go's stopped() can tell it apart from a plain fence and
+// write the run `stopped` instead of leaving it `running` with a dead lease.
+// It is joined together with ErrFenced, not used to replace it: every other
+// caller that checks for a fence still needs to match.
+var errReclaimFailed = errors.New("run: reclaim failed")
 
 // reclaim tries to win the run's own node back after its lease expired, so a
 // step already in flight can keep running under a fresh lease instead of
@@ -128,6 +135,40 @@ func (r *Runner) reclaim(ctx context.Context, s *state) error {
 	r.options.Log.Debug("reclaimed a fenced node",
 		"node", s.node.GetReference(), "run", s.run.GetId(), "lease", claimed.Lease.GetId())
 	return nil
+}
+
+// reclaimFailedStep writes what an unreclaimed fence means: the attempt this
+// worker had open is aborted and the run's lease is given back, both under
+// the old lease s.leaseID() still holds, so the next claim — by another
+// worker, or this one once it notices the node is open again — resumes it
+// rather than finding it stuck `running` behind a lease skift has already
+// moved on from.
+//
+// Both writes present the stale lease as their fencing token, so a race
+// where another worker's SetLease already won is tolerated rather than
+// treated as a failure: the store's own compare-and-swap refuses the write
+// with a fenced error, which is exactly the outcome wanted — that worker's
+// row is left untouched (Invariant 9).
+func (r *Runner) reclaimFailedStep(ctx context.Context, s *state) error {
+	tolerateFenced := func(err error) error {
+		if err != nil && !isFenced(err) {
+			return err
+		}
+		return nil
+	}
+	_, err := call(ctx, r.options.Store.AbortOpenStepRuns, &millv1.AbortOpenStepRunsRequest{
+		LeaseId: s.leaseID(),
+		RunId:   s.run.GetId(),
+		Reason:  "fenced",
+	})
+	if err := tolerateFenced(err); err != nil {
+		return err
+	}
+	_, err = call(ctx, r.options.Store.ReleaseLease, &millv1.ReleaseLeaseRequest{
+		LeaseId: s.leaseID(),
+		RunId:   s.run.GetId(),
+	})
+	return tolerateFenced(err)
 }
 
 // fail records why the heartbeat stopped and cancels the step.

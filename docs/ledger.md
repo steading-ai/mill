@@ -209,6 +209,7 @@ The store enforces these with constraints or in the writing transaction. A viola
 10. **`current_step` is derived.** There is no column to drift.
 11. **Skift first, store second.** A run is marked `done` only after skift has confirmed the completing patch; `gate_node_id` is recorded only after skift has returned the gate's id and before the lease is released. The store never asserts a fact about skift that skift has not yet made true.
 12. **A gate is filed once per step run.** `gate_node_id` set and the current step a gate step means resume reads the gate; it never files another. Invariant 11's order leaves one window this cannot close on its own: the patch that files the gate lands and the process dies before the store write, so skift has a gate the ledger knows nothing about. A worker therefore asks skift before it files — the node's user-assigned children carrying the run's and the step's labels — and records what it finds instead of filing a second one. That is the only place in the loop where skift's graph, rather than the ledger, decides what to write, and it is the only place it can be: the gate exists in exactly one of them.
+13. **`running` always has a lease.** No write leaves `status = 'running'` with `lease_id` null: `ReleaseLease` moves a running or selecting run to `stopped` instead of leaving it running with the lease cleared, and `rerun`'s reopen of a `failed` run lands on `stopped` for the same reason — a lease-holding claim is what `running` promises, and a run with no worker says so under its own name rather than by convention.
 
 ## Resume
 
@@ -315,7 +316,7 @@ Three properties fall out:
 - **A stale worker cannot corrupt the record.** Its skift writes are fenced out by skift; its store writes are rejected by Invariant 9. Its heartbeat fails first, which is how it learns.
 - **`revise` actually revises.** Superseding every step from the target through the failure means the revised work is re-simplified, re-committed, re-pushed, and re-reviewed; the ledger never claims pass-one evidence closed pass-two work.
 
-A graceful stop (`docs/architecture.md` §"Failure and stop", "Stop.") leaves exactly the runs the `run.status in (running, selecting)` branch above resumes — this worker's own `worker_ref`, either an aborted attempt (a kill: a second signal, or the grace window elapsing) or a `running` run with no lease at all (a drain that reached its boundary) — so a restarted worker does not have to wait for `ClaimNext` to hand them back one at a time. Before its first `ClaimNext`, it lists them itself (`Runner.Resumable`) and claims each by name (`Worker.reclaim`), oldest `updated_at` first, up to its concurrency; only the slots left over go to `ClaimNext` (mill#44). A run a crash left `running` is not among them — nothing yet tells a live crash apart from a dead one without the sweep's own TTL guard, so that case still waits for an ordinary claim.
+A graceful stop (`docs/architecture.md` §"Failure and stop", "Stop.") leaves exactly the runs `Runner.Resumable` lists before the next `ClaimNext` — this worker's own `worker_ref`, either an aborted attempt (a kill: a second signal, or the grace window elapsing) or a `stopped` run with no lease at all (a drain that reached its boundary) — so a restarted worker does not have to wait for `ClaimNext` to hand them back one at a time. Before its first `ClaimNext`, it lists them itself (`Runner.Resumable`) and claims each by name (`Worker.reclaim`), oldest `updated_at` first, up to its concurrency; only the slots left over go to `ClaimNext` (mill#44). A run a crash left `running` is not among them — nothing yet tells a live crash apart from a dead one without the sweep's own TTL guard, so that case still waits for an ordinary claim.
 
 `Complete` is not an RPC. It is `ApplyPatch` with a `complete_node` operation, and skift releases the lease inside that same patch — which is why `ReportUsage` for the final step must precede it, why there is no separate `Release` on the done path, and why `store.Done` comes last.
 
@@ -326,12 +327,17 @@ Every way a run ends in §Resume happens inside a claim. A node skift has closed
 The worker runs it before its first claim, ahead of the host's pass, and again at the top of its claim loop whenever `sweep-interval` has elapsed — a busy worker between runs, an idle one every `wait` — with no timer and no goroutine of its own. A second process sweeping the same ledger would race the live worker, which is why it is the worker's and not a unit's.
 
 ```
-for run in store.Status(live):                     # selecting, running, waiting, parked
+for run in store.Status(live):                     # selecting, running, waiting, parked, stopped
     if run.worker_ref != self: continue            # cleanup is host-local; another host's run is its own
     if driving(run.node_id): continue              # this process is on it; its own goroutine writes its ending
     if run.updated_at > now - TTL: continue        # another process on this host may be mid-write; by age, never by "not in the ledger" (mill#49)
     node := skift.Node(run.node_ref)              # the reference is stored qualified; any project's client reads it
     error?             -> finding{failure}; continue
+    node.status open and !node.claimed and run.status in (running, selecting):
+        store.AbortOpenStepRuns(run)
+        store.ReleaseLease(run)                    # ledger says stopped; a claim resumes it
+        finding{stopped, run, node status and the ledger's step}
+        continue
     node.status open   -> continue                 # whatever its readiness: a parked run's node is blocked by its own gate
     store.AbortOpenStepRuns(run)                   # no token outlives the run
     switch:
@@ -356,6 +362,8 @@ store.RecordReconciliation(findings)
 ```
 
 A finding is anything the probe or the reconciler actually did — filed, commented, or dropped — never a red branch a node already says is red, or a green one already dropped: an unchanged pass converges to nothing and records none of the three healing kinds.
+
+The open-and-unclaimed branch catches the fifth way a run is left holding no worker: the one where no heartbeat ever fails, because the worker that held the lease is simply gone and skift's own lease has already expired out from under it. `node.claimed` is skift's word that nobody has the node; the sweep presents the run's own stored `lease_id` to `AbortOpenStepRuns`/`ReleaseLease` rather than negotiating anything of its own, so if another worker's `SetLease` has already landed since the sweep read the node, the fence comparison refuses the write with no effect (Invariant 9) and the new worker's state is untouched.
 
 Two things make this safe to write under no lease. Skift refuses `drop_node` and a user's `complete_node` on a node with a live lease, so a run whose node is closed is provably unleased there: nothing is driving it. And the store's terminal write with no lease presented takes the row lock alone and nulls `lease_id` as it ends the run (Invariant 9's leaseless door, the one Abandon uses), so a worker that still believed it held the run is fenced on its next write. No skift write is made: a closed node is outside every ready set, nothing is held, and the ledger row with its `failed` event and the `reconciliations` row are the record. `mill run` on a closed node resolves its run the same way, through the same code, so the two cannot disagree; `mill restart` refuses a node that is not open, because a restart of one would open a run nothing can claim.
 
@@ -393,7 +401,7 @@ Every artifact's metadata carries `run_id`. Every `ApplyPatch` mill sends uses `
 - `restart <node>`: release, abandon, destroy, create the next generation — one transaction on the store side, with the skift release first. A lease skift says is not live is skipped rather than fatal: the run a human restarts is usually the one whose worker died holding it, and there is nothing to take back.
 - `explain <run>`: current step, its latest step run's status and exit, the evidence kind that would close it, the gate it waits on if any, the attempts used against `retries`.
 - `logs <run> [--step]`: the per-step-run log files, redacted at write time; `--follow` tails the running one.
-- `cancel <run>`, `rerun <run> --from <step>`: set `cancel_requested`; `rerun` also supersedes from the step once the worker has released. A run that ended `failed` is reopened by the same transaction — status back to `running`, no lease, `ended_at`, gate and park reason cleared — because the supersede is worth nothing on a run Invariant 9 admits no claim on. `abandoned` is refused: Invariant 1 allows one live run per node.
+- `cancel <run>`, `rerun <run> --from <step>`: set `cancel_requested`; `rerun` also supersedes from the step once the worker has released. A run that ended `failed` is reopened by the same transaction — status to `stopped`, no lease, `ended_at`, gate and park reason cleared — because the supersede is worth nothing on a run Invariant 9 admits no claim on. `abandoned` is refused: Invariant 1 allows one live run per node.
 - `workspace show|clean <run>`: the retained workspace's location and state; `clean` destroys one a resumed run no longer needs.
 - `doctor`: no store query — probes the socket, migrations, skift as the mill principal, the sidecar, the signing key, the forge credential.
 

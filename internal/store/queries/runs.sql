@@ -62,13 +62,15 @@ SET status = 'waiting', gate_node_id = $2, lease_id = NULL
 WHERE id = $1
 RETURNING *;
 
--- A graceful drain's release: the run stays running, holding no lease, so
--- this worker's own reclaim or another worker's ClaimNext can pick it up at
--- its next step boundary (docs/ledger.md §Resume).
+-- A cancel, a drain's boundary release, or a shutdown: the run stops,
+-- holding no lease, so this worker's own reclaim or another worker's
+-- ClaimNext can pick it up at its next step boundary (docs/ledger.md
+-- §Resume). Admits a selecting run too: a cancel or shutdown can land before
+-- a workflow is even chosen.
 -- name: ReleaseRunLease :one
 UPDATE runs
-SET lease_id = NULL
-WHERE id = $1 AND lease_id = $2 AND status IN ('selecting', 'running')
+SET lease_id = NULL, status = 'stopped'
+WHERE id = $1 AND lease_id = $2 AND status IN ('running', 'selecting')
 RETURNING *;
 
 -- name: ParkRun :one
@@ -86,12 +88,13 @@ RETURNING *;
 
 -- A rerun on a run that ended without being replaced: it becomes live again
 -- at the step the rerun sent it back to, holding no lease, which is the
--- state Invariant 9 admits a claim on. ended_at is nulled because
--- runs_terminal_has_ended ties it to the status, and the gate and the park
--- reason go with the ending they belonged to.
+-- state Invariant 9 admits a claim on — status stopped, exactly like a
+-- cancel or a drain's boundary release, since nothing holds it either.
+-- ended_at is nulled because runs_terminal_has_ended ties it to the status,
+-- and the gate and the park reason go with the ending they belonged to.
 -- name: ReopenRun :one
 UPDATE runs
-SET status = 'running', ended_at = NULL, lease_id = NULL, worker_ref = '',
+SET status = 'stopped', ended_at = NULL, lease_id = NULL, worker_ref = '',
     cancel_requested = false, gate_node_id = NULL, parked_reason = NULL
 WHERE id = $1
 RETURNING *;

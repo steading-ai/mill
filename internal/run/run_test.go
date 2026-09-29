@@ -15,6 +15,7 @@ import (
 
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
+	"github.com/steading-ai/mill/internal/harness"
 	"github.com/steading-ai/mill/internal/harness/fake"
 	"github.com/steading-ai/mill/internal/run"
 	"github.com/steading-ai/mill/internal/skift"
@@ -404,6 +405,49 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 			Expect(block).To(HavePrefix("<mill-data"))
 			Expect(block).To(ContainSubstring(`kind="input"`))
 			Expect(block).To(ContainSubstring(`ref="` + predecessor + `"`))
+		})
+
+		It("An unresolved comment reaches the next prompt, attributed; a resolved one does not", func() {
+			node := f.node(ctx, "the work", "Change the README's first line.")
+			scripts := f.quickFixScripts()
+			scripts[0].Do = func(session harness.Session) {
+				f.commits(session)
+				resolveCtx := context.Background()
+				Expect(f.client.CommentFinding(resolveCtx, "mill-spec-comment-kept", node,
+					"the harness takes a kind: usage event, not a terminal.usage field")).To(Succeed())
+				Expect(f.client.CommentFinding(resolveCtx, "mill-spec-comment-resolved", node,
+					"an earlier note, now resolved, about the same field")).To(Succeed())
+
+				comments, err := f.client.Comments(resolveCtx, node)
+				Expect(err).NotTo(HaveOccurred())
+				var resolvedID string
+				for _, c := range comments {
+					if strings.Contains(c.GetBody(), "now resolved") {
+						resolvedID = c.GetId()
+					}
+				}
+				Expect(resolvedID).NotTo(BeEmpty(), "the comment to resolve was posted")
+				Expect(f.client.ResolveComment(resolveCtx, "mill-spec-resolve", resolvedID)).To(Succeed())
+			}
+			f.script(scripts...)
+
+			Expect(f.runner().Execute(ctx, node)).To(Succeed())
+
+			calls := f.harness.Calls()
+			var implement string
+			for _, call := range calls {
+				if strings.Contains(call.Prompt.Text, "the harness takes a kind") {
+					implement = call.Prompt.Text
+					break
+				}
+			}
+			Expect(implement).NotTo(BeEmpty(), "the unresolved comment reached a prompt")
+			Expect(implement).NotTo(ContainSubstring("now resolved"), "the resolved comment did not")
+
+			block := blockAround(implement, "the harness takes a kind")
+			Expect(block).To(HavePrefix("<mill-data"))
+			Expect(block).To(ContainSubstring(`kind="comment"`))
+			Expect(block).To(ContainSubstring(`author="` + f.skift.Principal + `"`))
 		})
 	})
 

@@ -22,14 +22,13 @@ import (
 //
 //   - the open attempt is aborted with reason `cancelled`, so the ledger says
 //     why it ended rather than leaving a row a resume would call a crash;
+//   - the run's lease is released, so the store says `stopped` rather than
+//     `running` with no worker behind it;
 //   - the lease is released `preempted` with detail `cancel`, so skift's
 //     event log distinguishes a node taken back on purpose from one whose
 //     worker died;
-//   - the run gives its lease back in the ledger too, as a drain does, so an
-//     operator's rerun is not refused as held by a worker that has let go;
-//   - nothing else is written. The run keeps its status, its workflow, and
-//     its branch, so the next claim resumes at the same step, one attempt
-//     further on.
+//   - nothing else is written. The run keeps its workflow and its branch, so
+//     the next claim resumes at the same step, one attempt further on.
 //
 // A cancelled run is therefore not a failed one. It is a run that stopped,
 // and `mill run` on the same node continues it.
@@ -39,7 +38,8 @@ import (
 var errCancelled = errors.New("run: cancelled")
 
 // cancelStep is what a cancellation does to the run: the attempt is aborted,
-// the lease is released with preempted, and the run is left resumable.
+// the run's lease is released (the store moves it to `stopped`), the skift
+// lease is released with preempted, and the run is left resumable.
 //
 // It is called with a context the heartbeat has not cancelled — the step's
 // context is already dead by the time this runs — because these writes are
