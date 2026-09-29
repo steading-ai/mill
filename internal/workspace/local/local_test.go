@@ -412,21 +412,7 @@ var _ = Describe("The local workspace", Label("unit"), func() {
 
 		// printed runs `env` through the chokepoint and returns what the
 		// child saw, once it has exited.
-		printed := func(ctx context.Context) map[string]string {
-			GinkgoHelper()
-			process, err := ws.Exec(ctx, workspace.Command{Path: "/usr/bin/env"})
-			Expect(err).NotTo(HaveOccurred())
-			out, err := io.ReadAll(process.Stdout)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(process.Wait().Status).To(BeZero())
-			env := map[string]string{}
-			for _, line := range lines(string(out)) {
-				if name, value, ok := strings.Cut(line, "="); ok {
-					env[name] = value
-				}
-			}
-			return env
-		}
+		printed := func(ctx context.Context) map[string]string { return envOf(ctx, ws) }
 
 		BeforeEach(func(ctx context.Context) {
 			made, err := ws.Create(ctx, workspace.Spec{RunID: "run-07", NodeRef: "mill#12", Origin: from, Egress: decided})
@@ -476,6 +462,34 @@ var _ = Describe("The local workspace", Label("unit"), func() {
 			for name, value := range ws.Environment() {
 				Expect(value).NotTo(Equal("token-a"), "%s still carries step 1's token", name)
 			}
+		})
+	})
+
+	// The skift fixture's specs (internal/testsupport/skift.go) find the
+	// checkout through MILL_SKIFT_REPO; a worker's own `skift_checkout`
+	// setting is what the local backend has to turn into that variable,
+	// the way a nested machine's bind does for the machine backend
+	// (docs/sandbox.md §Testing).
+	Describe("the skift fixture's checkout", func() {
+		It("names it MILL_SKIFT_REPO for a check step's exec and for a session", func(ctx context.Context) {
+			checkout := filepath.Join(GinkgoT().TempDir(), "skift-checkout")
+			configured := local.New(local.Options{Root: root, Origin: from, SkiftCheckout: checkout})
+			_, err := configured.Create(ctx, workspace.Spec{RunID: "run-08", NodeRef: "mill#12", Origin: from})
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func(ctx context.Context) { Expect(configured.Destroy(ctx)).To(Succeed()) })
+			Expect(configured.Rotate(ctx, workspace.TokenFor(theBearer, workspace.Exec))).To(Succeed())
+
+			Expect(envOf(ctx, configured)).To(HaveKeyWithValue("MILL_SKIFT_REPO", checkout))
+			// What a session's harness adapter reads is the same map.
+			Expect(configured.Environment()).To(HaveKeyWithValue("MILL_SKIFT_REPO", checkout))
+		})
+
+		It("names nothing when the worker has no checkout configured", func(ctx context.Context) {
+			handle = create(ctx, "run-09", "mill#12")
+			Expect(ws.Rotate(ctx, workspace.TokenFor(theBearer, workspace.Exec))).To(Succeed())
+
+			Expect(envOf(ctx, ws)).NotTo(HaveKey("MILL_SKIFT_REPO"))
+			Expect(ws.Environment()).NotTo(HaveKey("MILL_SKIFT_REPO"))
 		})
 	})
 
@@ -636,4 +650,22 @@ func lines(output string) []string {
 	fields := strings.Split(strings.TrimSpace(output), "\n")
 	sort.Strings(fields)
 	return fields
+}
+
+// envOf runs `env` through the chokepoint and returns what the child saw,
+// once it has exited.
+func envOf(ctx context.Context, subject *local.Workspace) map[string]string {
+	GinkgoHelper()
+	process, err := subject.Exec(ctx, workspace.Command{Path: "/usr/bin/env"})
+	Expect(err).NotTo(HaveOccurred())
+	out, err := io.ReadAll(process.Stdout)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(process.Wait().Status).To(BeZero())
+	env := map[string]string{}
+	for _, line := range lines(string(out)) {
+		if name, value, ok := strings.Cut(line, "="); ok {
+			env[name] = value
+		}
+	}
+	return env
 }

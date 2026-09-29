@@ -42,7 +42,12 @@ var _ = Describe("The activity record", Label(testsupport.DBLabel), func() {
 		f.script(fake.Script{
 			Do: func(harness.Session) { f.workspace.Redact(secret) },
 			Events: []*harnessv1.Event{
-				fake.Text("turn-1", "using "+secret+" to reach the forge"),
+				// Final: true, as a block's last delta always carries it —
+				// otherwise the redactor's holdback has nothing proving the
+				// block is done and keeps the tail buffered forever.
+				{RequestId: "turn-1", Body: &harnessv1.Event_Text{
+					Text: &harnessv1.Text{Text: "using " + secret + " to reach the forge", Final: true},
+				}},
 				toolResult("the answer mentions " + secret + " again"),
 			},
 			Terminal: fake.Terminal("context gathered", nil, usage(10)),

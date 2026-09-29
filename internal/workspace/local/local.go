@@ -121,6 +121,13 @@ type Options struct {
 	// lets systemd's own TimeoutStopSec escalate (scope mode). Zero means
 	// [DefaultGrace].
 	Grace time.Duration
+	// SkiftCheckout is the worker's own `skift_checkout` setting
+	// (docs/sandbox.md §Testing): named in every check step's and
+	// session's environment as MILL_SKIFT_REPO, so the run loop's own
+	// database specs find the fixture the way a nested machine's do.
+	// Empty means the local backend hands out nothing named MILL_SKIFT_REPO,
+	// which is what a worker with no checkout configured wants.
+	SkiftCheckout string
 }
 
 // Workspace is one run's local workspace.
@@ -457,6 +464,9 @@ func (w *Workspace) environmentFor(token workspace.Token) map[string]string {
 	// sockets, which the local backend's shared filesystem and uid make
 	// reachable (workspace.DeadSockets).
 	workspace.MergeDeadSockets(env, handle)
+	if w.options.SkiftCheckout != "" {
+		env["MILL_SKIFT_REPO"] = w.options.SkiftCheckout
+	}
 	return env
 }
 

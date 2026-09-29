@@ -116,9 +116,11 @@ type Config struct {
 	NoProxy         string `yaml:"no-proxy"`
 	// Nesting (docs/sandbox.md §Self-hosting): the repositories whose
 	// `[machine].nested` request is granted, each by its path on the forge
-	// (`wellspring/mill`) or its origin URL, and the skift checkout a
-	// nested machine gets bound read-only for its test fixture. Spelled
-	// with underscores the way env_mode is: a deployment writes them.
+	// (`wellspring/mill`) or its origin URL, and the skift checkout the
+	// run loop's own database specs find through MILL_SKIFT_REPO — read
+	// directly by the local backend, or bound read-only at a fixed path
+	// for a nested machine. Spelled with underscores the way env_mode is:
+	// a deployment writes them.
 	NestedRepos   []string `yaml:"nested_repos"`
 	SkiftCheckout string   `yaml:"skift_checkout"`
 	// The reconciliation sweep (docs/sandbox.md §"External state"): the

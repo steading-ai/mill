@@ -97,8 +97,11 @@ var _ = Describe("Retries are the step's own", Label(testsupport.DBLabel), func(
 	It("The breaker tells the whole story", func() {
 		By("given a workflow whose clean-tree check fails because commit produced no commit")
 		// The commit session says it cannot proceed and leaves the tree as
-		// it found it; the check that follows is the one that fails, four
-		// rounds and one revise away from the words that explain it.
+		// it found it; the check that follows is the one that fails. Its
+		// own retries are 0, so revise.go consults on_failure once per set
+		// of retries: the first failure revises commit, and the second —
+		// with no attempts left to spend — parks. Two rounds is every
+		// round this workflow's clean-tree can ever have.
 		workflow := f.variant(ctx, "unclean-fix", func(definition *millv1.Workflow) {
 			stepOf(definition, "clean-tree").GetCheck().Command =
 				[]string{"sh", "-c", "echo 'the tree is dirty: README.md' >&2; exit 1"}
@@ -109,7 +112,6 @@ var _ = Describe("Retries are the step's own", Label(testsupport.DBLabel), func(
 			fake.Script{Terminal: fake.Terminal(
 				"Round 1: I cannot proceed. Committing this change requires approval.",
 				nil, usage(5)), Do: f.commits},
-			fake.Script{Terminal: fake.Terminal("the change is made again", nil, usage(20)), Do: f.commits},
 			fake.Script{Terminal: fake.Terminal(
 				"Round 2: I cannot proceed. Committing this change requires approval.",
 				nil, usage(5)), Do: f.commits},

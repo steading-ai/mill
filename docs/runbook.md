@@ -521,8 +521,9 @@ tested, merged — with the properties the design promises asserted from
 **Where it runs.** On `core`, by hand, as below; and inside every machine a
 node of mill's own is worked in, as the `live-tier` check step of the mill
 project's workflows (`workflows/mill-quick-fix`, `workflows/mill-feature`),
-which runs `MILL_SANDBOX_HOST=1 mise exec -- make test` on the committed
-tree after `clean-tree`. Inside a machine the specs that need the host —
+which runs `MILL_SANDBOX_HOST=1 MILL_REQUIRE_FIXTURES=1 mise exec -- make
+test` on the committed tree after `clean-tree`. Inside a machine the specs
+that need the host —
 the template unit, the host's podman, the subscription credential, a forge
 — skip naming what they need, and the ones written for the inside run
 against the machine's ephemeral root ([sandbox.md](sandbox.md)
@@ -551,6 +552,15 @@ of the ordinary suite's variables:
 |---|---|
 | `MILL_SANDBOX_HOST` | Set to anything to turn the live tier on. Unset, every `live` spec skips with the message that names its cost: *set MILL_SANDBOX_HOST=1 on a host with root, nspawn and btrfs to run the spec that boots a real machine*. `make test` never sets it, so the tier skips there and on any laptop — silently, because without `MILL_ACCEPTANCE` the whole suite skips at `BeforeSuite` first; the live specs' own message shows under `MILL_ACCEPTANCE=1` with this unset. |
 | `MILL_SANDBOX_MODEL_CREDENTIAL` | The `claude setup-token` file the credential gateway presents upstream for a machine's sessions. No login enters a machine, so a machine run has no account credential of its own; supply the setup-token the deployed worker loads from its vault ([sandbox.md](sandbox.md) §Credentials). Unset, the live tier skips before booting anything. |
+
+`MILL_REQUIRE_FIXTURES` is a different variable for a different "live tier":
+this section's is `tests/acceptance/sandbox_test.go`, labelled `live`, the
+suite that boots real machines; `MILL_REQUIRE_FIXTURES` instead governs the
+`live-tier` *check step*'s own plain `make test` run of the ordinary suite,
+turning a database spec's skip into a failure that names what the host is
+missing rather than letting it pass silently unrun
+([sandbox.md](sandbox.md) §Testing). Only the `live-tier` step's command
+sets it; an ordinary `make test` leaves it unset and keeps skipping.
 
 The service the tier's `mill run` and `mill work` write to is the ordinary
 suite's, on `MILL_ACCEPTANCE_DATABASE_URL` — on `core`, `make db-up`'s

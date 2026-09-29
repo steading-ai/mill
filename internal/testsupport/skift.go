@@ -54,6 +54,13 @@ func lookPath(name string) (string, error) {
 // SkiftRepoEnv overrides where skift's checkout is looked for.
 const SkiftRepoEnv = "MILL_SKIFT_REPO"
 
+// RequireFixturesEnv makes requireAvailable fail rather than skip when the
+// fixture cannot be started: the live tier sets it, because a skipped
+// database spec there is not a passed one, and a suite outside the tier
+// leaves it unset so it keeps skipping when a host has none of the
+// prerequisites (docs/sandbox.md §Testing).
+const RequireFixturesEnv = "MILL_REQUIRE_FIXTURES"
+
 // defaultSkiftRepo is where the operator keeps checkouts.
 const defaultSkiftRepo = "src/github.com/steading-ai/skift"
 
@@ -129,12 +136,20 @@ func SkiftUnavailable() string {
 }
 
 // requireAvailable skips the caller when this host cannot start a skift,
-// naming what is missing.
+// naming what is missing — or fails it under [RequireFixturesEnv], because
+// the live tier that sets it treats a database spec that never ran as a
+// failure, not a pass.
 func requireAvailable() {
 	ginkgo.GinkgoHelper()
-	if reason := SkiftUnavailable(); reason != "" {
-		ginkgo.Skip(reason)
+	reason := SkiftUnavailable()
+	if reason == "" {
+		return
 	}
+	if os.Getenv(RequireFixturesEnv) != "" {
+		ginkgo.Fail(reason)
+		return
+	}
+	ginkgo.Skip(reason)
 }
 
 // startSkift migrates and seeds databaseURL and starts `skift serve` on a
@@ -145,13 +160,21 @@ func (p *Postgres) startSkift(ctx context.Context, databaseURL string) *Skift {
 	repo := skiftRepo()
 	binary := skiftBinary()
 
+	// goose runs from the run's own toolchain, not the checkout's: its
+	// working directory is left at the spawning process's own (always
+	// somewhere under this project's already-trusted mise.toml), never
+	// the checkout, whose own mise.toml pins goose again and is not
+	// trusted by this account. -dir must therefore be absolute: with no
+	// working directory of its own, a relative path would resolve against
+	// the spawning process's, not the checkout.
+	absRepo, err := filepath.Abs(repo)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	migrate, err := spawner.Exec(ctx, workspace.Command{
 		Path: "goose",
 		Args: []string{
-			"-dir", filepath.Join(repo, "internal", "store", "migrations"),
+			"-dir", filepath.Join(absRepo, "internal", "store", "migrations"),
 			"postgres", databaseURL, "up",
 		},
-		Dir: repo,
 	})
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	diagnostics := drain(migrate.Stderr)
