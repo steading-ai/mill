@@ -313,8 +313,12 @@ var _ = Describe("mill serve --workflows-root", Label(testsupport.DBLabel), func
 
 		definition, _, err := workflow.Load(quickFix)
 		Expect(err).NotTo(HaveOccurred())
+		// mill-quick-fix also pushed as "quick-fix", scoped to project:mill, so
+		// picking the row by name alone is ambiguous between the two; scoping
+		// the listing to org is what selects the one Load above read.
+		orgOnly := m.run(ctx, "workflow", "list", "--scope", "org")
 		// workflow list prints the version's first 12 hex characters.
-		Expect(rowFor(listed, "quick-fix")).To(ContainSubstring(definition.GetVersion()[:12]),
+		Expect(rowFor(orgOnly, "quick-fix")).To(ContainSubstring(definition.GetVersion()[:12]),
 			"the version listed is the one Load computes from the directory on disk")
 	})
 
