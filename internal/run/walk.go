@@ -112,6 +112,17 @@ func (r *Runner) walk(ctx context.Context, s *state) error {
 			feedback = withFindings(r.findings(s, detail), feedback)
 		}
 
+		// A revise's or a retry's findings go the same way: feedbackFrom is
+		// untouched by the block above, so it alone says whether this pass
+		// already carries something from a real attempt. When it does not,
+		// the ledger is asked instead of leaving a resumed attempt with
+		// nothing (mill#100).
+		if feedbackFrom == "" {
+			derived, from := r.resumedFeedback(s, detail, step.GetName())
+			feedback = withFindings(feedback, derived)
+			feedbackFrom = from
+		}
+
 		outcome, err := r.stepUnderBoundary(ctx, s, step, detail, feedback, feedbackFrom)
 		if err != nil {
 			return err

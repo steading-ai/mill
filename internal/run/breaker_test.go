@@ -241,6 +241,12 @@ var _ = Describe("The circuit breaker", Label(testsupport.DBLabel), func() {
 			Expect(commits[1].GetFeedbackFrom()).To(Equal(checks[0].GetId()),
 				"the revise answers the check's failure")
 			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_PARKED))
+
+			// And the check's own failure carries what it found, not only an
+			// exit: a plain check/skill failure is persisted the same way a
+			// reviewer's revise verdict already was, so a resumed attempt can
+			// recover it from the ledger alone (mill#100).
+			Expect(stepRunDetail(detail, checks[0].GetId()).GetEvidence().GetOutput()).NotTo(BeEmpty())
 		})
 	})
 })

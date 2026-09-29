@@ -465,6 +465,86 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			Eventually(resumed, time.Minute).Should(Receive(BeNil()))
 		})
 
+		It("drains in front of the implement a revise sends work back to", func() {
+			By("given a feature run whose review attempt 1 has just asked for changes")
+			f.pushWorkflowFrom(ctx, featureDir)
+			node := f.node(ctx, "a fix drained before implement's second attempt", "Change the README's first line.")
+			var worker *run.Worker
+			writesPlan := func(harness.Session) {
+				defer GinkgoRecover()
+				Expect(f.workspace.Write(context.Background(), planPath(f.nodeRef),
+					[]byte(planBody(f.runOf(context.Background()).GetId(), f.nodeRef)))).To(Succeed())
+			}
+			f.script(
+				ok("context gathered"),
+				ok("explored the problem"),
+				fake.Script{Terminal: fake.Terminal("planned", nil, usage(10)), Do: writesPlan},
+				fake.Script{Terminal: fake.Terminal("", approves("AC-1", "the plan names its proof"), usage(5))},
+				fake.Script{Terminal: fake.Terminal("the change is made", nil, usage(20)), Do: f.commits},
+				fake.Script{Terminal: fake.Terminal("simplified", nil, usage(10)), Do: f.commits},
+				fake.Script{Terminal: fake.Terminal("committed", nil, usage(5)), Do: f.commits},
+				fake.Script{Terminal: fake.Terminal("opened the pull request", nil, usage(5)), Do: f.commits},
+				fake.Script{Terminal: fake.Terminal("", revises("AC-2", "needs another pass"), usage(5)), Do: func(harness.Session) {
+					// The revise's SupersedeSteps runs as part of processing
+					// this very attempt's outcome, before the worker ever
+					// asks for implement's second attempt — the boundary a
+					// drain here releases in front of (mill#100, mill#94).
+					worker.Drain()
+				}},
+			)
+			worker = f.workerOver(f.runner(quick, func(o *run.Options) {
+				o.Workflow = "feature"
+				o.WorkflowDir = mustAbs(featureDir)
+			}))
+			done := startWorker(ctx, worker)
+
+			By("then the run releases in front of implement's second attempt, which never starts")
+			Eventually(done, time.Minute).Should(Receive(BeNil()))
+
+			reason, detail := f.releasedLease(ctx)
+			Expect(reason).To(Equal("preempted"))
+			Expect(detail).To(Equal("drain"))
+			Expect(f.leaseOf(ctx).GetId()).To(BeEmpty(), "the node is claimable again")
+			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+
+			detailBefore := f.inspect(ctx)
+			for _, name := range []string{"implement", "simplify", "commit", "pr", "review"} {
+				runs := stepRuns(detailBefore, name)
+				Expect(runs).To(HaveLen(1), name+": round 1 only; round 2 is the one a drain releases in front of")
+				Expect(runs[0].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_SUPERSEDED),
+					name+": swept up by the revise the same pass it fired, ahead of the drain")
+			}
+			reviewAttempt1 := stepRuns(detailBefore, "review")[0]
+
+			By("and the next worker resumes at implement with review's finding as its prompt")
+			f.script(
+				fake.Script{Terminal: fake.Terminal("the change is made again", nil, usage(20)), Do: f.commits},
+				fake.Script{Terminal: fake.Terminal("simplified again", nil, usage(10)), Do: f.commits},
+				fake.Script{Terminal: fake.Terminal("committed again", nil, usage(5)), Do: f.commits},
+				fake.Script{Terminal: fake.Terminal("opened the pull request again", nil, usage(5)), Do: f.commits},
+				fake.Script{Terminal: fake.Terminal("", approves("AC-2", "the fix addresses the finding"), usage(5))},
+			)
+			next := f.workerOver(f.runner(quick, func(o *run.Options) {
+				o.Workflow = "feature"
+				o.WorkflowDir = mustAbs(featureDir)
+			}))
+			resumed := startWorker(ctx, next)
+			Eventually(func() skiftv1.Status { return f.statusOf(ctx, node) }, 3*time.Minute, 200*time.Millisecond).
+				Should(Equal(skiftv1.Status_STATUS_DONE))
+			next.Drain()
+			Eventually(resumed, time.Minute).Should(Receive(BeNil()))
+
+			calls := f.harness.Calls()
+			Expect(calls).NotTo(BeEmpty())
+			Expect(calls[0].Prompt.Text).To(ContainSubstring("needs another pass"),
+				"implement's second attempt is asked with review's finding, not nothing")
+
+			implementsAfter := stepRuns(f.inspect(ctx), "implement")
+			Expect(implementsAfter).To(HaveLen(2))
+			Expect(implementsAfter[1].GetFeedbackFrom()).To(Equal(reviewAttempt1.GetId()),
+				"the ledger, not memory, is what named the attempt this round answers")
+		})
+
 		It("lets the run finish normally when the drain lands on its last step, with nothing left to run", func() {
 			By("given a workflow with nothing after pr, the run's last step")
 			workflow := f.variant(ctx, "quick-fix-no-merge", func(definition *millv1.Workflow) {

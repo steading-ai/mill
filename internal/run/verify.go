@@ -384,6 +384,24 @@ func latestClosed(detail *millv1.InspectResponse, step string) *millv1.StepRunDe
 	return found
 }
 
+// latestAttempt is the attempt at a step with the highest attempt number,
+// whatever its status, or nil. Unlike latestClosed, this also returns a
+// superseded or failed row, which is what a resumed revise target or retry
+// needs to look at (mill#100).
+func latestAttempt(detail *millv1.InspectResponse, step string) *millv1.StepRunDetail {
+	var found *millv1.StepRunDetail
+	for _, d := range detail.GetSteps() {
+		sr := d.GetStepRun()
+		if sr.GetStepName() != step {
+			continue
+		}
+		if found == nil || sr.GetAttempt() > found.GetStepRun().GetAttempt() {
+			found = d
+		}
+	}
+	return found
+}
+
 // supersededBefore is the superseded attempt at a step with the highest
 // attempt number below the given one, or nil: the work the reviewer judged
 // last, before the revise reopened the step.

@@ -12,6 +12,7 @@ import (
 
 	harnessv1 "github.com/steading-ai/mill/gen/harness/v1"
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/harness"
 	"github.com/steading-ai/mill/internal/harness/fake"
 	"github.com/steading-ai/mill/internal/run"
 	"github.com/steading-ai/mill/internal/testsupport"
@@ -150,6 +151,75 @@ var _ = Describe("Resume after a run died early", Label(testsupport.DBLabel), fu
 		Expect(calls).NotTo(BeEmpty())
 		Expect(calls[0].Session.ID).To(Equal(first))
 		Expect(calls[0].Verb).To(Equal("resume"))
+		Expect(calls[0].Prompt.Text).NotTo(ContainSubstring("## What the last attempt failed on"),
+			"gather-context is not a revise target and follows no failed attempt: it owes nothing (mill#100)")
+	})
+
+	It("A session aborted mid-turn on a revise target's attempt is resumed with the revise's finding", func() {
+		By("given a feature run whose review attempt 1 has asked for changes, implement's second attempt aborted after the harness had spoken")
+		f.pushWorkflowFrom(ctx, featureDir)
+		writesPlan := func(harness.Session) {
+			defer GinkgoRecover()
+			Expect(f.workspace.Write(context.Background(), planPath(f.nodeRef),
+				[]byte(planBody(f.runOf(context.Background()).GetId(), f.nodeRef)))).To(Succeed())
+		}
+		const interval = time.Second
+		const grace = 5 * time.Second
+		f.script(
+			ok("context gathered"),
+			ok("explored the problem"),
+			fake.Script{Terminal: fake.Terminal("planned", nil, usage(10)), Do: writesPlan},
+			fake.Script{Terminal: fake.Terminal("", approves("AC-1", "the plan names its proof"), usage(5))},
+			fake.Script{Terminal: fake.Terminal("the change is made", nil, usage(20)), Do: f.commits},
+			fake.Script{Terminal: fake.Terminal("simplified", nil, usage(10)), Do: f.commits},
+			fake.Script{Terminal: fake.Terminal("committed", nil, usage(5)), Do: f.commits},
+			fake.Script{Terminal: fake.Terminal("opened the pull request", nil, usage(5)), Do: f.commits},
+			fake.Script{Terminal: fake.Terminal("", revises("AC-2", "needs another pass"), usage(5))},
+			fake.Script{
+				Events:    []*harnessv1.Event{fake.Text("turn-1", "reading the finding")},
+				Hold:      true,
+				Cancelled: fake.Terminal("stopped", nil, nil),
+			},
+		)
+
+		runner := f.runner(func(o *run.Options) {
+			o.Workflow = "feature"
+			o.WorkflowDir = mustAbs(featureDir)
+			o.TTL = 3 * interval
+			o.Interval = interval
+			o.Grace = grace
+		})
+		done := make(chan error, 1)
+		go func() { done <- runner.Execute(ctx, f.nodeRef) }()
+		Eventually(func() int { return len(f.harness.Calls()) }, 30*time.Second, 100*time.Millisecond).
+			Should(BeNumerically(">=", 10), "implement's second attempt, answering the revise, has spoken")
+		Expect(f.cancelRun(ctx)).To(Succeed())
+		Eventually(done, interval+grace).Should(Receive(BeNil()))
+
+		implementSessions := sessionsOf(f.inspect(ctx), "implement")
+		Expect(implementSessions).To(HaveLen(2), "round 1, superseded by the revise, and round 2, aborted mid-turn")
+		aborted := implementSessions[1]
+		Expect(startedSessions(f.inspect(ctx))).To(ContainElement(aborted))
+
+		By("when the run resumes at implement")
+		f.script(
+			fake.Script{Terminal: fake.Terminal("the change is made again", nil, usage(20)), Do: f.commits},
+			fake.Script{Terminal: fake.Terminal("simplified again", nil, usage(10)), Do: f.commits},
+			fake.Script{Terminal: fake.Terminal("committed again", nil, usage(5)), Do: f.commits},
+			fake.Script{Terminal: fake.Terminal("opened the pull request again", nil, usage(5)), Do: f.commits},
+			fake.Script{Terminal: fake.Terminal("", approves("AC-2", "the fix addresses the finding"), usage(5))},
+		)
+		Expect(f.runner(func(o *run.Options) {
+			o.Workflow = "feature"
+			o.WorkflowDir = mustAbs(featureDir)
+		}).Execute(ctx, f.nodeRef)).To(Succeed())
+
+		By("then the harness receives a Resume request for the aborted session, carrying review's finding")
+		calls := f.harness.Calls()
+		Expect(calls).NotTo(BeEmpty())
+		Expect(calls[0].Session.ID).To(Equal(aborted))
+		Expect(calls[0].Verb).To(Equal("resume"))
+		Expect(calls[0].Prompt.Text).To(ContainSubstring("needs another pass"))
 	})
 })
 
