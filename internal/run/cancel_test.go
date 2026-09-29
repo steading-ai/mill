@@ -9,6 +9,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/harness"
 	"github.com/steading-ai/mill/internal/harness/fake"
 	"github.com/steading-ai/mill/internal/run"
 	"github.com/steading-ai/mill/internal/testsupport"
@@ -138,5 +139,74 @@ var _ = Describe("Cancelling a run", Label(testsupport.DBLabel), func() {
 		}))
 		Expect(f.runOf(ctx).GetCancelRequested()).To(BeFalse(),
 			"the flag was cleared when the run was taken over")
+	})
+
+	It("carries a revise's finding across a cancel that lands on the target's next attempt", func() {
+		By("given a feature run whose review attempt 1 has just asked for changes, implement's second attempt in flight")
+		f.pushWorkflowFrom(ctx, featureDir)
+		f.node(ctx, "a fix cancelled mid-answer to a revise", "Change the README's first line.")
+		writesPlan := func(harness.Session) {
+			defer GinkgoRecover()
+			Expect(f.workspace.Write(context.Background(), planPath(f.nodeRef),
+				[]byte(planBody(f.runOf(context.Background()).GetId(), f.nodeRef)))).To(Succeed())
+		}
+		f.script(
+			ok("context gathered"),
+			ok("explored the problem"),
+			fake.Script{Terminal: fake.Terminal("planned", nil, usage(10)), Do: writesPlan},
+			fake.Script{Terminal: fake.Terminal("", approves("AC-1", "the plan names its proof"), usage(5))},
+			fake.Script{Terminal: fake.Terminal("the change is made", nil, usage(20)), Do: f.commits},
+			fake.Script{Terminal: fake.Terminal("simplified", nil, usage(10)), Do: f.commits},
+			fake.Script{Terminal: fake.Terminal("committed", nil, usage(5)), Do: f.commits},
+			fake.Script{Terminal: fake.Terminal("opened the pull request", nil, usage(5)), Do: f.commits},
+			fake.Script{Terminal: fake.Terminal("", revises("AC-2", "needs another pass"), usage(5))},
+			fake.Script{Hold: true, Cancelled: fake.Terminal("stopped", nil, nil)},
+		)
+
+		runner := f.runner(func(o *run.Options) {
+			o.Workflow = "feature"
+			o.WorkflowDir = mustAbs(featureDir)
+			o.TTL = 3 * interval
+			o.Interval = interval
+			o.Grace = grace
+		})
+		done := make(chan error, 1)
+		go func() { done <- runner.Execute(ctx, f.nodeRef) }()
+		Eventually(func() int { return len(f.harness.Calls()) }, 30*time.Second, 100*time.Millisecond).
+			Should(BeNumerically(">=", 10), "implement's second attempt, answering the revise, is in flight")
+
+		By("when cancel_requested is set")
+		Expect(f.cancelRun(ctx)).To(Succeed())
+		Eventually(done, interval+grace).Should(Receive(BeNil()))
+
+		detailBefore := f.inspect(ctx)
+		implementsBefore := stepRuns(detailBefore, "implement")
+		Expect(implementsBefore).To(HaveLen(2), "round 1, superseded by the revise, and round 2, cancelled mid-turn")
+		Expect(implementsBefore[1].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_ABORTED))
+		reviewAttempt1 := stepRuns(detailBefore, "review")[0]
+		Expect(implementsBefore[1].GetFeedbackFrom()).To(Equal(reviewAttempt1.GetId()),
+			"already durable at creation time; feedback_from was never what mill#100 lost")
+
+		By("and the next worker resumes implement with review's finding as its prompt")
+		f.script(
+			fake.Script{Terminal: fake.Terminal("the change is made again", nil, usage(20)), Do: f.commits},
+			fake.Script{Terminal: fake.Terminal("simplified again", nil, usage(10)), Do: f.commits},
+			fake.Script{Terminal: fake.Terminal("committed again", nil, usage(5)), Do: f.commits},
+			fake.Script{Terminal: fake.Terminal("opened the pull request again", nil, usage(5)), Do: f.commits},
+			fake.Script{Terminal: fake.Terminal("", approves("AC-2", "the fix addresses the finding"), usage(5))},
+		)
+		Expect(f.runner(func(o *run.Options) {
+			o.Workflow = "feature"
+			o.WorkflowDir = mustAbs(featureDir)
+		}).Execute(ctx, f.nodeRef)).To(Succeed())
+
+		calls := f.harness.Calls()
+		Expect(calls).NotTo(BeEmpty())
+		Expect(calls[0].Prompt.Text).To(ContainSubstring("needs another pass"),
+			"implement's third attempt is asked with review's finding, not nothing")
+
+		implementsAfter := stepRuns(f.inspect(ctx), "implement")
+		Expect(implementsAfter).To(HaveLen(3))
+		Expect(implementsAfter[2].GetFeedbackFrom()).To(Equal(reviewAttempt1.GetId()))
 	})
 })
