@@ -21,8 +21,7 @@ import (
 // That is a cancellation in every respect but who asked for it and what the
 // event log records, so it is the same mechanism: the heartbeat raises
 // [errShutdown], the step's context is cancelled, the adapter stops the
-// session, and [Runner.shutdownStep] writes the two facts that make the run
-// resumable. "Resume is the crash path" is the whole of the recovery: the
+// session, and [Runner.shutdownStep] writes the facts that make the run resumable. "Resume is the crash path" is the whole of the recovery: the
 // next claim finds a `running` run with an aborted attempt and starts the
 // next attempt at the same step, in the same session.
 
@@ -34,12 +33,18 @@ var errShutdown = errors.New("run: shutting down")
 // shutdownStep leaves the run where the next worker can pick it up.
 //
 // It is called with a context the heartbeat has not cancelled, because these
-// two writes are the point of the shutdown and must land.
+// writes are the point of the shutdown and must land.
 func (r *Runner) shutdownStep(ctx context.Context, s *state) error {
 	if _, err := call(ctx, r.options.Store.AbortOpenStepRuns, &millv1.AbortOpenStepRunsRequest{
 		LeaseId: s.leaseID(),
 		RunId:   s.run.GetId(),
 		Reason:  "shutdown",
+	}); err != nil {
+		return err
+	}
+	if _, err := call(ctx, r.options.Store.ReleaseLease, &millv1.ReleaseLeaseRequest{
+		LeaseId: s.leaseID(),
+		RunId:   s.run.GetId(),
 	}); err != nil {
 		return err
 	}

@@ -1,10 +1,8 @@
 package store_test
 
 import (
-	"errors"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -131,10 +129,11 @@ var _ = Describe("SetLease", Label(testsupport.DBLabel), func() {
 	}, SpecTimeout(time.Minute))
 })
 
-// ReleaseLease is a graceful drain's release (internal/run/shutdown.go's
-// drainStep): the run stays running, holding no lease, so a reclaim or
-// another worker's ClaimNext can pick it up at its next step boundary
-// (docs/ledger.md §Resume). Unlike SetLease it never takes a run over —
+// ReleaseLease is how a worker lets go of a run it is not ending: a graceful
+// drain at a step boundary (internal/run/shutdown.go's drainStep), and a
+// cancel or a shutdown after aborting the open attempt. The run keeps its
+// status, holding no lease, so a reclaim or another worker's ClaimNext can
+// pick it up (docs/ledger.md §Resume). Unlike SetLease it never takes a run over —
 // it only gives one back — so it is fenced like an ordinary write rather
 // than checking [claimableStatuses].
 var _ = Describe("ReleaseLease", Label(testsupport.DBLabel), func() {
@@ -160,23 +159,21 @@ var _ = Describe("ReleaseLease", Label(testsupport.DBLabel), func() {
 		Expect(unchanged.GetLeaseId()).To(Equal(l.lease), "a fenced-out write writes nothing")
 	}, SpecTimeout(time.Minute))
 
-	It("refuses a run that is not running, rather than silently succeeding", func(ctx SpecContext) {
+	It("gives back a selecting run's lease and leaves it selecting, as a cancel during assessment does", func(ctx SpecContext) {
 		l := newLedger(ctx)
-		// l.run leaves a fresh run selecting, still holding l.lease — the
-		// one status a matching lease can reach that is not running,
-		// since every later status (waiting, parked, done...) clears
-		// lease_id on its way out.
+		// l.run leaves a fresh run selecting, still holding l.lease: the
+		// state a cancel or a shutdown finds when it lands during the
+		// assessment step, before a workflow is chosen. The run must give
+		// its lease back there too, or an operator's rerun is refused as
+		// held by a worker that has let go (steading#17, 2026-09-29).
 		run := l.run(ctx, "mill#9")
 		Expect(run.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_SELECTING))
 
-		_, err := l.store.ReleaseLease(ctx, l.lease, run.GetId())
-		Expect(err).To(HaveOccurred())
-		Expect(errors.Is(err, pgx.ErrNoRows)).To(BeTrue(),
-			"the query's own status = 'running' guard is what refuses it")
-
-		unchanged, err := l.store.GetRun(ctx, run.GetId())
+		released, err := l.store.ReleaseLease(ctx, l.lease, run.GetId())
 		Expect(err).NotTo(HaveOccurred())
-		Expect(unchanged.GetLeaseId()).To(Equal(l.lease), "refused, not silently released")
+		Expect(released.GetLeaseId()).To(BeEmpty())
+		Expect(released.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_SELECTING),
+			"§Resume takes a selecting run with no lease exactly as a running one")
 	}, SpecTimeout(time.Minute))
 })
 
