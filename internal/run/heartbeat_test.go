@@ -3,10 +3,9 @@ package run
 // The heartbeat's clean/kill distinction, specified directly: stopping a run
 // gracefully must never look like a kill to the goroutine renewing its
 // lease. Draining is walk()'s own decision at a step boundary and never
-// touches the heartbeat at all (internal/run/walk.go's stepAttempted check),
-// so there is nothing here to specify about it beyond what these cases
-// already show: nothing but stop() or a cancelled context ever reaches
-// stepCtx.Done().
+// touches the heartbeat at all, so there is nothing here to specify about it
+// beyond what these cases already show: nothing but stop() or a cancelled
+// context ever reaches stepCtx.Done().
 //
 // The ticker.C branch that renews the lease and turns a fenced or refused
 // renewal into h.fail(err) is unchanged by this package's clean/kill split
