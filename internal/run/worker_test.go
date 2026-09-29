@@ -526,6 +526,45 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 		})
 	})
 
+	// mill#93: a drain's own in-flight set is this worker's inFlight map
+	// alone (Worker.spawn/InFlight), never the ledger, so a parked run (a
+	// gate answered and waiting for a claim) or a cancelled one (an aborted
+	// attempt, no worker driving it) can neither enter it nor hold it open.
+	Describe("Draining alongside parked and cancelled runs it cannot claim", func() {
+		It("reaches idle at the live step's own boundary, not a timeout the other runs never affect", func() {
+			node := f.node(ctx, "a fix drained beside runs nobody holds", "Change the README's first line.")
+			f.parkedRun(ctx, project+"#910")
+			f.parkedRun(ctx, project+"#911")
+			f.abortedRun(ctx, project+"#912", "somebody-else@host")
+
+			var worker *run.Worker
+			implementDone := fake.Script{
+				Terminal: fake.Terminal("the change is made", nil, usage(20)),
+				Do:       func(harness.Session) { worker.Drain() },
+			}
+			f.script(ok("context gathered"), implementDone)
+			worker = f.workerOver(f.runner(quick))
+			done := startWorker(ctx, worker)
+
+			Eventually(func() millv1.WorkerState { return worker.State() }, 5*time.Second, 20*time.Millisecond).
+				Should(Equal(millv1.WorkerState_WORKER_STATE_IDLE),
+					"the live step's own boundary is what clears inFlight, well inside a drain timeout")
+			Eventually(done, time.Minute).Should(Receive(BeNil()))
+			Expect(f.runOfRef(ctx, node).GetLeaseId()).To(BeEmpty(), "the live run released, not aborted")
+		})
+
+		It("reports idle at once when nothing is held, parked and cancelled runs notwithstanding", func() {
+			f.parkedRun(ctx, project+"#920")
+			f.parkedRun(ctx, project+"#921")
+			f.abortedRun(ctx, project+"#922", "somebody-else@host")
+
+			worker := f.workerOver(f.runner(quick))
+			worker.Drain()
+			Expect(worker.State()).To(Equal(millv1.WorkerState_WORKER_STATE_IDLE),
+				"nothing was ever claimed, so nothing in the ledger is this worker's to wait on")
+		})
+	})
+
 	Describe("Losing a run", func() {
 		It("skips a node it was fenced out of and goes back to claiming", func() {
 			taken := f.node(ctx, "a node taken by somebody else", "Change the README's first line.")

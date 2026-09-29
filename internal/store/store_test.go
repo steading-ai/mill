@@ -516,6 +516,42 @@ var _ = Describe("The reads the CLI needs", Label(testsupport.DBLabel), func() {
 		Expect(summaries).To(BeEmpty())
 	}, SpecTimeout(time.Minute))
 
+	// mill#93: a drain waits on held runs alone, so Status must say which
+	// ones those are from ledger columns alone, with no call to skift.
+	It("Status marks held true only while a lease is set and the last attempt did not abort", func(ctx SpecContext) {
+		l := newLedger(ctx)
+
+		running, _ := l.runWithWorkflow(ctx, "mill#931")
+
+		parked, _ := l.runWithWorkflow(ctx, "mill#932")
+		_, err := l.store.Park(ctx, l.lease, parked.GetId(), "gate-1", millv1.ParkedReason_PARKED_REASON_RETRIES)
+		Expect(err).NotTo(HaveOccurred())
+
+		// The stalled-state gap this node does not fix (mill#93's Notes): a
+		// cancelled run's lease_id is left as it was, so held's own answer
+		// must come from last_step_status, not the lease alone.
+		cancelled, _ := l.runWithWorkflow(ctx, "mill#933")
+		l.start(ctx, cancelled.GetId(), "implement")
+		_, err = l.store.AbortOpenStepRuns(ctx, l.lease, cancelled.GetId(), "shutdown")
+		Expect(err).NotTo(HaveOccurred())
+
+		released, _ := l.runWithWorkflow(ctx, "mill#934")
+		l.start(ctx, released.GetId(), "implement")
+		_, err = l.store.ReleaseLease(ctx, l.lease, released.GetId())
+		Expect(err).NotTo(HaveOccurred())
+
+		summaries, _, err := l.store.Status(ctx, nil, "mill")
+		Expect(err).NotTo(HaveOccurred())
+		held := make(map[string]bool, len(summaries))
+		for _, s := range summaries {
+			held[s.GetRun().GetNodeRef()] = s.GetHeld()
+		}
+		Expect(held[running.GetNodeRef()]).To(BeTrue(), "a plain running run holds its lease")
+		Expect(held[parked.GetNodeRef()]).To(BeFalse(), "Park clears the lease")
+		Expect(held[cancelled.GetNodeRef()]).To(BeFalse(), "the last attempt aborted; no worker is driving it")
+		Expect(held[released.GetNodeRef()]).To(BeFalse(), "a drain released the lease at the boundary")
+	}, SpecTimeout(time.Minute))
+
 	It("lists the workflows that decode and names the row that does not", func(ctx SpecContext) {
 		l := newLedger(ctx)
 		good := l.workflow(ctx)

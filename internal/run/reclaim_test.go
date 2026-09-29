@@ -223,3 +223,45 @@ func (f *fixture) drainedRun(ctx context.Context, nodeRef, workerRef string) dra
 	Expect(err).NotTo(HaveOccurred())
 	return drainedRunResult{runID: runID, stepRunID: stepRunID}
 }
+
+// parkedRun opens a run under a worker ref of its own — always a different
+// one than the fixture's own worker, since a parked run is by definition
+// nobody's active claim — closes one step, and trips the circuit breaker on
+// it: the shape breaker.go's park leaves a run in — status `parked`,
+// lease_id cleared, a gate node set — waiting for whatever answers its gate
+// to hand it back to the claim loop, not to this worker.
+func (f *fixture) parkedRun(ctx context.Context, nodeRef string) {
+	GinkgoHelper()
+	const workerRef = "somebody-else@host"
+	lease := "spec-lease-" + nodeRef
+	created, err := f.store.CreateRun(ctx, connect.NewRequest(&millv1.CreateRunRequest{
+		LeaseId: lease, NodeId: "spec-node-" + nodeRef, NodeRef: nodeRef, ContextId: "spec-ctx",
+		WorkerRef: workerRef, Branch: "mill/" + nodeRef,
+	}))
+	Expect(err).NotTo(HaveOccurred())
+	runID := created.Msg.GetRun().GetId()
+	// SetLease is the store's own way to move a fresh run from `selecting` to
+	// `running`, same as drainedRun's — Park only admits a running run.
+	_, err = f.store.SetLease(ctx, connect.NewRequest(&millv1.SetLeaseRequest{
+		LeaseId: lease, RunId: runID, WorkerRef: workerRef,
+	}))
+	Expect(err).NotTo(HaveOccurred())
+	started, err := f.store.StartStepRun(ctx, connect.NewRequest(&millv1.StartStepRunRequest{
+		LeaseId: lease, RunId: runID, StepName: "implement",
+		Kind: millv1.StepKind_STEP_KIND_SKILL, WorkerRef: workerRef,
+	}))
+	Expect(err).NotTo(HaveOccurred())
+	_, err = f.store.CloseStepRun(ctx, connect.NewRequest(&millv1.CloseStepRunRequest{
+		LeaseId: lease, StepRunId: started.Msg.GetStepRun().GetId(),
+		Evidence: &millv1.Evidence{
+			Kind:  millv1.EvidenceKind_EVIDENCE_KIND_COMMIT,
+			Value: &millv1.Evidence_Commit{Commit: strings.Repeat("a", 40)},
+		},
+	}))
+	Expect(err).NotTo(HaveOccurred())
+	_, err = f.store.Park(ctx, connect.NewRequest(&millv1.ParkRequest{
+		LeaseId: lease, RunId: runID, GateNodeId: "spec-gate-" + nodeRef,
+		Reason: millv1.ParkedReason_PARKED_REASON_RETRIES,
+	}))
+	Expect(err).NotTo(HaveOccurred())
+}

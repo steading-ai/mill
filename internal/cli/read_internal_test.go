@@ -108,6 +108,31 @@ var _ = Describe("The read tools' view of the machine", Label("unit"), func() {
 	})
 })
 
+var _ = Describe("mill status's held summary line", Label("unit"), func() {
+	// Scenario: the line counts held apart from parked or unowned
+	//   Given a listing mixing runs a worker holds with ones it does not
+	//   When mill status renders the summary line
+	//   Then it counts the two apart, not just the row total
+	It("counts held apart from parked or unowned", func() {
+		By("given a listing mixing runs a worker holds with ones it does not")
+		runs := []*millv1.RunSummary{
+			{Run: &millv1.Run{Id: "01JHELD1", NodeRef: "mill#80"}, Held: true},
+			{Run: &millv1.Run{Id: "01JHELD2", NodeRef: "mill#81"}, Held: true},
+			{Run: &millv1.Run{Id: "01JPARK1", NodeRef: "mill#82"}, Held: false},
+		}
+
+		By("when mill status renders the summary line")
+		line := heldSummaryLine(runs)
+
+		By("then it counts the two apart, not just the row total")
+		Expect(line).To(Equal("2 held, 1 parked or unowned"))
+	})
+
+	It("reads 0 held for an empty listing", func() {
+		Expect(heldSummaryLine(nil)).To(Equal("0 held, 0 parked or unowned"))
+	})
+})
+
 // rowOf is the line of a table that starts with the given cell.
 func rowOf(table, first string) string {
 	for _, line := range bytes.Split([]byte(table), []byte("\n")) {

@@ -93,11 +93,20 @@ $ mill status
 worker claims from: every project
 NODE       STATUS   STEP       ATTEMPT  ELAPSED  TOKENS       USD    GATE
 millcli#1  running  implement  1        0s       184213/9820  $1.06  -
+1 held, 0 parked or unowned
 ```
 
 `TOKENS` is input/output, summed over models. `USD` is the rate table `cost`
 prices with (§cost, `docs/ledger.md` §usage) applied to the same totals —
 `-` for a model the table names no rate for.
+
+The line below the table counts runs a worker can confirm it is actually
+driving right now (a lease held on a `selecting` or `running` row whose
+latest attempt did not abort) apart from every other listed run — parked,
+waiting, or one whose last attempt was cancelled. It cannot rule out the one
+case ledger columns alone never can: a lease a dead worker never released
+and skift has not yet expired: for a guaranteed answer before a deploy, use
+`mill drain --wait`, not this count.
 
 `MACHINE` is the machine a run on the `machine` backend runs in, as the
 ledger's workspace row names it (`ledger.md` §workspaces); `-` for a local

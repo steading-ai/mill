@@ -4014,7 +4014,17 @@ type RunSummary struct {
 	// domain model's round derivation for a row so the two do not drift
 	// (docs/ledger.md §"Queries the CLI needs"). 1 for a run that has never
 	// been sent back.
-	Rounds        int64 `protobuf:"varint,9,opt,name=rounds,proto3" json:"rounds,omitempty"`
+	Rounds int64 `protobuf:"varint,9,opt,name=rounds,proto3" json:"rounds,omitempty"`
+	// Whether a lease is currently held on this run and its last attempt did
+	// not abort: selecting or running, with a lease_id set, and last_step_status
+	// not aborted (mill#93). False for a parked run, a run waiting on a gate,
+	// a run a drain released at its boundary, and a cancelled run with no
+	// worker driving it — none of these can reach a step boundary on their
+	// own, so a drain does not wait on them. A lease a dead worker never
+	// released and skift has not yet expired still reads true here: only
+	// skift, not the ledger, judges a lease's liveness, so `mill drain --wait`
+	// remains the precise answer for that case and this field is not.
+	Held          bool `protobuf:"varint,10,opt,name=held,proto3" json:"held,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4110,6 +4120,13 @@ func (x *RunSummary) GetRounds() int64 {
 		return x.Rounds
 	}
 	return 0
+}
+
+func (x *RunSummary) GetHeld() bool {
+	if x != nil {
+		return x.Held
+	}
+	return false
 }
 
 // StepRunDetail is one attempt with everything hanging off it, which is what
@@ -6363,7 +6380,7 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"\x12cache_write_tokens\x18\x05 \x01(\x03R\x10cacheWriteTokens\x12,\n" +
 	"\x06source\x18\x06 \x01(\x0e2\x14.mill.v1.UsageSourceR\x06source\x12\x10\n" +
 	"\x03usd\x18\a \x01(\x01R\x03usd\x12\x16\n" +
-	"\x06priced\x18\b \x01(\bR\x06priced\"\xe7\x02\n" +
+	"\x06priced\x18\b \x01(\bR\x06priced\"\xfb\x02\n" +
 	"\n" +
 	"RunSummary\x12\x1e\n" +
 	"\x03run\x18\x01 \x01(\v2\f.mill.v1.RunR\x03run\x12!\n" +
@@ -6374,7 +6391,9 @@ const file_mill_v1_mill_proto_rawDesc = "" +
 	"\tworkspace\x18\x06 \x01(\v2\x12.mill.v1.WorkspaceR\tworkspace\x12\x1b\n" +
 	"\tlast_step\x18\a \x01(\tR\blastStep\x12@\n" +
 	"\x10last_step_status\x18\b \x01(\x0e2\x16.mill.v1.StepRunStatusR\x0elastStepStatus\x12\x16\n" +
-	"\x06rounds\x18\t \x01(\x03R\x06rounds\"\xa2\x02\n" +
+	"\x06rounds\x18\t \x01(\x03R\x06rounds\x12\x12\n" +
+	"\x04held\x18\n" +
+	" \x01(\bR\x04held\"\xa2\x02\n" +
 	"\rStepRunDetail\x12+\n" +
 	"\bstep_run\x18\x01 \x01(\v2\x10.mill.v1.StepRunR\astepRun\x12-\n" +
 	"\bevidence\x18\x02 \x01(\v2\x11.mill.v1.EvidenceR\bevidence\x12*\n" +
