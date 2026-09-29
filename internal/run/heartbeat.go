@@ -150,20 +150,25 @@ func (r *Runner) reclaim(ctx context.Context, s *state) error {
 // with a fenced error, which is exactly the outcome wanted — that worker's
 // row is left untouched (Invariant 9).
 func (r *Runner) reclaimFailedStep(ctx context.Context, s *state) error {
-	if _, err := call(ctx, r.options.Store.AbortOpenStepRuns, &millv1.AbortOpenStepRunsRequest{
+	tolerateFenced := func(err error) error {
+		if err != nil && !isFenced(err) {
+			return err
+		}
+		return nil
+	}
+	_, err := call(ctx, r.options.Store.AbortOpenStepRuns, &millv1.AbortOpenStepRunsRequest{
 		LeaseId: s.leaseID(),
 		RunId:   s.run.GetId(),
 		Reason:  "fenced",
-	}); err != nil && !isFenced(err) {
+	})
+	if err := tolerateFenced(err); err != nil {
 		return err
 	}
-	if _, err := call(ctx, r.options.Store.ReleaseLease, &millv1.ReleaseLeaseRequest{
+	_, err = call(ctx, r.options.Store.ReleaseLease, &millv1.ReleaseLeaseRequest{
 		LeaseId: s.leaseID(),
 		RunId:   s.run.GetId(),
-	}); err != nil && !isFenced(err) {
-		return err
-	}
-	return nil
+	})
+	return tolerateFenced(err)
 }
 
 // fail records why the heartbeat stopped and cancels the step.

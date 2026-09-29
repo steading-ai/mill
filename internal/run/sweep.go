@@ -165,28 +165,27 @@ func (r *Runner) sweepOne(ctx context.Context, report *machine.Report, summary *
 }
 
 // sweepOpenUnclaimed gives back the lease of a live run whose node skift
-// shows open with nobody holding it: the worker that had it is gone
-// entirely, with no heartbeat left to fail and fence it.
+// shows open with nobody holding it (FindingStopped's doc has why).
 func (r *Runner) sweepOpenUnclaimed(ctx context.Context, report *machine.Report, summary *millv1.RunSummary, run *millv1.Run) {
+	fail := func(err error) {
+		report.Findings = append(report.Findings, machine.Finding{
+			Kind: machine.FindingFailure, Name: run.GetId(),
+			Detail: fmt.Sprintf("stopping %s: %v", run.GetNodeRef(), err),
+		})
+	}
 	if _, err := call(ctx, r.options.Store.AbortOpenStepRuns, &millv1.AbortOpenStepRunsRequest{
 		LeaseId: run.GetLeaseId(),
 		RunId:   run.GetId(),
 		Reason:  "node open with no lease held",
 	}); err != nil {
-		report.Findings = append(report.Findings, machine.Finding{
-			Kind: machine.FindingFailure, Name: run.GetId(),
-			Detail: fmt.Sprintf("stopping %s: %v", run.GetNodeRef(), err),
-		})
+		fail(err)
 		return
 	}
 	if _, err := call(ctx, r.options.Store.ReleaseLease, &millv1.ReleaseLeaseRequest{
 		LeaseId: run.GetLeaseId(),
 		RunId:   run.GetId(),
 	}); err != nil {
-		report.Findings = append(report.Findings, machine.Finding{
-			Kind: machine.FindingFailure, Name: run.GetId(),
-			Detail: fmt.Sprintf("stopping %s: %v", run.GetNodeRef(), err),
-		})
+		fail(err)
 		return
 	}
 	report.Findings = append(report.Findings, machine.Finding{
