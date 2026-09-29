@@ -147,6 +147,26 @@ func (s *stub) onMerge(head string) {
 	}
 }
 
+// branchCatchUp is the branch-read handler both onPushedBranch and
+// onBranchCatchUp answer with: 404 for the first hidden reads, then 200 at
+// head; a negative hidden never converges. seen, if not nil, is set once the
+// branch becomes visible, for a caller with a second handler gated on it.
+func branchCatchUp(name, head string, hidden int, seen *atomic.Bool) func(http.ResponseWriter, []byte) {
+	var reads atomic.Int64
+	return func(w http.ResponseWriter, _ []byte) {
+		if hidden >= 0 && reads.Add(1) > int64(hidden) {
+			if seen != nil {
+				seen.Store(true)
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"name":"` + name + `","commit":{"sha":"` + head + `"}}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"Branch not found"}`))
+	}
+}
+
 // onPushedBranch stands the stub in for a GitHub catching up with a push.
 // The branch reads 404 for the first hidden reads and then exists at head;
 // a negative hidden is a push that never landed. A pull request opened
@@ -155,21 +175,10 @@ func (s *stub) onPushedBranch(name, head string, hidden int, fixture string) {
 	GinkgoHelper()
 	created, err := os.ReadFile(filepath.Join("testdata", fixture))
 	Expect(err).NotTo(HaveOccurred())
-	var reads atomic.Int64
 	var visible atomic.Bool
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.handlers[http.MethodGet+" "+repoAPI+"/branches/"+url.PathEscape(name)] =
-		func(w http.ResponseWriter, _ []byte) {
-			if hidden >= 0 && reads.Add(1) > int64(hidden) {
-				visible.Store(true)
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(`{"name":"` + name + `","commit":{"sha":"` + head + `"}}`))
-				return
-			}
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"message":"Branch not found"}`))
-		}
+	s.handlers[http.MethodGet+" "+repoAPI+"/branches/"+url.PathEscape(name)] = branchCatchUp(name, head, hidden, &visible)
 	s.handlers[http.MethodPost+" "+repoAPI+"/pulls"] = func(w http.ResponseWriter, _ []byte) {
 		if !visible.Load() {
 			w.WriteHeader(http.StatusUnprocessableEntity)
@@ -179,6 +188,17 @@ func (s *stub) onPushedBranch(name, head string, hidden int, fixture string) {
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write(created)
 	}
+}
+
+// onBranchCatchUp stands the stub in for GitHub still catching up with an
+// existing pull request's branch. Unlike onPushedBranch, nothing here opens
+// a pull request — this is the reuse path, which only waits and re-reads
+// one already found.
+func (s *stub) onBranchCatchUp(name, head string, hidden int) {
+	GinkgoHelper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.handlers[http.MethodGet+" "+repoAPI+"/branches/"+url.PathEscape(name)] = branchCatchUp(name, head, hidden, nil)
 }
 
 // onMergeableStates answers repeated reads of one pull request with a

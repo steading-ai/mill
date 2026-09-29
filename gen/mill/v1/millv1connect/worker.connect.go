@@ -44,6 +44,9 @@ const (
 	WorkerServiceClaimsProcedure = "/mill.v1.WorkerService/Claims"
 	// WorkerServiceDrainProcedure is the fully-qualified name of the WorkerService's Drain RPC.
 	WorkerServiceDrainProcedure = "/mill.v1.WorkerService/Drain"
+	// WorkerServiceRetireBranchProcedure is the fully-qualified name of the WorkerService's
+	// RetireBranch RPC.
+	WorkerServiceRetireBranchProcedure = "/mill.v1.WorkerService/RetireBranch"
 )
 
 // WorkerServiceClient is a client for the mill.v1.WorkerService service.
@@ -60,6 +63,12 @@ type WorkerServiceClient interface {
 	// locally. It returns at once; the caller polls Probe's state to learn
 	// when the worker has actually gone idle.
 	Drain(context.Context, *connect.Request[v1.DrainRequest]) (*connect.Response[v1.DrainResponse], error)
+	// RetireBranch closes a pull request and deletes its branch through the
+	// worker's own forge credential, the same one `mill run` already
+	// delivers with — a restarted-from shell usually holds none of its own
+	// (docs/architecture.md §"Identity and credentials"), so `mill restart`
+	// calls this instead of resolving a credential in its own process.
+	RetireBranch(context.Context, *connect.Request[v1.RetireBranchRequest]) (*connect.Response[v1.RetireBranchResponse], error)
 }
 
 // NewWorkerServiceClient constructs a client for the mill.v1.WorkerService service. By default, it
@@ -91,14 +100,21 @@ func NewWorkerServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(workerServiceMethods.ByName("Drain")),
 			connect.WithClientOptions(opts...),
 		),
+		retireBranch: connect.NewClient[v1.RetireBranchRequest, v1.RetireBranchResponse](
+			httpClient,
+			baseURL+WorkerServiceRetireBranchProcedure,
+			connect.WithSchema(workerServiceMethods.ByName("RetireBranch")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // workerServiceClient implements WorkerServiceClient.
 type workerServiceClient struct {
-	probe  *connect.Client[v1.ProbeRequest, v1.ProbeResponse]
-	claims *connect.Client[v1.ClaimsRequest, v1.ClaimsResponse]
-	drain  *connect.Client[v1.DrainRequest, v1.DrainResponse]
+	probe        *connect.Client[v1.ProbeRequest, v1.ProbeResponse]
+	claims       *connect.Client[v1.ClaimsRequest, v1.ClaimsResponse]
+	drain        *connect.Client[v1.DrainRequest, v1.DrainResponse]
+	retireBranch *connect.Client[v1.RetireBranchRequest, v1.RetireBranchResponse]
 }
 
 // Probe calls mill.v1.WorkerService.Probe.
@@ -116,6 +132,11 @@ func (c *workerServiceClient) Drain(ctx context.Context, req *connect.Request[v1
 	return c.drain.CallUnary(ctx, req)
 }
 
+// RetireBranch calls mill.v1.WorkerService.RetireBranch.
+func (c *workerServiceClient) RetireBranch(ctx context.Context, req *connect.Request[v1.RetireBranchRequest]) (*connect.Response[v1.RetireBranchResponse], error) {
+	return c.retireBranch.CallUnary(ctx, req)
+}
+
 // WorkerServiceHandler is an implementation of the mill.v1.WorkerService service.
 type WorkerServiceHandler interface {
 	// Probe answers the sidecar, signing, and forge probes from the worker's
@@ -130,6 +151,12 @@ type WorkerServiceHandler interface {
 	// locally. It returns at once; the caller polls Probe's state to learn
 	// when the worker has actually gone idle.
 	Drain(context.Context, *connect.Request[v1.DrainRequest]) (*connect.Response[v1.DrainResponse], error)
+	// RetireBranch closes a pull request and deletes its branch through the
+	// worker's own forge credential, the same one `mill run` already
+	// delivers with — a restarted-from shell usually holds none of its own
+	// (docs/architecture.md §"Identity and credentials"), so `mill restart`
+	// calls this instead of resolving a credential in its own process.
+	RetireBranch(context.Context, *connect.Request[v1.RetireBranchRequest]) (*connect.Response[v1.RetireBranchResponse], error)
 }
 
 // NewWorkerServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -157,6 +184,12 @@ func NewWorkerServiceHandler(svc WorkerServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(workerServiceMethods.ByName("Drain")),
 		connect.WithHandlerOptions(opts...),
 	)
+	workerServiceRetireBranchHandler := connect.NewUnaryHandler(
+		WorkerServiceRetireBranchProcedure,
+		svc.RetireBranch,
+		connect.WithSchema(workerServiceMethods.ByName("RetireBranch")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/mill.v1.WorkerService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case WorkerServiceProbeProcedure:
@@ -165,6 +198,8 @@ func NewWorkerServiceHandler(svc WorkerServiceHandler, opts ...connect.HandlerOp
 			workerServiceClaimsHandler.ServeHTTP(w, r)
 		case WorkerServiceDrainProcedure:
 			workerServiceDrainHandler.ServeHTTP(w, r)
+		case WorkerServiceRetireBranchProcedure:
+			workerServiceRetireBranchHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -184,4 +219,8 @@ func (UnimplementedWorkerServiceHandler) Claims(context.Context, *connect.Reques
 
 func (UnimplementedWorkerServiceHandler) Drain(context.Context, *connect.Request[v1.DrainRequest]) (*connect.Response[v1.DrainResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.WorkerService.Drain is not implemented"))
+}
+
+func (UnimplementedWorkerServiceHandler) RetireBranch(context.Context, *connect.Request[v1.RetireBranchRequest]) (*connect.Response[v1.RetireBranchResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("mill.v1.WorkerService.RetireBranch is not implemented"))
 }

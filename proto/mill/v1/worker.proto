@@ -37,6 +37,12 @@ service WorkerService {
   // locally. It returns at once; the caller polls Probe's state to learn
   // when the worker has actually gone idle.
   rpc Drain(DrainRequest) returns (DrainResponse);
+  // RetireBranch closes a pull request and deletes its branch through the
+  // worker's own forge credential, the same one `mill run` already
+  // delivers with — a restarted-from shell usually holds none of its own
+  // (docs/architecture.md §"Identity and credentials"), so `mill restart`
+  // calls this instead of resolving a credential in its own process.
+  rpc RetireBranch(RetireBranchRequest) returns (RetireBranchResponse);
 }
 
 // ProbeRequest asks the worker to run its own local-only probes. It takes
@@ -145,3 +151,20 @@ message DrainRequest {
 // DrainResponse is empty: Drain is fire-and-forget, and the caller polls
 // Probe to learn when the worker has actually gone idle.
 message DrainResponse {}
+
+// RetireBranchRequest names the branch a restart has ended, and the project
+// it lives in, since a worker may claim from more than one.
+message RetireBranchRequest {
+  // The skift project the branch's repository belongs to.
+  string project = 1;
+  // The branch to close and delete.
+  string branch = 2;
+  // The comment left on the pull request when it is closed, if one is open.
+  string comment = 3;
+}
+
+// RetireBranchResponse carries the pull request that was closed, if any.
+message RetireBranchResponse {
+  // The closed pull request's URL, or empty when the branch had none open.
+  string pull_request_url = 1;
+}

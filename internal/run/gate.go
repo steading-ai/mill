@@ -80,6 +80,13 @@ func (r *Runner) runGate(ctx context.Context, s *state, step *millv1.Step, sr *m
 // step closes on directly: a merge already read the forge's checks — or
 // found nothing left to read, the pull request already merged — and the
 // generic post-execute verification must not ask a second time (mill#62).
+//
+// The pull request the forge answers is checked against this run's own head
+// before anything below acts on it: a `pr` step earlier in the same run
+// already refuses a foreign head (execute.go's pullRequest), but a run
+// restarted between `pr` and here can still find the branch reused by
+// another generation by the time it reaches the gate (steading#17), and a
+// merge must not catch that generation's pull request up or merge it.
 func (r *Runner) approve(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun, detail *millv1.InspectResponse) (string, *evidence.Evidence, error) {
 	if step.GetEvidence() != millv1.EvidenceKind_EVIDENCE_KIND_STATUS {
 		return "", nil, nil
@@ -87,6 +94,13 @@ func (r *Runner) approve(ctx context.Context, s *state, step *millv1.Step, sr *m
 	f := s.repo.Forge
 	pr, err := f.PR(ctx, s.run.GetBranch())
 	if err != nil {
+		return "", nil, err
+	}
+	head, err := r.head(ctx, s)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := checkForeignHead(s.run.GetBranch(), head, pr.HeadSHA); err != nil {
 		return "", nil, err
 	}
 	var verified *evidence.Evidence

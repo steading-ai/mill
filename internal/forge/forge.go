@@ -356,6 +356,30 @@ type Forge interface {
 	DeleteBranch(ctx context.Context, branch string) error
 }
 
+// Retire takes a branch that has ended off the forge: the pull request on it
+// closed with comment if one is open, then the branch deleted. `mill
+// restart`'s CLI process and `WorkerService.RetireBranch` both run this same
+// sequence — the CLI through the worker's RPC when it holds no credential of
+// its own, the worker directly — so there is exactly one implementation of
+// what "closed" means.
+func Retire(ctx context.Context, f Forge, branch, comment string) (prURL string, err error) {
+	pr, err := f.PR(ctx, branch)
+	switch {
+	case errors.Is(err, ErrNoPullRequest):
+	case err != nil:
+		return "", err
+	default:
+		if err := f.ClosePR(ctx, pr, comment); err != nil {
+			return "", err
+		}
+		prURL = pr.URL
+	}
+	if err := f.DeleteBranch(ctx, branch); err != nil {
+		return "", err
+	}
+	return prURL, nil
+}
+
 // Account is who a forge says a credential belongs to, for `mill doctor`.
 type Account struct {
 	// Login is the account's name on the forge.

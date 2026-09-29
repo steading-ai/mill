@@ -72,6 +72,12 @@ type WorkerServiceConfig struct {
 	// exists to keep this config constructible with its zero value in tests,
 	// not because production ever leaves one of the four unset while running.
 	Store WorkerStore
+	// RetireBranch closes the named project's pull request on branch, if one
+	// is open, and deletes the branch — resolved fresh, from this process's
+	// own settings, the same way Forge is. Nil means no worker runs in this
+	// process; RetireBranch answers CodeFailedPrecondition, the same as
+	// Drain's nil check.
+	RetireBranch func(ctx context.Context, project, branch, comment string) (string, error)
 }
 
 // WorkerService answers WorkerService.Probe from this process's own worker
@@ -209,4 +215,19 @@ func (s *WorkerService) Claims(_ context.Context, _ *connect.Request[millv1.Clai
 		Projects: s.cfg.Projects,
 		Labels:   s.cfg.Labels,
 	}), nil
+}
+
+// RetireBranch closes the named project's pull request on the given branch,
+// if one is open, and deletes the branch, through this process's own forge
+// credential — the credential a restarted-from shell usually does not have
+// (docs/architecture.md §"Identity and credentials").
+func (s *WorkerService) RetireBranch(ctx context.Context, req *connect.Request[millv1.RetireBranchRequest]) (*connect.Response[millv1.RetireBranchResponse], error) {
+	if s.cfg.RetireBranch == nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("no worker runs in this process"))
+	}
+	prURL, err := s.cfg.RetireBranch(ctx, req.Msg.GetProject(), req.Msg.GetBranch(), req.Msg.GetComment())
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(&millv1.RetireBranchResponse{PullRequestUrl: prURL}), nil
 }

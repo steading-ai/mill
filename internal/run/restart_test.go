@@ -3,6 +3,7 @@ package run_test
 import (
 	"bytes"
 	"context"
+	"errors"
 
 	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
@@ -63,7 +64,29 @@ var _ = Describe("Restart", Label(testsupport.DBLabel), func() {
 		Expect(next.GetGeneration()).To(Equal(int64(2)))
 		Expect(f.runOf(ctx).GetId()).To(Equal(next.GetId()))
 		Expect(out.String()).To(ContainSubstring("finishing its restart"))
-		Expect(f.forge.closingComments()).To(BeEmpty(), "nothing is closed twice")
+
+		By("and the forge cleanup the first attempt never reached now runs")
+		Expect(f.forge.closingComments()).To(HaveLen(1))
+		Expect(f.forge.branchesDeleted()).To(ContainElement(first.GetBranch()))
+	})
+
+	// Scenario: A restart whose forge cleanup still fails reports the
+	// failure and leaves nothing new behind
+	It("A restart whose forge cleanup still fails reports the failure and leaves nothing new behind", func() {
+		By("given a node whose generation 1 is abandoned and nothing replaced it")
+		first := parkedAtImplement()
+		abandonedByHand(first)
+
+		By("when mill restart is invoked and the forge still refuses to delete the branch")
+		f.forge.deleteBranchErr = errors.New("the forge refused")
+		_, err := f.runner().Restart(ctx, f.nodeRef, "restart")
+
+		By("then the restart fails naming the abandoned generation and the cause")
+		Expect(err).To(MatchError(ContainSubstring("generation 1")))
+		Expect(err).To(MatchError(ContainSubstring("the forge refused")))
+
+		By("and no generation 2 was created")
+		Expect(f.runOf(ctx)).To(BeNil())
 	})
 
 	// Scenario: A claim on a node whose run was abandoned opens the next generation

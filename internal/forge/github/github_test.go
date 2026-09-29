@@ -149,6 +149,37 @@ var _ = Describe("The GitHub forge adapter", Label("unit"), func() {
 			Expect(api.count(http.MethodPost, repoAPI+"/pulls")).To(Equal(1))
 		})
 
+		It("OpenPR waits for an existing pull request's branch to reach the requested head before reusing it", func(ctx context.Context) {
+			api.on(http.MethodGet, repoAPI, http.StatusOK, "repository.json")
+			api.on(http.MethodGet, repoAPI+"/pulls", http.StatusOK, "pulls_open.json")
+			api.onBranchCatchUp(branch, head, 2)
+			quick := github.New(api.repo(), api.minter(),
+				github.WithHTTPClient(api.httpClient()), github.WithBranchWait(2*time.Second, 10*time.Millisecond))
+
+			pr, err := quick.OpenPR(ctx, forge.OpenPRRequest{Branch: branch, Head: head, Title: "mill#13"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pr.Number).To(Equal(7))
+			Expect(api.count(http.MethodGet, repoAPI+"/branches/")).To(Equal(3), "two misses, then the branch")
+			Expect(api.count(http.MethodGet, repoAPI+"/pulls")).To(Equal(2), "looked up, then re-read once caught up")
+			Expect(api.count(http.MethodPost, repoAPI+"/pulls")).To(BeZero(), "an existing pull request is reused, not recreated")
+		})
+
+		It("OpenPR does not reuse a pull request whose branch never reaches the requested head", func(ctx context.Context) {
+			api.on(http.MethodGet, repoAPI, http.StatusOK, "repository.json")
+			api.on(http.MethodGet, repoAPI+"/pulls", http.StatusOK, "pulls_open.json")
+			api.onBranchCatchUp(branch, head, -1)
+			quick := github.New(api.repo(), api.minter(),
+				github.WithHTTPClient(api.httpClient()), github.WithBranchWait(50*time.Millisecond, 10*time.Millisecond))
+
+			_, err := quick.OpenPR(ctx, forge.OpenPRRequest{Branch: branch, Head: head})
+
+			var missing *forge.BranchMissingError
+			Expect(errors.As(err, &missing)).To(BeTrue(), "%v", err)
+			Expect(missing.Branch).To(Equal(branch))
+			Expect(missing.Head).To(Equal(head))
+			Expect(api.count(http.MethodGet, repoAPI+"/pulls")).To(Equal(1), "the stale pull request is never trusted")
+		})
+
 		It("A push that never landed is a named failure", func(ctx context.Context) {
 			api.on(http.MethodGet, repoAPI, http.StatusOK, "repository.json")
 			api.on(http.MethodGet, repoAPI+"/pulls", http.StatusOK, "pulls_empty.json")

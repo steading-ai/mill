@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"time"
@@ -144,5 +145,37 @@ var _ = Describe("WorkerService", Label("unit"), func() {
 
 		_, err := client.Claims(ctx, connect.NewRequest(&millv1.ClaimsRequest{}))
 		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnimplemented))
+	})
+
+	It("RetireBranch closes the pull request and deletes the branch", func(ctx SpecContext) {
+		var gotProject, gotBranch, gotComment string
+		ts := httptest.NewServer(workerMux(server.NewWorkerService(server.WorkerServiceConfig{
+			RetireBranch: func(_ context.Context, project, branch, comment string) (string, error) {
+				gotProject, gotBranch, gotComment = project, branch, comment
+				return "https://example.test/pr/1", nil
+			},
+		})))
+		DeferCleanup(ts.Close)
+		client := millv1connect.NewWorkerServiceClient(ts.Client(), ts.URL)
+
+		res, err := client.RetireBranch(ctx, connect.NewRequest(&millv1.RetireBranchRequest{
+			Project: "mill",
+			Branch:  "mill/mill-92",
+			Comment: "superseded",
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.Msg.GetPullRequestUrl()).To(Equal("https://example.test/pr/1"))
+		Expect(gotProject).To(Equal("mill"))
+		Expect(gotBranch).To(Equal("mill/mill-92"))
+		Expect(gotComment).To(Equal("superseded"))
+	})
+
+	It("RetireBranch answers no worker configured", func(ctx SpecContext) {
+		ts := httptest.NewServer(workerMux(server.NewWorkerService(server.WorkerServiceConfig{})))
+		DeferCleanup(ts.Close)
+		client := millv1connect.NewWorkerServiceClient(ts.Client(), ts.URL)
+
+		_, err := client.RetireBranch(ctx, connect.NewRequest(&millv1.RetireBranchRequest{}))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
 	})
 })
