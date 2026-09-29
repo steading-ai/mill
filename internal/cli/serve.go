@@ -208,6 +208,7 @@ func runServe(cmd *cobra.Command, opts serveOptions) error {
 			InFlight:          worker.InFlight,
 			Outage:            worker.Outage,
 			Store:             svc,
+			RetireBranch:      retireBranchResolver(&opts.worker),
 		})
 	}
 
@@ -363,5 +364,20 @@ func workerForgeResolver(opts *workOptions) func(context.Context) (forge.Forge, 
 			return nil, "", "", err
 		}
 		return f, token.source, repositoryURL, nil
+	}
+}
+
+// retireBranchResolver is WorkerServiceConfig's RetireBranch, over --work's
+// own settings. Unlike workerForgeResolver, it resolves the forge for the
+// project the request names rather than projects[0]: `mill restart
+// --project X` may not be the first project a worker configured to claim
+// several was started with.
+func retireBranchResolver(opts *workOptions) func(ctx context.Context, project, branch, comment string) (string, error) {
+	return func(ctx context.Context, project, branch, comment string) (string, error) {
+		f, _, err := resolveForgeProject(ctx, opts.run.skiftSocket, project, opts.run.forge)
+		if err != nil {
+			return "", err
+		}
+		return forge.Retire(ctx, f, branch, comment)
 	}
 }

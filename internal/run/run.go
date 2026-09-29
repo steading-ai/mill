@@ -187,6 +187,15 @@ type Options struct {
 	Attach Workspaces
 	// Repositories resolves the run's repository from its project.
 	Repositories Repositories
+	// RetireBranch closes a restarted run's pull request and deletes its
+	// branch, run wherever the forge credential lives. `mill restart`'s CLI
+	// process sets it to a call through `WorkerService.RetireBranch` rather
+	// than minting its own credential, an operator's shell usually does not
+	// have (docs/architecture.md §"Identity and credentials"). Nil falls
+	// back to closing directly through the run's own [Repository.Forge] —
+	// what every run without a co-located worker, and every `internal/run`
+	// spec, still does.
+	RetireBranch func(ctx context.Context, branch, comment string) (prURL string, err error)
 	// Harnesses builds the adapter table a skill step's harness name is
 	// looked up in, for the run's workspace: on the machine backend a
 	// session's sidecar runs inside that workspace's machine, so the table
@@ -707,7 +716,7 @@ func (r *Runner) reconcileClosed(ctx context.Context, run *millv1.Run, node *ski
 	if action == "failed" && run.GetWorkflowId() != "" {
 		comment := fmt.Sprintf("Closed: run %s of %s ended because its %s (%s).",
 			run.GetId(), run.GetNodeRef(), reason, skiftStatus(node.GetStatus()))
-		if err := r.closeBranch(ctx, run, comment, repo); err != nil {
+		if err := r.closeBranch(ctx, run.GetId(), run.GetBranch(), comment, repo); err != nil {
 			r.options.Log.Warn("closing the branch of a run whose node was closed", "run", run.GetId(), "error", err)
 		}
 	}

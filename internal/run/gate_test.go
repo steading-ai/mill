@@ -625,4 +625,58 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 			Expect(evidenceOf(f.inspect(ctx), "merge").GetStatus()).To(Equal(string(forge.Success)))
 		})
 	})
+
+	// mill#92 (steading#17): a restart whose forge cleanup silently failed
+	// left a branch and its pull request stranded, and a later generation
+	// pushing to the same branch name could find the merge gate reading
+	// that abandoned pull request rather than its own.
+	Describe("The merge gate refuses a pull request that is not this run's own push", func() {
+		It("fails without asking the forge to merge, and parks rather than revising", func() {
+			// No retry and no revise: the mismatch does not clear on its
+			// own, so either would only repeat or misroute the same
+			// failure. Isolating one attempt keeps the assertion simple,
+			// the same way the transient-refusal specs above do.
+			workflow := f.variant(ctx, "foreign-head-merge", func(definition *millv1.Workflow) {
+				merge := stepOf(definition, "merge")
+				merge.Retries = 0
+				merge.OnFailure = nil
+			})
+			// fixtureForge.OpenPR calls its own PR method directly rather
+			// than through the Forge interface, so wrapping it here reaches
+			// only the merge gate's own f.PR read, not the pr step's —
+			// standing in for another generation's push landing on the
+			// branch between the two.
+			wrapped := &foreignHeadForge{fixtureForge: f.forge, head: strings.Repeat("f", 40)}
+
+			Expect(f.runner(func(o *run.Options) {
+				o.Workflow = workflow
+				o.Repositories = func(context.Context, *skiftv1.Project) (run.Repository, error) {
+					return run.Repository{Forge: wrapped, Origin: f.origin}, nil
+				}
+			}).Execute(ctx, f.nodeRef)).To(Succeed())
+
+			Expect(f.forge.mergeCalls()).To(BeZero(), "never asked to merge a pull request that was not this run's own")
+			detail := f.inspect(ctx)
+			merges := stepRuns(detail, "merge")
+			Expect(merges).To(HaveLen(1))
+			Expect(merges[0].GetStatus()).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_FAILED))
+			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_PARKED))
+		})
+	})
 })
+
+// foreignHeadForge answers PR with a head this run never pushed, standing in
+// for another generation's push landing on the same branch name.
+type foreignHeadForge struct {
+	*fixtureForge
+	head string
+}
+
+func (f *foreignHeadForge) PR(ctx context.Context, branch string) (forge.PullRequest, error) {
+	pr, err := f.fixtureForge.PR(ctx, branch)
+	if err != nil {
+		return pr, err
+	}
+	pr.HeadSHA = f.head
+	return pr, nil
+}

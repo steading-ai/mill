@@ -496,6 +496,10 @@ type fixtureForge struct {
 	// a real forge's GitAuth carries — set by a spec that needs to prove the
 	// credential never leaks into a filed finding's body.
 	credential string
+	// deleteBranchErr, when set, is returned once by DeleteBranch and then
+	// cleared — a forge that refuses to delete the branch, without a real
+	// forge to script it through.
+	deleteBranchErr error
 }
 
 // mergeCalls is how many times the forge was asked to merge the pull
@@ -621,6 +625,11 @@ func (f *fixtureForge) ClosePR(_ context.Context, pr forge.PullRequest, comment 
 func (f *fixtureForge) DeleteBranch(_ context.Context, branch string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.deleteBranchErr != nil {
+		err := f.deleteBranchErr
+		f.deleteBranchErr = nil
+		return err
+	}
 	f.deleted = append(f.deleted, branch)
 	return nil
 }

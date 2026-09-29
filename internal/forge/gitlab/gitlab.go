@@ -304,6 +304,13 @@ func (c *Client) Push(ctx context.Context, request forge.PushRequest) (string, e
 // OpenPR opens a merge request for the branch, or returns the one already
 // open for it. Asking twice is asking once: GitLab refuses a duplicate, and a
 // resumed run must be able to ask again.
+//
+// An existing merge request is not returned until GitLab shows its source
+// branch at the requested head: a branch name reused across restarts can
+// have a merge request GitLab already knows about, left at whatever an
+// earlier generation's push last put there (steading#17), and its cached
+// head is stale until this same wait catches it up, the way the create path
+// below already waits for a brand new branch.
 func (c *Client) OpenPR(ctx context.Context, request forge.OpenPRRequest) (forge.PullRequest, error) {
 	if request.Branch == "" {
 		return forge.PullRequest{}, errors.New("gitlab: opening a merge request needs a branch")
@@ -311,7 +318,13 @@ func (c *Client) OpenPR(ctx context.Context, request forge.OpenPRRequest) (forge
 	existing, err := c.PR(ctx, request.Branch)
 	switch {
 	case err == nil:
-		return existing, nil
+		if request.Head == "" {
+			return existing, nil
+		}
+		if err := c.awaitBranch(ctx, request.Branch, request.Head); err != nil {
+			return forge.PullRequest{}, err
+		}
+		return c.PR(ctx, request.Branch)
 	case !errors.Is(err, forge.ErrNoPullRequest):
 		return forge.PullRequest{}, err
 	}

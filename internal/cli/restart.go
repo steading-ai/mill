@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 
+	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
+	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 	"github.com/steading-ai/mill/internal/run"
 	"github.com/steading-ai/mill/internal/skift"
 	"github.com/steading-ai/mill/internal/workspace"
@@ -77,6 +80,7 @@ decision; this is that decision.`,
 				Repositories: repositories(opts.run),
 				WorkerRef:    worker,
 				Out:          cmd.OutOrStdout(),
+				RetireBranch: retireBranchOverSocket(opts.socket, opts.project),
 			})
 			_, err = runner.Restart(cmd.Context(), args[0], opts.reason)
 			return err
@@ -92,6 +96,29 @@ decision; this is that decision.`,
 	f.StringVar(&opts.run.sandboxRoot, "sandbox-root", machine.DefaultRoot, sandboxRootUsage)
 	f.StringVar(&opts.reason, "reason", "restart", "why, for the lease's release detail and the ledger")
 	return cmd
+}
+
+// retireBranchOverSocket is run.Options.RetireBranch for `mill restart`: the
+// close-then-delete sequence runs inside the worker at socket, over
+// WorkerService.RetireBranch, rather than resolving a forge credential in
+// this process — an operator's shell restarting a run usually holds none of
+// its own (docs/architecture.md §"Identity and credentials"). A socket with
+// no worker mounted, or one that refuses, fails the restart naming the
+// cause rather than falling back to a local credential: the incident this
+// guards against was a silent partial success, and a fallback that
+// sometimes resolves locally reintroduces the same ambiguity.
+func retireBranchOverSocket(socket, project string) func(ctx context.Context, branch, comment string) (string, error) {
+	return func(ctx context.Context, branch, comment string) (string, error) {
+		res, err := workerClient(socket).RetireBranch(ctx, connect.NewRequest(&millv1.RetireBranchRequest{
+			Project: project,
+			Branch:  branch,
+			Comment: comment,
+		}))
+		if err != nil {
+			return "", fmt.Errorf("closing %s's forge state through the worker at %s: %w", branch, socket, err)
+		}
+		return res.Msg.GetPullRequestUrl(), nil
+	}
 }
 
 // applyRestartConfig fills in, from the configuration file, what finding

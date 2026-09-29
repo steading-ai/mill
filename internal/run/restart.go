@@ -52,9 +52,20 @@ func (r *Runner) Restart(ctx context.Context, nodeRef, reason string) (*millv1.R
 	case old == nil:
 		// The last generation is abandoned and nothing replaced it: a
 		// restart that got as far as the abandon and stopped — the forge
-		// refused to close the branch, say. Running it again finishes it;
-		// there is nothing left to take back, discard or close.
+		// refused to close the branch, say. Running it again finishes the
+		// forge half; there is nothing left to take back or discard, and no
+		// abandoned run to look up, so the branch name is computed the same
+		// way every generation's own push names it.
 		r.printf("%s has no live run; generation %d is abandoned, finishing its restart\n", nodeRef, next-1)
+		repo := r.restartRepository(ctx, "node", nodeRef)
+		branch := workspace.BranchFor(node.GetReference())
+		comment := fmt.Sprintf(
+			"Superseded: %s's restart abandoned generation %d (%s). Generation %d starts from the default branch with fresh sessions.",
+			nodeRef, next-1, reason, next)
+		if err := r.closeBranch(ctx, "", branch, comment, repo); err != nil {
+			return nil, fmt.Errorf("restart: generation %d of %s was abandoned but its forge state could not be closed: %w",
+				next-1, nodeRef, err)
+		}
 	default:
 		if err := r.preempt(ctx, old, reason); err != nil {
 			return nil, err
@@ -70,15 +81,12 @@ func (r *Runner) Restart(ctx context.Context, nodeRef, reason string) (*millv1.R
 		// A restart closes the pull request and deletes the branch, so it
 		// needs the same repository a run has. A project with none still
 		// restarts; only the forge half is skipped.
-		repo, err := r.repository(ctx, nil)
-		if err != nil {
-			r.options.Log.Debug("no repository for the restart", "run", old.GetId(), "error", err)
-		}
+		repo := r.restartRepository(ctx, "run", old.GetId())
 		r.discardWorkspace(ctx, old, repo)
 		comment := fmt.Sprintf(
 			"Superseded: run %s of %s was restarted (%s). Generation %d starts from the default branch with fresh sessions.",
 			old.GetId(), old.GetNodeRef(), reason, old.GetGeneration()+1)
-		if err := r.closeBranch(ctx, old, comment, repo); err != nil {
+		if err := r.closeBranch(ctx, old.GetId(), old.GetBranch(), comment, repo); err != nil {
 			return nil, err
 		}
 	}
@@ -170,6 +178,19 @@ func (r *Runner) discardWorkspace(ctx context.Context, old *millv1.Run, repo Rep
 	}
 }
 
+// restartRepository resolves the repository a restart's forge cleanup runs
+// against. A project with none still restarts: the failure is only logged,
+// under logKey/logValue (the node or the abandoned run, whichever the caller
+// has), since closeBranch treats a zero Repository the same as one with no
+// forge to skip the cleanup on.
+func (r *Runner) restartRepository(ctx context.Context, logKey, logValue string) Repository {
+	repo, err := r.repository(ctx, nil)
+	if err != nil {
+		r.options.Log.Debug("no repository for the restart", logKey, logValue, "error", err)
+	}
+	return repo
+}
+
 // closeBranch takes a run that has ended off the forge: the pull request
 // closed with the comment given, and the branch deleted. After a restart
 // the new generation pushes the same branch name from the default branch
@@ -177,28 +198,37 @@ func (r *Runner) discardWorkspace(ctx context.Context, old *millv1.Run, repo Rep
 // human has already declared a dead end; after a sweep nothing will push
 // it again, and a branch nobody will merge is noise on the forge.
 //
-// A project with no repository has nothing to close, and neither moment is
-// one to insist on one.
-func (r *Runner) closeBranch(ctx context.Context, old *millv1.Run, comment string, repo Repository) error {
-	client := repo.Forge
-	if client == nil {
-		r.options.Log.Debug("no forge to close the branch on", "run", old.GetId())
+// runID is only for the log line a skipped close leaves; branch is what
+// gets closed, computed by the caller because the run that named it may
+// already be gone (the retried `old == nil` path in [Runner.Restart] has no
+// run to read it back from).
+//
+// When [Options.RetireBranch] is set, the close runs through it — the
+// worker process, which holds the credential a restarted-from shell usually
+// does not (docs/architecture.md §"Identity and credentials") — instead of
+// this run's own repository. A project with no repository, and a
+// [Options.RetireBranch] left nil, has nothing to close, and neither moment
+// is one to insist on one.
+func (r *Runner) closeBranch(ctx context.Context, runID, branch, comment string, repo Repository) error {
+	var (
+		prURL string
+		err   error
+	)
+	switch {
+	case r.options.RetireBranch != nil:
+		prURL, err = r.options.RetireBranch(ctx, branch, comment)
+	case repo.Forge != nil:
+		prURL, err = forge.Retire(ctx, repo.Forge, branch, comment)
+	default:
+		r.options.Log.Debug("no forge to close the branch on", "run", runID)
 		return nil
 	}
-	pr, err := client.PR(ctx, old.GetBranch())
-	switch {
-	case errors.Is(err, forge.ErrNoPullRequest):
-	case err != nil:
-		return err
-	default:
-		if err := client.ClosePR(ctx, pr, comment); err != nil {
-			return err
-		}
-		r.printf("closed %s\n", pr.URL)
-	}
-	if err := client.DeleteBranch(ctx, old.GetBranch()); err != nil {
+	if err != nil {
 		return err
 	}
-	r.printf("deleted branch %s\n", old.GetBranch())
+	if prURL != "" {
+		r.printf("closed %s\n", prURL)
+	}
+	r.printf("deleted branch %s\n", branch)
 	return nil
 }

@@ -87,6 +87,39 @@ var _ = Describe("The GitLab forge adapter", Label("unit"), func() {
 			Expect(api.count(http.MethodPost, escaped+"/merge_requests")).To(BeZero())
 		})
 
+		It("OpenPR waits for an existing merge request's branch to reach the requested head before reusing it", func(ctx context.Context) {
+			const head = "9a1f0c3f2b6d4e5a7c8b9d0e1f2a3b4c5d6e7f80"
+			api.on(http.MethodGet, escaped+"/merge_requests", http.StatusOK, "merge_requests_open.json")
+			api.onBranchCatchUp(branch, head, 2)
+			quick := gitlab.New(api.repo(), api.minter(),
+				gitlab.WithHTTPClient(api.server.Client()), gitlab.WithBranchWait(2*time.Second, time.Millisecond)).
+				ForStep(forge.Step{TokenID: "01J0STEP", TokenHash: "e3b0c442"})
+
+			pr, err := quick.OpenPR(ctx, forge.OpenPRRequest{Branch: branch, Head: head, Title: "mill#13"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pr.Number).To(Equal(7))
+			Expect(api.count(http.MethodGet, escaped+"/repository/branches")).To(Equal(3), "two misses, then the branch")
+			Expect(api.count(http.MethodGet, escaped+"/merge_requests")).To(Equal(2), "looked up, then re-read once caught up")
+			Expect(api.count(http.MethodPost, escaped+"/merge_requests")).To(BeZero(), "an existing merge request is reused, not recreated")
+		})
+
+		It("OpenPR does not reuse a merge request whose branch never reaches the requested head", func(ctx context.Context) {
+			const head = "9a1f0c3f2b6d4e5a7c8b9d0e1f2a3b4c5d6e7f80"
+			api.on(http.MethodGet, escaped+"/merge_requests", http.StatusOK, "merge_requests_open.json")
+			api.onBranchCatchUp(branch, head, -1)
+			quick := gitlab.New(api.repo(), api.minter(),
+				gitlab.WithHTTPClient(api.server.Client()), gitlab.WithBranchWait(20*time.Millisecond, time.Millisecond)).
+				ForStep(forge.Step{TokenID: "01J0STEP", TokenHash: "e3b0c442"})
+
+			_, err := quick.OpenPR(ctx, forge.OpenPRRequest{Branch: branch, Head: head})
+
+			var missing *forge.BranchMissingError
+			Expect(errors.As(err, &missing)).To(BeTrue(), "%v", err)
+			Expect(missing.Branch).To(Equal(branch))
+			Expect(missing.Head).To(Equal(head))
+			Expect(api.count(http.MethodGet, escaped+"/merge_requests")).To(Equal(1), "the stale merge request is never trusted")
+		})
+
 		It("The forge catches up before the merge request is opened", func(ctx context.Context) {
 			// Given a push the forge takes a moment to show: the branch
 			// reads 404 twice before GitLab has it at the pushed head, and

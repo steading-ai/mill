@@ -916,15 +916,28 @@ const feedbackHeading = "## What the last attempt failed on\n\nThis is the mill'
 // until the forge shows the branch there: the session's push and this call
 // are two requests to a forge that indexes the first one in its own time
 // (mill#46).
+//
+// A restart that reuses the branch name can find OpenPR's reuse path
+// answering another generation's still-open pull request (steading#17); once
+// the forge has caught the branch up to head (mill#46's own wait, inside
+// OpenPR), a pull request not at head belongs to whoever else pushed to this
+// name, and is refused rather than adopted.
 func (r *Runner) pullRequest(ctx context.Context, s *state) (forge.PullRequest, error) {
 	head, err := r.head(ctx, s)
 	if err != nil {
 		return forge.PullRequest{}, err
 	}
-	return s.repo.Forge.OpenPR(ctx, forge.OpenPRRequest{
+	pr, err := s.repo.Forge.OpenPR(ctx, forge.OpenPRRequest{
 		Branch:      s.run.GetBranch(),
 		Head:        head,
 		Title:       s.node.GetTitle(),
 		Description: s.node.GetBody(),
 	})
+	if err != nil {
+		return forge.PullRequest{}, err
+	}
+	if err := checkForeignHead(s.run.GetBranch(), head, pr.HeadSHA); err != nil {
+		return forge.PullRequest{}, err
+	}
+	return pr, nil
 }

@@ -593,6 +593,117 @@ func (*DrainResponse) Descriptor() ([]byte, []int) {
 	return file_mill_v1_worker_proto_rawDescGZIP(), []int{8}
 }
 
+// RetireBranchRequest names the branch a restart has ended, and the project
+// it lives in, since a worker may claim from more than one.
+type RetireBranchRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The skift project the branch's repository belongs to.
+	Project string `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
+	// The branch to close and delete.
+	Branch string `protobuf:"bytes,2,opt,name=branch,proto3" json:"branch,omitempty"`
+	// The comment left on the pull request when it is closed, if one is open.
+	Comment       string `protobuf:"bytes,3,opt,name=comment,proto3" json:"comment,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RetireBranchRequest) Reset() {
+	*x = RetireBranchRequest{}
+	mi := &file_mill_v1_worker_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RetireBranchRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RetireBranchRequest) ProtoMessage() {}
+
+func (x *RetireBranchRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_mill_v1_worker_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RetireBranchRequest.ProtoReflect.Descriptor instead.
+func (*RetireBranchRequest) Descriptor() ([]byte, []int) {
+	return file_mill_v1_worker_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *RetireBranchRequest) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *RetireBranchRequest) GetBranch() string {
+	if x != nil {
+		return x.Branch
+	}
+	return ""
+}
+
+func (x *RetireBranchRequest) GetComment() string {
+	if x != nil {
+		return x.Comment
+	}
+	return ""
+}
+
+// RetireBranchResponse carries the pull request that was closed, if any.
+type RetireBranchResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The closed pull request's URL, or empty when the branch had none open.
+	PullRequestUrl string `protobuf:"bytes,1,opt,name=pull_request_url,json=pullRequestUrl,proto3" json:"pull_request_url,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *RetireBranchResponse) Reset() {
+	*x = RetireBranchResponse{}
+	mi := &file_mill_v1_worker_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RetireBranchResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RetireBranchResponse) ProtoMessage() {}
+
+func (x *RetireBranchResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_mill_v1_worker_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RetireBranchResponse.ProtoReflect.Descriptor instead.
+func (*RetireBranchResponse) Descriptor() ([]byte, []int) {
+	return file_mill_v1_worker_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *RetireBranchResponse) GetPullRequestUrl() string {
+	if x != nil {
+		return x.PullRequestUrl
+	}
+	return ""
+}
+
 var File_mill_v1_worker_proto protoreflect.FileDescriptor
 
 const file_mill_v1_worker_proto_rawDesc = "" +
@@ -624,17 +735,24 @@ const file_mill_v1_worker_proto_rawDesc = "" +
 	"\bprojects\x18\x02 \x03(\tR\bprojects\x12\x16\n" +
 	"\x06labels\x18\x03 \x03(\tR\x06labels\"\x0e\n" +
 	"\fDrainRequest\"\x0f\n" +
-	"\rDrainResponse*\x9e\x01\n" +
+	"\rDrainResponse\"a\n" +
+	"\x13RetireBranchRequest\x12\x18\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x12\x16\n" +
+	"\x06branch\x18\x02 \x01(\tR\x06branch\x12\x18\n" +
+	"\acomment\x18\x03 \x01(\tR\acomment\"@\n" +
+	"\x14RetireBranchResponse\x12(\n" +
+	"\x10pull_request_url\x18\x01 \x01(\tR\x0epullRequestUrl*\x9e\x01\n" +
 	"\vWorkerState\x12\x1c\n" +
 	"\x18WORKER_STATE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15WORKER_STATE_CLAIMING\x10\x01\x12\x19\n" +
 	"\x15WORKER_STATE_DRAINING\x10\x02\x12\x15\n" +
 	"\x11WORKER_STATE_IDLE\x10\x03\x12$\n" +
-	" WORKER_STATE_WAITING_ON_UPSTREAM\x10\x042\xba\x01\n" +
+	" WORKER_STATE_WAITING_ON_UPSTREAM\x10\x042\x87\x02\n" +
 	"\rWorkerService\x126\n" +
 	"\x05Probe\x12\x15.mill.v1.ProbeRequest\x1a\x16.mill.v1.ProbeResponse\x129\n" +
 	"\x06Claims\x12\x16.mill.v1.ClaimsRequest\x1a\x17.mill.v1.ClaimsResponse\x126\n" +
-	"\x05Drain\x12\x15.mill.v1.DrainRequest\x1a\x16.mill.v1.DrainResponseB0Z.github.com/steading-ai/mill/gen/mill/v1;millv1b\x06proto3"
+	"\x05Drain\x12\x15.mill.v1.DrainRequest\x1a\x16.mill.v1.DrainResponse\x12K\n" +
+	"\fRetireBranch\x12\x1c.mill.v1.RetireBranchRequest\x1a\x1d.mill.v1.RetireBranchResponseB0Z.github.com/steading-ai/mill/gen/mill/v1;millv1b\x06proto3"
 
 var (
 	file_mill_v1_worker_proto_rawDescOnce sync.Once
@@ -649,7 +767,7 @@ func file_mill_v1_worker_proto_rawDescGZIP() []byte {
 }
 
 var file_mill_v1_worker_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_mill_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_mill_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_mill_v1_worker_proto_goTypes = []any{
 	(WorkerState)(0),              // 0: mill.v1.WorkerState
 	(*ProbeRequest)(nil),          // 1: mill.v1.ProbeRequest
@@ -661,8 +779,10 @@ var file_mill_v1_worker_proto_goTypes = []any{
 	(*ClaimsResponse)(nil),        // 7: mill.v1.ClaimsResponse
 	(*DrainRequest)(nil),          // 8: mill.v1.DrainRequest
 	(*DrainResponse)(nil),         // 9: mill.v1.DrainResponse
-	(*timestamppb.Timestamp)(nil), // 10: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),   // 11: google.protobuf.Duration
+	(*RetireBranchRequest)(nil),   // 10: mill.v1.RetireBranchRequest
+	(*RetireBranchResponse)(nil),  // 11: mill.v1.RetireBranchResponse
+	(*timestamppb.Timestamp)(nil), // 12: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),   // 13: google.protobuf.Duration
 }
 var file_mill_v1_worker_proto_depIdxs = []int32{
 	5,  // 0: mill.v1.ProbeResponse.sidecar:type_name -> mill.v1.ProbeResult
@@ -671,17 +791,19 @@ var file_mill_v1_worker_proto_depIdxs = []int32{
 	0,  // 3: mill.v1.ProbeResponse.state:type_name -> mill.v1.WorkerState
 	4,  // 4: mill.v1.ProbeResponse.in_flight:type_name -> mill.v1.InFlightRun
 	3,  // 5: mill.v1.ProbeResponse.upstream_outage:type_name -> mill.v1.UpstreamOutage
-	10, // 6: mill.v1.UpstreamOutage.since:type_name -> google.protobuf.Timestamp
-	10, // 7: mill.v1.UpstreamOutage.reset_at:type_name -> google.protobuf.Timestamp
-	11, // 8: mill.v1.InFlightRun.time_in_step:type_name -> google.protobuf.Duration
+	12, // 6: mill.v1.UpstreamOutage.since:type_name -> google.protobuf.Timestamp
+	12, // 7: mill.v1.UpstreamOutage.reset_at:type_name -> google.protobuf.Timestamp
+	13, // 8: mill.v1.InFlightRun.time_in_step:type_name -> google.protobuf.Duration
 	1,  // 9: mill.v1.WorkerService.Probe:input_type -> mill.v1.ProbeRequest
 	6,  // 10: mill.v1.WorkerService.Claims:input_type -> mill.v1.ClaimsRequest
 	8,  // 11: mill.v1.WorkerService.Drain:input_type -> mill.v1.DrainRequest
-	2,  // 12: mill.v1.WorkerService.Probe:output_type -> mill.v1.ProbeResponse
-	7,  // 13: mill.v1.WorkerService.Claims:output_type -> mill.v1.ClaimsResponse
-	9,  // 14: mill.v1.WorkerService.Drain:output_type -> mill.v1.DrainResponse
-	12, // [12:15] is the sub-list for method output_type
-	9,  // [9:12] is the sub-list for method input_type
+	10, // 12: mill.v1.WorkerService.RetireBranch:input_type -> mill.v1.RetireBranchRequest
+	2,  // 13: mill.v1.WorkerService.Probe:output_type -> mill.v1.ProbeResponse
+	7,  // 14: mill.v1.WorkerService.Claims:output_type -> mill.v1.ClaimsResponse
+	9,  // 15: mill.v1.WorkerService.Drain:output_type -> mill.v1.DrainResponse
+	11, // 16: mill.v1.WorkerService.RetireBranch:output_type -> mill.v1.RetireBranchResponse
+	13, // [13:17] is the sub-list for method output_type
+	9,  // [9:13] is the sub-list for method input_type
 	9,  // [9:9] is the sub-list for extension type_name
 	9,  // [9:9] is the sub-list for extension extendee
 	0,  // [0:9] is the sub-list for field type_name
@@ -698,7 +820,7 @@ func file_mill_v1_worker_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_mill_v1_worker_proto_rawDesc), len(file_mill_v1_worker_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   9,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
