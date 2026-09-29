@@ -221,8 +221,16 @@ var _ = Describe("The stranded-run sweep", Label(testsupport.DBLabel), func() {
 		By("given a run whose completing patch landed and whose store write did not")
 		atStepTwo()
 		first := f.runOf(ctx)
-		_, err := f.store.SetCompleteRequestId(ctx, connect.NewRequest(&millv1.SetCompleteRequestIdRequest{
-			LeaseId: first.GetLeaseId(), RunId: first.GetId(), RequestId: "mill-" + first.GetId() + "-complete-1",
+		// atStepTwo leaves the run stopped, lease cleared: a worker takes it
+		// over first, exactly as claiming the node again would, before
+		// minting the complete-request-id its patch carries.
+		const lease = "spec-lease-complete"
+		_, err := f.store.SetLease(ctx, connect.NewRequest(&millv1.SetLeaseRequest{
+			LeaseId: lease, RunId: first.GetId(), WorkerRef: f.worker,
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = f.store.SetCompleteRequestId(ctx, connect.NewRequest(&millv1.SetCompleteRequestIdRequest{
+			LeaseId: lease, RunId: first.GetId(), RequestId: "mill-" + first.GetId() + "-complete-1",
 		}))
 		Expect(err).NotTo(HaveOccurred())
 		f.complete(ctx, f.nodeRef)

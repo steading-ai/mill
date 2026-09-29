@@ -69,12 +69,13 @@ var _ = Describe("Rerun", Label(testsupport.DBLabel), func() {
 		Expect(l.currentStep(ctx, run.GetId(), workflow)).To(Equal("simplify"))
 	}, SpecTimeout(time.Minute))
 
-	// Scenario: a run already stopped (not failed) is rerun without a claim
-	It("reruns an already-stopped run in place, leaving it stopped and unclaimed", func(ctx SpecContext) {
+	// Scenario: a run already stopped (not failed) is rerun without a claim,
+	// from a step earlier than the one it is sitting on
+	It("reruns an already-stopped run from an earlier step, and the next claim starts there", func(ctx SpecContext) {
 		l := newLedger(ctx)
 		run, workflow := l.runWithWorkflow(ctx, "mill#94")
-		l.close(ctx, run.GetId(), "implement")
-		l.start(ctx, run.GetId(), "simplify")
+		implemented := l.close(ctx, run.GetId(), "implement")
+		attempted := l.start(ctx, run.GetId(), "simplify")
 		_, err := l.store.AbortOpenStepRuns(ctx, l.lease, run.GetId(), "cancelled")
 		Expect(err).NotTo(HaveOccurred())
 		_, err = l.store.ReleaseLease(ctx, l.lease, run.GetId())
@@ -83,12 +84,15 @@ var _ = Describe("Rerun", Label(testsupport.DBLabel), func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(stopped.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
 
-		result, err := l.store.Rerun(ctx, run.GetId(), "simplify", "ivy", "resume after cancel")
+		result, err := l.store.Rerun(ctx, run.GetId(), "implement", "ivy", "resume from the start")
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result.Reopened).To(BeFalse(), "the run was already live; rerun only supersedes the span")
+		Expect(result.Superseded).To(HaveLen(2))
+		Expect(result.Superseded[0].GetId()).To(Equal(implemented.GetId()))
+		Expect(result.Superseded[1].GetId()).To(Equal(attempted.GetId()))
 		Expect(result.Run.GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
 		Expect(result.Run.GetLeaseId()).To(BeEmpty())
-		Expect(l.currentStep(ctx, run.GetId(), workflow)).To(Equal("simplify"))
+		Expect(l.currentStep(ctx, run.GetId(), workflow)).To(Equal("implement"), "the next claim resumes at the rerun step")
 	}, SpecTimeout(time.Minute))
 })

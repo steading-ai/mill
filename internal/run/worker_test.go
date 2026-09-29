@@ -569,8 +569,8 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 		It("skips a node it was fenced out of and goes back to claiming", func() {
 			taken := f.node(ctx, "a node taken by somebody else", "Change the README's first line.")
 			// Mid-step, another principal takes the lease. The next
-			// heartbeat is refused, which is the whole of the worker's
-			// notice: it abandons the run locally and writes nothing more.
+			// heartbeat is refused; the worker's own reclaim loses the race,
+			// so it releases the run (stopped) and abandons it locally.
 			f.script(fake.Script{Hold: true, Do: func(harness.Session) {
 				defer GinkgoRecover()
 				f.expire(ctx, f.leaseOf(ctx).GetId())
@@ -590,8 +590,8 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			var err error
 			Eventually(done, time.Minute).Should(Receive(&err))
 			Expect(err).NotTo(HaveOccurred(), "being fenced out is not the worker's failure")
-			Expect(f.runOfRef(ctx, taken).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING),
-				"the run is left as it stands, for whoever holds the node now")
+			Expect(f.runOfRef(ctx, taken).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED),
+				"the failed reclaim releases the run, for whoever holds the node now")
 		})
 	})
 
