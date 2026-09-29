@@ -505,7 +505,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			Expect(reason).To(Equal("preempted"))
 			Expect(detail).To(Equal("drain"))
 			Expect(f.leaseOf(ctx).GetId()).To(BeEmpty(), "the node is claimable again")
-			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_RUNNING))
+			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
 
 			detailBefore := f.inspect(ctx)
 			for _, name := range []string{"implement", "simplify", "commit", "pr", "review"} {
