@@ -837,9 +837,19 @@ func claudeAdapter(kind workspace.Kind, opts runOptions, envMode claude.EnvMode,
 			claude.WithExecer(ws),
 			claude.WithSandbox())
 	}
-	return claude.New(
+	options := []claude.Option{
 		claude.WithEntrypoint(claude.DefaultCommand, opts.sidecar),
-		claude.WithEnvMode(envMode))
+		claude.WithEnvMode(envMode),
+	}
+	// A workspace whose steps run inside a reapable unit (workspace.SessionExecer,
+	// implemented by the local backend) wants the session spawned through it
+	// rather than through the adapter's own default execer, so BeginStep's
+	// boundary reaches the session and everything it spawns beneath it, not
+	// only the checks and preparatory steps that already ran through ws.Exec.
+	if se, ok := ws.(workspace.SessionExecer); ok {
+		options = append(options, claude.WithExecer(se.SessionExec()))
+	}
+	return claude.New(options...)
 }
 
 // sidecarSourceDir is the built sidecar directory the worker materialises
