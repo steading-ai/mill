@@ -832,6 +832,11 @@ func (r *Runner) prompt(ctx context.Context, s *state, step *millv1.Step, detail
 			Author: input.GetNode().GetAssignee(),
 		})
 	}
+	comments, err := r.comments(ctx, s.node.GetReference())
+	if err != nil {
+		return harness.Prompt{}, err
+	}
+	node.Comments = comments
 	text := workflow.Prompt(skill, node)
 	if brief != "" {
 		text += "\n\n" + brief
