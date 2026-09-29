@@ -99,6 +99,51 @@ var _ = Describe("The GitLab adapter against a real GitLab", Label("live"), func
 		runner.run(ctx, "fetch", "--quiet", "origin")
 		Expect(strings.TrimSpace(runner.run(ctx, "cat-file", "-t", landed))).To(Equal("commit"))
 	})
+
+	// This proves FailingChecks and CheckLog answer for real, against the
+	// host's GitLab, rather than only against the fixtures gitlab_test.go
+	// drives. Unlike GitHub's live spec, a GitLab
+	// personal/project token's ordinary `api` scope (docs/tools.md §Forges)
+	// is enough to push a `.gitlab-ci.yml` of the branch's own — no extra
+	// permission the way a GitHub Actions workflow would need — so the
+	// pipeline it deliberately fails is this spec's own, not the scratch
+	// project's existing CI, and this spec is deterministic even for a
+	// scratch project with none.
+	It("reads a failing job's log off a real red pipeline", func(ctx context.Context) {
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		DeferCleanup(cancel)
+		runner := liveGit{dir: checkout, token: token}
+
+		runner.run(ctx, "checkout", "--quiet", "-b", branch)
+		ci := "mill-live-fail:\n" +
+			"  script:\n" +
+			"    - echo 'run-verbs.spec.ts:67'\n" +
+			"    - echo \"Error: expect(locator).toBeDisabled() failed\"\n" +
+			"    - exit 1\n"
+		Expect(os.WriteFile(filepath.Join(checkout, ".gitlab-ci.yml"), []byte(ci), 0o600)).To(Succeed())
+		runner.run(ctx, "add", ".gitlab-ci.yml")
+		runner.run(ctx, "-c", "user.name=mill", "-c", "user.email=mill@example.test",
+			"commit", "--quiet", "--no-gpg-sign", "--message", "mill: live spec "+branch+" (deliberately red)")
+
+		head, err := client.Push(ctx, forge.PushRequest{Git: runner, Branch: branch})
+		Expect(err).NotTo(HaveOccurred())
+
+		Eventually(func() (forge.Status, error) { return client.Checks(ctx, head) }).
+			WithTimeout(3*time.Minute).WithPolling(5*time.Second).
+			Should(Equal(forge.Failed), "the deliberately failing job settled")
+
+		checks, err := client.FailingChecks(ctx, head)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(checks).NotTo(BeEmpty())
+		Expect(checks[0].LogID).NotTo(BeEmpty())
+
+		excerpt, err := client.CheckLog(ctx, checks[0])
+		Expect(err).NotTo(HaveOccurred())
+		Expect(excerpt).To(ContainSubstring("run-verbs.spec.ts:67"))
+		Expect(excerpt).To(ContainSubstring("expect(locator).toBeDisabled() failed"))
+
+		Expect(client.DeleteBranch(ctx, branch)).To(Succeed())
+	})
 })
 
 // liveGit is the workspace's git, for a spec that has no workspace: the same

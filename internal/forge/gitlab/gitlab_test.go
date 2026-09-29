@@ -217,6 +217,66 @@ var _ = Describe("The GitLab forge adapter", Label("unit"), func() {
 		)
 	})
 
+	Describe("the failing checks on a commit, and their logs", func() {
+		const sha = "9a1f0c3f2b6d4e5a7c8b9d0e1f2a3b4c5d6e7f80"
+
+		It("gives a failing job its status and a log id to ask a trace for", func(ctx context.Context) {
+			api.on(http.MethodGet, escaped+"/pipelines", http.StatusOK, "pipelines_failed.json")
+			api.on(http.MethodGet, escaped+"/pipelines/333/jobs", http.StatusOK, "jobs_failed.json")
+
+			failing, err := client.FailingChecks(ctx, sha)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(failing).To(ConsistOf(forge.CheckResult{
+				Name: "e2e", URL: "https://gitlab.example.test/group/thing/-/jobs/987",
+				Conclusion: "failed", LogID: "987",
+			}))
+		})
+
+		It("reads a job's trace, filtered to the failing assertion", func(ctx context.Context) {
+			body := "noise\nrun-verbs.spec.ts:67\nError: expect(locator).toBeDisabled() failed\nmore noise\n"
+			api.onBody(http.StatusOK, []byte(body))
+
+			excerpt, err := client.CheckLog(ctx, forge.CheckResult{Name: "e2e", LogID: "987"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(excerpt).To(ContainSubstring("run-verbs.spec.ts:67"))
+			Expect(excerpt).To(ContainSubstring("expect(locator).toBeDisabled() failed"))
+		})
+
+		It("never lets the minted token survive into a log excerpt", func(ctx context.Context) {
+			body := "Error: leaked token " + theToken + " must not reach the excerpt\n"
+			api.onBody(http.StatusOK, []byte(body))
+
+			excerpt, err := client.CheckLog(ctx, forge.CheckResult{Name: "e2e", LogID: "987"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(excerpt).NotTo(ContainSubstring(theToken))
+			Expect(excerpt).To(ContainSubstring("[redacted]"))
+		})
+
+		It("names why when GitLab cannot find a job's trace", func(ctx context.Context) {
+			api.onBody(http.StatusNotFound, []byte(`{"message":"404 Not Found"}`))
+
+			_, err := client.CheckLog(ctx, forge.CheckResult{Name: "e2e", LogID: "987"})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("404"))
+		})
+
+		It("names why when GitLab forbids a job's trace", func(ctx context.Context) {
+			api.onBody(http.StatusForbidden, []byte(`{"message":"403 Forbidden"}`))
+
+			_, err := client.CheckLog(ctx, forge.CheckResult{Name: "e2e", LogID: "987"})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("403"))
+		})
+
+		It("refuses a check with no log id without a network call", func(ctx context.Context) {
+			excerpt, err := client.CheckLog(ctx, forge.CheckResult{Name: "e2e"})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("no log to read"))
+			Expect(excerpt).To(Equal(""))
+			Expect(api.calls()).To(BeEmpty())
+		})
+	})
+
 	Describe("closing a merge request the mill is abandoning", func() {
 		It("comments first, then closes, so the close is never unexplained", func(ctx context.Context) {
 			api.on(http.MethodGet, escaped+"/merge_requests", http.StatusOK, "merge_requests_open.json")

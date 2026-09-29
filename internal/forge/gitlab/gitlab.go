@@ -248,7 +248,9 @@ type pipeline struct {
 // job is one job of a pipeline, as much of it as [Client.FailingChecks]
 // reads.
 type job struct {
+	ID     int    `json:"id"`
 	Name   string `json:"name"`
+	Status string `json:"status"`
 	WebURL string `json:"web_url"`
 }
 
@@ -462,9 +464,28 @@ func (c *Client) FailingChecks(ctx context.Context, sha string) ([]forge.CheckRe
 	}
 	failing := make([]forge.CheckResult, 0, len(jobs))
 	for _, j := range jobs {
-		failing = append(failing, forge.CheckResult{Name: j.Name, URL: j.WebURL})
+		failing = append(failing, forge.CheckResult{
+			Name: j.Name, URL: j.WebURL,
+			Conclusion: j.Status, LogID: strconv.Itoa(j.ID),
+		})
 	}
 	return failing, nil
+}
+
+// CheckLog is check's job trace, filtered to the lines naming a failure and
+// capped, through [forge.FilterLog]. Every job GitLab's [Client.FailingChecks]
+// reports has an id, so the only refusal here is GitLab's own — a trace it
+// cannot serve (expired, forbidden, gone) — named from the status GitLab
+// gave.
+func (c *Client) CheckLog(ctx context.Context, check forge.CheckResult) (string, error) {
+	if check.LogID == "" {
+		return "", fmt.Errorf("gitlab: %s: no log to read", check.Name)
+	}
+	raw, err := c.raw(ctx, c.path("jobs", check.LogID, "trace"))
+	if err != nil {
+		return "", fmt.Errorf("gitlab: %s: read job trace: %w", check.Name, err)
+	}
+	return forge.FilterLog(raw), nil
 }
 
 // Merge merges the merge request, squashing when the project's setting says
@@ -824,6 +845,38 @@ func (c *Client) call(ctx context.Context, method, path string, query url.Values
 		return fmt.Errorf("gitlab: decode %s %s: %w", method, path, err)
 	}
 	return nil
+}
+
+// raw makes one GET request with a freshly minted credential and returns the
+// body as-is, for an endpoint whose answer [call] cannot decode as JSON — a
+// job's trace, which GitLab serves as plain text. What raw does on its own
+// account is scrub the credential's token out of the body before returning
+// it; a log line that happened to echo it back is not this call's to leak.
+func (c *Client) raw(ctx context.Context, path string) ([]byte, error) {
+	credential, err := c.credential(ctx)
+	if err != nil {
+		return nil, err
+	}
+	endpoint := strings.TrimSuffix(c.repo.BaseURL, "/") + path
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("gitlab: GET %s: %w", path, err)
+	}
+	authorize(request, credential)
+
+	response, err := c.http.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("gitlab: GET %s: %w", path, err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	answer, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes))
+	if err != nil {
+		return nil, fmt.Errorf("gitlab: GET %s: %w", path, err)
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, &apiError{Status: response.StatusCode, Method: http.MethodGet, Path: path, Message: messageOf(answer)}
+	}
+	return bytes.ReplaceAll(answer, []byte(credential.Token), []byte("[redacted]")), nil
 }
 
 // maxResponseBytes caps what one API answer may be. A merge request list is

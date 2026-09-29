@@ -119,6 +119,55 @@ var _ = Describe("The GitHub adapter against github.com", Label("live"), func() 
 
 		Expect(client.DeleteBranch(ctx, branch)).To(Succeed())
 	})
+
+	// This proves FailingChecks and CheckLog answer for real, against
+	// github.com, rather than only against the fixtures github_test.go
+	// drives. It does not force a check red: the token
+	// docs/tools.md asks a person to mint has read-only access to checks
+	// and commit statuses, so the spec takes whatever the scratch
+	// repository's own checks say about a plain push, and asserts the two
+	// methods agree with what Checks reports either way.
+	It("reads the failing checks and their logs off a real commit", func(ctx context.Context) {
+		ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+		DeferCleanup(cancel)
+		runner := liveGit{dir: checkout, token: token}
+
+		runner.run(ctx, "checkout", "--quiet", "-b", branch)
+		Expect(os.WriteFile(filepath.Join(checkout, "MILL-LIVE.md"), []byte(branch+"\n"), 0o600)).To(Succeed())
+		runner.run(ctx, "add", "MILL-LIVE.md")
+		runner.run(ctx, "-c", "user.name=mill", "-c", "user.email=mill@example.test",
+			"commit", "--quiet", "--no-gpg-sign", "--message", "mill: live spec "+branch)
+
+		head, err := client.Push(ctx, forge.PushRequest{Git: runner, Branch: branch})
+		Expect(err).NotTo(HaveOccurred())
+
+		var status forge.Status
+		Eventually(func() (forge.Status, error) {
+			status, err = client.Checks(ctx, head)
+			return status, err
+		}).WithTimeout(3 * time.Minute).WithPolling(5 * time.Second).Should(BeElementOf(forge.Success, forge.Failed))
+
+		checks, err := client.FailingChecks(ctx, head)
+		Expect(err).NotTo(HaveOccurred())
+
+		switch status {
+		case forge.Success:
+			Expect(checks).To(BeEmpty(), "a green commit names no failing check")
+		case forge.Failed:
+			Expect(checks).NotTo(BeEmpty(), "a red commit names at least one failing check")
+			for _, check := range checks {
+				excerpt, err := client.CheckLog(ctx, check)
+				if err != nil {
+					GinkgoWriter.Printf("%s: log unreadable, named why: %v\n", check.Name, err)
+					continue
+				}
+				GinkgoWriter.Printf("%s: %d bytes of excerpt\n", check.Name, len(excerpt))
+				Expect(len(excerpt)).To(BeNumerically("<=", forge.MaxExcerptBytes))
+			}
+		}
+
+		Expect(client.DeleteBranch(ctx, branch)).To(Succeed())
+	})
 })
 
 // liveGit is the workspace's git, for a spec that has no workspace: the

@@ -1,0 +1,3 @@
+[
+  { "id": 987, "name": "e2e", "status": "failed", "web_url": "https://gitlab.example.test/group/thing/-/jobs/987" }
+]

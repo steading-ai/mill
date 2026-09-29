@@ -2,6 +2,7 @@ package evidence_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -140,6 +141,16 @@ type fixtureForge struct {
 	status    forge.Status
 	statusErr error
 	asked     []string
+	// failingChecks and failingChecksErr script FailingChecks, for the
+	// `status` verifier's failure message (mill#95).
+	failingChecks    []forge.CheckResult
+	failingChecksErr error
+	// checkLogs maps a CheckResult's LogID to the raw log CheckLog returns,
+	// filtered through the real forge.FilterLog so a spec proves the whole
+	// path rather than a hand-trimmed stand-in; checkLogErrs scripts a
+	// refusal by LogID instead.
+	checkLogs    map[string]string
+	checkLogErrs map[string]error
 }
 
 func (f *fixtureForge) PR(_ context.Context, branch string) (forge.PullRequest, error) {
@@ -150,6 +161,23 @@ func (f *fixtureForge) PR(_ context.Context, branch string) (forge.PullRequest, 
 func (f *fixtureForge) Checks(_ context.Context, sha string) (forge.Status, error) {
 	f.asked = append(f.asked, "checks "+sha)
 	return f.status, f.statusErr
+}
+
+func (f *fixtureForge) FailingChecks(_ context.Context, sha string) ([]forge.CheckResult, error) {
+	f.asked = append(f.asked, "failingchecks "+sha)
+	return f.failingChecks, f.failingChecksErr
+}
+
+func (f *fixtureForge) CheckLog(_ context.Context, check forge.CheckResult) (string, error) {
+	f.asked = append(f.asked, "checklog "+check.LogID)
+	if err, ok := f.checkLogErrs[check.LogID]; ok {
+		return "", err
+	}
+	raw, ok := f.checkLogs[check.LogID]
+	if !ok {
+		return "", fmt.Errorf("fixtureForge: no log scripted for check %q", check.Name)
+	}
+	return forge.FilterLog([]byte(raw)), nil
 }
 
 var _ evidence.Forge = (*fixtureForge)(nil)

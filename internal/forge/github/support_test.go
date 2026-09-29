@@ -123,6 +123,17 @@ func (s *stub) onWith(method, path string, status int, fixture string, headers m
 	s.routes[method+" "+path] = answer{status: status, body: body, headers: headers}
 }
 
+// onBody answers job 2's log with a body a spec builds in memory rather than
+// reading from testdata — built with theToken so a spec can assert the token
+// never survives filtering, which a static fixture file could not do without
+// hard-coding theToken's value a second place.
+func (s *stub) onBody(status int, body []byte) {
+	GinkgoHelper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.routes[http.MethodGet+" "+repoAPI+"/actions/jobs/2/logs"] = answer{status: status, body: body}
+}
+
 // onMerge answers a merge the way GitHub does: the request names the commit
 // it merges, and a request naming anything but head is a 409, which is the
 // forge saying the branch moved under the mill.
