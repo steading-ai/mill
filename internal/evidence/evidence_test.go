@@ -531,13 +531,35 @@ var _ = Describe("The status verifier", Label("unit"), func() {
 	})
 
 	It("gives up once the checks have not settled within the workflow's cap", func() {
+		now := time.Now()
 		s := step(forge.Pending)
-		s.Elapsed = 11 * time.Minute
+		s.Now = func() time.Time { return now }
+		// Two reads of the same head: the fold has to pick the earliest one,
+		// not just any entry, to measure the head's whole wait.
+		s.StatusHistory = []evidence.StatusRead{
+			{Head: sha, At: now.Add(-3 * time.Minute)},
+			{Head: sha, At: now.Add(-11 * time.Minute)},
+		}
 
 		_, err := verify(s)
 
 		Expect(evidence.Pending(err)).To(BeFalse())
 		Expect(err).To(MatchError(ContainSubstring("had not settled after 10m0s")))
+	})
+
+	It("gives a freshly read head its own window, however long an earlier head waited", func() {
+		now := time.Now()
+		s := step(forge.Pending)
+		s.Now = func() time.Time { return now }
+		// A different head, long past the cap: its wait must not count
+		// against sha, which this history has never mentioned (mill#91).
+		s.StatusHistory = []evidence.StatusRead{
+			{Head: strings.Repeat("f", 40), At: now.Add(-61 * time.Minute)},
+		}
+
+		_, err := verify(s)
+
+		Expect(evidence.Pending(err)).To(BeTrue(), "%v", err)
 	})
 })
 

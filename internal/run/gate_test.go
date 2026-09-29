@@ -15,6 +15,7 @@ import (
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 	"github.com/steading-ai/mill/internal/forge"
 	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/harness/fake"
 	"github.com/steading-ai/mill/internal/run"
 	"github.com/steading-ai/mill/internal/testsupport"
 )
@@ -538,6 +539,44 @@ var _ = Describe("Gates", Label(testsupport.DBLabel), func() {
 			Expect(stepRuns(detail, "implement")).To(HaveLen(2))
 			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_PARKED),
 				"checks that never settle keep failing the step past its one retry")
+		})
+
+		// mill#91: the wait above used to accumulate across a run's merge
+		// attempts rather than reset on a fresh head, so a revise's new commit
+		// inherited however long the head before it had already waited and
+		// could time out at once, even with checks that would have settled
+		// well inside the window on their own.
+		It("gives the head a revise moves to its own window, not the one the head before it exhausted", func() {
+			workflow := f.variant(ctx, "short-status-timeout", func(definition *millv1.Workflow) {
+				definition.Status = &millv1.StatusPolicy{
+					Interval: durationpb.New(10 * time.Millisecond),
+					Timeout:  durationpb.New(30 * time.Millisecond),
+				}
+			})
+			f.forge.checksAt = forge.Pending
+
+			// The first four turns are quick-fix's ordinary pass, exhausting
+			// the first head's window; the fifth is the revise's own
+			// implement, which commits a new head and, once it lands, gives
+			// the forge's checks something to settle rather than stall on
+			// forever.
+			scripts := append(f.quickFixScripts(), fake.Script{
+				Terminal: fake.Terminal("the change is made again", nil, usage(20)),
+				Do: func(session harness.Session) {
+					f.commits(session)
+					f.forge.checksQueue = []forge.Status{forge.Pending}
+					f.forge.checksAt = forge.Success
+				},
+			})
+			f.script(scripts...)
+
+			Expect(f.runner(func(o *run.Options) { o.Workflow = workflow }).
+				Execute(ctx, f.nodeRef)).To(Succeed())
+
+			Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_DONE),
+				"the second head settles green well inside its own window")
+			Expect(stepRuns(f.inspect(ctx), "implement")).To(HaveLen(2), "one revise, same shape as the sibling spec above")
+			Expect(f.forge.mergeCalls()).To(Equal(1), "the second head, once green, is merged exactly once")
 		})
 
 		It("re-checks the head a conflict's own catch-up produces before merging it", func() {
