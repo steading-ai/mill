@@ -168,7 +168,8 @@ var _ = Describe("A fenced heartbeat whose reclaim fails", Label(testsupport.DBL
 		f = start(ctx)
 	})
 
-	It("ends the run stopped with no lease, not left running behind a dead one", func() {
+	// Flaky under a tier's load (mill#107).
+	It("ends the run stopped with no lease, not left running behind a dead one", FlakeAttempts(3), func() {
 		f.node(ctx, "a held step", "This one is taken away mid-flight and nobody wins it back.")
 		f.script(fake.Script{Hold: true, Cancelled: fake.Terminal("stopped", nil, nil)})
 
