@@ -711,11 +711,16 @@ func (r *Runner) commitAlreadyMade(ctx context.Context, s *state, step *millv1.S
 // whole of what a check produces, and an operator asked to explain a failed
 // check has nowhere else to read it.
 func (r *Runner) runCheck(ctx context.Context, s *state, step *millv1.Step, sr *millv1.StepRun) (result, error) {
+	concurrency := r.options.Concurrency
+	if concurrency < 1 {
+		concurrency = 1
+	}
 	res, err := check.Run(ctx, s.workspace, check.Request{
 		Name:        step.GetName(),
 		Check:       step.GetCheck(),
 		WorkflowDir: r.options.WorkflowDir,
 		Sink:        checkSink{activity: s.activity},
+		Env:         map[string]string{"MILL_WORKER_CONCURRENCY": strconv.Itoa(concurrency)},
 	})
 	if err != nil {
 		return result{}, err

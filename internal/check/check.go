@@ -70,6 +70,12 @@ type Request struct {
 	// and contract, then its output as it streams — as Run produces them.
 	// Nil keeps Run exactly as it was before Sink existed.
 	Sink Sink
+	// Env is what the runner adds to the command's environment — an
+	// operational variable such as MILL_WORKER_CONCURRENCY, never something
+	// a workflow definition names (docs/core-principles.md §3: the
+	// environment is the workspace's to set, not the check's contract).
+	// Nil sets none, unchanged from before Env existed.
+	Env map[string]string
 }
 
 // Sink is where a check's own activity records come from: its resolved
@@ -249,8 +255,9 @@ func Command(request Request) (workspace.Command, error) {
 	}
 	// The environment is the workspace's to set and no part of the check's
 	// contract: a check names a command and reads its result
-	// (docs/core-principles.md §3).
-	return workspace.Command{Path: path, Args: argv[1:]}, nil
+	// (docs/core-principles.md §3). request.Env is the runner's own
+	// addition, not the definition's — see [Request.Env].
+	return workspace.Command{Path: path, Args: argv[1:], Env: request.Env}, nil
 }
 
 func resolve(request Request, name string) (string, error) {

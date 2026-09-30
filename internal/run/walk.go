@@ -180,6 +180,14 @@ func (r *Runner) underBoundary(ctx context.Context, s *state, step *millv1.Step,
 // and why decides what is written. A plain fence writes nothing; a fence
 // whose reclaim failed releases the run so another worker can claim it.
 func (r *Runner) stopped(ctx context.Context, s *state) error {
+	// The heartbeat's reason is read after its goroutine has recorded one.
+	// A kill ends the goroutine through ctx, so wait for it; a fence from a
+	// step's own write may leave it renewing, so stop it first.
+	if ctx.Err() != nil {
+		s.beat.wait()
+	} else {
+		s.beat.stop()
+	}
 	err := s.beat.err()
 	switch {
 	case errors.Is(err, errReclaimFailed):

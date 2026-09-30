@@ -38,6 +38,12 @@ NODE_CPU_amd64 := x64
 
 GINKGO := ginkgo -r -p --randomize-all --fail-on-pending --keep-going
 
+# PROCS is the host's cores divided among however many of this worker's own
+# runs are testing at once (MILL_WORKER_CONCURRENCY, unset outside a live
+# tier), floored to 1, so two runs' tiers do not each ask for every core of
+# the host (docs/runbook.md §"The live tier").
+PROCS := $(shell v=$$(( $$(nproc) / $${MILL_WORKER_CONCURRENCY:-1} )); [ "$$v" -ge 1 ] || v=1; echo "$$v")
+
 MIGRATIONS := internal/store/migrations
 
 COMPOSE := podman compose
@@ -61,7 +67,7 @@ version:
 
 # Every spec. Database specs need podman for testcontainers.
 test:
-	$(GINKGO) ./...
+	$(GINKGO) --procs=$(PROCS) ./...
 
 # Specs that run without external services.
 test-unit:
