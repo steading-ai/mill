@@ -792,9 +792,30 @@ func (f *fixture) reclaim(ctx context.Context) string {
 	GinkgoHelper()
 	other := skift.New(f.skift.HTTPClient(), f.skift.BaseURL(), project,
 		skift.WithAgentRef("other@host"), skift.WithSessionRef("other"))
-	claimed, err := other.Claim(ctx, f.nodeRef)
-	Expect(err).NotTo(HaveOccurred())
+	var claimed *skift.Claimed
+	Expect(retryNotReady(func() (err error) {
+		claimed, err = other.Claim(ctx, f.nodeRef)
+		return err
+	})).To(Succeed())
 	return claimed.Lease.GetId()
+}
+
+// retryNotReady calls fn, and retries it on a short interval, up to a
+// bounded timeout, only while its error is a [*skift.NotReadyError]: skift
+// answering a claim that landed a moment before the label it filtered on was
+// visible, not a real refusal. Ten seconds is generous next to the
+// sub-second races this covers; a genuinely stuck node still fails the spec
+// rather than hanging the suite. Any other error returns at once, unmasked.
+func retryNotReady(fn func() error) error {
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		err := fn()
+		var notReady *skift.NotReadyError
+		if err == nil || !errors.As(err, &notReady) || !time.Now().Before(deadline) {
+			return err
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // cancelRun asks the run's worker to stop at its next heartbeat.

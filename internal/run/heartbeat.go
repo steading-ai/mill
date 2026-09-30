@@ -198,6 +198,15 @@ func (h *heartbeat) err() error {
 	return h.reason
 }
 
+// wait blocks until the heartbeat's own goroutine has recorded why it
+// stopped and exited. stepCtx.Done() wakes that goroutine and walk()'s own
+// ctx.Err() check concurrently; without waiting here, stopped() can read
+// err() before the goroutine's stepCtx.Done() case has called fail(), and
+// mistake an unclean stop (a kill) for none at all.
+func (h *heartbeat) wait() {
+	<-h.done
+}
+
 // containsAny reports whether text holds any of the marks, case-insensitively.
 func containsAny(text string, marks ...string) bool {
 	lower := strings.ToLower(text)

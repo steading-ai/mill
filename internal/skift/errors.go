@@ -74,6 +74,18 @@ func fenced(err error) bool {
 	return false
 }
 
+// Deadlocked reports whether err is skift losing a database deadlock: two
+// requests' writes crossed and Postgres aborted one to break the cycle
+// (SQLSTATE 40P01), which its own manual says a plain retry clears — not a
+// defect in either request, and not the fencing [ErrFenced] already names.
+func Deadlocked(err error) bool {
+	var connectErr *connect.Error
+	if !errors.As(err, &connectErr) {
+		return false
+	}
+	return strings.Contains(connectErr.Message(), "SQLSTATE 40P01")
+}
+
 // wrap turns a Connect failure into an error the run loop can classify,
 // keeping the original for anything that wants to read the code.
 func wrap(what string, err error) error {

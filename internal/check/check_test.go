@@ -373,6 +373,29 @@ var _ = Describe("Resolving a check's command", Label("unit"), func() {
 
 		Expect(err).To(MatchError(ContainSubstring("names no command")))
 	})
+
+	It("carries the runner's own Env onto the spawned command", func() {
+		command, err := check.Command(check.Request{
+			Name:        "test",
+			Check:       &millv1.Check{Command: []string{"make", "test"}},
+			WorkflowDir: GinkgoT().TempDir(),
+			Env:         map[string]string{"MILL_WORKER_CONCURRENCY": "2"},
+		})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(command.Env).To(Equal(map[string]string{"MILL_WORKER_CONCURRENCY": "2"}))
+	})
+
+	It("leaves the command's Env nil when the request sets none", func() {
+		command, err := check.Command(check.Request{
+			Name:        "test",
+			Check:       &millv1.Check{Command: []string{"make", "test"}},
+			WorkflowDir: GinkgoT().TempDir(),
+		})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(command.Env).To(BeNil())
+	})
 })
 
 // fakeSink is check.Sink for a spec that wants to see what Run sends it: the

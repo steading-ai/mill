@@ -562,6 +562,14 @@ missing rather than letting it pass silently unrun
 ([sandbox.md](sandbox.md) §Testing). Only the `live-tier` step's command
 sets it; an ordinary `make test` leaves it unset and keeps skipping.
 
+`MILL_WORKER_CONCURRENCY` bounds the tier's own `make test` to a share of the
+host: the `Makefile`'s `test` target passes `ginkgo` `--procs` computed from
+`nproc` divided by it, floored to 1, so several runs' `live-tier` steps —
+each one worked in its own machine, on the same host — do not each ask
+`ginkgo -p` for every core. `mill work` sets it from `--concurrency`, the cap
+on runs it drives at once; an ordinary `make test` leaves it unset and asks
+for the whole host, unchanged from before this variable existed.
+
 The service the tier's `mill run` and `mill work` write to is the ordinary
 suite's, on `MILL_ACCEPTANCE_DATABASE_URL` — on `core`, `make db-up`'s
 development database. That database outlives every suite run, and a

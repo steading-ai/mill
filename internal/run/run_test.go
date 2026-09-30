@@ -242,10 +242,7 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 	})
 
 	Describe("Resuming after a kill", func() {
-		// FlakeAttempts until mill#107: this spec fails by timing under a live
-		// tier's load (2026-09-30), and every run's tier meets it. mill#107 makes
-		// it wait for the state it depends on and removes the retries.
-		It("aborts the first attempt, starts attempt 2 in the same session, and completes the run", FlakeAttempts(3), func() {
+		It("aborts the first attempt, starts attempt 2 in the same session, and completes the run", func() {
 			f.node(ctx, "interrupted", "This run is killed mid-step.")
 			f.script(append([]fake.Script{{Hold: true, Cancelled: fake.Terminal("stopped", nil, nil)}},
 				f.quickFixScripts()...)...)
@@ -263,9 +260,11 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 			// signal or grace window to model here, but the effect on the
 			// step is the same either way): shutdownStep already aborted the
 			// attempt and released the lease with reason shutdown, so the
-			// node is claimable again with no expiry needed.
+			// node is claimable again with no expiry needed. skift can still
+			// answer not-ready for a moment after that release, the same race
+			// [fixture.reclaim] retries through.
 			f.script(f.quickFixScripts()...)
-			Expect(f.runner().Execute(ctx, f.nodeRef)).To(Succeed())
+			Expect(retryNotReady(func() error { return f.runner().Execute(ctx, f.nodeRef) })).To(Succeed())
 
 			attempts := attemptsOf(f.inspect(ctx), "gather-context")
 			Expect(attempts).To(HaveLen(2))

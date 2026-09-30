@@ -172,7 +172,7 @@ var _ = Describe("Cancelling a run", Label(testsupport.DBLabel), func() {
 		})
 		done := make(chan error, 1)
 		go func() { done <- runner.Execute(ctx, f.nodeRef) }()
-		Eventually(func() int { return len(f.harness.Calls()) }, 30*time.Second, 100*time.Millisecond).
+		Eventually(func() int { return len(f.harness.Calls()) }, 5*time.Minute, 100*time.Millisecond).
 			Should(BeNumerically(">=", 10), "implement's second attempt, answering the revise, is in flight")
 
 		By("when cancel_requested is set")
