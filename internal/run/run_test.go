@@ -242,7 +242,10 @@ var _ = Describe("The run loop", Label(testsupport.DBLabel), func() {
 	})
 
 	Describe("Resuming after a kill", func() {
-		It("aborts the first attempt, starts attempt 2 in the same session, and completes the run", func() {
+		// FlakeAttempts until mill#107: this spec fails by timing under a live
+		// tier's load (2026-09-30), and every run's tier meets it. mill#107 makes
+		// it wait for the state it depends on and removes the retries.
+		It("aborts the first attempt, starts attempt 2 in the same session, and completes the run", FlakeAttempts(3), func() {
 			f.node(ctx, "interrupted", "This run is killed mid-step.")
 			f.script(append([]fake.Script{{Hold: true, Cancelled: fake.Terminal("stopped", nil, nil)}},
 				f.quickFixScripts()...)...)

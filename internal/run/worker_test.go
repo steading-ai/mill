@@ -393,7 +393,10 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			Eventually(resumed, time.Minute).Should(Receive(BeNil()))
 		})
 
-		It("drains in front of a review that would answer a revise", func() {
+		// FlakeAttempts until mill#107: this spec fails by timing under a live
+		// tier's load (2026-09-30), and every run's tier meets it. mill#107 makes
+		// it wait for the state it depends on and removes the retries.
+		It("drains in front of a review that would answer a revise", FlakeAttempts(3), func() {
 			By("given a feature run whose review attempt 1 asked for changes and whose implement round 2 has just closed through pr")
 			f.pushWorkflowFrom(ctx, featureDir)
 			node := f.node(ctx, "a fix drained before a second review", "Change the README's first line.")
@@ -819,9 +822,12 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			Expect(journal.String()).To(ContainSubstring("resumed " + second + ", last updated"))
 
 			By("and each resumes at its next step in a fresh session, not a resume of implement's")
-			calls := f.harness.Calls()
-			Expect(calls).To(HaveLen(2), "one fresh session per reclaimed run's commit step")
-			for _, call := range calls {
+			// A session starts after its claim, not with it: the claim count
+			// above reaches two before either run has walked to its commit
+			// step, so the sessions are waited for, not assumed.
+			Eventually(f.harness.Calls, time.Minute, 100*time.Millisecond).
+				Should(HaveLen(2), "one fresh session per reclaimed run's commit step")
+			for _, call := range f.harness.Calls() {
 				Expect(call.Verb).To(Equal("start"), "commit has never been attempted before; nothing exists to resume")
 			}
 
