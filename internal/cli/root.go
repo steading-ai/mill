@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/steading-ai/mill/internal/domain"
 	"github.com/steading-ai/mill/internal/run"
 	"github.com/steading-ai/mill/internal/version"
 )
@@ -38,6 +39,9 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 func ExitCode(err error) int {
 	if errors.Is(err, run.ErrFenced) {
 		return ExitFenced
+	}
+	if errors.Is(err, domain.ErrMigrationBlocked) {
+		return ExitMigrationBlocked
 	}
 	if errors.Is(err, errLogsWaiting) {
 		return ExitLogsWaiting

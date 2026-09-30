@@ -52,6 +52,12 @@ import (
 // supervisor restarting on this is restarting on the normal path.
 const ExitFenced = 75
 
+// ExitMigrationBlocked is the status `mill serve` exits with when a missing
+// migration below the database's current version is not marked safe to
+// apply out of order: sysexits.h's EX_CONFIG, because a human has to fix
+// the deployment before a restart could possibly help.
+const ExitMigrationBlocked = 78
+
 // Exit statuses for `mill logs -f`, distinct from an ordinary failure (1)
 // the way ExitFenced is: 2 is stead's doctor code for "could not tell", and
 // the rest are free. None collide with ExitFenced.

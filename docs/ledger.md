@@ -211,6 +211,30 @@ The store enforces these with constraints or in the writing transaction. A viola
 12. **A gate is filed once per step run.** `gate_node_id` set and the current step a gate step means resume reads the gate; it never files another. Invariant 11's order leaves one window this cannot close on its own: the patch that files the gate lands and the process dies before the store write, so skift has a gate the ledger knows nothing about. A worker therefore asks skift before it files — the node's user-assigned children carrying the run's and the step's labels — and records what it finds instead of filing a second one. That is the only place in the loop where skift's graph, rather than the ledger, decides what to write, and it is the only place it can be: the gate exists in exactly one of them.
 13. **`running` always has a lease.** No write leaves `status = 'running'` with `lease_id` null: `ReleaseLease` moves a running or selecting run to `stopped` instead of leaving it running with the lease cleared, and `rerun`'s reopen of a `failed` run lands on `stopped` for the same reason — a lease-holding claim is what `running` promises, and a run with no worker says so under its own name rather than by convention.
 
+## Migration numbering under concurrent runs
+
+A migration's number is assigned by the branch that adds it, off whatever
+main carried when the branch started. Two branches in flight can pick the
+same next number, or numbers that land out of order once both merge — the
+second merge's migration is numbered lower than one the first merge already
+shipped. The merge gate's catch-up now catches this before either reaches
+the forge (`internal/store/migrations`'s ordering spec, `CheckOrder`),
+telling `implement` the next free number instead of the one the branch
+started from.
+
+The check is best-effort: it resolves the merge target from
+`refs/remotes/origin/HEAD` and diffs migration file names against it, and
+skips silently when it cannot resolve a target at all. A migration can
+therefore still land out of order despite it. That is safe to apply late
+only when the migration is annotated `-- +mill out-of-order: safe` — which
+is only true for a migration independent of anything numbered between it and
+the version it lands behind (`00028`'s identity column addition does not
+touch anything `00029`'s trigger change reads or writes). `mill serve`
+applies such a migration out of order automatically. Anything else —
+a missing lower migration with no such annotation — stops `mill serve` once,
+by design, naming the migration, rather than retrying: a human has to
+apply it by hand or confirm it is safe, and a restart cannot do either.
+
 ## Resume
 
 The worker's algorithm on receiving a node from `ClaimNext`. Every store call presents `node.lease_id` and is fenced by Invariant 9; every skift call carries it too.

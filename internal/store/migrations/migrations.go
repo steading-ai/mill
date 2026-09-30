@@ -8,8 +8,11 @@ package migrations
 
 import (
 	"context"
+	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
+	"io/fs"
 	"strconv"
 	"strings"
 
@@ -23,27 +26,49 @@ import (
 //go:embed *.sql
 var FS embed.FS
 
+// outOfOrderSafe marks a migration, by a comment on its own line, as safe to
+// apply after a database has already moved past its version: it touches
+// nothing any migration between it and the database's current version could
+// have depended on. Without it, a missing lower migration blocks Up rather
+// than being applied out of order.
+const outOfOrderSafe = "-- +mill out-of-order: safe"
+
+// ErrBlocked is the error Up wraps when a migration below the database's
+// current version is missing and unmarked: applying it would need goose's
+// out-of-order mode, and nothing here may assume that is safe without the
+// migration saying so itself.
+var ErrBlocked = errors.New("migrations: blocked on a missing lower migration")
+
 // Migrator applies migrations to one database.
 type Migrator struct {
+	db       *sql.DB
+	fsys     fs.FS
 	provider *goose.Provider
 }
 
 // Open connects to databaseURL and prepares a Migrator over [FS]. Close it
 // when done.
 func Open(ctx context.Context, databaseURL string) (*Migrator, error) {
+	return OpenFS(ctx, databaseURL, FS)
+}
+
+// OpenFS is [Open] over fsys instead of the package's own [FS]: the seam a
+// spec uses to exercise Up's missing-migration handling against a small,
+// synthetic schema instead of the real one.
+func OpenFS(ctx context.Context, databaseURL string, fsys fs.FS) (*Migrator, error) {
 	cfg, err := pgx.ParseConfig(databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
 	}
 	db := stdlib.OpenDB(*cfg)
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, FS, goose.WithLogger(goose.NopLogger()))
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, fsys, goose.WithLogger(goose.NopLogger()))
 	if err != nil {
 		return nil, joinClose(fmt.Errorf("prepare migrations: %w", err), db)
 	}
 	if err := provider.Ping(ctx); err != nil {
 		return nil, joinClose(fmt.Errorf("connect to database: %w", err), db)
 	}
-	return &Migrator{provider: provider}, nil
+	return &Migrator{db: db, fsys: fsys, provider: provider}, nil
 }
 
 // Close releases the connection.
@@ -51,10 +76,73 @@ func (m *Migrator) Close() error {
 	return m.provider.Close()
 }
 
-// Up applies every pending migration.
+// Up applies every pending migration. A missing migration below the current
+// database version is applied out of order only when every one of them is
+// marked outOfOrderSafe; otherwise Up returns an [ErrBlocked] error naming
+// the migration and the manual remedy, before touching the database at all.
 func (m *Migrator) Up(ctx context.Context) error {
-	_, err := m.provider.Up(ctx)
+	statuses, err := m.provider.Status(ctx)
+	if err != nil {
+		return err
+	}
+	var current int64
+	for _, s := range statuses {
+		if s.State == goose.StateApplied && s.Source.Version > current {
+			current = s.Source.Version
+		}
+	}
+	var missing []*goose.MigrationStatus
+	for _, s := range statuses {
+		if s.State == goose.StatePending && s.Source.Version < current {
+			missing = append(missing, s)
+		}
+	}
+	if len(missing) == 0 {
+		_, err := m.provider.Up(ctx)
+		return err
+	}
+	safe, err := safeVersions(m.fsys)
+	if err != nil {
+		return err
+	}
+	for _, s := range missing {
+		if !safe[s.Source.Version] {
+			return fmt.Errorf(
+				"%w: migration %d (%s) is missing but the database is already at version %d; "+
+					"apply it by hand: goose -dir internal/store/migrations postgres \"$DATABASE_URL\" -allow-missing up",
+				ErrBlocked, s.Source.Version, s.Source.Path, current)
+		}
+	}
+	outOfOrder, err := goose.NewProvider(goose.DialectPostgres, m.db, m.fsys,
+		goose.WithLogger(goose.NopLogger()), goose.WithAllowOutofOrder(true))
+	if err != nil {
+		return err
+	}
+	_, err = outOfOrder.Up(ctx)
 	return err
+}
+
+// safeVersions is the set of migration versions in fsys marked
+// outOfOrderSafe.
+func safeVersions(fsys fs.FS) (map[int64]bool, error) {
+	versions, err := Versions(fsys)
+	if err != nil {
+		return nil, err
+	}
+	safe := make(map[int64]bool, len(versions))
+	for name, version := range versions {
+		body, err := fs.ReadFile(fsys, name)
+		if err != nil {
+			return nil, err
+		}
+		for _, line := range strings.Split(string(body), "\n") {
+			if strings.TrimSpace(line) == outOfOrderSafe {
+				safe[version] = true
+				break
+			}
+		}
+	}
+	return safe, nil
 }
 
 // DownTo rolls back migrations newer than version, newest first. Version 0
@@ -93,6 +181,37 @@ func joinClose(err error, c closer) error {
 	return err
 }
 
+// VersionOf parses the goose `NNNNN_name.sql` version prefix from a
+// migration's file name, or reports ok false when name carries none.
+func VersionOf(name string) (version int64, ok bool) {
+	digits := name
+	if i := strings.IndexByte(name, '_'); i >= 0 {
+		digits = name[:i]
+	}
+	version, err := strconv.ParseInt(digits, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return version, true
+}
+
+// Versions reads every migration's version out of fsys, by file name — the
+// data an order check compares between two branches without needing goose or
+// a database.
+func Versions(fsys fs.FS) (map[string]int64, error) {
+	entries, err := fs.ReadDir(fsys, ".")
+	if err != nil {
+		return nil, err
+	}
+	versions := make(map[string]int64, len(entries))
+	for _, entry := range entries {
+		if version, ok := VersionOf(entry.Name()); ok {
+			versions[entry.Name()] = version
+		}
+	}
+	return versions, nil
+}
+
 // Wanted is the newest migration this binary carries, which is the version a
 // current database is at. `mill doctor` compares it against what the database
 // reports.
@@ -103,13 +222,7 @@ func Wanted() int64 {
 	}
 	var newest int64
 	for _, entry := range entries {
-		name := entry.Name()
-		digits := name
-		if i := strings.IndexByte(name, '_'); i >= 0 {
-			digits = name[:i]
-		}
-		version, err := strconv.ParseInt(digits, 10, 64)
-		if err == nil && version > newest {
+		if version, ok := VersionOf(entry.Name()); ok && version > newest {
 			newest = version
 		}
 	}

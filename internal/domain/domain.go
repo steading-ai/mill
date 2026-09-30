@@ -48,6 +48,10 @@ var (
 	// ErrNotAttempted: a step the run has never attempted. Its message
 	// names the steps it has.
 	ErrNotAttempted = store.ErrNotAttempted
+	// ErrMigrationBlocked: a missing migration below the database's current
+	// version is not marked safe to apply out of order. `mill serve` refuses
+	// to start rather than guess.
+	ErrMigrationBlocked = migrations.ErrBlocked
 )
 
 // Service is the ledger with its rules applied. Every handler holds one.

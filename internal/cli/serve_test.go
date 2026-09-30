@@ -3,6 +3,7 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"os"
@@ -19,6 +20,7 @@ import (
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
 	"github.com/steading-ai/mill/gen/mill/v1/millv1connect"
 	"github.com/steading-ai/mill/internal/cli"
+	"github.com/steading-ai/mill/internal/domain"
 	"github.com/steading-ai/mill/internal/sdnotify"
 	"github.com/steading-ai/mill/internal/testsupport"
 	"github.com/steading-ai/mill/internal/workflow"
@@ -109,6 +111,34 @@ var _ = Describe("mill serve", Label(testsupport.DBLabel), func() {
 		listed, err := client.Status(ctx, connect.NewRequest(&millv1.StatusRequest{}))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(listed.Msg.GetRuns()).To(BeEmpty(), "an empty ledger has no runs to report")
+	})
+
+	// A missing lower migration, unmarked, against a real, already-migrated
+	// database — one already-shipped migration's tracking row removed —
+	// proves mill serve's actual entry point is closed: it refuses once,
+	// naming the migration, rather than restarting, and the socket is
+	// never bound.
+	It("refuses to start on a missing, unmarked migration, and never binds its socket", func(ctx SpecContext) {
+		db := pg.Database(ctx)
+		databaseURL := db.Config().ConnString()
+
+		Expect(domain.Migrate(ctx, databaseURL)).To(Succeed())
+		_, err := db.Exec(ctx, `DELETE FROM goose_db_version WHERE version_id = $1`, int64(27))
+		Expect(err).NotTo(HaveOccurred())
+
+		dir := GinkgoT().TempDir()
+		socket := filepath.Join(dir, "o.sock")
+
+		var stdout, stderr bytes.Buffer
+		root := cli.NewRootCommand(&stdout, &stderr)
+		root.SetArgs([]string{"serve", "--socket", socket, "--database-url", databaseURL})
+
+		err = root.ExecuteContext(ctx)
+
+		Expect(errors.Is(err, domain.ErrMigrationBlocked)).To(BeTrue(), "got: %v", err)
+		Expect(err).To(MatchError(ContainSubstring("00027")))
+		_, statErr := os.Stat(socket)
+		Expect(os.IsNotExist(statErr)).To(BeTrue(), "the socket must never be bound before the migration refusal")
 	})
 
 	// This is the proof that `mill serve` itself, not just the handlers it

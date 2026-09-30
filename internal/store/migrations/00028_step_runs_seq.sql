@@ -8,6 +8,10 @@
 -- INSERT grant on step_runs (00012_grants.sql) is enough. bigserial creates
 -- a separate sequence object mill_app has no USAGE on, which would fail
 -- every InsertStepRun under that role.
+--
+-- Safe to apply after a later migration: it only adds a column nothing
+-- numbered above it reads or writes.
+-- +mill out-of-order: safe
 
 -- +goose Up
 

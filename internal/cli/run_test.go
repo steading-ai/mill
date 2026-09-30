@@ -17,6 +17,7 @@ import (
 	skiftv1 "github.com/steading-ai/skift/gen/skift/v1"
 
 	"github.com/steading-ai/mill/internal/cli"
+	"github.com/steading-ai/mill/internal/domain"
 	"github.com/steading-ai/mill/internal/run"
 	"github.com/steading-ai/mill/internal/testsupport"
 	"github.com/steading-ai/mill/internal/workspace/socket"
@@ -477,6 +478,10 @@ var _ = Describe("mill run", func() {
 		It("gives a fenced run a status of its own", func() {
 			Expect(cli.ExitCode(run.ErrFenced)).To(Equal(cli.ExitFenced))
 			Expect(cli.ExitCode(context.Canceled)).To(Equal(1))
+		})
+
+		It("gives a blocked migration a status of its own", func() {
+			Expect(cli.ExitCode(domain.ErrMigrationBlocked)).To(Equal(cli.ExitMigrationBlocked))
 		})
 	})
 })

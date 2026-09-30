@@ -91,6 +91,12 @@ ExecStart=/usr/bin/mill serve --work --env-mode strict --socket %t/mill/mill.soc
 TimeoutStopSec=90
 KillSignal=SIGTERM
 Restart=on-failure
+# Exit status 78 (EX_CONFIG) is a migration mill serve refuses to guess at:
+# a missing migration below the database's current version that is not
+# marked safe to apply out of order. A restart cannot fix that, only a human
+# applying it by hand can, so it is excluded here rather than looping every
+# RestartSec.
+RestartPreventExitStatus=78
 RestartSec=2
 StandardOutput=journal
 StandardError=journal
