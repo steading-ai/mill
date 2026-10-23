@@ -20,7 +20,10 @@ ARG HARBOR_HOST
 
 # The system and the toolchain: what ruby-build, node-gyp and linked crates
 # need to compile against, and procps-ng because a check step will pgrep.
-RUN dnf -y install \
+# ca-certificates is upgraded explicitly: the Harbor proxy can serve a
+# fedora:44 cached before the distribution's current trust store.
+RUN dnf -y upgrade ca-certificates \
+    && dnf -y install \
       systemd dbus-broker podman git sudo curl procps-ng \
       gcc gcc-c++ make pkgconf python3 \
       openssl-devel zlib-devel libffi-devel libyaml-devel \

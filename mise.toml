@@ -6,14 +6,14 @@
 # is podman, which testcontainers uses for the database specs.
 
 [tools]
-python = "3.14.7"
-go = "1.25.7"
+python = "3.14.9"
+go = "1.26.10"
 golangci-lint = "2.13.2"
 buf = "1.72.0"
 sqlc = "1.31.1"
 "aqua:pressly/goose" = "3.28.0"
 ginkgo = "2.32.1"
-node = "24.13.0"
+node = "24.22.1"
 pnpm = "10.20.0"
 hk = "1.57.0"
 nfpm = "2.47.0"
