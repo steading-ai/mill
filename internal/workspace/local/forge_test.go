@@ -288,7 +288,7 @@ var _ = Describe("A workspace on a private origin", Label("unit"), func() {
 		// the workspace — is refused
 		anonymous := exec.CommandContext(ctx, "git", "clone", "--quiet", remote,
 			filepath.Join(GinkgoT().TempDir(), "anonymous"))
-		anonymous.Env = testsupport.ScratchEnv(testsupport.SpecGit("GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=true")...)
+		anonymous.Env = testsupport.MinimalEnv(testsupport.SpecGit("GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=true")...)
 		refused, err := anonymous.CombinedOutput()
 		Expect(err).To(HaveOccurred(), "the origin let an anonymous read through")
 		Expect(string(refused)).To(ContainSubstring("Authentication failed"))

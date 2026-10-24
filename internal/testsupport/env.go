@@ -27,7 +27,7 @@ func ScratchEnv(extra ...string) []string {
 	return append(clean, extra...)
 }
 
-// SpecGit is what a spec's own fixture git adds over [ScratchEnv]: none of
+// SpecGit is what a spec's own fixture git adds over [MinimalEnv]: none of
 // the operator's configuration, an identity of the spec's own, and a fixed
 // locale, so what git prints is what the spec matches.
 func SpecGit(extra ...string) []string {
@@ -39,5 +39,16 @@ func SpecGit(extra ...string) []string {
 		"GIT_COMMITTER_NAME=spec",
 		"GIT_COMMITTER_EMAIL=spec@example.test",
 		"LC_ALL=C",
+	}, extra...)
+}
+
+// MinimalEnv is the environment for a subprocess that needs nothing of the
+// host but where its programs are and whose home it is: PATH and HOME from
+// this process, then extra. No GIT_* variable reaches it unless extra names
+// one, so it is as safe under a git hook as [ScratchEnv], and tighter.
+func MinimalEnv(extra ...string) []string {
+	return append([]string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + os.Getenv("HOME"),
 	}, extra...)
 }

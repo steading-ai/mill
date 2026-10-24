@@ -216,7 +216,7 @@ var _ = Describe("The machine workspace's git and forge verbs", Label("unit"), f
 		Expect(key.Path).To(HavePrefix(f.config.SigningDir), "the key is the account's, beside no run")
 		verify := exec.Command("git", "-c", "gpg.ssh.allowedSignersFile="+key.AllowedSigners, "verify-commit", committed.SHA)
 		verify.Dir = checkout
-		verify.Env = testsupport.ScratchEnv(testsupport.SpecGit()...)
+		verify.Env = testsupport.MinimalEnv(testsupport.SpecGit()...)
 		out, err := verify.CombinedOutput()
 		Expect(err).NotTo(HaveOccurred(), "git verify-commit: %s", out)
 		Expect(string(out)).To(ContainSubstring("Good \"git\" signature for " + f.config.Identity))

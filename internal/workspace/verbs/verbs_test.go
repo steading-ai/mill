@@ -205,7 +205,7 @@ func runGit(dir string, args ...string) string {
 	GinkgoHelper()
 	command := exec.Command("git", args...)
 	command.Dir = dir
-	command.Env = testsupport.ScratchEnv(testsupport.SpecGit("HOME=" + dir)...)
+	command.Env = testsupport.MinimalEnv(testsupport.SpecGit("HOME=" + dir)...)
 	out, err := command.CombinedOutput()
 	Expect(err).NotTo(HaveOccurred(), "git %s: %s", strings.Join(args, " "), out)
 	return string(out)

@@ -35,7 +35,7 @@ func seedOrigin() string {
 		GinkgoHelper()
 		command := exec.Command("git", args...)
 		command.Dir = dir
-		command.Env = testsupport.ScratchEnv(testsupport.SpecGit()...)
+		command.Env = testsupport.MinimalEnv(testsupport.SpecGit()...)
 		out, err := command.CombinedOutput()
 		Expect(err).NotTo(HaveOccurred(), "git %s: %s", strings.Join(args, " "), out)
 	}

@@ -19,7 +19,7 @@ func git(dir string, args ...string) string {
 
 	command := exec.Command("git", args...)
 	command.Dir = dir
-	command.Env = testsupport.ScratchEnv(testsupport.SpecGit()...)
+	command.Env = testsupport.MinimalEnv(testsupport.SpecGit()...)
 	out, err := command.CombinedOutput()
 	Expect(err).NotTo(HaveOccurred(), "git %s: %s", strings.Join(args, " "), out)
 	return strings.TrimSpace(string(out))
