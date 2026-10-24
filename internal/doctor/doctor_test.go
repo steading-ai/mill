@@ -3,6 +3,7 @@ package doctor_test
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/steading-ai/mill/internal/doctor"
 	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/testsupport"
 	"github.com/steading-ai/mill/internal/workspace"
 	"github.com/steading-ai/mill/internal/workspace/signing"
 )
@@ -91,5 +93,27 @@ var _ = Describe("The isolation probe", Label("unit"), func() {
 		matches, err := filepath.Glob(filepath.Join(workspaceDir, "doctor-isolation-*"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(matches).To(BeEmpty(), "the throwaway workspace's own directory is gone")
+	})
+
+	It("SessionSockets makes its own repository when the mill runs under a git hook", func(ctx context.Context) {
+		// git exports GIT_DIR and GIT_INDEX_FILE into a hook, and `make
+		// test-unit` runs from one: a git init that inherits them
+		// reinitialises the hook's repository instead of the probe's.
+		hooked := GinkgoT().TempDir()
+		initialise := exec.Command("git", "init", "--quiet", hooked)
+		initialise.Env = testsupport.ScratchEnv()
+		Expect(initialise.CombinedOutput()).Error().NotTo(HaveOccurred())
+		config := filepath.Join(hooked, ".git", "config")
+		before, err := os.ReadFile(config)
+		Expect(err).NotTo(HaveOccurred())
+		GinkgoT().Setenv("GIT_DIR", filepath.Join(hooked, ".git"))
+		GinkgoT().Setenv("GIT_INDEX_FILE", filepath.Join(hooked, ".git", "index"))
+
+		result := doctor.SessionSockets(ctx, GinkgoT().TempDir(), "/run/mill/ws.sock", "/run/skift/skift.sock")
+		Expect(result.OK).To(BeTrue(), result.Reason)
+
+		after, err := os.ReadFile(config)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(after)).To(Equal(string(before)), "the hook's repository is untouched")
 	})
 })
