@@ -237,9 +237,11 @@ func SessionSockets(ctx context.Context, workspaceDir, socket, skiftSocket strin
 
 // gitInit makes dir an empty git repository, spawned through
 // [workspace.Spawner] like every other process the mill runs (os/exec is
-// forbidden outside internal/workspace).
+// forbidden outside internal/workspace). It inherits only the floor, so a
+// GIT_DIR in the mill's own environment, such as a git hook's, cannot point
+// it at another repository.
 func gitInit(ctx context.Context, dir string) error {
-	process, err := (workspace.Spawner{}).Exec(ctx, workspace.Command{
+	process, err := (workspace.Spawner{Floor: workspace.Floor(os.Environ())}).Exec(ctx, workspace.Command{
 		Path: "git", Args: []string{"init", "--quiet", dir},
 	})
 	if err != nil {

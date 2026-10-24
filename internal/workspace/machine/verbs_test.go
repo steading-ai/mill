@@ -15,6 +15,7 @@ import (
 
 	"github.com/steading-ai/mill/internal/forge"
 	"github.com/steading-ai/mill/internal/forge/gitlab"
+	"github.com/steading-ai/mill/internal/testsupport"
 	"github.com/steading-ai/mill/internal/workspace"
 	"github.com/steading-ai/mill/internal/workspace/machine"
 	"github.com/steading-ai/mill/internal/workspace/machine/driver"
@@ -100,7 +101,9 @@ var _ = Describe("The machine workspace's git and forge verbs", Label("unit"), f
 				_, _ = w.Write([]byte(`{"iid":7,"state":"opened","web_url":"https://gitlab.example.test/group/thing/-/merge_requests/7",` +
 					`"source_branch":"` + branch + `","target_branch":"main"}`))
 			case strings.Contains(r.URL.EscapedPath(), "/repository/branches/"):
-				head, err := exec.Command("git", "--git-dir="+bare, "rev-parse", "refs/heads/"+branch).Output()
+				probe := exec.Command("git", "--git-dir="+bare, "rev-parse", "refs/heads/"+branch)
+				probe.Env = testsupport.ScratchEnv()
+				head, err := probe.Output()
 				if err != nil {
 					w.WriteHeader(http.StatusNotFound)
 					_, _ = w.Write([]byte(`{"message":"404 Branch Not Found"}`))
@@ -171,7 +174,9 @@ var _ = Describe("The machine workspace's git and forge verbs", Label("unit"), f
 		pushed, err := ws.Forge().Push(ctx, workspace.PushRequest{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(pushed).To(Equal(workspace.PushResult{Branch: branch, SHA: committed.SHA, Remote: bare}))
-		out, err := exec.Command("git", "--git-dir="+bare, "rev-parse", "refs/heads/"+branch).Output()
+		probe := exec.Command("git", "--git-dir="+bare, "rev-parse", "refs/heads/"+branch)
+		probe.Env = testsupport.ScratchEnv()
+		out, err := probe.Output()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(strings.TrimSpace(string(out))).To(Equal(committed.SHA), "the push landed on the forge's repository")
 
@@ -211,7 +216,7 @@ var _ = Describe("The machine workspace's git and forge verbs", Label("unit"), f
 		Expect(key.Path).To(HavePrefix(f.config.SigningDir), "the key is the account's, beside no run")
 		verify := exec.Command("git", "-c", "gpg.ssh.allowedSignersFile="+key.AllowedSigners, "verify-commit", committed.SHA)
 		verify.Dir = checkout
-		verify.Env = gitEnv()
+		verify.Env = testsupport.MinimalEnv(testsupport.SpecGit()...)
 		out, err := verify.CombinedOutput()
 		Expect(err).NotTo(HaveOccurred(), "git verify-commit: %s", out)
 		Expect(string(out)).To(ContainSubstring("Good \"git\" signature for " + f.config.Identity))

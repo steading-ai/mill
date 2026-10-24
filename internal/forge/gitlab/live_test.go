@@ -15,6 +15,7 @@ import (
 
 	"github.com/steading-ai/mill/internal/forge"
 	"github.com/steading-ai/mill/internal/forge/gitlab"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // The live spec spends a real branch and a real merge request on a scratch
@@ -157,7 +158,7 @@ type liveGit struct {
 func (g liveGit) Run(ctx context.Context, env map[string]string, args ...string) (string, error) {
 	command := exec.CommandContext(ctx, "git", args...) //nolint:gosec // a spec's own git, behind an env gate
 	command.Dir = g.dir
-	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	command.Env = testsupport.ScratchEnv("GIT_TERMINAL_PROMPT=0")
 	for name, value := range env {
 		command.Env = append(command.Env, name+"="+value)
 	}

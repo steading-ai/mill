@@ -296,7 +296,7 @@ var _ = Describe("The local workspace", Label("unit"), func() {
 			key := ws.SigningKey()
 			verify := exec.Command("git", append(key.GitConfig(), "verify-commit", commit.SHA)...) //nolint:gosec // the arguments are this spec's own
 			verify.Dir = handle.Root
-			verify.Env = gitEnv()
+			verify.Env = testsupport.MinimalEnv(testsupport.SpecGit()...)
 			out, err := verify.CombinedOutput()
 			Expect(err).NotTo(HaveOccurred(), "git verify-commit: %s", out)
 			Expect(string(out)).To(ContainSubstring("Good \"git\" signature for mill@example.test"))

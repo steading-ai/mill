@@ -17,6 +17,7 @@ import (
 
 	"github.com/steading-ai/mill/internal/forge"
 	"github.com/steading-ai/mill/internal/forge/gitlab"
+	"github.com/steading-ai/mill/internal/testsupport"
 	"github.com/steading-ai/mill/internal/workspace"
 	"github.com/steading-ai/mill/internal/workspace/local"
 	"github.com/steading-ai/mill/internal/workspace/redact"
@@ -73,7 +74,9 @@ var _ = Describe("The local workspace's forge verbs", Label("unit"), func() {
 			// push actually goes to, so a merge request is opened only
 			// after the ref is really there.
 			case strings.Contains(r.URL.EscapedPath(), "/repository/branches/"):
-				head, err := exec.Command("git", "--git-dir="+bare, "rev-parse", "refs/heads/"+branch).Output()
+				probe := exec.Command("git", "--git-dir="+bare, "rev-parse", "refs/heads/"+branch)
+				probe.Env = testsupport.ScratchEnv()
+				head, err := probe.Output()
 				if err != nil {
 					w.WriteHeader(http.StatusNotFound)
 					_, _ = w.Write([]byte(`{"message":"404 Branch Not Found"}`))
@@ -285,7 +288,7 @@ var _ = Describe("A workspace on a private origin", Label("unit"), func() {
 		// the workspace — is refused
 		anonymous := exec.CommandContext(ctx, "git", "clone", "--quiet", remote,
 			filepath.Join(GinkgoT().TempDir(), "anonymous"))
-		anonymous.Env = append(gitEnv(), "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=true")
+		anonymous.Env = testsupport.MinimalEnv(testsupport.SpecGit("GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=true")...)
 		refused, err := anonymous.CombinedOutput()
 		Expect(err).To(HaveOccurred(), "the origin let an anonymous read through")
 		Expect(string(refused)).To(ContainSubstring("Authentication failed"))

@@ -38,6 +38,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 const (
@@ -866,6 +867,7 @@ func carryWorkingTree(ctx context.Context, root, clone string) {
 	patch := gitOutput(ctx, root, "diff", "--binary", "HEAD")
 	if patch != "" {
 		apply := exec.CommandContext(ctx, "git", "-C", clone, "apply", "--whitespace=nowarn", "-") //nolint:gosec // the suite's own git
+		apply.Env = testsupport.ScratchEnv()
 		apply.Stdin = strings.NewReader(patch)
 		out, err := apply.CombinedOutput()
 		Expect(err).NotTo(HaveOccurred(), "applying the working tree's changes: %s", out)
@@ -885,6 +887,7 @@ func carryWorkingTree(ctx context.Context, root, clone string) {
 func gitOutput(ctx context.Context, dir string, args ...string) string {
 	GinkgoHelper()
 	command := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...) //nolint:gosec // the suite's own git
+	command.Env = testsupport.ScratchEnv()
 	out, err := command.Output()
 	Expect(err).NotTo(HaveOccurred(), "git %s", strings.Join(args, " "))
 	return string(out)
@@ -1009,7 +1012,7 @@ func startMachineWorker(ctx context.Context, s *staged) *worker {
 	// worker declares no --socket flag, and a `socket:` line in its file is
 	// read against that flag and so never applied — `serve --work`, which
 	// declares it, is the face a deployment runs.
-	command.Env = append(os.Environ(),
+	command.Env = testsupport.ScratchEnv(
 		"MILL_SOCKET="+suite.service.Socket,
 		"MILL_FORGE_TOKEN="+env.ForgeToken,
 		"MILL_FORGE_USER="+env.ForgeUser)

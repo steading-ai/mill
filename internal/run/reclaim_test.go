@@ -201,6 +201,43 @@ var _ = Describe("A fenced heartbeat whose reclaim fails", Label(testsupport.DBL
 		Expect(f.runOf(ctx).GetLeaseId()).To(BeEmpty())
 	})
 
+	It("ends the run stopped when the fence lands under a store write between sessions, as it does under a session", func() {
+		// The fence's half of mill#67: a failed reclaim noticed while the
+		// worker is in one of its own store writes, not a session, must
+		// still abort the attempt and release the run rather than leave it
+		// `running` behind a lease skift has moved on from.
+		f.node(ctx, "a fence between sessions", "The session is over; the node is taken away while its cost is recorded.")
+		f.script(fake.Script{Terminal: fake.Terminal("context gathered", nil, usage(10))})
+
+		blocking := &blockingUsage{StoreServiceClient: f.store, started: make(chan struct{})}
+		runner := f.runner(func(o *run.Options) {
+			o.TTL = 12 * time.Second
+			o.Interval = 200 * time.Millisecond
+			o.Store = blocking
+		})
+		done := make(chan error, 1)
+		go func() { done <- runner.Execute(ctx, f.nodeRef) }()
+		Eventually(blocking.started, 30*time.Second).Should(BeClosed(), "the worker is inside RecordUsage")
+		stepRun := f.openStepRun(ctx)
+		Expect(stepRun).NotTo(BeNil(), "the attempt is still open while its usage is recorded")
+		first := f.leaseOf(ctx).GetId()
+		Expect(first).NotTo(BeEmpty())
+
+		f.expire(ctx, first)
+		second := f.reclaim(ctx)
+		Expect(second).NotTo(Equal(first))
+
+		Eventually(done, 30*time.Second).Should(Receive(MatchError(run.ErrFenced)))
+
+		Expect(f.stepRunStatus(ctx, stepRun.GetId())).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_ABORTED))
+		Expect(f.abortReason(ctx, stepRun.GetId())).To(Equal("fenced"))
+		Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
+		Expect(f.runOf(ctx).GetLeaseId()).To(BeEmpty())
+		Expect(f.leaseOf(ctx).GetId()).To(Equal(second), "the node stays with whoever won it")
+		Expect(f.releases(ctx)).To(Equal([]string{"preempted: spec: forcing expiry"}),
+			"a fenced worker releases nothing in skift, and never as a crash")
+	})
+
 	It("leaves another worker's row untouched when its own store-side claim already landed", func() {
 		f.node(ctx, "a held step", "This one is taken away mid-flight, and the winner has already claimed it in the ledger too.")
 		f.script(fake.Script{Hold: true, Cancelled: fake.Terminal("stopped", nil, nil)})

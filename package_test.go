@@ -11,6 +11,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
+
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // The package is what a host installs with no checkout and no build tools,
@@ -27,7 +29,7 @@ var _ = Describe("The package", Label("unit", "slow"), Ordered, func() {
 		By("when make package runs")
 		cmd := exec.Command("make", "package")
 		cmd.Dir = dir
-		cmd.Env = scratchEnv()
+		cmd.Env = testsupport.ScratchEnv()
 		session, err := gexec.Start(cmd, GinkgoWriter, GinkgoWriter)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(session.Wait(10 * time.Minute)).To(gexec.Exit(0))

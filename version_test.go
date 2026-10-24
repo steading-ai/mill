@@ -8,6 +8,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // The version a build carries comes from the tree it was built from: a
@@ -22,7 +24,7 @@ var _ = Describe("The version", Label("unit"), func() {
 	in := func(name string, args ...string) *exec.Cmd {
 		cmd := exec.Command(name, args...)
 		cmd.Dir = repo
-		cmd.Env = scratchEnv()
+		cmd.Env = testsupport.ScratchEnv()
 		return cmd
 	}
 

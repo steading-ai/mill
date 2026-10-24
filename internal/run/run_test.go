@@ -525,14 +525,26 @@ func (f failing) Done(ctx context.Context, req *connect.Request[millv1.DoneReque
 // heartbeat cancels the step's shared context, exactly as it reaches the
 // caller when nothing has translated it yet. started closes once the call
 // arrives, so a spec can wait for the write to be in flight before staging
-// whatever is meant to cancel the context underneath it.
+// whatever is meant to cancel the context underneath it. answer, when set,
+// is the error the call returns in place of the bare cancellation.
 type blockingUsage struct {
 	millv1connect.StoreServiceClient
 	started chan struct{}
+	answer  func(ctx context.Context) error
 }
 
 func (b *blockingUsage) RecordUsage(ctx context.Context, _ *connect.Request[millv1.RecordUsageRequest]) (*connect.Response[millv1.RecordUsageResponse], error) {
 	close(b.started)
 	<-ctx.Done()
+	if b.answer != nil {
+		return nil, b.answer(ctx)
+	}
 	return nil, ctx.Err()
+}
+
+// cutByTransport is the cancellation as a Connect client can report it when
+// the transport fails first under a cancelled context: CodeCanceled around
+// the transport's own error, with no context.Canceled anywhere in its chain.
+func cutByTransport(context.Context) error {
+	return connect.NewError(connect.CodeCanceled, errors.New("http2: response body closed"))
 }

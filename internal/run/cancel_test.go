@@ -77,6 +77,94 @@ var _ = Describe("Cancelling a run", Label(testsupport.DBLabel), func() {
 			"the ledger lets go of the lease when skift does, as a drain's release does")
 	})
 
+	DescribeTable("Cancel noticed during a store write between sessions stops the run as a cancellation, not a crash", func(answer func(context.Context) error) {
+		// mill#67: the heartbeat notices the flag while the worker is in one
+		// of its own store writes rather than in a session. The write fails
+		// with the cancelled step context, and the run must still end the way
+		// a cancel that interrupts a session ends.
+		By("given a step whose session has ended and whose usage write is in flight")
+		f.node(ctx, "a cancel between sessions", "The session is over; the worker is still recording what it cost.")
+		f.script(fake.Script{Terminal: fake.Terminal("context gathered", nil, usage(10))})
+
+		blocking := &blockingUsage{StoreServiceClient: f.store, started: make(chan struct{}), answer: answer}
+		runner := f.runner(func(o *run.Options) {
+			o.TTL = 3 * interval
+			o.Interval = interval
+			o.Grace = grace
+			o.Store = blocking
+		})
+		done := make(chan error, 1)
+		go func() { done <- runner.Execute(ctx, f.nodeRef) }()
+		Eventually(blocking.started, 30*time.Second).Should(BeClosed(), "the worker is inside RecordUsage")
+		stepRun := f.openStepRun(ctx)
+		Expect(stepRun).NotTo(BeNil(), "the attempt is still open while its usage is recorded")
+
+		By("when cancel_requested is set")
+		Expect(f.cancelRun(ctx)).To(Succeed())
+
+		By("then the run ends within one heartbeat interval plus the grace period")
+		Eventually(done, interval+grace).Should(Receive(BeNil()))
+
+		By("and the attempt is aborted as cancelled, once")
+		Expect(f.stepRunStatus(ctx, stepRun.GetId())).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_ABORTED))
+		Expect(f.abortReason(ctx, stepRun.GetId())).To(Equal("cancelled"))
+		aborts := 0
+		for _, op := range f.eventOps(ctx) {
+			if op == "abort_step_run" {
+				aborts++
+			}
+		}
+		Expect(aborts).To(Equal(1), "the cancellation is written once")
+
+		By("and the lease is released as a cancellation, and never as a crash")
+		Expect(f.releases(ctx)).To(Equal([]string{"preempted: cancel"}))
+
+		By("and the run is stopped, resumable at that step")
+		Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
+		Expect(f.runOf(ctx).GetLeaseId()).To(BeEmpty())
+		Expect(f.runOf(ctx).GetCancelRequested()).To(BeTrue(), "nothing reclaimed the node and cleared the request")
+		Expect(f.leaseOf(ctx).GetId()).To(BeEmpty(), "the node is claimable again")
+	},
+		Entry("when the write returns the bare cancellation", nil),
+		Entry("when the write's client reports a Canceled carrying the transport's error", cutByTransport),
+	)
+
+	It("A kill noticed during a store write between sessions stops the run as a shutdown, not a crash", func() {
+		// The same door as mill#67, reached by the process going away
+		// instead of a person asking: the kill cancels the step context under
+		// a store write, not a session.
+		By("given a step whose session has ended and whose usage write is in flight")
+		f.node(ctx, "a kill between sessions", "The session is over; the worker is still recording what it cost.")
+		f.script(fake.Script{Terminal: fake.Terminal("context gathered", nil, usage(10))})
+
+		blocking := &blockingUsage{StoreServiceClient: f.store, started: make(chan struct{})}
+		runner := f.runner(func(o *run.Options) {
+			o.TTL = 3 * interval
+			o.Interval = interval
+			o.Grace = grace
+			o.Store = blocking
+		})
+		killed, kill := context.WithCancel(ctx)
+		done := make(chan error, 1)
+		go func() { done <- runner.Execute(killed, f.nodeRef) }()
+		Eventually(blocking.started, 30*time.Second).Should(BeClosed(), "the worker is inside RecordUsage")
+		stepRun := f.openStepRun(ctx)
+		Expect(stepRun).NotTo(BeNil(), "the attempt is still open while its usage is recorded")
+
+		By("when the worker is killed")
+		kill()
+		Eventually(done, interval+grace).Should(Receive())
+
+		By("then the attempt is aborted as a shutdown, and the lease released as one")
+		Expect(f.stepRunStatus(ctx, stepRun.GetId())).To(Equal(millv1.StepRunStatus_STEP_RUN_STATUS_ABORTED))
+		Expect(f.abortReason(ctx, stepRun.GetId())).To(Equal("shutdown"))
+		Expect(f.releases(ctx)).To(Equal([]string{"preempted: shutdown"}))
+
+		By("and the run is stopped, resumable at that step")
+		Expect(f.runOf(ctx).GetStatus()).To(Equal(millv1.RunStatus_RUN_STATUS_STOPPED))
+		Expect(f.leaseOf(ctx).GetId()).To(BeEmpty(), "the node is claimable again")
+	})
+
 	It("a cancelled run can be rerun before any worker claims it again", func() {
 		// steading#17, 2026-09-29: a run cancelled so an operator could move
 		// it back to its pr step was refused as "held under a live lease"

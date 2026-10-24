@@ -5,7 +5,6 @@ import (
 	"errors"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	millv1 "github.com/steading-ai/mill/gen/mill/v1"
@@ -37,11 +36,6 @@ type heartbeat struct {
 	done   chan struct{}
 	once   sync.Once
 
-	// clean is set by stop() before it cancels stepCtx, so the
-	// stepCtx.Done() case below can tell a clean stop from an unclean
-	// cancellation (a kill) and leave h.reason nil for the former.
-	clean atomic.Bool
-
 	mu     sync.Mutex
 	reason error
 }
@@ -58,24 +52,33 @@ func (r *Runner) startHeartbeat(ctx context.Context, s *state) *heartbeat {
 		for {
 			select {
 			case <-stepCtx.Done():
-				// A clean stop() already recorded nothing to fail: h.err()
-				// stays nil, as it does today. An unclean cancellation — the
-				// outer kill context, cancelled by a second signal or the
-				// grace window elapsing — resolves to errShutdown itself,
-				// since nothing upstream has set a reason for it.
-				if !h.clean.Load() {
+				// stop() cancels stepCtx alone and leaves h.err() nil. A
+				// cancelled parent is a kill — a second signal or the grace
+				// window elapsing — and resolves to errShutdown, whether or
+				// not stop() has since been called too.
+				if ctx.Err() != nil {
 					h.fail(errShutdown)
 				}
 				return
 			case <-ticker.C:
 				if err := r.beat(stepCtx, s); err != nil {
-					h.fail(err)
+					h.fail(killed(ctx, err))
 					return
 				}
 			}
 		}
 	}()
 	return h
+}
+
+// killed is a renewal's failure as the heartbeat reports it: a call cut off
+// by a kill is the kill, errShutdown, rather than the cancellation it
+// returned. A fence the renewal saw first stays a fence.
+func killed(ctx context.Context, err error) error {
+	if ctx.Err() != nil && cutOff(err) && !isFenced(err) {
+		return errShutdown
+	}
+	return err
 }
 
 // beat is one tick: renew the lease, then read the cancel flag.
@@ -181,11 +184,9 @@ func (h *heartbeat) fail(err error) {
 	h.cancel()
 }
 
-// stop ends the heartbeat and waits for its goroutine. clean is set first, so
-// the stepCtx.Done() case this unblocks does not mistake it for a kill.
+// stop ends the heartbeat and waits for its goroutine.
 func (h *heartbeat) stop() {
 	h.once.Do(func() {
-		h.clean.Store(true)
 		h.cancel()
 		<-h.done
 	})

@@ -706,7 +706,7 @@ func gitAs(dir string, env map[string]string, args ...string) {
 	for name, value := range env {
 		environment[name] = value
 	}
-	process, err := workspace.Spawner{Floor: scratchEnv()}.Exec(context.Background(), workspace.Command{
+	process, err := workspace.Spawner{Floor: testsupport.ScratchEnv()}.Exec(context.Background(), workspace.Command{
 		Path: "git", Args: args, Dir: dir,
 		Env: environment,
 	})
@@ -714,21 +714,6 @@ func gitAs(dir string, env map[string]string, args ...string) {
 	stdout, stderr := readAll(process.Stdout), readAll(process.Stderr)
 	result := process.Wait()
 	Expect(result.Status).To(BeZero(), "git %s: %s %s", strings.Join(args, " "), stdout(), stderr())
-}
-
-// scratchEnv is the environment for the fixture's own git, with the host's
-// GIT_* variables cleared: under a git hook the process inherits GIT_DIR and
-// GIT_INDEX_FILE, and this git would otherwise act on the hook's repository
-// rather than the fixture, whatever Dir says.
-func scratchEnv() []string {
-	env := os.Environ()
-	clean := make([]string, 0, len(env))
-	for _, kv := range env {
-		if !strings.HasPrefix(kv, "GIT_") {
-			clean = append(clean, kv)
-		}
-	}
-	return clean
 }
 
 // readAll drains a pipe in the background.
@@ -1668,4 +1653,27 @@ func (f *fixture) releasedLease(ctx context.Context) (reason, detail string) {
 		ORDER BY occurred_at DESC, id DESC LIMIT 1`, node.GetId()).Scan(&recorded)).To(Succeed())
 	reason, detail, _ = strings.Cut(recorded, ": ")
 	return reason, detail
+}
+
+// releases is every release skift recorded for the node's leases, oldest
+// first, each as skift writes it: "reason: detail". A spec that must know a
+// lease was never released some other way first reads this rather than
+// [fixture.releasedLease], which sees only the last.
+func (f *fixture) releases(ctx context.Context) []string {
+	GinkgoHelper()
+	conn, err := pgx.Connect(ctx, f.skift.DatabaseURL)
+	Expect(err).NotTo(HaveOccurred())
+	defer func() { _ = conn.Close(ctx) }()
+
+	node, err := f.client.Node(ctx, f.nodeRef)
+	Expect(err).NotTo(HaveOccurred())
+
+	rows, err := conn.Query(ctx, `
+		SELECT coalesce(reason, '') FROM events
+		WHERE node_id = $1 AND op = 'release_lease'
+		ORDER BY occurred_at, id`, node.GetId())
+	Expect(err).NotTo(HaveOccurred())
+	recorded, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	Expect(err).NotTo(HaveOccurred())
+	return recorded
 }
