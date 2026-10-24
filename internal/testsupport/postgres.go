@@ -28,7 +28,7 @@ import (
 
 // postgresImage is the same pinned postgres:18 the development stack in
 // compose.yaml runs, so specs and `make db-up` see one server version.
-const postgresImage = "docker.io/library/postgres:18@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280"
+const postgresImage = "docker.io/library/postgres:18@sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6"
 
 // DBLabel marks a spec as needing the container. `make test-unit` filters it
 // out; `make test-db` runs nothing else.
