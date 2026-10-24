@@ -10,6 +10,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // A clone of the scratch project, for the two questions only git can answer:
@@ -70,7 +72,7 @@ func (c *clone) verifyCommit(ctx context.Context, sha, allowedSigners string) (s
 	command := exec.CommandContext(ctx, "git", //nolint:gosec // the suite's own git
 		"-c", "gpg.ssh.allowedSignersFile="+signers, "verify-commit", sha)
 	command.Dir = c.dir
-	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	command.Env = testsupport.ScratchEnv("GIT_TERMINAL_PROMPT=0")
 	out, err := command.CombinedOutput()
 	return string(out), err
 }
@@ -87,7 +89,7 @@ func (c *clone) run(ctx context.Context, args ...string) string {
 	}, args...)
 	command := exec.CommandContext(ctx, "git", credentialed...) //nolint:gosec // the suite's own git
 	command.Dir = c.dir
-	command.Env = append(os.Environ(),
+	command.Env = testsupport.ScratchEnv(
 		"GIT_TERMINAL_PROMPT=0",
 		"MILL_FORGE_USERNAME="+env.ForgeUser,
 		"MILL_FORGE_TOKEN="+env.ForgeToken)

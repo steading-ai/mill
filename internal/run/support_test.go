@@ -706,7 +706,7 @@ func gitAs(dir string, env map[string]string, args ...string) {
 	for name, value := range env {
 		environment[name] = value
 	}
-	process, err := workspace.Spawner{Floor: scratchEnv()}.Exec(context.Background(), workspace.Command{
+	process, err := workspace.Spawner{Floor: testsupport.ScratchEnv()}.Exec(context.Background(), workspace.Command{
 		Path: "git", Args: args, Dir: dir,
 		Env: environment,
 	})
@@ -714,21 +714,6 @@ func gitAs(dir string, env map[string]string, args ...string) {
 	stdout, stderr := readAll(process.Stdout), readAll(process.Stderr)
 	result := process.Wait()
 	Expect(result.Status).To(BeZero(), "git %s: %s %s", strings.Join(args, " "), stdout(), stderr())
-}
-
-// scratchEnv is the environment for the fixture's own git, with the host's
-// GIT_* variables cleared: under a git hook the process inherits GIT_DIR and
-// GIT_INDEX_FILE, and this git would otherwise act on the hook's repository
-// rather than the fixture, whatever Dir says.
-func scratchEnv() []string {
-	env := os.Environ()
-	clean := make([]string, 0, len(env))
-	for _, kv := range env {
-		if !strings.HasPrefix(kv, "GIT_") {
-			clean = append(clean, kv)
-		}
-	}
-	return clean
 }
 
 // readAll drains a pipe in the background.

@@ -14,6 +14,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/steading-ai/mill/internal/harness"
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // liveVar turns on the spec that spends a real session against the account's
@@ -160,6 +161,7 @@ func git(dir string, args ...string) string {
 
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
+	cmd.Env = testsupport.ScratchEnv()
 	out, err := cmd.CombinedOutput()
 	Expect(err).NotTo(HaveOccurred(), "git %v: %s", args, out)
 	return string(out)

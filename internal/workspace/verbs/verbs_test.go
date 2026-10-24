@@ -13,6 +13,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/steading-ai/mill/internal/forge"
+	"github.com/steading-ai/mill/internal/testsupport"
 	"github.com/steading-ai/mill/internal/workspace"
 	"github.com/steading-ai/mill/internal/workspace/redact"
 	"github.com/steading-ai/mill/internal/workspace/signing"
@@ -204,12 +205,7 @@ func runGit(dir string, args ...string) string {
 	GinkgoHelper()
 	command := exec.Command("git", args...)
 	command.Dir = dir
-	command.Env = []string{
-		"PATH=" + os.Getenv("PATH"), "HOME=" + dir,
-		"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_SYSTEM=" + os.DevNull,
-		"GIT_AUTHOR_NAME=spec", "GIT_AUTHOR_EMAIL=spec@example.test",
-		"GIT_COMMITTER_NAME=spec", "GIT_COMMITTER_EMAIL=spec@example.test",
-	}
+	command.Env = testsupport.ScratchEnv(testsupport.SpecGit("HOME=" + dir)...)
 	out, err := command.CombinedOutput()
 	Expect(err).NotTo(HaveOccurred(), "git %s: %s", strings.Join(args, " "), out)
 	return string(out)

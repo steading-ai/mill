@@ -132,7 +132,7 @@ var _ = Describe("mill workspace", Label(testsupport.DBLabel), func() {
 // os/exec is internal/workspace's alone, here as everywhere else.
 func git(dir string, args ...string) {
 	GinkgoHelper()
-	process, err := workspace.Spawner{Floor: scratchEnv()}.Exec(context.Background(), workspace.Command{
+	process, err := workspace.Spawner{Floor: testsupport.ScratchEnv()}.Exec(context.Background(), workspace.Command{
 		Path: "git", Args: args, Dir: dir,
 		Env: map[string]string{
 			"PATH":              os.Getenv("PATH"),
@@ -146,19 +146,4 @@ func git(dir string, args ...string) {
 	stdout, _ := io.ReadAll(process.Stdout)
 	stderr, _ := io.ReadAll(process.Stderr)
 	Expect(process.Wait().Status).To(BeZero(), "git %s: %s %s", strings.Join(args, " "), stdout, stderr)
-}
-
-// scratchEnv is the environment for the fixture's own git, with the host's
-// GIT_* variables cleared: under a git hook the process inherits GIT_DIR and
-// GIT_INDEX_FILE, and this git would otherwise act on the hook's repository
-// rather than the fixture, whatever Dir says.
-func scratchEnv() []string {
-	env := os.Environ()
-	clean := make([]string, 0, len(env))
-	for _, kv := range env {
-		if !strings.HasPrefix(kv, "GIT_") {
-			clean = append(clean, kv)
-		}
-	}
-	return clean
 }

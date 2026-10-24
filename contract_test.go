@@ -10,6 +10,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
+
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // The field the tree under test removes. Nothing outside the generated code
@@ -114,7 +116,7 @@ func gitSession(dir string, args ...string) *gexec.Session {
 	GinkgoHelper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Env = scratchEnv(
+	cmd.Env = testsupport.ScratchEnv(
 		"GIT_AUTHOR_NAME=mill specs", "GIT_AUTHOR_EMAIL=specs@mill.invalid",
 		"GIT_COMMITTER_NAME=mill specs", "GIT_COMMITTER_EMAIL=specs@mill.invalid",
 		"HK_CONFIG_DIR="+GinkgoT().TempDir())
@@ -129,7 +131,7 @@ func makeIn(dir string, timeout time.Duration, target string) *gexec.Session {
 	GinkgoHelper()
 	cmd := exec.Command("make", target)
 	cmd.Dir = dir
-	cmd.Env = scratchEnv()
+	cmd.Env = testsupport.ScratchEnv()
 	session, err := gexec.Start(cmd, GinkgoWriter, GinkgoWriter)
 	Expect(err).NotTo(HaveOccurred())
 	return session.Wait(timeout)

@@ -10,6 +10,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // A repository on this host, for the scenarios that end before a run reaches
@@ -63,7 +65,7 @@ func git(ctx context.Context, dir string, args ...string) {
 	defer cancel()
 	command := exec.CommandContext(ctx, "git", args...) //nolint:gosec // the suite's own git
 	command.Dir = dir
-	command.Env = append(os.Environ(),
+	command.Env = testsupport.ScratchEnv(
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_CONFIG_SYSTEM=/dev/null",

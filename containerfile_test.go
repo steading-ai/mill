@@ -9,6 +9,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
+
+	"github.com/steading-ai/mill/internal/testsupport"
 )
 
 // The image packaging/Containerfile describes is scratch: no shell, no
@@ -50,7 +52,7 @@ var _ = Describe("The container image", Label("unit", "slow"), Ordered, func() {
 			"--tag", tag,
 			".")
 		cmd.Dir = dir
-		cmd.Env = scratchEnv()
+		cmd.Env = testsupport.ScratchEnv()
 		output(cmd, 3*time.Minute)
 	})
 
@@ -66,7 +68,7 @@ var _ = Describe("The container image", Label("unit", "slow"), Ordered, func() {
 		// against a hardcoded string.
 		versionCmd := exec.Command("make", "-s", "version")
 		versionCmd.Dir = dir
-		versionCmd.Env = scratchEnv()
+		versionCmd.Env = testsupport.ScratchEnv()
 		want := "mill version " + output(versionCmd, 30*time.Second)
 
 		Expect(got).To(Equal(want))

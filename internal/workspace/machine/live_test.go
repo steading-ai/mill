@@ -56,6 +56,7 @@ const (
 func host(argv ...string) (stdout, stderr string, status int) {
 	GinkgoHelper()
 	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = testsupport.ScratchEnv()
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err := cmd.Run()

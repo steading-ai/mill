@@ -8,24 +8,9 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-)
 
-// gitEnv is what this spec's own git invocations run with: none of the
-// operator's configuration, and an identity of their own — the same floor
-// internal/workspace/local's own specs use to build and verify checkouts.
-func gitEnv() []string {
-	return []string{
-		"PATH=" + os.Getenv("PATH"),
-		"HOME=" + os.Getenv("HOME"),
-		"GIT_CONFIG_GLOBAL=" + os.DevNull,
-		"GIT_CONFIG_SYSTEM=" + os.DevNull,
-		"GIT_AUTHOR_NAME=spec",
-		"GIT_AUTHOR_EMAIL=spec@example.test",
-		"GIT_COMMITTER_NAME=spec",
-		"GIT_COMMITTER_EMAIL=spec@example.test",
-		"LC_ALL=C",
-	}
-}
+	"github.com/steading-ai/mill/internal/testsupport"
+)
 
 // git runs git in dir and returns its trimmed output, failing the spec if it
 // exits non-zero.
@@ -34,7 +19,7 @@ func git(dir string, args ...string) string {
 
 	command := exec.Command("git", args...)
 	command.Dir = dir
-	command.Env = gitEnv()
+	command.Env = testsupport.ScratchEnv(testsupport.SpecGit()...)
 	out, err := command.CombinedOutput()
 	Expect(err).NotTo(HaveOccurred(), "git %s: %s", strings.Join(args, " "), out)
 	return strings.TrimSpace(string(out))

@@ -45,7 +45,7 @@ var _ = Describe("The breaker's mirrored ceilings", func() {
 			Skip("skift checkout at " + repo + " has no .git: cannot read its history")
 		}
 
-		spawner := workspace.Spawner{}
+		spawner := workspace.Spawner{Floor: testsupport.ScratchEnv()}
 		ctx := context.Background()
 
 		list, err := spawner.Exec(ctx, workspace.Command{

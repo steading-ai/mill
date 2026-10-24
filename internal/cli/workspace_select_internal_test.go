@@ -14,6 +14,7 @@ import (
 	"github.com/steading-ai/mill/internal/harness/claude"
 	"github.com/steading-ai/mill/internal/run"
 	"github.com/steading-ai/mill/internal/skill"
+	"github.com/steading-ai/mill/internal/testsupport"
 	"github.com/steading-ai/mill/internal/version"
 	"github.com/steading-ai/mill/internal/workspace"
 	"github.com/steading-ai/mill/internal/workspace/local"
@@ -34,12 +35,7 @@ func seedOrigin() string {
 		GinkgoHelper()
 		command := exec.Command("git", args...)
 		command.Dir = dir
-		command.Env = []string{
-			"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"),
-			"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_SYSTEM=" + os.DevNull,
-			"GIT_AUTHOR_NAME=spec", "GIT_AUTHOR_EMAIL=spec@example.test",
-			"GIT_COMMITTER_NAME=spec", "GIT_COMMITTER_EMAIL=spec@example.test",
-		}
+		command.Env = testsupport.ScratchEnv(testsupport.SpecGit()...)
 		out, err := command.CombinedOutput()
 		Expect(err).NotTo(HaveOccurred(), "git %s: %s", strings.Join(args, " "), out)
 	}
