@@ -1001,14 +1001,25 @@ func (r *Runner) stop(ctx context.Context, s *state, err error) error {
 	}
 	if s.beat != nil {
 		s.beat.stop()
-		// A raw context.Canceled surviving this far is never more authoritative
-		// than the reason that raised it: some call left running past walk's own
-		// ctx.Err() checkpoints returned the bare cancellation instead of the
-		// heartbeat's own translated error. errReleased and an already-resolved
-		// ErrFenced are deliberate outcomes stopped() already computed, and
-		// neither wraps context.Canceled, so they pass through untouched.
-		if beatErr := s.beat.err(); beatErr != nil && (err == nil || errors.Is(err, context.Canceled)) {
-			err = beatErr
+		if beatErr := s.beat.err(); beatErr != nil {
+			switch {
+			case errors.Is(err, context.Canceled):
+				// A raw context.Canceled surviving this far is the heartbeat's
+				// cancellation reaching a call outside a session — a store
+				// write between steps, opening the workspace — which returned
+				// it bare instead of passing through stopped(). stopped() is
+				// what the heartbeat's reason means, so it runs here: a cancel
+				// or a shutdown is written as one, never released as a crash.
+				// errReleased and an already-resolved ErrFenced are outcomes
+				// stopped() already computed, and neither wraps
+				// context.Canceled, so they pass through untouched.
+				err = r.stopped(ctx, s)
+			case err == nil && !errors.Is(beatErr, errCancelled) && !errors.Is(beatErr, errShutdown):
+				// The walk finished, and the heartbeat failed on its way
+				// out. A cancel or a shutdown noticed then has nothing left
+				// to stop: the run is done.
+				err = beatErr
+			}
 		}
 	}
 	if s.workspace != nil && err != nil {

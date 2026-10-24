@@ -1654,3 +1654,26 @@ func (f *fixture) releasedLease(ctx context.Context) (reason, detail string) {
 	reason, detail, _ = strings.Cut(recorded, ": ")
 	return reason, detail
 }
+
+// releases is every release skift recorded for the node's leases, oldest
+// first, each as skift writes it: "reason: detail". A spec that must know a
+// lease was never released some other way first reads this rather than
+// [fixture.releasedLease], which sees only the last.
+func (f *fixture) releases(ctx context.Context) []string {
+	GinkgoHelper()
+	conn, err := pgx.Connect(ctx, f.skift.DatabaseURL)
+	Expect(err).NotTo(HaveOccurred())
+	defer func() { _ = conn.Close(ctx) }()
+
+	node, err := f.client.Node(ctx, f.nodeRef)
+	Expect(err).NotTo(HaveOccurred())
+
+	rows, err := conn.Query(ctx, `
+		SELECT coalesce(reason, '') FROM events
+		WHERE node_id = $1 AND op = 'release_lease'
+		ORDER BY occurred_at, id`, node.GetId())
+	Expect(err).NotTo(HaveOccurred())
+	recorded, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	Expect(err).NotTo(HaveOccurred())
+	return recorded
+}
