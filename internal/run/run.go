@@ -1003,16 +1003,16 @@ func (r *Runner) stop(ctx context.Context, s *state, err error) error {
 		s.beat.stop()
 		if beatErr := s.beat.err(); beatErr != nil {
 			switch {
-			case errors.Is(err, context.Canceled):
-				// A raw context.Canceled surviving this far is the heartbeat's
+			case cutOff(err):
+				// A cut-off call surviving this far is the heartbeat's
 				// cancellation reaching a call outside a session — a store
 				// write between steps, opening the workspace — which returned
 				// it bare instead of passing through stopped(). stopped() is
 				// what the heartbeat's reason means, so it runs here: a cancel
 				// or a shutdown is written as one, never released as a crash.
 				// errReleased and an already-resolved ErrFenced are outcomes
-				// stopped() already computed, and neither wraps
-				// context.Canceled, so they pass through untouched.
+				// stopped() already computed, and neither is a cut-off call,
+				// so they pass through untouched.
 				err = r.stopped(ctx, s)
 			case err == nil && !errors.Is(beatErr, errCancelled) && !errors.Is(beatErr, errShutdown):
 				// The walk finished, and the heartbeat failed on its way
@@ -1063,6 +1063,14 @@ func call[Req, Res any](ctx context.Context, method func(context.Context, *conne
 		return nil, err
 	}
 	return res.Msg, nil
+}
+
+// cutOff reports whether a failure is a call ended by its context's
+// cancellation: a bare context.Canceled, or a Connect error with
+// CodeCanceled, which can carry the transport's error rather than the
+// context's (connect's wrapIfContextDone).
+func cutOff(err error) bool {
+	return errors.Is(err, context.Canceled) || connect.CodeOf(err) == connect.CodeCanceled
 }
 
 // isFenced reports whether a failure is a lease that is no longer current,

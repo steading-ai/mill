@@ -77,7 +77,7 @@ var _ = Describe("Cancelling a run", Label(testsupport.DBLabel), func() {
 			"the ledger lets go of the lease when skift does, as a drain's release does")
 	})
 
-	It("Cancel noticed during a store write between sessions stops the run as a cancellation, not a crash", func() {
+	DescribeTable("Cancel noticed during a store write between sessions stops the run as a cancellation, not a crash", func(answer func(context.Context) error) {
 		// mill#67: the heartbeat notices the flag while the worker is in one
 		// of its own store writes rather than in a session. The write fails
 		// with the cancelled step context, and the run must still end the way
@@ -86,7 +86,7 @@ var _ = Describe("Cancelling a run", Label(testsupport.DBLabel), func() {
 		f.node(ctx, "a cancel between sessions", "The session is over; the worker is still recording what it cost.")
 		f.script(fake.Script{Terminal: fake.Terminal("context gathered", nil, usage(10))})
 
-		blocking := &blockingUsage{StoreServiceClient: f.store, started: make(chan struct{})}
+		blocking := &blockingUsage{StoreServiceClient: f.store, started: make(chan struct{}), answer: answer}
 		runner := f.runner(func(o *run.Options) {
 			o.TTL = 3 * interval
 			o.Interval = interval
@@ -124,7 +124,10 @@ var _ = Describe("Cancelling a run", Label(testsupport.DBLabel), func() {
 		Expect(f.runOf(ctx).GetLeaseId()).To(BeEmpty())
 		Expect(f.runOf(ctx).GetCancelRequested()).To(BeTrue(), "nothing reclaimed the node and cleared the request")
 		Expect(f.leaseOf(ctx).GetId()).To(BeEmpty(), "the node is claimable again")
-	})
+	},
+		Entry("when the write returns the bare cancellation", nil),
+		Entry("when the write's client reports a Canceled carrying the transport's error", cutByTransport),
+	)
 
 	It("A kill noticed during a store write between sessions stops the run as a shutdown, not a crash", func() {
 		// The same door as mill#67, reached by the process going away

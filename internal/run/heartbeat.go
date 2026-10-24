@@ -72,10 +72,10 @@ func (r *Runner) startHeartbeat(ctx context.Context, s *state) *heartbeat {
 }
 
 // killed is a renewal's failure as the heartbeat reports it: a call cut off
-// by a kill is the kill, errShutdown, rather than the bare cancellation it
+// by a kill is the kill, errShutdown, rather than the cancellation it
 // returned. A fence the renewal saw first stays a fence.
 func killed(ctx context.Context, err error) error {
-	if ctx.Err() != nil && errors.Is(err, context.Canceled) && !isFenced(err) {
+	if ctx.Err() != nil && cutOff(err) && !isFenced(err) {
 		return errShutdown
 	}
 	return err

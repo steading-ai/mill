@@ -14,8 +14,11 @@ package run
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
+	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -60,5 +63,35 @@ var _ = Describe("The heartbeat", Label("unit"), func() {
 			Expect(h.err()).To(MatchError(errShutdown),
 				"a stop() that follows a kill is still a kill")
 		}
+	})
+})
+
+var _ = Describe("A renewal the heartbeat reports", Label("unit"), func() {
+	killedCtx := func() context.Context {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		return ctx
+	}
+
+	DescribeTable("is the kill when a kill cut it off",
+		func(err error) {
+			Expect(killed(killedCtx(), err)).To(MatchError(errShutdown))
+		},
+		Entry("as a bare context.Canceled", context.Canceled),
+		Entry("as a Connect Canceled carrying the context's error",
+			connect.NewError(connect.CodeCanceled, context.Canceled)),
+		Entry("as a Connect Canceled carrying the transport's error instead",
+			connect.NewError(connect.CodeCanceled, errors.New("http2: response body closed"))),
+	)
+
+	It("stays a fence when the renewal saw the fence first", func() {
+		fenced := fmt.Errorf("%w: %w", ErrFenced, context.Canceled)
+		Expect(killed(killedCtx(), fenced)).To(MatchError(ErrFenced))
+		Expect(killed(killedCtx(), fenced)).NotTo(MatchError(errShutdown))
+	})
+
+	It("is what it returned while the process is still alive", func() {
+		cut := connect.NewError(connect.CodeCanceled, errors.New("http2: response body closed"))
+		Expect(killed(context.Background(), cut)).To(BeIdenticalTo(cut))
 	})
 })
