@@ -1,4 +1,4 @@
-# The repository's first workflow, and its only one: on every push to
+# Publishes mill as an image: on every push to
 # main, build the staged tree `make stage-<arch>` (Makefile) produces for
 # each architecture, image it with packaging/Containerfile, and push a
 # multi-arch manifest to ghcr.io/steading-ai/mill so a consuming

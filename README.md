@@ -6,7 +6,9 @@ Design first, code second. Read [docs/prd.md](docs/prd.md), then [docs/domain-mo
 
 ## Status
 
-Scaffolded. The design is written; the code behind the CLI faces is not. The repository is built by skift's reference harness from the O0 backlog held in skift (project `mill`), one node at a time: see [harness/README.md](harness/README.md) and `/ralph-loop`.
+Early, and running where it was built: mill delivers work on its own repository, inside the sandbox [docs/sandbox.md](docs/sandbox.md) describes. The `quick-fix` and `feature` workflows ship with it. [docs/roadmap.md](docs/roadmap.md) says what each milestone makes possible.
+
+The repository's work is held in skift (project `mill`) and worked one node at a time. The reference harness that built the first milestones is still here: see [harness/README.md](harness/README.md) and `/ralph-loop`.
 
 ```
 harness/.venv/bin/python harness/loop.py --epic '#1' --dry-run   # what is ready under the milestone
