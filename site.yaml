@@ -1,0 +1,270 @@
+# What mill.stead.ing says on its front page, and how its docs are arranged.
+# The pages under /docs/ are README.md and every Markdown file in docs/.
+# The fields are documented at https://github.com/steading-ai/stead.ing
+project: mill
+headline: Takes a ready task to a merged change, with proof at every step.
+summary: >-
+  Mill claims a ready node from skift, picks a workflow for it, and runs each step as a fresh agent
+  session or a plain command. A step closes only on a fact mill checked for itself: a commit that
+  exists, a test that exited 0, a review that parsed and said approve. When a decision belongs to a
+  person, mill files it as a node for them and waits.
+fit: >-
+  Mill suits someone who keeps their plan in skift and wants ready work delivered without starting
+  or watching each session. It needs Linux with systemd, PostgreSQL, skift, and Claude Code. It is
+  built for one operator on machines they own. It is early: it runs on its author's machine, and the
+  host setup for its sandbox is not packaged yet.
+facts:
+  - Built in Go
+  - Runs on Linux
+
+run:
+  title: One node going through mill's feature workflow, with one step spelled out at a time
+  work:
+    ref: "#12"
+    title: Rate-limit the webhook handler
+  workflow: feature
+  steps:
+    - name: toolchain
+      kind: command
+      state: closed
+      who: mill, in the run's machine
+      closes: The install finishing, whichever way it ends
+      proof: exit 0
+      note: >-
+        Before any agent starts, mill installs the tools the repository pins. If that fails, the
+        first session is told what went wrong. The run does not fail over it.
+    - name: gather-context
+      kind: agent session
+      state: closed
+      who: the implementing session
+      closes: An artifact that skift accepted
+      proof: "sha256:9c41e0…"
+      note: >-
+        This step may read and search, and nothing else. What it found is stored with the node, so
+        later steps start from that and not from a transcript.
+    - name: think
+      kind: agent session
+      state: closed
+      who: the implementing session
+      closes: An artifact that skift accepted
+      proof: "sha256:02d7aa…"
+      note: >-
+        Kept apart from planning on purpose. A plan written while the problem is still being
+        understood is a plan for the first idea that arrived.
+    - name: plan
+      kind: agent session
+      state: closed
+      who: the implementing session
+      closes: An artifact that skift accepted
+      proof: "sha256:51be3c…"
+      note: >-
+        The plan is a file in the repository, committed with the change. Whoever asks later why the
+        change is shaped this way can read it.
+    - name: review-plan
+      kind: agent session
+      state: closed
+      who: the reviewing session, which cannot write
+      closes: A verdict that parses and says approve
+      proof: approve
+      note: >-
+        A reviewer that shared the planner's context would be reviewing its own work, so it gets a
+        session of its own. Its verdict is parsed, not read. `revise` sends the run back to plan
+        with the findings.
+    - name: plan-approval
+      kind: gate
+      state: closed
+      who: the workflow's policy, or a person
+      closes: An answer to the gate
+      proof: approved by policy
+      note: >-
+        The last decision that is cheap to change. Here the workflow approved it, because the
+        reviewer did and the work is small. Anything bigger becomes a node for a person in skift,
+        and the run lets go of the work until they answer.
+    - name: implement
+      kind: agent session
+      state: closed
+      who: the implementing session
+      closes: An artifact that skift accepted
+      proof: "sha256:e88f14…"
+      note: >-
+        Forty-five minutes and two retries. A step that runs out of both parks the node with its
+        last findings and asks a person what to do.
+    - name: simplify
+      kind: agent session
+      state: closed
+      who: the implementing session
+      closes: An artifact that skift accepted
+      proof: "sha256:7a305d…"
+      note: >-
+        A second pass over the change for reuse and clarity, in the same session that wrote it, so
+        the context is already there.
+    - name: commit
+      kind: agent session
+      state: closed
+      who: the implementing session
+      closes: A commit this step made, on the run's branch
+      proof: a41c9e7
+      note: >-
+        Mill looks the commit up itself: it exists, it is on the run's branch, and mill is its
+        author. An agent saying it committed closes nothing.
+    - name: clean-tree
+      kind: command
+      state: closed
+      who: mill, with no model involved
+      closes: An exit code of 0
+      proof: exit 0
+      note: >-
+        A plain command with an exit code. Checks like this run before any model is asked for a
+        judgement, and a failure sends the run back to commit.
+    - name: pr
+      kind: agent session
+      state: closed
+      who: the implementing session
+      closes: The pull request the forge returns for the branch
+      proof: pull/212
+      note: >-
+        Mill asks the forge for the pull request by branch. The address it gets back is the
+        evidence.
+    - name: review
+      kind: agent session
+      state: running
+      who: the reviewing session, which cannot write
+      closes: A verdict that parses and says approve
+      note: >-
+        Checks the change against the node's acceptance criteria. `revise` returns the findings to
+        the implementing session, a limited number of times.
+    - name: merge
+      kind: gate
+      state: open
+      who: the workflow's policy, or a person
+      closes: The forge reporting success for the commit
+      note: >-
+        Merged without asking when the reviewer approves work of this size. Otherwise a person
+        decides. What protects the branch is the repository's own rules, and mill never works
+        around them.
+
+video:
+  caption: A node filed in skift, claimed by mill, and merged without anyone starting a session.
+
+offers:
+  title: What mill does
+  items:
+    - title: Claims ready work
+      body: >-
+        It asks skift for the next ready node in the projects it is set up for, and holds it under a
+        lease it keeps renewing. It keeps no queue of its own.
+    - title: Picks a workflow
+      body: >-
+        By a label on the node, a project's default, or a short assessment step. A workflow is a
+        file: the steps in order, who runs each, and the evidence that closes it.
+    - title: Runs each step
+      body: >-
+        As a fresh agent session with only the tools that step is allowed, or as a plain command
+        with an exit code.
+    - title: Closes steps on evidence
+      body: >-
+        A commit it can look up, an exit code, a verdict that parses, an address the forge returns.
+        Never an agent's word for it.
+    - title: A reviewer that can say no
+      body: >-
+        The reviewer is a separate session that cannot write. It answers approve or revise, and
+        revise goes back to the implementer a limited number of times.
+    - title: Questions for a person
+      body: >-
+        A decision that belongs to a person becomes a node assigned to one in skift. The run lets go
+        of the work while it waits, and picks up where it stopped when the answer arrives.
+    - title: A sandbox for every run
+      body: >-
+        Each run works in its own systemd-nspawn machine, built from an image the repository
+        declares in `mill.toml`. Traffic leaves through the host's proxy, and the session holds no
+        credential it could keep.
+    - title: A ledger
+      body: >-
+        Every step, attempt, piece of evidence, and cost is on record. After a crash, mill resumes
+        at the first step that isn't closed.
+    - title: Tools for the operator
+      body: >-
+        `mill status`, `explain`, `logs`, `cost`, and `doctor`, from a shell, or over MCP from your
+        own agent session.
+
+thinking:
+  title: How mill thinks about delivery
+  items:
+    - title: Evidence closes steps
+      body: >-
+        A step is finished when mill has verified a fact outside the session. An agent saying it is
+        done, or a transcript that reads well, closes nothing. That is the difference between a
+        workflow that is enforced and one that is described.
+      href: /docs/core-principles/
+    - title: A small model
+      body: >-
+        One run takes one node through one workflow. A workflow is steps in order, and each step
+        names the one kind of evidence that closes it. Retries, gates, and resuming after a crash
+        all follow from that.
+      href: /docs/domain-model/
+    - title: Only a runner
+      body: >-
+        Mill holds one node's worth of state per run. It doesn't plan or keep a backlog: when work
+        needs splitting, a workflow files the pieces in skift and ends. Everything a step runs goes
+        through one door, the workspace.
+      href: /docs/architecture/
+
+quickstart:
+  title: Deliver your first node
+  steps:
+    - title: Set it up
+      body: >-
+        Paste this into your agent. It reads what mill needs and walks you through it: skift, a
+        PostgreSQL database, and the `mill` binary.
+      prompt: true
+    - title: Install the plugin
+      body: >-
+        For Claude Code, from a clone of mill's repository. The plugin registers mill's MCP server
+        and a skill for reading a run.
+        [The plugin's README](https://github.com/steading-ai/mill/blob/main/plugin/mill/README.md)
+        covers what it needs and how to check it worked.
+      code: |-
+        claude plugin marketplace add ./plugin
+        claude plugin install mill@mill
+    - title: Use the skill
+      body: >-
+        Ask your agent what mill is working on. The skill reads a run for you: which step it is on,
+        why that step is open, and what evidence would close it.
+    - title: Use the command line yourself
+      body: >-
+        Deliver one node by hand, on the same code path the service uses, then read the record.
+      code: |-
+        mill doctor
+        mill run 'myproject#12'
+        mill explain 'myproject#12'
+
+not:
+  - title: Not a planner.
+    body: It never decides what to build or in what order, and it keeps no backlog of its own.
+    use: skift
+  - title: Not a source of work.
+    body: It doesn't watch for CVEs, exceptions, or feedback. It works what is ready.
+    use: almanac
+  - title: Not a chat tool.
+    body: It has no conversation of its own. Its questions become nodes for a person.
+    use: thicket
+instead: >-
+  Built to be *left alone*. You file the work and answer the questions only a person can. The
+  ledger tells you what happened.
+
+pairs:
+  - project: skift
+    body: holds the plan and says what is ready. Mill takes its work from there.
+  - project: almanac
+    body: turns outside events (CVEs, exceptions, customer feedback, etc.) into ready tasks.
+  - project: thicket
+    body: lets you talk an idea through with an agent and have it file the nodes mill delivers.
+
+docs:
+  order:
+    [prd, core-principles, domain-model, architecture, ledger, sandbox, sandbox-scenarios, tools, activity, runbook, publishing, roadmap]
+  exclude:
+    - docs/plans/
+    - docs/research/
+    - docs/retrospectives/
+    - docs/spikes/

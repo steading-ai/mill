@@ -9,8 +9,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// The publish workflow (.github/workflows/publish.yml) is the repository's
-// first, and its only one: a push, not a check. These specs read it as
+// The publish workflow (.github/workflows/publish.yml) is a push, not a
+// check. These specs read it as
 // data rather than running it — nothing here can reach ghcr.io — so what
 // they prove is the shape a reviewer would otherwise have to eyeball: the
 // trigger, the permissions, and the tags a push actually pushes.
