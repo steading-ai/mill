@@ -1,0 +1,7 @@
+// Renovate manages only the GitHub Actions in .github/workflows, their lockfile
+// actions.lock, and the gh-actions-lock release the actions-lock workflow installs.
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: ["github>ivy/renovate-config"],
+  enabledManagers: ["github-actions", "custom.regex"],
+}
