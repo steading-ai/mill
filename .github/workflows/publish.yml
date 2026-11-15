@@ -32,7 +32,7 @@ jobs:
 
       # Installs the same Go, Node and pnpm mise.toml pins everywhere else,
       # and puts their shims on PATH for every step after this one.
-      - uses: jdx/mise-action@v2.4.4
+      - uses: jdx/mise-action@v5.2.7
 
       - name: Cache Go modules and build cache
         uses: actions/cache@v6.1.0
