@@ -6,7 +6,7 @@ workflows:
     '.github/workflows/actions-lock.yml':
         - 'actions/checkout@v7.0.1'
     '.github/workflows/publish.yml':
-        - 'actions/cache@v4.3.0'
+        - 'actions/cache@v6.1.0'
         - 'actions/checkout@v4.4.0'
         - 'docker/login-action@v3.7.0'
         - 'docker/setup-buildx-action@v3.12.0'
@@ -15,9 +15,9 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'steading-ai/stead.ing@main'
 dependencies:
-    'actions/cache@v4.3.0':
-        ref: 'v4.3.0'
-        commit: 'sha1-0057852bfaa89a56745cba8c7296529d2fc39830'
+    'actions/cache@v6.1.0':
+        ref: 'v6.1.0'
+        commit: 'sha1-55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
         owner_id: 44036562
         repo_id: 215566462
     'actions/checkout@v4.4.0':

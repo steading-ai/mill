@@ -35,7 +35,7 @@ jobs:
       - uses: jdx/mise-action@v2.4.4
 
       - name: Cache Go modules and build cache
-        uses: actions/cache@v4.3.0
+        uses: actions/cache@v6.1.0
         with:
           path: |
             ~/go/pkg/mod
@@ -43,7 +43,7 @@ jobs:
           key: go-${{ hashFiles('go.sum') }}
 
       - name: Cache the pnpm store
-        uses: actions/cache@v4.3.0
+        uses: actions/cache@v6.1.0
         with:
           path: ~/.local/share/pnpm/store
           key: pnpm-${{ hashFiles('sidecar/pnpm-lock.yaml') }}
