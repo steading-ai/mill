@@ -55,7 +55,7 @@ jobs:
         with:
           driver-opts: image=moby/buildkit:v0.34.1-ubuntu@sha256:4f105b796772937ff4e2ce05c528342676086cd21a706d81f2ba681c127994b9
 
-      - uses: docker/login-action@v3.7.0
+      - uses: docker/login-action@v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
