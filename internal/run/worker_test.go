@@ -393,10 +393,7 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			Eventually(resumed, time.Minute).Should(Receive(BeNil()))
 		})
 
-		// FlakeAttempts until mill#107: this spec fails by timing under a live
-		// tier's load (2026-09-30), and every run's tier meets it. mill#107 makes
-		// it wait for the state it depends on and removes the retries.
-		It("drains in front of a review that would answer a revise", FlakeAttempts(3), func() {
+		It("drains in front of a review that would answer a revise", func() {
 			By("given a feature run whose review attempt 1 asked for changes and whose implement round 2 has just closed through pr")
 			f.pushWorkflowFrom(ctx, featureDir)
 			node := f.node(ctx, "a fix drained before a second review", "Change the README's first line.")
@@ -434,6 +431,8 @@ var _ = Describe("The worker", Label(testsupport.DBLabel), func() {
 			done := startWorker(ctx, worker)
 
 			By("then the run releases in front of review's second attempt, which never starts")
+			Eventually(func() int { return len(f.harness.Calls()) }, 3*time.Minute, 100*time.Millisecond).
+				Should(Equal(13), "all thirteen scripted steps ran before the drain")
 			Eventually(done, time.Minute).Should(Receive(BeNil()))
 
 			reason, detail := f.releasedLease(ctx)

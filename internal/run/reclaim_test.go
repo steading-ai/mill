@@ -168,10 +168,7 @@ var _ = Describe("A fenced heartbeat whose reclaim fails", Label(testsupport.DBL
 		f = start(ctx)
 	})
 
-	// FlakeAttempts until mill#107: this spec fails by timing under a live
-	// tier's load (2026-09-30), and every run's tier meets it. mill#107 makes
-	// it wait for the state it depends on and removes the retries.
-	It("ends the run stopped with no lease, not left running behind a dead one", FlakeAttempts(3), func() {
+	It("ends the run stopped with no lease, not left running behind a dead one", func() {
 		f.node(ctx, "a held step", "This one is taken away mid-flight and nobody wins it back.")
 		f.script(fake.Script{Hold: true, Cancelled: fake.Terminal("stopped", nil, nil)})
 

@@ -444,7 +444,7 @@ func execute(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 	if gw != nil {
 		defer func() { _ = gw.Close() }()
 	}
-	runner, err := newRunner(cmd, opts, opts.project, nodeRef, answers, gw, nil)
+	runner, err := newRunner(cmd, opts, opts.project, nodeRef, answers, gw, nil, 0)
 	if err != nil {
 		return err
 	}
@@ -467,7 +467,11 @@ func execute(cmd *cobra.Command, opts runOptions, nodeRef string) error {
 // onActivity, when not nil, is wired onto [run.Options.OnActivity] so this
 // runner's attempts reach a same-process `Logs` observer; nil is every
 // caller but `serve --work`, which has one to reach.
-func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, answers run.Answerer, gw *gateway.Server, onActivity func(string)) (*run.Runner, error) {
+//
+// concurrency is wired onto [run.Options.Concurrency]: the worker's own cap
+// on runs driven at once, or 0 from `mill run`, which drives one node at a
+// time and has no concurrency flag.
+func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, answers run.Answerer, gw *gateway.Server, onActivity func(string), concurrency int) (*run.Runner, error) {
 	// The first thing, because it is the cheapest thing that can be wrong
 	// and the most expensive to find out late: a backend that cannot serve
 	// a run on this host fails after the node has been claimed and cloned
@@ -532,6 +536,7 @@ func newRunner(cmd *cobra.Command, opts runOptions, project, sessionRef string, 
 		Repositories:      repositories(opts),
 		Harnesses:         harnessesFor(kind, opts, envMode),
 		WorkerRef:         worker,
+		Concurrency:       concurrency,
 		Workflow:          opts.workflow,
 		Tier:              tier,
 		WorkflowDir:       opts.workflowDir,

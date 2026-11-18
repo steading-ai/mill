@@ -203,6 +203,11 @@ type Options struct {
 	Harnesses HarnessesFor
 	// WorkerRef is this worker, recorded on the run and on every attempt.
 	WorkerRef string
+	// Concurrency is the worker's own cap on runs driven at once, read only
+	// to size a check step's own parallelism (a live tier's `make test`,
+	// through MILL_WORKER_CONCURRENCY) so that several runs' tiers do not
+	// each ask for every core of the host. Zero means one.
+	Concurrency int
 	// Workflow is the workflow name to select when a run has none. The
 	// project default, until the assessment step exists.
 	Workflow string

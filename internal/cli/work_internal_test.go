@@ -235,7 +235,7 @@ model_credential_minted: 2026-09-01
 		cmd := &cobra.Command{Use: "work"}
 		cmd.SetOut(GinkgoWriter)
 		cmd.SetErr(GinkgoWriter)
-		_, err := newRunner(cmd, opts.run, "spec-project", "", nil, nil, nil)
+		_, err := newRunner(cmd, opts.run, "spec-project", "", nil, nil, nil, 0)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("retention"))
 	})
@@ -246,7 +246,7 @@ model_credential_minted: 2026-09-01
 		cmd := &cobra.Command{Use: "work"}
 		cmd.SetOut(GinkgoWriter)
 		cmd.SetErr(GinkgoWriter)
-		_, err := newRunner(cmd, opts.run, "spec-project", "", nil, nil, nil)
+		_, err := newRunner(cmd, opts.run, "spec-project", "", nil, nil, nil, 0)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("retention-projects"))
 		Expect(err.Error()).To(ContainSubstring("demo"))

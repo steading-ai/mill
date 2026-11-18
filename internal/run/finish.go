@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -70,6 +71,20 @@ func (r *Runner) recordGatewayUsage(ctx context.Context, lease string, sr *millv
 	return err
 }
 
+// deadlockRetryBudget bounds how many times postUsage and finish retry a
+// write that lost a database deadlock ([skift.Deadlocked]) before giving up
+// and failing the run. Concurrent runs post usage and complete at once often
+// enough (mill#107's load proof) that this is ordinary, not exceptional;
+// Postgres resolves the cycle by aborting one side, so the loser's own next
+// attempt is not competing with anything.
+const deadlockRetryBudget = 3
+
+// deadlockRetryWait is how long postUsage and finish wait between those
+// retries. The deadlock is already resolved by the time skift answers it, so
+// this is only room for a second, independent collision rather than a real
+// backoff.
+const deadlockRetryWait = 50 * time.Millisecond
+
 // postUsage sends an attempt's totals to skift, one record per model, and
 // marks the rows posted. The totals are the adapter's rows alone: the
 // store keeps the gateway's count out of them (mill.v1.StepRunDetail).
@@ -89,13 +104,26 @@ func (r *Runner) postUsage(ctx context.Context, s *state, sr *millv1.StepRun) er
 			continue
 		}
 		for _, totals := range d.GetTotals() {
-			if err := s.skift.ReportUsage(ctx, s.leaseID(), s.node.GetReference(), totals.GetModel(), skift.TokenCounts{
+			counts := skift.TokenCounts{
 				InputTokens:      totals.GetInputTokens(),
 				OutputTokens:     totals.GetOutputTokens(),
 				CacheReadTokens:  totals.GetCacheReadTokens(),
 				CacheWriteTokens: totals.GetCacheWriteTokens(),
-			}); err != nil {
-				return err
+			}
+			var reportErr error
+			for attempt := 0; ; attempt++ {
+				reportErr = s.skift.ReportUsage(ctx, s.leaseID(), s.node.GetReference(), totals.GetModel(), counts)
+				if reportErr == nil || attempt >= deadlockRetryBudget-1 || !skift.Deadlocked(reportErr) {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(deadlockRetryWait):
+				}
+			}
+			if reportErr != nil {
+				return reportErr
 			}
 		}
 	}
@@ -132,8 +160,20 @@ func (r *Runner) finish(ctx context.Context, s *state, detail *millv1.InspectRes
 	}
 	requestID := keyed.GetRun().GetCompleteRequestId()
 
-	if err := s.skift.Complete(ctx, requestID, s.leaseID(), s.node.GetReference(), r.result(s, detail)); err != nil {
-		return err
+	var completeErr error
+	for attempt := 0; ; attempt++ {
+		completeErr = s.skift.Complete(ctx, requestID, s.leaseID(), s.node.GetReference(), r.result(s, detail))
+		if completeErr == nil || attempt >= deadlockRetryBudget-1 || !skift.Deadlocked(completeErr) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(deadlockRetryWait):
+		}
+	}
+	if completeErr != nil {
+		return completeErr
 	}
 	if _, err := call(ctx, r.options.Store.Done, &millv1.DoneRequest{
 		LeaseId: s.leaseID(),

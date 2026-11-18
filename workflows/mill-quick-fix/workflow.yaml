@@ -118,12 +118,7 @@ steps:
       command:
         - sh
         - -c
-        # Until mill#107: the run loop's database specs (internal/run, the
-        # skift fixture) fail by timing in every tier, a different set each
-        # time, so the tier runs without the fixture and they skip, as they
-        # did before 73af3e0. mill#107 makes them wait for what they read
-        # and restores MILL_REQUIRE_FIXTURES=1 and the checkout here.
-        - env -u MILL_SKIFT_REPO MILL_SANDBOX_HOST=1 mise exec -- make test 1>&2
+        - MILL_SANDBOX_HOST=1 MILL_REQUIRE_FIXTURES=1 mise exec -- make test 1>&2
       exit:
         - 0
       stdout: none

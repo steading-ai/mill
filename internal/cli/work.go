@@ -265,7 +265,7 @@ func newWorker(cmd *cobra.Command, opts *workOptions, onActivity func(string)) (
 	if len(projects) == 1 {
 		project = projects[0]
 	}
-	runner, err := newRunner(cmd, opts.run, project, "", nil, gw, onActivity)
+	runner, err := newRunner(cmd, opts.run, project, "", nil, gw, onActivity, opts.concurrency)
 	if err != nil {
 		return nil, err
 	}
