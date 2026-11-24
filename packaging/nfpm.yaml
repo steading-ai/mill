@@ -25,6 +25,7 @@ version: ${MILL_VERSION}
 release: 1
 maintainer: Ivy Evans <ivy@ivyevans.net>
 homepage: https://github.com/steading-ai/mill
+license: ISC
 description: |
   A workflow runner over skift's work graph. It claims a ready node, drives
   each step as a headless coding-agent session or a deterministic check,

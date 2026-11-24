@@ -16,3 +16,7 @@ harness/.venv/bin/python harness/loop.py --epic '#1'             # run until it 
 ```
 
 `mise install` creates the venv; `SKIFT_PROJECT=mill` is set by `mise.toml`.
+
+## License
+
+Mill is released under the [ISC license](LICENSE.md).
